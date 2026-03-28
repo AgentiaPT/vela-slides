@@ -238,6 +238,12 @@ def generate_viewer_html(version):
             jsxSource = jsxSource.replace(/^import\\s*\\{{[^}}]*\\}}\\s*from\\s+["'][^"']+["'];?\\s*$/gm, '');
             jsxSource = jsxSource.replace(/^export\\s+default\\s+/gm, '');
 
+            // UMD shim: bridge window globals to the names the app expects
+            var umdShim = 'const {{ useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo }} = React;\\n'
+              + 'const _LucideAll = window.lucideReact;\\n'
+              + 'const {{ ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown }} = window.lucideReact;\\n';
+            jsxSource = umdShim + jsxSource;
+
             try {{
               var code = Babel.transform(jsxSource, {{
                 presets: ['react'],
