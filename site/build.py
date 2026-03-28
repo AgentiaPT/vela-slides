@@ -191,9 +191,18 @@ def generate_viewer_html(version):
         setMsg('Failed to load');
       }}
 
-      // Read ?deck= parameter
+      // Read ?deck= parameter (only relative paths allowed — no external URLs)
       var params = new URLSearchParams(window.location.search);
-      var deckUrl = params.get('deck');
+      var deckParam = params.get('deck');
+      var deckUrl = null;
+
+      if (deckParam) {{
+        if (/^[a-z][a-z0-9+.-]*:/i.test(deckParam) || deckParam.startsWith('//')) {{
+          showError('External deck URLs are not allowed.<br>Only local deck paths (e.g. <code>examples/deck.json</code>) are supported.<br><a href="./">Back to gallery</a>');
+          return;
+        }}
+        deckUrl = deckParam;
+      }}
 
       // Fetch vela.jsx engine + optional deck in parallel
       var jsxPromise = fetch('vela.jsx').then(function(r) {{
@@ -244,19 +253,17 @@ def generate_viewer_html(version):
               + 'const {{ ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown }} = window.lucideReact;\\n';
             jsxSource = umdShim + jsxSource;
 
+            // Append self-mount so App is accessible within the evaluated scope
+            jsxSource += '\\n;(function() {{ var rootEl = document.getElementById("root"); var root = window._createRoot(rootEl); root.render(React.createElement(App)); }})();\\n';
+
             try {{
               var code = Babel.transform(jsxSource, {{
                 presets: ['react'],
                 filename: 'vela.jsx'
               }}).code;
 
-              // Execute
+              // Execute (App mounts itself from within the evaluated code)
               new Function(code)();
-
-              // Mount
-              var rootEl = document.getElementById('root');
-              var root = window._createRoot(rootEl);
-              root.render(React.createElement(App));
             }} catch(e) {{
               console.error('[vela] Boot failed:', e);
               showError('Failed to start Vela: ' + e.message);
@@ -405,62 +412,6 @@ def generate_gallery_html(decks, version):
       color: #64748b;
     }}
 
-    /* Open any URL section */
-    .open-url {{
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px 48px;
-      text-align: center;
-    }}
-    .open-url .divider {{
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 20px;
-      color: #334155;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-    }}
-    .open-url .divider::before, .open-url .divider::after {{
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: #1e293b;
-    }}
-    .open-url form {{
-      display: flex;
-      gap: 8px;
-      max-width: 600px;
-      margin: 0 auto;
-    }}
-    .open-url input {{
-      flex: 1;
-      background: #111827;
-      border: 1px solid #1e293b;
-      border-radius: 8px;
-      padding: 12px 16px;
-      color: #e2e8f0;
-      font-size: 14px;
-      outline: none;
-      font-family: monospace;
-    }}
-    .open-url input:focus {{ border-color: #3b82f6; }}
-    .open-url input::placeholder {{ color: #475569; }}
-    .open-url button {{
-      background: #3b82f6;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 12px 24px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-      white-space: nowrap;
-    }}
-    .open-url button:hover {{ background: #2563eb; }}
-
     /* Footer */
     .footer {{
       text-align: center;
@@ -477,7 +428,6 @@ def generate_gallery_html(decks, version):
       .gallery {{ grid-template-columns: 1fr; padding: 16px; gap: 16px; }}
       .header {{ padding: 40px 16px 12px; }}
       .header h1 {{ font-size: 24px; letter-spacing: 4px; }}
-      .open-url form {{ flex-direction: column; }}
     }}
   </style>
 </head>
@@ -485,7 +435,7 @@ def generate_gallery_html(decks, version):
   <div class="header">
     <div class="boat">⛵</div>
     <h1>VELA</h1>
-    <p>AI-native presentation engine. Browse example decks below, or load any public deck JSON by URL.</p>
+    <p>AI-native presentation engine. Browse example decks below.</p>
     <div class="version">v{html.escape(version)}</div>
   </div>
 
@@ -504,13 +454,6 @@ def generate_gallery_html(decks, version):
     </a>
   </div>
 
-  <div class="open-url">
-    <div class="divider">or load by URL</div>
-    <form onsubmit="event.preventDefault(); var u=this.querySelector('input').value.trim(); if(u) window.location.href='vela.html?deck='+encodeURIComponent(u);">
-      <input type="url" placeholder="https://raw.githubusercontent.com/.../deck.json" />
-      <button type="submit">Open</button>
-    </form>
-  </div>
 
   <div class="footer">
     <span>&copy; 2025-present <a href="https://www.linkedin.com/in/rquintino/">Rui Quintino</a></span>
