@@ -10,7 +10,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 [![Claude.ai](https://img.shields.io/badge/Runs%20on-Claude.ai-orange.svg)](https://claude.ai)
 [![Skill](https://img.shields.io/badge/Type-Claude%20Skill-purple.svg)](#use-as-a-claudeai-skill)
 
-[Try it Now](#try-it-now) · [Get Started](#get-started) · [Features](#features) · [Examples](#examples) · [Architecture](docs/ARCHITECTURE.md) · [Dependencies](docs/DEPENDENCIES.md)
+[Get Started](#get-started) · [Features](#features) · [Examples](#examples) · [Architecture](docs/ARCHITECTURE.md) · [Dependencies](docs/DEPENDENCIES.md)
 
 </div>
 
@@ -28,36 +28,18 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 ![Vela Slides Screenshot](docs/screenshot.png)
 
-## Try it Now
+## Get Started
 
-**[▶ Browse Example Decks](https://agentiapt.github.io/vela-slides/)** — gallery with all sample decks, runs instantly in any browser (no Claude.ai account needed). Note: AI features (Vera chat) are not available on GitHub Pages — use the Claude.ai artifact for the full experience.
-
-**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** — full interactive artifact on Claude.ai with Vera AI assistant for live editing.
+| | Approach | Best for |
+|---|----------|----------|
+| **Try instantly** | **[▶ Browse the gallery](https://agentiapt.github.io/vela-slides/)** | View sample decks in any browser — no account needed |
+| | **[▶ Open the live demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** | Interactive artifact on Claude.ai with Vera AI assistant |
+| **Set up for creation** | **[Upload as Claude.ai skill](#1-use-as-a-claudeai-skill)** | Generate decks from conversation on Claude.ai |
+| | **[Run locally with Claude Code](#2-run-locally-with-claude-code)** | Full CLI, live preview, file system access |
 
 > The Claude.ai artifact runs entirely in your browser. AI features (Vera chat, batch edit) use your Claude.ai subscription. Vela has no backend and no access to your data. Requires **Settings → Feature Preview → AI-powered artifacts** enabled.
 
----
-
-## Get Started
-
-Three ways to use Vela, from fastest to most powerful:
-
-| Approach | Time to first slide | Best for |
-|----------|-------------------|----------|
-| **[Browse the gallery](https://agentiapt.github.io/vela-slides/)** | ~2 seconds | View sample decks instantly, no account needed |
-| **[Open the artifact](#1-open-the-artifact)** | ~5 seconds | Try it instantly, present from Claude.ai |
-| **[Upload as Claude.ai skill](#2-use-as-a-claudeai-skill)** | ~2 minutes | Generate decks from conversation on Claude.ai |
-| **[Run locally with Claude Code](#3-run-locally-with-claude-code)** | ~30 seconds | Full CLI, live preview, file system access |
-
-### 1. Open the Artifact
-
-Click the link, see slides, edit with Vera:
-
-**[▶ Open Vela Slides v12](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)**
-
-Or assemble a standalone artifact (`python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.json --from-parts`) and paste it into any Claude.ai conversation for a blank canvas with a starter deck.
-
-### 2. Use as a Claude.ai Skill
+### 1. Use as a Claude.ai Skill
 
 Upload the skill so Claude generates Vela decks from your descriptions:
 
@@ -67,7 +49,7 @@ Upload the skill so Claude generates Vela decks from your descriptions:
 
 Claude will generate structured slide JSON, assemble it into the Vela engine, and output an interactive artifact.
 
-### 3. Run Locally with Claude Code
+### 2. Run Locally with Claude Code
 
 Full CLI access, live browser preview, file system integration:
 
