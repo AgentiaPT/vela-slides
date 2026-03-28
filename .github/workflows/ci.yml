@@ -25,6 +25,7 @@ jobs:
         id: version_check
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          IMPORTS_FILE="skills/vela-slides/app/parts/part-imports.jsx"
 
           # Check if any skill files changed
           SKILL_CHANGES=$(git diff --name-only "$BASE_SHA"...HEAD -- 'skills/vela-slides/' || true)
@@ -40,11 +41,11 @@ jobs:
           echo ""
 
           # Extract VELA_VERSION from PR branch
-          PR_VERSION=$(grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+' skills/vela-slides/app/parts/part-imports.jsx)
+          PR_VERSION=$(grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+' "$IMPORTS_FILE")
 
           # Extract VELA_VERSION from base branch (file may not exist if this is a new addition)
-          if git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx > /dev/null 2>&1; then
-            BASE_VERSION=$(git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx | grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+')
+          if git show "$BASE_SHA":"$IMPORTS_FILE" > /dev/null 2>&1; then
+            BASE_VERSION=$(git show "$BASE_SHA":"$IMPORTS_FILE" | grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+')
           else
             BASE_VERSION=""
           fi
