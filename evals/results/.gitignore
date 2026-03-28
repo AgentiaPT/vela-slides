@@ -1,0 +1,3 @@
+# Eval results are local — only final reports are committed
+*
+!.gitignore

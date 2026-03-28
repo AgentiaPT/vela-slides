@@ -1,0 +1,41 @@
+{
+  "name": "agentia-skills",
+  "owner": {
+    "name": "Rui Quintino",
+    "email": "info@agentia.pt"
+  },
+  "metadata": {
+    "description": "AI-native presentation and agentic engineering tools by agentIA",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "vela-slides",
+      "description": "Create, edit, translate, rebrand, or present slide decks. Use when the user wants presentations, slides, decks, or keynotes — even without mentioning Vela by name. Includes 21 block types, CLI tools for agent-efficient editing, and live local preview via channel bridge.",
+      "source": "./",
+      "strict": false,
+      "version": "2.6.0",
+      "author": {
+        "name": "Rui Quintino",
+        "email": "info@agentia.pt"
+      },
+      "homepage": "https://github.com/AgentiaPT/vela-slides",
+      "repository": "https://github.com/AgentiaPT/vela-slides",
+      "license": "ELv2",
+      "keywords": [
+        "slides",
+        "presentation",
+        "deck",
+        "ai-native",
+        "react",
+        "claude-artifact",
+        "agent-tools",
+        "channel"
+      ],
+      "category": "productivity",
+      "skills": [
+        "./skills/vela-slides"
+      ]
+    }
+  ]
+}

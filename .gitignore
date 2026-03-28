@@ -1,0 +1,76 @@
+# Runtime
+.vela.pid
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+venv/
+
+# Build outputs (assembled artifacts)
+*.assembled.jsx
+dist/
+build/
+*.log
+
+# Node (if anyone runs npm for any reason)
+node_modules/
+
+# Temporary files
+*.tmp
+*.bak
+*.zip
+temp/
+tmp*
+-o
+
+# Repro/debug scripts and screenshots
+tests/repro_*
+tests/screenshots/
+
+# System dotfiles (WSL artifacts)
+.bash_profile
+.bashrc
+.zshrc
+.zprofile
+.profile
+.gitconfig
+.gitmodules
+.ripgreprc
+.mcp.json
+
+# Claude Code local config
+.claude/
+
+# Working decks (user-created, not shipped)
+decks/
+
+# Eval outputs (generated at runtime)
+eval/
+evals/output/
+evals/results/*
+!evals/results/.gitignore
+evals/reports/
+evals/archive/
+evals/workdirs/
+
+# Local working files
+.vela.json
+opus-4-6.*
+*.jsx
+!skills/vela-slides/app/**/*.jsx
+agentic-react-slides.json
+tests/contact-slide.json

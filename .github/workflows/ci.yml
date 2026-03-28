@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  version-bump-check:
+    name: Version Bump Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check VELA_VERSION bump for skill file changes
+        id: version_check
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+
+          # Check if any skill files changed
+          SKILL_CHANGES=$(git diff --name-only "$BASE_SHA"...HEAD -- 'skills/vela-slides/' || true)
+
+          if [ -z "$SKILL_CHANGES" ]; then
+            echo "✅ No skill files changed — version bump not required."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Skill files changed:"
+          echo "$SKILL_CHANGES"
+          echo ""
+
+          # Extract VELA_VERSION from PR branch
+          PR_VERSION=$(grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+' skills/vela-slides/app/parts/part-imports.jsx)
+
+          # Extract VELA_VERSION from base branch
+          BASE_VERSION=$(git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx | grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+')
+
+          echo "Base version: $BASE_VERSION"
+          echo "PR version:   $PR_VERSION"
+          echo ""
+
+          if [ "$PR_VERSION" = "$BASE_VERSION" ]; then
+            echo "❌ Files under skills/vela-slides/ changed but VELA_VERSION was not bumped."
+            echo "   Current: $PR_VERSION (same as base branch)"
+            echo "   Update VELA_VERSION in part-imports.jsx and add a VELA_CHANGELOG entry."
+            exit 1
+          fi
+
+          echo "✅ Version bumped from $BASE_VERSION → $PR_VERSION."
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run unit tests
+        id: unit
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(python3 tests/test_vela.py --unit 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          # Parse test counts from summary line: "✅ N passed  ❌ M failed"
+          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+          failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Run integration tests
+        id: integration
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(python3 tests/test_vela.py --integration 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+          failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Run server tests
+        id: server
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(python3 -m unittest tests.test_serve -v 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
+          failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Verify concat produces identical template
+        id: concat
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          cp skills/vela-slides/app/vela.jsx /tmp/original.jsx
+          output=$(python3 skills/vela-slides/scripts/concat.py skills/vela-slides/app/parts skills/vela-slides/app/vela.jsx 2>&1)
+          diff_output=$(diff /tmp/original.jsx skills/vela-slides/app/vela.jsx 2>&1)
+          if [ -n "$diff_output" ]; then
+            exit_code=1
+            output="❌ vela.jsx is out of sync with parts!
+          Run: python3 skills/vela-slides/scripts/concat.py
+          Then commit the updated template.
+
+          Diff:
+          $diff_output"
+          else
+            exit_code=0
+            output="✅ Template in sync with parts"
+          fi
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Post test status comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const unitExit = '${{ steps.unit.outputs.exit_code }}';
+            const integrationExit = '${{ steps.integration.outputs.exit_code }}';
+            const serverExit = '${{ steps.server.outputs.exit_code }}';
+            const concatExit = '${{ steps.concat.outputs.exit_code }}';
+
+            const unitOutput = `${{ steps.unit.outputs.output }}`;
+            const integrationOutput = `${{ steps.integration.outputs.output }}`;
+            const serverOutput = `${{ steps.server.outputs.output }}`;
+            const concatOutput = `${{ steps.concat.outputs.output }}`;
+
+            const unitPassed = '${{ steps.unit.outputs.passed }}' || '0';
+            const unitFailed = '${{ steps.unit.outputs.failed }}' || '0';
+            const unitTime = '${{ steps.unit.outputs.elapsed }}' || '?';
+            const intPassed = '${{ steps.integration.outputs.passed }}' || '0';
+            const intFailed = '${{ steps.integration.outputs.failed }}' || '0';
+            const intTime = '${{ steps.integration.outputs.elapsed }}' || '?';
+            const srvPassed = '${{ steps.server.outputs.passed }}' || '0';
+            const srvFailed = '${{ steps.server.outputs.failed }}' || '0';
+            const srvTime = '${{ steps.server.outputs.elapsed }}' || '?';
+            const concatTime = '${{ steps.concat.outputs.elapsed }}' || '?';
+
+            const sha = '${{ github.event.pull_request.head.sha }}'.slice(0, 7);
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && concatExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed);
+            const totalTests = totalPassed + totalFailed;
+
+            const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+
+            let body = `## 🧪 CI Test Results — Python 3.12\n\n`;
+            body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
+            if (totalFailed > 0) body += `, ${totalFailed} failed`;
+            body += `\n\n`;
+            body += `| Check | Status | Tests | Time |\n|-------|--------|-------|------|\n`;
+            body += `| Unit Tests | ${status(unitExit)} | ${unitPassed} passed${unitFailed !== '0' ? ', ' + unitFailed + ' failed' : ''} | ${unitTime} |\n`;
+            body += `| Integration Tests | ${status(integrationExit)} | ${intPassed} passed${intFailed !== '0' ? ', ' + intFailed + ' failed' : ''} | ${intTime} |\n`;
+            body += `| Server Tests | ${status(serverExit)} | ${srvPassed} passed${srvFailed !== '0' ? ', ' + srvFailed + ' failed' : ''} | ${srvTime} |\n`;
+            body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
+
+            // Add error details for failed steps
+            const failures = [];
+            if (unitExit !== '0') failures.push({ name: 'Unit Tests', output: unitOutput });
+            if (integrationExit !== '0') failures.push({ name: 'Integration Tests', output: integrationOutput });
+            if (serverExit !== '0') failures.push({ name: 'Server Tests', output: serverOutput });
+            if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
+
+            if (failures.length > 0) {
+              body += `### Error Details\n\n`;
+              for (const f of failures) {
+                body += `<details>\n<summary>${f.name}</summary>\n\n\`\`\`\n${f.output}\n\`\`\`\n\n</details>\n\n`;
+              }
+            }
+
+            body += `---\n`;
+            body += `📌 Commit: \`${sha}\` | [View Run](${runUrl})\n`;
+            body += `🕐 Updated: ${timestamp}\n`;
+            body += `\n<!-- vela-ci-status -->`;
+
+            const marker = `<!-- vela-ci-status -->`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }

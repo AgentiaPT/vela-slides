@@ -1,0 +1,15 @@
+{
+  "name": "vela-channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx vela-channel.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

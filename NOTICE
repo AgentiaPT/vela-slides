@@ -1,0 +1,82 @@
+NOTICE — Vela Slides
+====================
+
+Copyright © 2025-present Rui Quintino
+Licensed under the Elastic License 2.0 (ELv2) — see LICENSE
+
+This file lists all third-party dependencies used by Vela Slides,
+their licenses, and how they are consumed. This serves as a
+software bill of materials (SBOM) for IP due diligence purposes.
+
+
+Runtime Dependencies (Claude.ai Artifact Sandbox)
+-------------------------------------------------
+
+These libraries are provided by the Claude.ai artifact runtime
+environment and are NOT bundled with Vela Slides:
+
+  React 18+
+    License: MIT
+    Source:  https://github.com/facebook/react
+    Usage:   UI framework (useState, useReducer, useEffect, etc.)
+
+  lucide-react 0.383.0
+    License: ISC
+    Source:  https://github.com/lucide-icons/lucide
+    Usage:   Icon components (ChevronLeft, Maximize2, Download, etc.)
+
+
+Runtime Dependencies (CDN-loaded)
+---------------------------------
+
+These libraries are loaded dynamically from CDN at runtime,
+only when specific features are used:
+
+  html2canvas 1.4.1
+    License: MIT
+    Source:  https://github.com/niklasvh/html2canvas
+    CDN:     https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
+    Usage:   Slide screenshot capture for AI visual context and
+             alternatives generation. Loaded on-demand, not bundled.
+
+  Google Fonts (Sora, DM Sans, Space Mono)
+    License: SIL Open Font License 1.1
+    Source:  https://fonts.google.com
+    Usage:   Typography via CSS @import. No fonts are bundled.
+
+
+External API
+------------
+
+  Anthropic Messages API (v1)
+    Endpoint: https://api.anthropic.com/v1/messages
+    Model:    claude-sonnet-4-20250514
+    Usage:    AI features (Vera chat, improve, quick edit, alternatives).
+              Calls are made client-side using the user's own Claude.ai
+              session. No API keys are stored or distributed with Vela.
+    Note:     AI features require the user's own Claude.ai subscription.
+              Vela does not proxy, store, or relay any API credentials.
+
+
+Build Dependencies (Python stdlib only)
+---------------------------------------
+
+The build toolchain (concat.py, assemble.py, validate.py) uses
+only Python standard library modules:
+
+  json, sys, os, re, pathlib, textwrap, datetime
+
+No pip packages are required. No node_modules. No bundler.
+
+
+Dependency Summary
+------------------
+
+  Total runtime deps:    3 (React, lucide-react, html2canvas)
+  Total build deps:      0 (Python stdlib only)
+  Copyleft licenses:     0
+  Restrictive licenses:  0
+  All licenses:          MIT, ISC, SIL OFL 1.1 — all permissive
+
+No dependency imposes copyleft, viral, or disclosure obligations
+on Vela Slides or its users.

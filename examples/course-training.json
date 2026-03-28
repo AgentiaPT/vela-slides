@@ -1,0 +1,133 @@
+{
+  "deckTitle": "Introduction to Prompt Engineering",
+  "lanes": [
+    {
+      "title": "Core Module",
+      "items": [
+        {
+          "title": "Prompt Engineering Fundamentals",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Title Slide",
+              "bg": "#0a1f1a",
+              "bgGradient": "linear-gradient(135deg, #0a1f1a 0%, #0f2922 50%, #0a1f1a 100%)",
+              "color": "#d1fae5",
+              "accent": "#34d399",
+              "padding": "60px 80px",
+              "duration": 30,
+              "layout": "center",
+              "blocks": [
+                { "type": "badge", "text": "MODULE 3", "icon": "BookOpen", "color": "#34d399", "bg": "#34d39915", "border": "#34d39940" },
+                { "type": "spacer", "h": 8 },
+                { "type": "heading", "text": "Introduction to Prompt Engineering", "size": "3xl", "align": "center" },
+                { "type": "text", "text": "AI Foundations Course — Spring 2026", "size": "lg", "color": "#6ee7b7", "align": "center" },
+                { "type": "spacer", "h": 20 },
+                { "type": "icon-row", "items": [
+                  { "icon": "Clock", "text": "90 Minutes" },
+                  { "icon": "Wrench", "text": "Hands-on" },
+                  { "icon": "Award", "text": "Certificate" }
+                ]}
+              ]
+            },
+            {
+              "title": "Learning Objectives",
+              "bg": "#0c2119",
+              "bgGradient": "linear-gradient(160deg, #0a1f1a 0%, #112e24 100%)",
+              "color": "#d1fae5",
+              "accent": "#10b981",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Learning Objectives", "size": "2xl", "icon": "Target" },
+                { "type": "spacer", "h": 10 },
+                { "type": "bullets", "items": [
+                  "Distinguish between zero-shot, few-shot, and chain-of-thought prompting strategies",
+                  "Construct structured prompts using the Context-Instruction-Examples-Constraints framework",
+                  "Evaluate prompt quality by analyzing output relevance, accuracy, and consistency",
+                  "Refactor underperforming prompts through systematic iteration and testing"
+                ], "icon": "CheckCircle", "size": "md" },
+                { "type": "spacer", "h": 12 },
+                { "type": "callout", "text": "Prerequisites: Completion of Module 1 (AI Overview) and Module 2 (Language Models). Familiarity with at least one LLM interface (Claude, ChatGPT, etc.).", "icon": "Info", "bg": "#10b98115", "border": "#10b98140" }
+              ]
+            },
+            {
+              "title": "Core Concepts",
+              "bg": "#0b2019",
+              "bgGradient": "linear-gradient(135deg, #0a1f1a 0%, #0f2922 100%)",
+              "color": "#d1fae5",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                { "type": "heading", "text": "Core Prompting Strategies", "size": "2xl", "icon": "Lightbulb" },
+                { "type": "spacer", "h": 8 },
+                { "type": "grid", "columns": 2, "gap": 16, "items": [
+                  { "blocks": [
+                    { "type": "heading", "text": "Zero-Shot", "size": "lg", "icon": "Zap", "color": "#34d399" },
+                    { "type": "text", "text": "No examples provided. The model relies entirely on its training to interpret the task.", "size": "sm", "color": "#a7f3d0" },
+                    { "type": "code", "text": "Classify this review as positive\nor negative:\n\"The battery lasts all day.\"", "size": "sm" }
+                  ]},
+                  { "blocks": [
+                    { "type": "heading", "text": "Few-Shot", "size": "lg", "icon": "Layers", "color": "#34d399" },
+                    { "type": "text", "text": "Provide 2-5 input/output examples so the model learns the pattern before answering.", "size": "sm", "color": "#a7f3d0" },
+                    { "type": "code", "text": "\"Great product!\" → Positive\n\"Broke after a week\" → Negative\n\"Battery lasts all day\" → ?", "size": "sm" }
+                  ]}
+                ]},
+                { "type": "text", "text": "Key insight: Few-shot prompting improves accuracy by 15-30% on classification tasks, but adds token cost. Choose based on your accuracy-cost tradeoff.", "size": "sm", "color": "#6ee7b7" }
+              ]
+            },
+            {
+              "title": "The Framework",
+              "bg": "#0d2520",
+              "bgGradient": "linear-gradient(135deg, #0a1f1a 0%, #132f26 100%)",
+              "color": "#d1fae5",
+              "accent": "#10b981",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                { "type": "heading", "text": "The CIEC Framework", "size": "2xl", "icon": "Layout" },
+                { "type": "spacer", "h": 8 },
+                { "type": "steps", "items": [
+                  { "title": "Context", "text": "Define the role, audience, and domain the model should operate in" },
+                  { "title": "Instruction", "text": "State the specific task clearly — what output you need and in what format" },
+                  { "title": "Examples", "text": "Provide sample inputs and ideal outputs to anchor the model's behavior" },
+                  { "title": "Constraints", "text": "Set boundaries: length limits, tone, forbidden topics, output schema" }
+                ]},
+                { "type": "spacer", "h": 10 },
+                { "type": "flow", "items": [
+                  { "icon": "PenTool", "text": "Draft" },
+                  { "icon": "Play", "text": "Test" },
+                  { "icon": "BarChart", "text": "Evaluate" },
+                  { "icon": "RefreshCw", "text": "Refine" }
+                ], "connector": "arrow" }
+              ]
+            },
+            {
+              "title": "Practice Exercise",
+              "bg": "#0a1f1a",
+              "bgGradient": "linear-gradient(160deg, #0a1f1a 0%, #0f2922 100%)",
+              "color": "#d1fae5",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 120,
+              "blocks": [
+                { "type": "heading", "text": "Practice Exercise", "size": "2xl", "icon": "Edit" },
+                { "type": "spacer", "h": 6 },
+                { "type": "callout", "text": "Write a prompt that asks an LLM to summarize a research paper into a 3-bullet executive brief for a non-technical CEO. Apply all four CIEC steps. Test with at least two different papers and compare outputs.", "icon": "FileQuestion", "bg": "#34d39915", "border": "#34d39940" },
+                { "type": "spacer", "h": 8 },
+                { "type": "table", "headers": ["Criteria", "Weak Prompt", "Strong Prompt"], "rows": [
+                  ["Context", "\"Summarize this paper\"", "\"You are a research analyst writing for a non-technical executive audience\""],
+                  ["Specificity", "\"Make it short\"", "\"Produce exactly 3 bullet points, each under 20 words\""],
+                  ["Output format", "No format specified", "\"Return as a markdown list with bold key findings\""]
+                ], "size": "sm" },
+                { "type": "spacer", "h": 8 },
+                { "type": "badge", "text": "Due: Next Session", "icon": "Calendar", "color": "#fbbf24", "bg": "#fbbf2415", "border": "#fbbf2440" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

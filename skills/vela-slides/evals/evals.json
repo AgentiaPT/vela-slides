@@ -1,0 +1,200 @@
+{
+  "skill_name": "vela-slides",
+  "evals": [
+    {
+      "id": 1,
+      "theme": "create",
+      "prompt": "Create a 5-slide presentation about AI in healthcare. Include a cover slide, an overview with key stats, a slide about diagnostic applications, a timeline of AI milestones in medicine, and a closing CTA. Use a dark theme with blue accents.",
+      "expected_output": "A valid Vela compact JSON deck with 5 slides, using varied block types (heading, metric, icon-row, timeline, badge), dark theme with blue accent colors, and appropriate durations.",
+      "assertions": [
+        "Output is valid JSON",
+        "Deck has exactly 5 slides",
+        "Uses compact format (has 'S' key, not 'lanes')",
+        "Every slide has a duration value",
+        "At least 3 different block types are used",
+        "Color palette aliases ($A, $B, etc.) are defined in C before use",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 2,
+      "theme": "create",
+      "prompt": "Create a 5-slide presentation about sustainable energy for a corporate audience. Include stats about renewable energy growth.",
+      "expected_output": "A valid compact deck with 5 slides, corporate-appropriate theme, metric blocks for stats, varied block types.",
+      "assertions": [
+        "Output is valid JSON with deckTitle (n key in compact)",
+        "Deck has exactly 5 slides",
+        "Uses compact format",
+        "Contains metric or grid blocks for stats",
+        "Every slide has duration within documented ranges",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 3,
+      "theme": "create",
+      "prompt": "hey make me some slides about our product launch next week",
+      "expected_output": "A 6-8 slide deck with plausible product launch content (not placeholder brackets). Should include cover, features, metrics, timeline, and CTA.",
+      "assertions": [
+        "Deck has 6-8 slides (skill default for vague prompts)",
+        "No placeholder brackets like [Product Name] — content is invented",
+        "At least 4 different block types used",
+        "Every slide has duration",
+        "Has a cover slide and a closing/CTA slide",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 4,
+      "theme": "create",
+      "prompt": "hey can you make me some slides about our Q4 results? we hit $2.3M revenue, 15% growth, and signed 8 new enterprise clients. keep it to like 4 slides, something professional I can show the board",
+      "expected_output": "A 4-slide professional deck with metric blocks for the KPIs, appropriate business styling, and board-ready formatting.",
+      "assertions": [
+        "Deck has 4 slides",
+        "Contains metric blocks with the three KPIs ($2.3M, 15%, 8 clients)",
+        "Uses a professional theme (not overly casual)",
+        "Every slide has duration",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 5,
+      "theme": "create-complex",
+      "prompt": "Create a 4-slide deck showing our CI/CD pipeline. Slide 1: title. Slide 2: a flow diagram showing Build > Test > Deploy with a gate after Test. Slide 3: a timeline of our releases in 2026. Slide 4: metrics dashboard with 3 KPIs.",
+      "expected_output": "A 4-slide deck with flow block (including gate), timeline block, and metric blocks. Complex block types rendered correctly in compact format.",
+      "assertions": [
+        "Deck has exactly 4 slides",
+        "Contains a flow block with gate property",
+        "Contains a timeline block with date entries",
+        "Contains metric blocks (value property used correctly, not confused with v/variant)",
+        "Flow block has items with labels",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 6,
+      "theme": "create-gotcha",
+      "prompt": "Create a single centered slide with a company logo SVG at the top, then a centered heading 'Welcome to Our Company', then a centered divider line, then a centered subtitle.",
+      "expected_output": "A slide that avoids the align:center gotcha. Uses align:left at slide level with per-block centering. SVG has maxWidth.",
+      "assertions": [
+        "Slide does NOT use slide-level align:center",
+        "SVG block has maxWidth property and per-block align:center",
+        "Heading and text blocks have per-block align:center",
+        "Divider block renders at full width (not collapsed)",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 7,
+      "theme": "edit",
+      "prompt": "In the deck at tests/skill-tests/test-deck.json, change the title of slide 2 to 'Our Journey Forward', then remove slide 4, then validate the deck.",
+      "expected_output": "Deck modified: slide 2 title changed, old slide 4 removed. Uses CLI commands, not str_replace.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses vela slide edit for the title change",
+        "Agent uses vela slide remove for deletion",
+        "Agent uses --dry-run before the remove operation",
+        "Agent runs vela deck validate after edits",
+        "Output is valid JSON with correct slide count"
+      ]
+    },
+    {
+      "id": 8,
+      "theme": "edit",
+      "prompt": "In the deck, duplicate slide 2, move the duplicate to position 5, change slide 1 background to #1a1a2e, remove slides 4 and 3 (handle index shifting), replace all 'Vela' with 'Nova', then validate.",
+      "expected_output": "All 7 operations completed using CLI. Removes done highest-index-first per gotchas. replace-text handles bulk rename.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses vela CLI for all operations (not str_replace)",
+        "Removes done in correct order (highest index first)",
+        "replace-text used for bulk Vela-to-Nova rename",
+        "Agent validates after all edits",
+        "Final deck is valid JSON"
+      ]
+    },
+    {
+      "id": 9,
+      "theme": "translate",
+      "prompt": "Translate all the text in the deck to French. Keep technical terms in English.",
+      "expected_output": "All user-visible text translated to French. Technical terms preserved. Structure unchanged.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses extract-text + patch-text (not N individual replace-text calls)",
+        "Output contains French text",
+        "Technical terms preserved in English",
+        "Slide count unchanged",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 10,
+      "theme": "translate",
+      "prompt": "Translate all the text in the deck to Portuguese. Keep technical terms untranslated.",
+      "expected_output": "All user-visible text translated to Portuguese. Technical terms like AI, JSON, API remain in English.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses extract-text + patch-text for efficiency",
+        "Output contains Portuguese text",
+        "Technical terms preserved in English",
+        "Slide count unchanged",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 11,
+      "theme": "rebrand",
+      "prompt": "Rebrand this deck from dark theme to a warm corporate look: backgrounds #FFF8F0, text #2D1810, accent #D97706. Update everything.",
+      "expected_output": "All slides updated to warm theme colors. Content and structure unchanged. Hex-to-rgba cascade handles opacity variants.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses vela deck replace-text for color replacements",
+        "Output contains new background color #FFF8F0",
+        "Output contains new text color #2D1810",
+        "Hex-to-rgba cascade handles opacity-suffixed colors automatically",
+        "Slide count and block types unchanged",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 12,
+      "theme": "rebrand",
+      "prompt": "Rebrand the deck from dark theme to light corporate: white backgrounds (#FFFFFF), dark text (#1E293B), blue accent (#2563EB). Update all slides.",
+      "expected_output": "All slides updated to light theme colors. Content and structure unchanged.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent uses vela deck replace-text for color replacements",
+        "Output contains #FFFFFF and #1E293B",
+        "Slide count unchanged",
+        "Block types unchanged",
+        "Passes vela deck validate"
+      ]
+    },
+    {
+      "id": 13,
+      "theme": "error-recovery",
+      "prompt": "I generated a deck but validation is failing. The deck is at tests/skill-tests/broken-test.json. Fix the errors and make it valid.",
+      "expected_output": "Agent reads validation errors, identifies missing deckTitle, missing duration, and invalid block type, fixes all three, and re-validates to exit code 0.",
+      "files": ["tests/skill-tests/broken-test.json"],
+      "assertions": [
+        "Agent runs vela deck validate first to identify errors",
+        "Agent fixes missing deckTitle",
+        "Agent fixes missing duration on the affected slide",
+        "Agent replaces invalid block type with a valid one",
+        "Final validation passes (exit code 0)"
+      ]
+    },
+    {
+      "id": 14,
+      "theme": "reference-loading",
+      "prompt": "Change the background color of slide 1 to #2d2d2d in the deck at tests/skill-tests/test-deck.json.",
+      "expected_output": "A single CLI call to edit the background. No reference files loaded — this is a trivial edit.",
+      "files": ["tests/skill-tests/test-deck.json"],
+      "assertions": [
+        "Agent does NOT load any reference files (block-schema, design-patterns, themes)",
+        "Agent uses vela slide edit for the change",
+        "Single CLI call (plus optional validate)",
+        "Output is valid JSON"
+      ]
+    }
+  ]
+}

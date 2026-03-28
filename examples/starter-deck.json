@@ -1,0 +1,151 @@
+{
+  "deckTitle": "Welcome to Vela Slides",
+  "lanes": [
+    {
+      "title": "Introduction",
+      "items": [
+        {
+          "title": "Welcome",
+          "status": "done",
+          "importance": "must",
+          "slides": [
+            {
+              "title": "Vela Slides",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "60px 80px",
+              "duration": 30,
+              "layout": "center",
+              "blocks": [
+                { "type": "badge", "text": "OPEN SOURCE", "icon": "Github", "color": "#60a5fa", "bg": "#60a5fa15", "border": "#60a5fa40" },
+                { "type": "spacer", "h": 8 },
+                { "type": "heading", "text": "⛵ Vela Slides", "size": "4xl", "align": "center" },
+                { "type": "text", "text": "AI-native presentations for Claude.ai", "size": "xl", "color": "#94a3b8", "align": "center" },
+                { "type": "spacer", "h": 20 },
+                { "type": "icon-row", "items": [
+                  { "icon": "Sparkles", "text": "AI-Powered" },
+                  { "icon": "Layers", "text": "22+ Block Types" },
+                  { "icon": "Palette", "text": "Themeable" },
+                  { "icon": "FileDown", "text": "PDF Export" }
+                ]}
+              ]
+            },
+            {
+              "title": "What Makes Vela Different",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(160deg, #0f172a 0%, #1a1a2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                { "type": "heading", "text": "Not Just Slides — A Design System", "size": "2xl" },
+                { "type": "spacer", "h": 8 },
+                { "type": "grid", "columns": 2, "gap": 16, "items": [
+                  { "blocks": [
+                    { "type": "heading", "text": "Traditional Tools", "size": "lg", "icon": "X", "color": "#f87171" },
+                    { "type": "bullets", "items": [
+                      "Manual formatting for every element",
+                      "One block type: the text box",
+                      "Design is a separate step",
+                      "Static once exported"
+                    ], "size": "md", "color": "#94a3b8" }
+                  ]},
+                  { "blocks": [
+                    { "type": "heading", "text": "Vela", "size": "lg", "icon": "Check", "color": "#4ade80" },
+                    { "type": "bullets", "items": [
+                      "Semantic blocks with built-in design",
+                      "22+ types: flows, grids, metrics, timelines",
+                      "Design patterns baked into generation",
+                      "Live AI iteration inside the deck"
+                    ], "size": "md" }
+                  ]}
+                ]}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Block Showcase",
+          "status": "done",
+          "importance": "must",
+          "slides": [
+            {
+              "title": "Flow Blocks",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #162032 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Process Flows", "size": "2xl", "icon": "ArrowRight" },
+                { "type": "text", "text": "Describe processes, pipelines, and cycles with semantic flow blocks.", "size": "md", "color": "#94a3b8" },
+                { "type": "spacer", "h": 8 },
+                { "type": "flow", "items": [
+                  { "icon": "FileText", "text": "Describe" },
+                  { "icon": "Cpu", "text": "Generate" },
+                  { "icon": "Eye", "text": "Review" },
+                  { "icon": "Sparkles", "text": "Iterate" },
+                  { "icon": "Rocket", "text": "Present" }
+                ], "connector": "arrow" }
+              ]
+            },
+            {
+              "title": "Metrics & Data",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a0f2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 45,
+              "blocks": [
+                { "type": "heading", "text": "Key Metrics", "size": "2xl", "icon": "BarChart" },
+                { "type": "spacer", "h": 12 },
+                { "type": "grid", "columns": 3, "gap": 16, "items": [
+                  { "blocks": [{ "type": "metric", "value": "22+", "label": "Block Types", "icon": "Layers", "trend": "up" }] },
+                  { "blocks": [{ "type": "metric", "value": "6.4K", "label": "Lines of Code", "icon": "Code" }] },
+                  { "blocks": [{ "type": "metric", "value": "0", "label": "Dependencies", "icon": "Package", "trend": "up" }] }
+                ]}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "items": [
+        {
+          "title": "Quick Start",
+          "status": "todo",
+          "importance": "must",
+          "slides": [
+            {
+              "title": "Try It Now",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #064e3b 0%, #0f172a 60%)",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Get Started in 3 Steps", "size": "2xl", "icon": "Zap" },
+                { "type": "spacer", "h": 12 },
+                { "type": "steps", "items": [
+                  { "title": "Install the Skill", "text": "Add the skill/ directory to your Claude.ai Skills" },
+                  { "title": "Describe Your Deck", "text": "Tell Claude what presentation you need" },
+                  { "title": "Present & Export", "text": "Use presenter mode or export to PDF" }
+                ]},
+                { "type": "spacer", "h": 12 },
+                { "type": "callout", "text": "Click the 🤖 Vera button inside any Vela artifact to iterate on your slides with AI — right inside the deck.", "icon": "Bot", "bg": "#34d39915", "border": "#34d39940" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

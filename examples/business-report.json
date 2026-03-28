@@ -1,0 +1,146 @@
+{
+  "deckTitle": "Q1 2026 — Product & Engineering Review",
+  "lanes": [
+    {
+      "title": "Business Review",
+      "items": [
+        {
+          "title": "Q1 Overview",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Title",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#6366f1",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "CONFIDENTIAL", "size": "sm" },
+                { "type": "heading", "text": "Q1 2026 Review", "size": "xl" },
+                { "type": "text", "text": "Product & Engineering — Quarterly Business Review", "size": "lg" },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    { "icon": "rocket", "label": "12 Releases" },
+                    { "icon": "server", "label": "99.7% Uptime" },
+                    { "icon": "trending-up", "label": "+18% ARR" }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Key Metrics",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#818cf8",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Key Metrics", "size": "lg" },
+                {
+                  "type": "grid",
+                  "cols": 3,
+                  "blocks": [
+                    { "type": "metric", "label": "Annual Recurring Revenue", "value": "$4.2M", "delta": "+18% YoY" },
+                    { "type": "metric", "label": "Monthly Active Users", "value": "52K", "delta": "+24% QoQ" },
+                    { "type": "metric", "label": "Net Promoter Score", "value": "72", "delta": "+8 pts" }
+                  ]
+                },
+                {
+                  "type": "progress",
+                  "label": "OKR Completion — Q1 2026",
+                  "value": 78,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "title": "Roadmap Progress",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#6366f1",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Roadmap Progress", "size": "lg" },
+                {
+                  "type": "timeline",
+                  "items": [
+                    { "date": "Jan 15", "title": "v3.0 Platform Launch", "text": "New API gateway and dashboard shipped to GA" },
+                    { "date": "Feb 3", "title": "SSO & RBAC", "text": "Enterprise auth rolled out to all paid tiers" },
+                    { "date": "Feb 28", "title": "Mobile SDK Beta", "text": "iOS and Android SDKs released to design partners" },
+                    { "date": "Mar 20", "title": "Data Pipeline v2", "text": "Real-time analytics pipeline in staging" }
+                  ]
+                },
+                {
+                  "type": "callout",
+                  "icon": "alert-triangle",
+                  "text": "Data Pipeline v2 delivery slipped 3 weeks due to upstream Kafka migration. GA now targeted for April 10."
+                }
+              ]
+            },
+            {
+              "title": "Team & Resources",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#818cf8",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Team & Resources", "size": "lg" },
+                {
+                  "type": "table",
+                  "headers": ["Team", "Headcount", "Velocity (pts/sprint)", "Status"],
+                  "rows": [
+                    ["Platform", "14", "68", "On Track"],
+                    ["Growth", "8", "42", "On Track"],
+                    ["Mobile", "6", "31", "At Risk"],
+                    ["Data / ML", "5", "24", "Behind"]
+                  ]
+                },
+                {
+                  "type": "text",
+                  "text": "Hiring: 4 open reqs (2 Senior Backend, 1 ML Engineer, 1 Mobile Lead). Mobile Lead role open 60+ days — escalated to exec recruiting.",
+                  "size": "sm"
+                }
+              ]
+            },
+            {
+              "title": "Q2 Priorities",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#6366f1",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Q2 Priorities", "size": "lg" },
+                {
+                  "type": "steps",
+                  "items": [
+                    { "title": "Ship Data Pipeline v2 to GA", "text": "Complete migration, onboard top-10 accounts by April 30" },
+                    { "title": "Launch Self-Serve Enterprise Tier", "text": "Automated provisioning, billing integration, SOC 2 compliance" },
+                    { "title": "Expand Mobile to Android GA", "text": "Feature parity with iOS, target 5K beta users by end of Q2" }
+                  ]
+                },
+                {
+                  "type": "bullets",
+                  "items": [
+                    "Risk: Kafka vendor contract renewal due May 1 — pricing TBD",
+                    "Risk: Mobile team capacity if Lead hire continues to slip",
+                    "Risk: SOC 2 audit timeline depends on infra remediation"
+                  ]
+                },
+                {
+                  "type": "callout",
+                  "icon": "message-circle",
+                  "text": "Executive ask: Approve $180K incremental cloud spend for Data Pipeline scaling and authorize contractor backfill for Mobile."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
