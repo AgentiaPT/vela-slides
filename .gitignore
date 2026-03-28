@@ -74,3 +74,6 @@ opus-4-6.*
 !skills/vela-slides/app/**/*.jsx
 agentic-react-slides.json
 tests/contact-slide.json
+
+
+_site/
