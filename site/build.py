@@ -330,14 +330,16 @@ def generate_gallery_html(decks, version):
 
     /* Header */
     .header {{
-      text-align: center;
-      padding: 60px 24px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 48px;
     }}
-    .header .boat {{ font-size: 48px; margin-bottom: 12px; display: inline-block; animation: sail 3s ease-in-out infinite; }}
-    @keyframes sail {{ 0%,100% {{ transform: translateY(0) rotate(-2deg); }} 50% {{ transform: translateY(-8px) rotate(2deg); }} }}
-    .header h1 {{ font-size: 32px; font-weight: 700; letter-spacing: 6px; margin-bottom: 8px; }}
-    .header p {{ font-size: 15px; color: #64748b; max-width: 480px; margin: 0 auto; line-height: 1.5; }}
-    .header .version {{ font-size: 11px; color: #475569; margin-top: 8px; font-family: monospace; }}
+    .header .boat {{ font-size: 28px; animation: sail 3s ease-in-out infinite; }}
+    @keyframes sail {{ 0%,100% {{ transform: translateY(0) rotate(-2deg); }} 50% {{ transform: translateY(-4px) rotate(2deg); }} }}
+    .header h1 {{ font-size: 20px; font-weight: 700; letter-spacing: 4px; }}
+    .header p {{ font-size: 13px; color: #64748b; margin-left: auto; }}
+    .header .version {{ font-size: 11px; color: #475569; font-family: monospace; margin-left: 8px; }}
 
     /* Card grid */
     .gallery {{
@@ -424,8 +426,8 @@ def generate_gallery_html(decks, version):
     /* Responsive */
     @media (max-width: 480px) {{
       .gallery {{ grid-template-columns: 1fr; padding: 16px; gap: 16px; }}
-      .header {{ padding: 40px 16px 12px; }}
-      .header h1 {{ font-size: 24px; letter-spacing: 4px; }}
+      .header {{ padding: 16px; gap: 10px; flex-wrap: wrap; }}
+      .header p {{ display: none; }}
     }}
   </style>
 </head>
