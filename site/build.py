@@ -342,11 +342,9 @@ def generate_gallery_html(decks, version):
     /* Card grid */
     .gallery {{
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
       gap: 24px;
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 32px 24px 60px;
+      padding: 32px 48px 60px;
     }}
 
     .card {{
