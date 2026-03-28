@@ -42,12 +42,21 @@ jobs:
           # Extract VELA_VERSION from PR branch
           PR_VERSION=$(grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+' skills/vela-slides/app/parts/part-imports.jsx)
 
-          # Extract VELA_VERSION from base branch
-          BASE_VERSION=$(git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx | grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+')
+          # Extract VELA_VERSION from base branch (file may not exist if this is a new addition)
+          if git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx > /dev/null 2>&1; then
+            BASE_VERSION=$(git show "$BASE_SHA":skills/vela-slides/app/parts/part-imports.jsx | grep -oP 'const VELA_VERSION\s*=\s*"\K[^"]+')
+          else
+            BASE_VERSION=""
+          fi
 
-          echo "Base version: $BASE_VERSION"
+          echo "Base version: ${BASE_VERSION:-<new file>}"
           echo "PR version:   $PR_VERSION"
           echo ""
+
+          if [ -z "$BASE_VERSION" ]; then
+            echo "✅ part-imports.jsx is new — version bump not required for initial addition."
+            exit 0
+          fi
 
           if [ "$PR_VERSION" = "$BASE_VERSION" ]; then
             echo "❌ Files under skills/vela-slides/ changed but VELA_VERSION was not bumped."
