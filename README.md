@@ -43,7 +43,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 Upload the skill so Claude generates Vela decks from your descriptions:
 
-1. Download **[`vela-slides.zip`](https://github.com/AgentiaPT/vela-slides/releases/latest)** from the latest release (or build a fresh one: `python3 skills/vela-slides/scripts/vela.py deck zip`)
+1. Download **[`vela-slides-skill-v*.zip`](https://github.com/AgentiaPT/vela-slides/releases/latest)** from the latest release (or build a fresh one: `python3 skills/vela-slides/scripts/vela.py deck zip`)
 2. In Claude.ai → **Customize → Skills → "+" → Upload a skill** → upload the ZIP
 3. Start a conversation: *"Create a 10-slide deck about the future of AI agents"*
 
