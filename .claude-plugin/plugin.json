@@ -1,0 +1,23 @@
+{
+  "name": "vela-slides",
+  "version": "2.6.0",
+  "description": "Create, edit, translate, rebrand, or present slide decks. Use when the user wants presentations, slides, decks, or keynotes — even without mentioning Vela by name.",
+  "author": {
+    "name": "Rui Quintino",
+    "email": "info@agentia.pt"
+  },
+  "homepage": "https://github.com/AgentiaPT/vela-slides",
+  "repository": "https://github.com/AgentiaPT/vela-slides",
+  "license": "ELv2",
+  "keywords": [
+    "slides",
+    "presentation",
+    "deck",
+    "ai-native",
+    "react",
+    "claude-artifact"
+  ],
+  "skills": [
+    "./skills/vela-slides"
+  ]
+}

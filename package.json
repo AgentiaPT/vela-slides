@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "predev": "test -f .vela.pid && kill $(cat .vela.pid) 2>/dev/null; rm -f .vela.pid",
+    "dev": "python3 skills/vela-slides/scripts/serve.py decks/"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.24.0",
+    "lucide-react": "^0.344.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

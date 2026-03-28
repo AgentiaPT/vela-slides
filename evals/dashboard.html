@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vela Eval — Live Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        vela: { 50:'#E6F1FF', 100:'#CCE3FF', 200:'#99C7FF', 400:'#3B82F6', 500:'#2563EB', 600:'#1D4ED8', 900:'#0A0F1C', 950:'#060A14' },
+      }
+    }
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  body { font-family: 'Inter', sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+  .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+  @keyframes slide-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .slide-in { animation: slide-in .3s ease-out; }
+  .glass { background: rgba(15,23,42,.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.08); }
+  .bar-fill { transition: width .6s cubic-bezier(.4,0,.2,1); }
+  .metric-card { transition: all .2s; }
+  .metric-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(59,130,246,.15); }
+</style>
+</head>
+<body class="dark bg-vela-950 text-gray-100 min-h-screen">
+
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ── Version metadata ──
+const VERSION_META = {
+  'v2.3': { label: 'Baseline', desc: 'Full JSON format, reads 3 reference files', color: '#3B82F6' },
+  'v2.4': { label: 'Compact keys', desc: 'Short keys (_,x,s), flat slides, theme refs', color: '#A855F7' },
+  'v2.5.1': { label: 'Compact+palette', desc: 'Adds color palette ($A=#hex), larger SKILL.md', color: '#10B981' },
+  'v2.6': { label: 'Lean compact', desc: 'Minimal SKILL.md (3.4K), still reads refs', color: '#F59E0B' },
+  'v2.7': { label: 'Self-contained', desc: 'Block ref inlined, no file reads, 4 tools', color: '#EF4444' },
+  'v2.8': { label: 'SC+quality rules', desc: 'v2.7 + enforced assertions, bg variety, icon colors', color: '#EC4899' },
+  'v2.9': { label: 'SC+example fix', desc: 'v2.8 + richer example (gradients, badges, alt theme)', color: '#14B8A6' },
+  'v3.0': { label: 'SC+archetypes', desc: 'v2.9 + grid+metric pattern for problem slides, callout pattern, type fixes', color: '#8B5CF6' },
+  'v3.1': { label: 'SC+sections+quality', desc: 'Fixes all quality gaps: section grouping, 3 themes, gradient punctuation, 2 accents, palette rules', color: '#06B6D4' },
+};
+const getVersionMeta = (v) => VERSION_META[v] || { label: v, desc: '', color: '#64748B' };
+
+// ── Tooltip ──
+function Tooltip({ children, text }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span className="relative inline-block" onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+      {children}
+      {show && text && (
+        <span className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-xs text-gray-200 whitespace-nowrap shadow-xl pointer-events-none slide-in">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ── Data loader: re-inject <script> tag to reload status.js ──
+function useEvalStatus(intervalMs = 2000) {
+  const [status, setStatus] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let timer;
+    const load = () => {
+      const old = document.getElementById('eval-status-script');
+      if (old) old.remove();
+      const s = document.createElement('script');
+      s.id = 'eval-status-script';
+      s.src = 'output/status.js?t=' + Date.now();
+      s.onload = () => {
+        if (window.EVAL_STATUS) {
+          setStatus(structuredClone(window.EVAL_STATUS));
+          setLastUpdate(new Date());
+          setError(null);
+        }
+      };
+      s.onerror = () => setError('No status.js found — run ./run.sh to start');
+      document.head.appendChild(s);
+    };
+    load();
+    timer = setInterval(load, intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+
+  return { status, lastUpdate, error };
+}
+
+// ── Formatting helpers ──
+const fmt = (n, d=0) => n == null ? '—' : Number(n).toLocaleString('en-US', {maximumFractionDigits:d});
+const fmtCost = (n) => n == null ? '—' : '$' + Number(n).toFixed(4);
+const fmtPct = (n) => n == null ? '—' : (n > 0 ? '-' : '+') + Math.abs(n).toFixed(1) + '%';
+const fmtDuration = (s) => { if (!s) return '—'; if (s < 60) return s.toFixed(0)+'s'; return (s/60).toFixed(1)+'m'; };
+
+// ── State badge ──
+function StateBadge({ state }) {
+  const styles = {
+    running: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    completed: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    idle: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${styles[state] || styles.idle}`}>
+      {state === 'running' && <span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"/>}
+      {state?.toUpperCase() || 'IDLE'}
+    </span>
+  );
+}
+
+// ── Progress bar ──
+function ProgressBar({ completed, total }) {
+  const pct = total > 0 ? (completed / total) * 100 : 0;
+  return (
+    <div className="w-full">
+      <div className="flex justify-between text-xs text-gray-400 mb-1">
+        <span>{completed} / {total} runs</span>
+        <span className="mono">{pct.toFixed(0)}%</span>
+      </div>
+      <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div className="h-full bg-gradient-to-r from-vela-400 to-emerald-400 rounded-full bar-fill" style={{width: pct+'%'}}/>
+      </div>
+    </div>
+  );
+}
+
+// ── Elapsed timer hook ──
+function useElapsed(startIso) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!startIso) { setElapsed(0); return; }
+    const start = new Date(startIso).getTime();
+    const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startIso]);
+  return elapsed;
+}
+
+// ── Current run indicator ──
+function CurrentRun({ current }) {
+  const elapsed = useElapsed(current?.started_at);
+  if (!current) return <div className="text-gray-500 text-sm italic">No active run</div>;
+  const stepLabel = current.step?.startsWith('edit:') ? current.step.replace('edit:', 'Edit: ') : current.step === 'create' ? 'Create' : current.step;
+  const mm = String(Math.floor(elapsed/60)).padStart(2,'0');
+  const ss = String(elapsed%60).padStart(2,'0');
+  return (
+    <div className="glass rounded-xl p-4 slide-in">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"/>
+          <span className="text-sm font-medium text-emerald-400">Currently Running</span>
+        </div>
+        <span className="mono text-lg font-semibold text-emerald-400">{mm}:{ss}</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div><span className="text-gray-500">Version</span><div className="mono font-medium">{current.version}</div></div>
+        <div><span className="text-gray-500">Scenario</span><div className="mono font-medium">{current.scenario}</div></div>
+        <div><span className="text-gray-500">Rep</span><div className="mono font-medium">#{current.rep}</div></div>
+        <div><span className="text-gray-500">Step</span><div className="mono font-medium">{stepLabel}</div></div>
+      </div>
+      {current.session_id && current.session_id !== '' && (
+        <div className="mt-2 text-xs text-gray-500">Session: <span className="mono text-gray-400">{current.session_id}</span></div>
+      )}
+    </div>
+  );
+}
+
+// ── AutoML-style progression chart (SVG) ──
+function ProgressionChart({ versions }) {
+  // Collect per-version averages for scatter plot
+  const versionAvgs = [];
+  const vColors = {};
+  Object.keys(versions).sort().forEach(v => { vColors[v] = getVersionMeta(v).color; });
+
+  const firstVersion = Object.keys(versions).sort()[0];
+
+  Object.entries(versions).sort(([a],[b])=>a.localeCompare(b)).forEach(([name, v]) => {
+    const runs = (v.runs || []).filter(r => r.totals?.duration_s > 0 && r.totals?.cost_usd > 0);
+    if (!runs.length) return;
+    const avgTime = runs.reduce((a,r)=>a+r.totals.duration_s,0)/runs.length;
+    const avgCost = runs.reduce((a,r)=>a+r.totals.cost_usd,0)/runs.length;
+    const avgTools = runs.reduce((a,r)=>a+(r.totals.tool_calls||0),0)/runs.length;
+    // Individual runs for scatter
+    runs.forEach(r => {
+      versionAvgs.push({ version: name, time: r.totals.duration_s, cost: r.totals.cost_usd, tools: r.totals.tool_calls, rep: r.rep });
+    });
+  });
+  if (versionAvgs.length < 2) return null;
+
+  // Baseline for weighted score
+  const baseRuns = versionAvgs.filter(r => r.version === firstVersion);
+  const baseTime = baseRuns.reduce((a,r)=>a+r.time,0)/baseRuns.length;
+  const baseCost = baseRuns.reduce((a,r)=>a+r.cost,0)/baseRuns.length;
+
+  versionAvgs.forEach(r => {
+    r.score = (r.time/baseTime)*0.70 + (r.cost/baseCost)*0.30;
+  });
+
+  const W = 700, H = 280, PAD = { t: 20, r: 30, b: 45, l: 55 };
+  const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
+
+  const times = versionAvgs.map(r=>r.time);
+  const costs = versionAvgs.map(r=>r.cost);
+  const minT = Math.min(...times)*0.85, maxT = Math.max(...times)*1.1;
+  const minC = Math.min(...costs)*0.7, maxC = Math.max(...costs)*1.15;
+  const rangeT = maxT-minT||1, rangeC = maxC-minC||1;
+
+  const xPos = (t) => PAD.l + ((t-minT)/rangeT)*plotW;
+  const yPos = (c) => PAD.t + plotH - ((c-minC)/rangeC)*plotH;
+
+  // Pareto frontier (lower-left is better on both axes)
+  const sorted = [...versionAvgs].sort((a,b)=>a.time-b.time);
+  const frontier = [];
+  let bestCost = Infinity;
+  sorted.forEach(r => { if (r.cost < bestCost) { frontier.push(r); bestCost = r.cost; }});
+  let frontierPath = frontier.length ? `M${xPos(frontier[0].time)},${yPos(frontier[0].cost)}` : '';
+  frontier.slice(1).forEach(r => { frontierPath += `L${xPos(r.time)},${yPos(r.cost)}`; });
+
+  // Ticks
+  const xTicks = Array.from({length:5},(_,i)=>minT+(rangeT*i/4));
+  const yTicks = Array.from({length:5},(_,i)=>minC+(rangeC*i/4));
+
+  return (
+    <div className="glass rounded-xl p-5 mb-6">
+      <div className="flex items-center justify-between mb-1">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-300">Time vs Cost — Pareto Frontier</h2>
+          <div className="text-xs text-gray-500">Lower-left is better — labels show weighted score (70% time + 30% cost, 1.0 = {firstVersion})</div>
+        </div>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          <span className="flex items-center gap-1.5"><span className="w-6 h-0.5 bg-emerald-400 inline-block"/>Frontier</span>
+          {Object.entries(vColors).filter(([v])=>versionAvgs.some(r=>r.version===v)).map(([v, c]) => (
+            <Tooltip key={v} text={getVersionMeta(v).desc}>
+              <span className="flex items-center gap-1.5 cursor-help"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{background:c}}/>{v} <span className="text-gray-500">{getVersionMeta(v).label}</span></span>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: '300px'}}>
+        {/* Grid */}
+        {xTicks.map((t,i) => (
+          <g key={'x'+i}>
+            <line x1={xPos(t)} y1={PAD.t} x2={xPos(t)} y2={PAD.t+plotH} stroke="#1E293B" strokeWidth="1"/>
+            <text x={xPos(t)} y={H-PAD.b+16} textAnchor="middle" fill="#64748B" fontSize="9" fontFamily="JetBrains Mono, monospace">{t.toFixed(0)}s</text>
+          </g>
+        ))}
+        {yTicks.map((c,i) => (
+          <g key={'y'+i}>
+            <line x1={PAD.l} y1={yPos(c)} x2={W-PAD.r} y2={yPos(c)} stroke="#1E293B" strokeWidth="1"/>
+            <text x={PAD.l-6} y={yPos(c)+4} textAnchor="end" fill="#64748B" fontSize="9" fontFamily="JetBrains Mono, monospace">${c.toFixed(2)}</text>
+          </g>
+        ))}
+
+        {/* Pareto frontier */}
+        {frontierPath && <path d={frontierPath} fill="none" stroke="#10B981" strokeWidth="2" opacity="0.7" strokeDasharray="4,3"/>}
+
+        {/* Dots with native SVG tooltip */}
+        {versionAvgs.map((r, i) => (
+          <g key={i} style={{cursor:'pointer'}}>
+            <title>{`${r.version} (${getVersionMeta(r.version).label}) r${r.rep}\n${r.time.toFixed(0)}s · $${r.cost.toFixed(3)} · ${r.tools} tools\nScore: ${r.score.toFixed(2)} (1.0 = baseline)`}</title>
+            <circle cx={xPos(r.time)} cy={yPos(r.cost)} r="7" fill={vColors[r.version]} opacity="0.9" stroke="#0F172A" strokeWidth="2"/>
+            <text x={xPos(r.time)} y={yPos(r.cost)-11} textAnchor="middle" fill="#CBD5E1" fontSize="8" fontFamily="JetBrains Mono, monospace">
+              {r.version}
+            </text>
+          </g>
+        ))}
+
+        {/* Axis labels */}
+        <text x={W/2} y={H-2} textAnchor="middle" fill="#94A3B8" fontSize="10">Time (seconds)</text>
+        <text x={12} y={PAD.t+plotH/2} textAnchor="middle" fill="#94A3B8" fontSize="10" transform={`rotate(-90,12,${PAD.t+plotH/2})`}>Cost ($)</text>
+      </svg>
+    </div>
+  );
+}
+
+// ── Metric card ──
+function MetricCard({ label, value, subtitle, icon, color='blue' }) {
+  const colors = { blue:'from-blue-500/10 to-blue-600/5 border-blue-500/20', green:'from-emerald-500/10 to-emerald-600/5 border-emerald-500/20', purple:'from-purple-500/10 to-purple-600/5 border-purple-500/20', amber:'from-amber-500/10 to-amber-600/5 border-amber-500/20' };
+  return (
+    <div className={`metric-card rounded-xl p-4 bg-gradient-to-br ${colors[color]} border`}>
+      <div className="text-xs text-gray-400 mb-1">{label}</div>
+      <div className="text-2xl font-semibold mono">{value}</div>
+      {subtitle && <div className="text-xs text-gray-500 mt-1">{subtitle}</div>}
+    </div>
+  );
+}
+
+// ── Version comparison bar chart ──
+function BarChart({ versions, metric, label, formatter = fmt }) {
+  const entries = Object.entries(versions).filter(([,v]) => v.runs?.length > 0);
+  if (entries.length === 0) return null;
+
+  const values = entries.map(([name, v]) => {
+    const vals = v.runs.filter(r => r.totals?.[metric]).map(r => r.totals[metric]);
+    return { name, mean: vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0 };
+  });
+  const max = Math.max(...values.map(v => v.mean), 1);
+
+  const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-amber-500'];
+
+  return (
+    <div className="mb-4">
+      <div className="text-xs text-gray-400 mb-2">{label}</div>
+      {values.map((v, i) => (
+        <div key={v.name} className="flex items-center gap-2 mb-1.5">
+          <span className="text-xs mono w-12 text-gray-400">{v.name}</span>
+          <div className="flex-1 h-5 bg-gray-800/50 rounded overflow-hidden">
+            <div className={`h-full ${barColors[i%barColors.length]} rounded bar-fill opacity-80`} style={{width: (v.mean/max*100)+'%'}}/>
+          </div>
+          <span className="text-xs mono w-20 text-right text-gray-300">{formatter(v.mean, metric==='cost_usd'?4:0)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Leaderboard ──
+function Leaderboard({ versions }) {
+  const entries = Object.entries(versions).filter(([,v]) => v.runs?.length > 0);
+  if (entries.length === 0) return null;
+
+  const ranked = entries.map(([name, v]) => {
+    const costs = v.runs.filter(r => r.totals?.cost_usd).map(r => r.totals.cost_usd);
+    const outputs = v.runs.filter(r => r.totals?.output_tokens).map(r => r.totals.output_tokens);
+    const durations = v.runs.filter(r => r.totals?.duration_s).map(r => r.totals.duration_s);
+    const tools = v.runs.filter(r => r.totals?.tool_calls).map(r => r.totals.tool_calls);
+    const validations = v.runs.filter(r => r.validation).map(r => r.validation);
+    const passRate = validations.length ? validations.reduce((a,x)=>a+(x.passed===x.total?1:0),0)/validations.length*100 : null;
+    return {
+      name,
+      avgCost: costs.length ? costs.reduce((a,b)=>a+b,0)/costs.length : null,
+      avgOutput: outputs.length ? outputs.reduce((a,b)=>a+b,0)/outputs.length : null,
+      avgDuration: durations.length ? durations.reduce((a,b)=>a+b,0)/durations.length : null,
+      avgTools: tools.length ? tools.reduce((a,b)=>a+b,0)/tools.length : null,
+      passRate,
+      runs: v.runs.length,
+      skillChars: v.skill_chars,
+    };
+  });
+
+  // Compute weighted score (70% time, 30% cost) normalized to baseline
+  const baseline = ranked.find(r => r.name === 'v2.3') || ranked[0];
+  ranked.forEach(r => {
+    const timeNorm = baseline.avgDuration && r.avgDuration ? r.avgDuration / baseline.avgDuration : 1;
+    const costNorm = baseline.avgCost && r.avgCost ? r.avgCost / baseline.avgCost : 1;
+    r.weightedScore = timeNorm * 0.70 + costNorm * 0.30;
+  });
+  ranked.sort((a,b) => (a.weightedScore||Infinity) - (b.weightedScore||Infinity));
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-gray-500 border-b border-gray-800">
+            <th className="text-left py-2 px-3">#</th>
+            <th className="text-left py-2 px-3">Version</th>
+            <th className="text-right py-2 px-3">Score</th>
+            <th className="text-right py-2 px-3">Avg Time</th>
+            <th className="text-right py-2 px-3">Avg Cost</th>
+            <th className="text-right py-2 px-3">Avg Tools</th>
+            <th className="text-right py-2 px-3">SKILL.md</th>
+            <th className="text-right py-2 px-3">Pass Rate</th>
+            <th className="text-right py-2 px-3">Runs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map((r, i) => {
+            const isBest = i === 0 && ranked.length > 1;
+            const scoreColor = r.weightedScore < 1 ? 'text-emerald-400' : r.weightedScore > 1 ? 'text-red-400' : 'text-gray-300';
+            return (
+              <tr key={r.name} className={`border-b border-gray-800/50 ${isBest ? 'bg-emerald-500/5' : ''}`}>
+                <td className="py-2.5 px-3 mono">{i===0 ? '🏆' : i+1}</td>
+                <td className="py-2.5 px-3"><Tooltip text={getVersionMeta(r.name).desc}><span className="mono font-medium cursor-help">{r.name}</span></Tooltip> <span className="text-xs text-gray-500">{getVersionMeta(r.name).label}</span></td>
+                <td className={`py-2.5 px-3 mono text-right font-semibold ${scoreColor}`}>{r.weightedScore?.toFixed(2) || '—'}</td>
+                <td className="py-2.5 px-3 mono text-right text-gray-400">{fmtDuration(r.avgDuration)}</td>
+                <td className="py-2.5 px-3 mono text-right">{fmtCost(r.avgCost)}</td>
+                <td className="py-2.5 px-3 mono text-right text-gray-400">{r.avgTools != null ? fmt(r.avgTools) : '—'}</td>
+                <td className="py-2.5 px-3 mono text-right text-gray-400">{fmt(r.skillChars)}</td>
+                <td className="py-2.5 px-3 mono text-right">
+                  {r.passRate != null ? <span className={r.passRate >= 100 ? 'text-emerald-400' : 'text-amber-400'}>{r.passRate.toFixed(0)}%</span> : '—'}
+                </td>
+                <td className="py-2.5 px-3 mono text-right text-gray-400">{r.runs}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Version detail card ──
+function VersionCard({ name, data }) {
+  const runs = data.runs || [];
+  const meta = getVersionMeta(name);
+  if (runs.length === 0) {
+    return (
+      <div className="glass rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div><span className="mono font-semibold text-lg">{name}</span> <span className="text-xs text-gray-400">{meta.label}</span></div>
+          <span className="text-xs text-gray-500">{fmt(data.skill_chars)} chars</span>
+        </div>
+        <div className="text-xs text-gray-500 mb-2">{meta.desc}</div>
+        <div className="text-sm text-gray-500 italic">Waiting for runs...</div>
+      </div>
+    );
+  }
+
+  const avgCost = runs.filter(r=>r.totals?.cost_usd).reduce((a,r)=>a+r.totals.cost_usd,0) / runs.filter(r=>r.totals?.cost_usd).length || 0;
+  const avgOutput = runs.filter(r=>r.totals?.output_tokens).reduce((a,r)=>a+r.totals.output_tokens,0) / runs.filter(r=>r.totals?.output_tokens).length || 0;
+
+  return (
+    <div className="glass rounded-xl p-4 slide-in" style={{borderLeft: `3px solid ${meta.color}`}}>
+      <div className="flex items-center justify-between mb-1">
+        <div><span className="mono font-semibold text-lg">{name}</span> <span className="text-xs text-gray-400">{meta.label}</span></div>
+        <span className="text-xs text-gray-500">{fmt(data.skill_chars)} chars</span>
+      </div>
+      <div className="text-xs text-gray-500 mb-3">{meta.desc}</div>
+      {(() => {
+        const avgDur = runs.filter(r=>r.totals?.duration_s).reduce((a,r)=>a+r.totals.duration_s,0) / (runs.filter(r=>r.totals?.duration_s).length||1);
+        const avgTools = runs.filter(r=>r.totals?.tool_calls).reduce((a,r)=>a+r.totals.tool_calls,0) / (runs.filter(r=>r.totals?.tool_calls).length||1);
+        const avgCache = runs.filter(r=>r.totals?.cache_read_tokens).reduce((a,r)=>a+r.totals.cache_read_tokens,0) / (runs.filter(r=>r.totals?.cache_read_tokens).length||1);
+        return (
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div><div className="text-xs text-gray-500">Avg Cost</div><div className="mono text-sm font-medium">{fmtCost(avgCost)}</div></div>
+            <div><div className="text-xs text-gray-500">Avg Output</div><div className="mono text-sm font-medium">{fmt(avgOutput)}</div></div>
+            <div><div className="text-xs text-gray-500">Avg Time</div><div className="mono text-sm font-medium">{fmtDuration(avgDur)}</div></div>
+            <div><div className="text-xs text-gray-500">Avg Tools</div><div className="mono text-sm font-medium">{fmt(avgTools)}</div></div>
+            <div><div className="text-xs text-gray-500">Cache Read</div><div className="mono text-sm font-medium">{fmt(avgCache)}</div></div>
+            <div><div className="text-xs text-gray-500">Runs</div><div className="mono text-sm font-medium">{runs.length}</div></div>
+          </div>
+        );
+      })()}
+      <div className="space-y-1.5">
+        {runs.map((r, i) => {
+          const t = r.totals || {};
+          const tip = `in=${fmt(t.input_tokens)} out=${fmt(t.output_tokens)} cacheR=${fmt(t.cache_read_tokens)} cacheW=${fmt(t.cache_write_tokens)} total=${fmt(t.total_tokens)}`;
+          return (
+            <Tooltip key={i} text={tip}>
+              <div className="flex items-center gap-2 text-xs flex-wrap cursor-help hover:bg-white/5 rounded px-1 -mx-1 py-0.5">
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.status === 'completed' ? 'bg-emerald-400' : 'bg-gray-600'}`}/>
+                <span className="mono text-gray-400 w-20">{r.scenario}</span>
+                <span className="mono text-gray-500 w-6">#{r.rep}</span>
+                {t.duration_s > 0 && <span className="mono text-gray-500">{fmtDuration(t.duration_s)}</span>}
+                {t.tool_calls > 0 && <span className="mono text-gray-500">{t.tool_calls} tools</span>}
+                <span className="flex-1"/>
+                {t.cost_usd > 0 && <span className="mono text-gray-300 w-16 text-right">{fmtCost(t.cost_usd)}</span>}
+                {r.validation && (
+                  <span className={`mono ${r.validation.passed === r.validation.total ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {r.validation.passed}/{r.validation.total}
+                  </span>
+                )}
+              </div>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Idle / waiting state ──
+function IdleState({ error }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+      <div className="text-6xl mb-6 opacity-30">⛵</div>
+      <h2 className="text-xl font-semibold text-gray-300 mb-2">Waiting for eval data</h2>
+      <p className="text-gray-500 text-sm max-w-md mb-6">
+        {error || 'Start a benchmark run to see live results here.'}
+      </p>
+      <div className="glass rounded-xl p-4 text-left max-w-sm">
+        <div className="text-xs text-gray-400 mb-2">Quick start:</div>
+        <code className="mono text-xs text-vela-400 block">cd eval && bash run.sh v2.5.1 create-6</code>
+      </div>
+    </div>
+  );
+}
+
+// ── Main dashboard ──
+function Dashboard() {
+  const { status, lastUpdate, error } = useEvalStatus(2000);
+
+  // Aggregate metrics
+  const agg = useMemo(() => {
+    if (!status?.versions) return null;
+    let totalCost = 0, totalRuns = 0, totalOutput = 0;
+    Object.values(status.versions).forEach(v => {
+      v.runs?.forEach(r => {
+        if (r.totals) {
+          totalCost += r.totals.cost_usd || 0;
+          totalOutput += r.totals.output_tokens || 0;
+          totalRuns++;
+        }
+      });
+    });
+    return { totalCost, totalRuns, totalOutput, avgCost: totalRuns ? totalCost/totalRuns : 0 };
+  }, [status]);
+
+  // Find best version
+  const best = useMemo(() => {
+    if (!status?.versions) return null;
+    let bestName = null, bestCost = Infinity;
+    Object.entries(status.versions).forEach(([name, v]) => {
+      const costs = v.runs?.filter(r=>r.totals?.cost_usd).map(r=>r.totals.cost_usd) || [];
+      if (costs.length) {
+        const avg = costs.reduce((a,b)=>a+b,0)/costs.length;
+        if (avg < bestCost) { bestCost = avg; bestName = name; }
+      }
+    });
+    return bestName ? { name: bestName, cost: bestCost } : null;
+  }, [status]);
+
+  if (!status) return <IdleState error={error}/>;
+
+  const p = status.progress || {};
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-3">
+            <span className="opacity-60">⛵</span> Vela Eval
+          </h1>
+          <div className="flex items-center gap-3 mt-1 text-sm text-gray-400">
+            <span>Model: <span className="mono text-gray-300">{status.model}</span></span>
+            <span className="text-gray-600">|</span>
+            <span>Reps: <span className="mono text-gray-300">{status.reps}</span></span>
+            <span className="text-gray-600">|</span>
+            <span>Max turns: <span className="mono text-gray-300">{status.max_turns}</span></span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <StateBadge state={status.state}/>
+          {lastUpdate && (
+            <span className="text-xs text-gray-500">
+              Updated {lastUpdate.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div className="mb-6">
+        <ProgressBar completed={p.completed_runs || 0} total={p.total_runs || 0}/>
+      </div>
+
+      {/* AutoML progression chart */}
+      <ProgressionChart versions={status.versions}/>
+
+      {/* Current run + top metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div className="lg:col-span-2">
+          <CurrentRun current={p.current}/>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <MetricCard label="Total Cost" value={fmtCost(agg?.totalCost)} subtitle={`${agg?.totalRuns || 0} runs`} color="purple"/>
+          <MetricCard label="Best So Far" value={best ? best.name : '—'} subtitle={best ? fmtCost(best.cost)+' avg' : 'waiting'} color="green"/>
+          <MetricCard label="Avg Output Tok" value={agg?.totalRuns ? fmt(agg.totalOutput/agg.totalRuns) : '—'} color="blue"/>
+          <MetricCard label="Avg Cost/Run" value={fmtCost(agg?.avgCost)} color="amber"/>
+        </div>
+      </div>
+
+      {/* Leaderboard */}
+      {Object.values(status.versions).some(v => v.runs?.length > 0) && (
+        <div className="glass rounded-xl p-5 mb-6">
+          <h2 className="text-sm font-semibold text-gray-300 mb-3">Leaderboard</h2>
+          <Leaderboard versions={status.versions}/>
+        </div>
+      )}
+
+      {/* Activity feed */}
+      {status.activity?.length > 0 && (
+        <div className="glass rounded-xl p-4 mb-6">
+          <h2 className="text-sm font-semibold text-gray-300 mb-2">Activity</h2>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {[...status.activity].reverse().map((a, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="mono text-gray-500 w-16 flex-shrink-0">{a.time}</span>
+                <span className="text-gray-400">{a.msg}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Charts */}
+      {Object.values(status.versions).some(v => v.runs?.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="glass rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Output Tokens (avg)</h3>
+            <BarChart versions={status.versions} metric="output_tokens" label="" formatter={fmt}/>
+          </div>
+          <div className="glass rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Cost per Run (avg)</h3>
+            <BarChart versions={status.versions} metric="cost_usd" label="" formatter={fmtCost}/>
+          </div>
+          <div className="glass rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Duration (avg)</h3>
+            <BarChart versions={status.versions} metric="duration_s" label="" formatter={fmtDuration}/>
+          </div>
+          <div className="glass rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">Input Tokens (avg)</h3>
+            <BarChart versions={status.versions} metric="input_tokens" label="" formatter={fmt}/>
+          </div>
+        </div>
+      )}
+
+      {/* Version detail cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {Object.entries(status.versions).sort(([a],[b]) => a.localeCompare(b)).map(([name, data]) => (
+          <VersionCard key={name} name={name} data={data}/>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="text-center text-xs text-gray-600 py-4">
+        Vela Eval Dashboard — polling every 2s — {Object.keys(status.versions).length} versions
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Dashboard/>);
+</script>
+</body>
+</html>

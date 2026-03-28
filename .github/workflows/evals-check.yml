@@ -1,0 +1,84 @@
+name: Eval Structure Check
+
+on:
+  pull_request:
+    paths:
+      - 'evals/**'
+      - 'skills/vela-slides/SKILL.md'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate Eval Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate scenario JSON
+        run: |
+          python3 -c "
+          import json, sys
+          with open('evals/eval-scenarios.json') as f:
+              data = json.load(f)
+          scenarios = data.get('scenarios', [])
+          print(f'Scenarios: {len(scenarios)}')
+          for s in scenarios:
+              assert 'id' in s, f'Missing id in scenario'
+              assert 'prompt' in s, f'Missing prompt in {s[\"id\"]}'
+              assert 'assertions' in s, f'Missing assertions in {s[\"id\"]}'
+              # Check fixtures exist
+              fixture = s.get('fixture')
+              if fixture:
+                  import os
+                  fpath = os.path.join('evals', 'fixtures', fixture)
+                  assert os.path.exists(fpath), f'Missing fixture: {fpath}'
+              print(f'  {s[\"id\"]}: {len(s[\"assertions\"])} assertions')
+          print('All scenarios valid')
+          "
+
+      - name: Compile eval scripts
+        run: |
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/judge.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/quality.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/baseline.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/gate.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/harvest.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/report.py', doraise=True)"
+          python3 -c "import py_compile; py_compile.compile('evals/scripts/validate.py', doraise=True)"
+          echo "All scripts compile"
+
+      - name: Validate fixture deck
+        run: |
+          if [ -f evals/fixtures/fixture-30.json ]; then
+            python3 evals/scripts/quality.py evals/fixtures/fixture-30.json --json
+          else
+            echo "No fixture deck yet (OK for initial setup)"
+          fi
+
+      - name: Gate dry-run
+        run: python3 evals/scripts/gate.py --dry-run
+
+      - name: Check SKILL.md sizes
+        run: |
+          python3 -c "
+          import os
+          MAX_SIZE = 20480  # 20KB
+          for root, dirs, files in os.walk('evals/skills'):
+              for f in files:
+                  if f == 'SKILL.md':
+                      path = os.path.join(root, f)
+                      size = os.path.getsize(path)
+                      version = os.path.basename(os.path.dirname(path))
+                      status = 'OK' if size <= MAX_SIZE else 'TOO LARGE'
+                      print(f'  {version}: {size:,} bytes [{status}]')
+                      assert size <= MAX_SIZE, f'{path} is {size} bytes (max {MAX_SIZE})'
+          print('All SKILL.md files within size limit')
+          "

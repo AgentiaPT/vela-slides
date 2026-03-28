@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vela Slides — Local</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    #vela-loading { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 20px; opacity: 1; transition: opacity 0.4s ease; }
+    #vela-loading.fade-out { opacity: 0; pointer-events: none; }
+    #vela-loading .boat { font-size: 48px; animation: sail 3s ease-in-out infinite; }
+    @keyframes sail { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-8px) rotate(2deg); } }
+    #vela-loading .title { font-size: 24px; font-weight: 700; color: #e2e8f0; font-family: system-ui; letter-spacing: 4px; }
+    #vela-loading .wave { height: 3px; width: 120px; background: linear-gradient(90deg, transparent, #3b82f6, #8b5cf6, #3b82f6, transparent); border-radius: 2px; animation: wave-move 2s ease-in-out infinite; }
+    @keyframes wave-move { 0%,100% { transform: scaleX(0.6); opacity: 0.5; } 50% { transform: scaleX(1); opacity: 1; } }
+    #vela-loading .msg { font-size: 13px; color: #64748b; font-family: system-ui; transition: opacity 0.3s; }
+    #vela-loading .dots { display: inline-block; width: 20px; text-align: left; }
+    #vela-loading .hint { font-size: 11px; color: #475569; font-family: system-ui; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="vela-loading">
+      <div class="boat">⛵</div>
+      <div class="title">VELA</div>
+      <div class="wave"></div>
+      <div class="msg">Setting sail<span class="dots"></span></div>
+      <div class="hint"></div>
+    </div>
+  </div>
+  <script>
+    (function() {
+      var msgs = [
+        // Sailing
+        'Setting sail', 'Charting the course', 'Hoisting the sails',
+        'Reading the winds', 'Checking the compass', 'Tying the knots',
+        'Raising the anchor', 'Catching the trade winds', 'Trimming the jib',
+        'Plotting coordinates', 'Scanning the horizon', 'Adjusting the rudder',
+        'Unfurling the mainsail', 'Loading the cargo hold', 'Polishing the helm',
+        'Tightening the rigging', 'Swabbing the deck', 'Stowing the gear',
+        // Presentation
+        'Arranging the slides', 'Sharpening the headlines', 'Tuning the palette',
+        'Aligning the blocks', 'Rendering the canvas', 'Warming up the engine',
+        'Brewing the pixels', 'Composing the layout', 'Rehearsing the flow',
+        'Queueing the transitions', 'Focusing the spotlight', 'Cueing the narrative',
+        'Preparing the stage', 'Dimming the house lights', 'Testing the mic',
+        // AI / Claude
+        'Waking up Vera', 'Initializing the agents', 'Syncing with Claude',
+        'Thinking deeply', 'Loading the toolkit', 'Spinning up the loop',
+        'Parsing the context', 'Priming the cache', 'Summoning intelligence',
+        'Connecting the dots', 'Training the spotlight', 'Assembling the crew',
+        // Fun
+        'Almost there, captain', 'Patience is a fair wind', 'Smooth seas ahead',
+        'One moment, skipper', 'Good things take a beat', 'Worth the wait',
+        'Hang tight, navigator', 'Steady as she goes', 'Land ho, nearly',
+      ];
+      var hints = [
+        'Ctrl+K to ask Claude anything',
+        'Press F for fullscreen presenter mode',
+        '🎓 Student Mode: AI teaching assistant for each slide',
+        '🗂 Press G in fullscreen for Gallery View',
+        'Select a slide before asking Claude for context-aware help',
+        'Two-way sync: edit here or let Claude edit via CLI',
+        'D toggles dark/light theme',
+        'T opens searchable table of contents',
+        'E opens quick-edit on the current slide',
+        'Shift+I auto-improves the current slide with AI',
+        '? shows all keyboard shortcuts',
+        'Export to PDF from the fullscreen toolbar',
+        'Click any text on a slide to edit inline',
+        'Drag modules in the sidebar to reorder',
+      ];
+      var msgEl = document.querySelector('#vela-loading .msg');
+      var dotsEl = document.querySelector('#vela-loading .dots');
+      var hintEl = document.querySelector('#vela-loading .hint');
+      // Shuffle both arrays for variety
+      for (var j = msgs.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var tmp = msgs[j]; msgs[j] = msgs[k]; msgs[k] = tmp; }
+      for (var j = hints.length - 1; j > 0; j--) { var k = Math.floor(Math.random() * (j + 1)); var tmp = hints[j]; hints[j] = hints[k]; hints[k] = tmp; }
+      var i = 0, d = 0;
+      if (hintEl) hintEl.textContent = hints[Math.floor(Math.random() * hints.length)];
+      setInterval(function() {
+        d = (d + 1) % 4;
+        if (dotsEl) dotsEl.textContent = '.'.repeat(d);
+      }, 400);
+      setInterval(function() {
+        i = (i + 1) % msgs.length;
+        if (msgEl) { msgEl.style.opacity = '0'; setTimeout(function() { msgEl.childNodes[0].textContent = msgs[i]; msgEl.style.opacity = '1'; }, 300); }
+        if (hintEl) hintEl.textContent = hints[Math.floor(Math.random() * hints.length)];
+      }, 2500);
+    })();
+  </script>
+
+  <!-- Import map for ES module resolution -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.3.1",
+      "react-dom": "https://esm.sh/react-dom@18.3.1",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react"
+    }
+  }
+  </script>
+
+  <!-- Load deps as ES modules, expose as globals for Babel script -->
+  <script type="module">
+    import * as React from 'react';
+    import * as ReactDOM from 'react-dom';
+    import * as lucideReact from 'lucide-react';
+    import { createRoot } from 'react-dom/client';
+
+    window.React = React;
+    window.ReactDOM = ReactDOM;
+    window.lucideReact = lucideReact;
+    window._createRoot = createRoot;
+
+    window._depsReady = true;
+    window.dispatchEvent(new Event('vela-deps-ready'));
+  </script>
+
+  <!-- Babel standalone for JSX transpilation -->
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+
+  <!-- Polyfill: window.storage for local mode (uses localStorage) -->
+  <script>
+    window.storage = {
+      get: function(key) {
+        return Promise.resolve(localStorage.getItem(key));
+      },
+      set: function(key, value) {
+        try { localStorage.setItem(key, value); } catch(e) {}
+        return Promise.resolve();
+      },
+      delete: function(key) {
+        localStorage.removeItem(key);
+        return Promise.resolve();
+      }
+    };
+  </script>
+
+  <!-- Long-poll sync client (works through WSL2 localhost forwarding) -->
+  <script>
+    (function() {
+      var debounceTimer = null;
+      var DEBOUNCE_MS = 500;
+      var _suppressNextUpdate = false;
+      var _version = 0;
+      var _active = true;
+
+      function poll() {
+        if (!_active) return;
+        fetch('/poll?v=' + _version)
+          .then(function(res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(function(msg) {
+            if (msg.version) _version = msg.version;
+            if (msg.type === 'reload') {
+              console.log('[vela-sync] App code changed — reloading');
+              location.reload();
+              return;
+            }
+            if (msg.type === 'deck_update' && msg.deck) {
+              if (_suppressNextUpdate) {
+                _suppressNextUpdate = false;
+              } else if (window.__velaReceiveDeckUpdate) {
+                window.__velaReceiveDeckUpdate(msg.deck);
+                console.log('[vela-sync] Updated from server');
+              }
+            }
+            poll();
+          })
+          .catch(function(e) {
+            setTimeout(poll, 2000);
+          });
+      }
+
+      // Initial connect
+      fetch('/poll?v=0')
+        .then(function(res) { return res.json(); })
+        .then(function(msg) {
+          if (msg.version) _version = msg.version;
+          console.log('[vela-sync] Connected (v' + _version + ')');
+          poll();
+        })
+        .catch(function() {
+          console.log('[vela-sync] Waiting for server...');
+          setTimeout(poll, 2000);
+        });
+
+      // Called by the Vela app when deck state changes (browser edits)
+      window.__velaSendDeckUpdate = function(deck) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function() {
+          _suppressNextUpdate = true;
+          fetch('/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'deck_save', deck: deck })
+          }).catch(function(e) {
+            console.error('[vela-sync] Save failed:', e);
+          });
+        }, DEBOUNCE_MS);
+      };
+    })();
+  </script>
+
+  <!-- Claude Channel Bridge UI -->
+  <style>
+    #claude-fab { position: fixed; bottom: 24px; right: 24px; z-index: 99999; width: 48px; height: 48px; border-radius: 50%; background: #3b82f6; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.15s, background 0.15s; }
+    #claude-fab:hover { transform: scale(1.1); background: #2563eb; }
+    #claude-fab.has-context { background: #8b5cf6; animation: fab-pulse 2s ease infinite; }
+    @keyframes fab-pulse { 0%,100% { box-shadow: 0 4px 12px rgba(139,92,246,0.3); } 50% { box-shadow: 0 4px 20px rgba(139,92,246,0.6); } }
+    #claude-fab { font-size: 22px; line-height: 1; }
+    #claude-prompt-overlay { position: fixed; inset: 0; z-index: 99998; background: rgba(0,0,0,0.3); display: none; }
+    #claude-prompt-overlay.open { display: flex; }
+    #claude-prompt-box { position: fixed; bottom: 80px; right: 24px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; width: 380px; max-width: 85vw; box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 99999; }
+    #claude-prompt-box input { width: 100%; background: #0f172a; border: 1px solid #475569; border-radius: 8px; padding: 10px 14px; color: #e2e8f0; font-size: 14px; outline: none; font-family: system-ui; }
+    #claude-prompt-box input:focus { border-color: #3b82f6; }
+    #claude-prompt-box .hint { font-size: 11px; color: #64748b; margin-top: 8px; }
+    #claude-prompt-box .presets { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    #claude-prompt-box .presets button { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; color: #94a3b8; font-size: 12px; cursor: pointer; transition: border-color 0.15s; }
+    #claude-prompt-box .presets button:hover { border-color: #3b82f6; color: #e2e8f0; }
+    #claude-toast { position: fixed; top: 16px; right: 16px; z-index: 99999; display: none; }
+    #claude-toast .toast-item { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 16px; margin-bottom: 8px; color: #e2e8f0; font-size: 13px; max-width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: toast-in 0.3s ease; }
+    #claude-toast .toast-item.working { border-left: 3px solid #f59e0b; }
+    #claude-toast .toast-item.done { border-left: 3px solid #34d399; }
+    #claude-toast .toast-item.error { border-left: 3px solid #ef4444; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+
+  <div id="claude-toast"></div>
+  <div id="claude-prompt-overlay">
+    <div id="claude-prompt-box">
+      <div class="presets"></div>
+      <input type="text" id="claude-input" placeholder="Ask Claude to edit this deck..." autocomplete="off" />
+      <div class="hint">Enter to send · Esc to close · Claude uses vela CLI tools</div>
+    </div>
+  </div>
+  <button id="claude-fab" title="Ask Claude (Ctrl+K)">✨</button>
+
+  <script>
+    (function() {
+      var CHANNEL_PORT = __VELA_CHANNEL_PORT__;
+      var DECK_PATH = '__VELA_DECK_PATH__';
+      var channelUrl = CHANNEL_PORT ? 'http://localhost:' + CHANNEL_PORT : null;
+      var fab = document.getElementById('claude-fab');
+      var overlay = document.getElementById('claude-prompt-overlay');
+      var input = document.getElementById('claude-input');
+      var toastContainer = document.getElementById('claude-toast');
+      var presetsEl = document.querySelector('#claude-prompt-box .presets');
+
+      // Hide if no channel configured
+      if (!channelUrl) { fab.style.display = 'none'; return; }
+
+      // Contextual presets — change based on whether a slide is selected
+      var deckPresets = [
+        { label: '🌐 Translate', action: 'translate', params: { language: 'pt-PT' } },
+        { label: '🩺 Health check', action: 'stats' },
+        { label: '🔧 Fix issues', action: 'fix_issues' },
+        { label: '📋 Summarize', action: 'prompt', params: { text: 'Give me a summary of this deck' } },
+      ];
+      var slidePresets = [
+        { label: '✨ Improve', action: 'improve_slide' },
+        { label: '✏️ Simplify text', action: 'prompt', params: { text: 'Simplify the text on this slide — make it more concise' } },
+        { label: '🎨 Better layout', action: 'prompt', params: { text: 'Improve the layout of this slide — use more visual block types' } },
+        { label: '💡 Stronger headline', action: 'prompt', params: { text: 'Make the headline on this slide more punchy and assertive' } },
+      ];
+
+      function updatePresets() {
+        presetsEl.innerHTML = '';
+        var ctx = window.__velaGetCurrentSlide ? window.__velaGetCurrentSlide() : null;
+        var items = ctx ? slidePresets : deckPresets;
+        items.forEach(function(p) {
+          var btn = document.createElement('button');
+          btn.textContent = p.label;
+          btn.onclick = function() { sendAction(p.action, p.params || {}); closePrompt(); };
+          presetsEl.appendChild(btn);
+        });
+        // Update placeholder
+        input.placeholder = ctx
+          ? 'Ask Claude about slide ' + ctx.slide_number + ': ' + (ctx.slide_title || '').substring(0, 40) + '...'
+          : 'Ask Claude to edit this deck...';
+      }
+
+      // Toast system
+      function showToast(text, type) {
+        toastContainer.style.display = 'block';
+        var item = document.createElement('div');
+        item.className = 'toast-item ' + (type || 'working');
+        item.textContent = text;
+        toastContainer.appendChild(item);
+        if (type === 'done' || type === 'error') {
+          setTimeout(function() { item.remove(); if (!toastContainer.children.length) toastContainer.style.display = 'none'; }, 5000);
+        }
+        return item;
+      }
+
+      function clearToasts() {
+        toastContainer.innerHTML = '';
+        toastContainer.style.display = 'none';
+      }
+
+      // Channel communication
+      function sendAction(action, params) {
+        var body = Object.assign({ action: action, deck_path: DECK_PATH }, params || {});
+
+        // Add current slide context if available
+        if (window.__velaGetCurrentSlide) {
+          var ctx = window.__velaGetCurrentSlide();
+          if (ctx) body.slide_context = ctx;
+        }
+
+        var toast = showToast('Claude is working...', 'working');
+
+        fetch(channelUrl + '/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+          toast.remove();
+          if (result.ok && result.reply) {
+            showToast(result.reply, 'done');
+          } else if (result.ok) {
+            showToast('Done', 'done');
+          } else {
+            showToast(result.error || 'Something went wrong', 'error');
+          }
+        })
+        .catch(function(err) {
+          toast.remove();
+          showToast('Channel unavailable — is Claude Code running with --dangerously-load-development-channels?', 'error');
+        });
+      }
+
+      // SSE for streaming replies (skip silent/engine replies)
+      if (typeof EventSource !== 'undefined') {
+        var sse = new EventSource(channelUrl + '/events');
+        sse.onmessage = function(evt) {
+          try {
+            var msg = JSON.parse(evt.data);
+            if (msg.type === 'reply' && !msg._silent) {
+              showToast(msg.text, 'done');
+            }
+          } catch(e) {}
+        };
+        sse.onerror = function() { /* silent reconnect */ };
+      }
+
+      // Open/close prompt
+      function openPrompt() { updatePresets(); overlay.classList.add('open'); input.value = ''; input.focus(); }
+      function closePrompt() { overlay.classList.remove('open'); }
+
+      fab.onclick = openPrompt;
+      overlay.onclick = function(e) { if (e.target === overlay) closePrompt(); };
+
+      input.onkeydown = function(e) {
+        if (e.key === 'Escape') { closePrompt(); return; }
+        if (e.key === 'Enter' && input.value.trim()) {
+          var text = input.value.trim();
+          closePrompt();
+          sendAction('prompt', { text: text });
+        }
+      };
+
+      // Track slide selection — update FAB appearance
+      setInterval(function() {
+        var ctx = window.__velaGetCurrentSlide ? window.__velaGetCurrentSlide() : null;
+        if (ctx) { fab.classList.add('has-context'); fab.title = 'Ask Claude about: ' + (ctx.slide_title || 'this slide') + ' (Ctrl+K)'; }
+        else { fab.classList.remove('has-context'); fab.title = 'Ask Claude (Ctrl+K)'; }
+      }, 1000);
+
+      // Ctrl+K shortcut
+      document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+          e.preventDefault();
+          if (overlay.classList.contains('open')) closePrompt();
+          else openPrompt();
+        }
+      });
+    })();
+  </script>
+
+  <!-- Vela App (JSX only — imports stripped, globals provided by module script above) -->
+  <script type="text/babel">
+__VELA_JSX_PLACEHOLDER__
+
+    // Mount the app
+    var rootEl = document.getElementById('root');
+    var root = window._createRoot(rootEl);
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>

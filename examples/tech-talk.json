@@ -1,0 +1,152 @@
+{
+  "deckTitle": "Building Resilient APIs with Edge Computing",
+  "lanes": [
+    {
+      "title": "Main Talk",
+      "items": [
+        {
+          "title": "Introduction",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Title",
+              "bg": "#0a1628",
+              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0f2035 50%, #0a1628 100%)",
+              "color": "#e2e8f0",
+              "accent": "#06b6d4",
+              "padding": "60px 80px",
+              "duration": 30,
+              "layout": "center",
+              "blocks": [
+                { "type": "badge", "text": "TECHCONF 2026", "icon": "Radio", "color": "#22d3ee", "bg": "#22d3ee15", "border": "#22d3ee40" },
+                { "type": "spacer", "h": 8 },
+                { "type": "heading", "text": "Building Resilient APIs with Edge Computing", "size": "3xl", "align": "center" },
+                { "type": "text", "text": "Sarah Chen — Principal Engineer, Cloudfront Systems", "size": "lg", "color": "#94a3b8", "align": "center" },
+                { "type": "spacer", "h": 16 },
+                { "type": "icon-row", "items": [
+                  { "icon": "Clock", "text": "45 min" },
+                  { "icon": "Signal", "text": "Intermediate" },
+                  { "icon": "Play", "text": "Live Demo" }
+                ]}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Architecture",
+          "status": "done",
+          "slides": [
+            {
+              "title": "The Architecture",
+              "bg": "#0c1a2e",
+              "bgGradient": "linear-gradient(160deg, #0c1a2e 0%, #0f1d2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#06b6d4",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                { "type": "heading", "text": "Edge-First Request Architecture", "size": "2xl", "icon": "Network" },
+                { "type": "spacer", "h": 12 },
+                { "type": "flow", "items": [
+                  { "icon": "Smartphone", "text": "Client" },
+                  { "icon": "Server", "text": "Edge Node" },
+                  { "icon": "Database", "text": "Cache / Origin" },
+                  { "icon": "ArrowLeft", "text": "Response" }
+                ], "connector": "arrow" },
+                { "type": "spacer", "h": 16 },
+                { "type": "callout", "text": "Edge nodes intercept requests within 50ms of the user. Cache hits bypass origin entirely — reducing P99 latency from 820ms to 47ms in production.", "icon": "Zap", "bg": "#06b6d415", "border": "#06b6d440" }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Implementation",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Code Example",
+              "bg": "#0a1628",
+              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0d1f30 100%)",
+              "color": "#e2e8f0",
+              "accent": "#22d3ee",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                { "type": "heading", "text": "Edge Function Handler", "size": "2xl", "icon": "Code" },
+                { "type": "spacer", "h": 8 },
+                { "type": "code", "language": "typescript", "text": "export default async function handler(req: Request) {\n  const cacheKey = `edge:${req.url}`;\n  const cached = await kv.get(cacheKey);\n\n  if (cached && !isStale(cached.timestamp)) {\n    return new Response(cached.body, {\n      headers: { 'X-Edge-Cache': 'HIT' }\n    });\n  }\n\n  const origin = await fetch(req.url, { cf: { cacheTtl: 300 } });\n  await kv.put(cacheKey, await origin.clone().text());\n  return origin;\n}" },
+                { "type": "spacer", "h": 8 },
+                { "type": "text", "text": "Each edge function runs in an isolated V8 runtime with <5ms cold start. The KV store replicates across all 280+ edge locations within seconds.", "size": "md", "color": "#94a3b8" }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Results",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Benchmarks",
+              "bg": "#0c1a2e",
+              "bgGradient": "linear-gradient(135deg, #0c1a2e 0%, #0f1d2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#06b6d4",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Performance Benchmarks", "size": "2xl", "icon": "BarChart3" },
+                { "type": "spacer", "h": 8 },
+                { "type": "table", "headers": ["Metric", "Origin-Only", "Edge-First", "Improvement"],
+                  "rows": [
+                    ["P99 Latency", "820 ms", "47 ms", "94% faster"],
+                    ["Throughput", "1.2K rps", "18K rps", "15x higher"],
+                    ["Error Rate", "0.8%", "0.02%", "40x lower"]
+                  ]
+                },
+                { "type": "spacer", "h": 12 },
+                { "type": "grid", "columns": 3, "gap": 16, "items": [
+                  { "blocks": [{ "type": "metric", "value": "47ms", "label": "P99 Latency", "icon": "Timer", "trend": "up" }] },
+                  { "blocks": [{ "type": "metric", "value": "99.98%", "label": "Availability", "icon": "Shield", "trend": "up" }] },
+                  { "blocks": [{ "type": "metric", "value": "280+", "label": "Edge Locations", "icon": "Globe" }] }
+                ]}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Closing",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Key Takeaways",
+              "bg": "#0a1628",
+              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0f2035 50%, #0a1628 100%)",
+              "color": "#e2e8f0",
+              "accent": "#22d3ee",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "Key Takeaways", "size": "2xl", "icon": "Lightbulb" },
+                { "type": "spacer", "h": 8 },
+                { "type": "bullets", "items": [
+                  "Edge computing eliminates the latency tax — serve from where your users are",
+                  "Cache-first architecture reduces origin load by 90%+ and improves resilience",
+                  "Isolated V8 runtimes give you full programmability without cold start penalties",
+                  "Graceful fallback patterns ensure availability even when origin is unreachable"
+                ], "icon": "ChevronRight" },
+                { "type": "spacer", "h": 12 },
+                { "type": "steps", "items": [
+                  { "title": "Identify Hot Paths", "text": "Profile your API to find cacheable, latency-sensitive endpoints" },
+                  { "title": "Deploy Edge Functions", "text": "Start with read-heavy routes — cache invalidation is simpler there" },
+                  { "title": "Measure and Iterate", "text": "Track cache hit rates, tail latencies, and error budgets per region" }
+                ]},
+                { "type": "spacer", "h": 10 },
+                { "type": "badge", "text": "github.com/example/edge-api", "icon": "Github", "color": "#22d3ee", "bg": "#22d3ee15", "border": "#22d3ee40" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,524 @@
+{
+  "metadata": {
+    "name": "vela-slides-eval-v3",
+    "description": "12 scenarios: 6 create + 6 edit. Covers minimal/full/ambiguous creation, translation, improvement, rebranding, deletion, addition, error recovery.",
+    "model": "opus",
+    "repetitions": 5,
+    "weighted_score": "70% time + 30% cost"
+  },
+  "scenarios": [
+    {
+      "id": "create-30",
+      "name": "Create 30-slide Vela showcase deck",
+      "type": "create",
+      "difficulty": "hard",
+      "holdout": false,
+      "prompt": "Create a 30-slide presentation deck titled 'Vela Slides \u2014 The AI-Native Presentation Engine'. This deck showcases everything Vela can do and serves as both a demo and a tutorial.\n\nSlide structure:\n1. Cover \u2014 centered, gradient, bold title + tagline\n2. What is Vela \u2014 overview with icon-row (3 pillars: AI-native, React-based, Skill-powered)\n3. How It Works \u2014 flow diagram (Create \u2192 Edit \u2192 Present \u2192 Share)\n4. Key Stats \u2014 grid with 3 metric cards (22+ block types, 3 formats, 1000+ icons)\n5. Block Types Overview \u2014 table listing all block categories with examples\n6-8. Text Blocks Deep Dive \u2014 heading sizes demo, text formatting, badge+code examples\n9. Icon Row \u2014 showcase with 5 features\n10. Grid Layout \u2014 3-column grid with styled cards\n11. Flow Diagrams \u2014 horizontal flow with gate and sublabels\n12. Steps & Timeline \u2014 steps block example\n13. Tables \u2014 comparison table with 4 columns, 5 rows, striped\n14. Metrics & Progress \u2014 metric blocks + progress bars\n15. Callouts & Quotes \u2014 callout with insight + quote block\n16. Tag Groups \u2014 tag-group with different variants\n17-18. Theming \u2014 dark theme slide + light theme slide showing same content\n19. Brand Customization \u2014 how to apply custom colors\n20. Compact Format \u2014 what compact JSON looks like, why it saves tokens\n21. Color Palette \u2014 how $A/$B aliases work\n22. CLI Overview \u2014 key vela commands in a steps block\n23. Editing Workflow \u2014 flow showing view \u2192 edit \u2192 validate \u2192 ship\n24. AI Assistant (Vera) \u2014 features of the built-in chat\n25. Use Cases \u2014 icon-row with 4 use cases (training, sales, reports, workshops)\n26. Roadmap \u2014 timeline block with Q2-Q4 2026 milestones\n27. Open Source \u2014 callout about ELv2 license + repo link\n28. Community \u2014 icon-row (GitHub, Discord, Docs)\n29. Getting Started \u2014 steps block (Install \u2192 Create \u2192 Present)\n30. Closing CTA \u2014 centered, gradient, tag-group with links\n\nBrand: dark theme #0A0F1C/#E6F1FF with accent #3B82F6. Alternate backgrounds across slides (use 3+ theme variants + gradients on cover/section breaks/CTA). Every content slide starts with a badge. Use assertion headlines where appropriate.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 30
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "icon-row"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "table"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "flow"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "steps"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "timeline"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "metric"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "callout"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "quote"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "tag-group"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "code"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "progress"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-5",
+      "name": "Create 5-slide pitch deck",
+      "type": "create",
+      "difficulty": "easy",
+      "holdout": false,
+      "prompt": "Create a 5-slide pitch deck titled 'AI in Healthcare \u2014 Transforming Patient Outcomes'.\n\nSlide structure:\n1. Cover \u2014 gradient background, bold title + tagline 'From Diagnosis to Treatment'\n2. The Problem \u2014 icon-row with 3 pain points (misdiagnosis rates, wait times, data silos)\n3. Our Solution \u2014 flow diagram showing AI pipeline (Data Ingestion \u2192 Analysis \u2192 Prediction \u2192 Action)\n4. Key Metrics \u2014 3 metric blocks (98.5% accuracy, 40% faster diagnosis, $2.3M saved/year)\n5. Call to Action \u2014 centered, tag-group with contact links\n\nBrand: dark theme #0F172A/#E2E8F0 with accent #10B981.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 5
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "icon-row"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "flow"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "metric"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-ambiguous",
+      "name": "Create deck from ambiguous prompt",
+      "type": "create",
+      "difficulty": "medium",
+      "holdout": true,
+      "prompt": "Make a deck about artificial intelligence. Save as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-blocks",
+      "name": "Create deck using all 21 block types",
+      "type": "create",
+      "difficulty": "hard",
+      "holdout": false,
+      "prompt": "Create a presentation deck titled 'Vela Block Type Catalog' that demonstrates ALL 21 Vela block types. Each slide should showcase 2-3 block types with realistic content. The 21 types are: heading, text, quote, badge, callout, bullets, icon-row, tag-group, grid, table, metric, progress, timeline, flow, steps, image, code, svg, spacer, divider.\n\nUse a dark theme (#0F172A/#E2E8F0, accent #3B82F6). Each slide should have a badge indicating which block types it demonstrates.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "heading"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "text"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "quote"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "badge"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "callout"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "bullets"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "icon-row"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "tag-group"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "grid"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "table"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "metric"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "progress"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "timeline"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "flow"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "steps"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "image"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "code"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "svg"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "spacer"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "divider"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-compact",
+      "name": "Create 6-slide business review deck",
+      "type": "create",
+      "difficulty": "medium",
+      "holdout": false,
+      "prompt": "Create a 6-slide presentation deck titled 'Quarterly Business Review \u2014 Q1 2026'.\n\nSlide structure:\n1. Cover with title and tagline\n2. Revenue metrics (3 metric blocks)\n3. Growth timeline (Q1-Q4 milestones)\n4. Team performance (table with 4 departments)\n5. Priorities (icon-row with 4 focus areas)\n6. Closing with next steps\n\nBrand: dark theme #0F172A/#E2E8F0, accent #3B82F6.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 6
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-multi-module",
+      "name": "Create deck with 3 lanes/modules",
+      "type": "create",
+      "difficulty": "medium",
+      "holdout": false,
+      "prompt": "Create a 12-slide presentation deck titled 'Product Launch Plan \u2014 Project Atlas' organized into 3 lanes (sections) with 2 modules each:\n\nLane 1 'Strategy': Module 'Market Analysis' (2 slides), Module 'Positioning' (2 slides)\nLane 2 'Execution': Module 'Development' (2 slides), Module 'Marketing' (2 slides)\nLane 3 'Results': Module 'Metrics' (2 slides), Module 'Next Steps' (2 slides)\n\nUse varied block types across slides. Dark theme #0F172A/#E2E8F0, accent #8B5CF6.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 12
+        },
+        {
+          "type": "text_present",
+          "text": "Strategy"
+        },
+        {
+          "type": "text_present",
+          "text": "Execution"
+        },
+        {
+          "type": "text_present",
+          "text": "Results"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "edit-translate",
+      "name": "Translate deck to Portuguese",
+      "type": "edit",
+      "difficulty": "hard",
+      "holdout": false,
+      "fixture": "fixture-30.json",
+      "prompt": "Translate the entire deck at evals/output/eval-deck.json to Portuguese (Portugal). Translate all visible text: slide titles, headings, body text, badge labels, icon-row titles/descriptions, table headers and cells, callout text, quotes, tag labels, step titles, flow labels, timeline entries. Keep technical terms (JSON, CLI, React, Vela, API) untranslated. Use the vela CLI for bulk operations where possible. Save the result back to evals/output/eval-deck.json and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 30
+        },
+        {
+          "type": "text_present",
+          "text": "Apresenta"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "edit-improve",
+      "name": "Improve 3 specific slides",
+      "type": "edit",
+      "difficulty": "medium",
+      "holdout": false,
+      "fixture": "fixture-30.json",
+      "prompt": "In the deck at evals/output/eval-deck.json, make these improvements:\n1. Slide 4 (Key Stats): Replace the current content with a more impactful layout \u2014 use individual metric blocks instead of grid, with larger sizes and colored values\n2. Slide 11 (Flow): Add a loop arrow to make it a cycle diagram, add a gate checkpoint after the second step\n3. Slide 30 (CTA): Add a customer testimonial quote block before the tag-group, and make the heading more compelling\n\nUse the vela CLI for edits. Save and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "edit-rebrand",
+      "name": "Rebrand to light corporate theme",
+      "type": "edit",
+      "difficulty": "medium",
+      "holdout": false,
+      "fixture": "fixture-30.json",
+      "prompt": "Rebrand the deck at evals/output/eval-deck.json from the current dark theme to a light corporate theme:\n- Primary background: #FFFFFF\n- Text color: #1E293B\n- Accent: #2563EB (slightly different blue)\n- Alt backgrounds: #F8FAFC, #F1F5F9\n- Muted text: #64748B\n- Update ALL slides to use the new light theme\n- Cover and CTA should use subtle light gradients (e.g. linear-gradient(135deg, #FFFFFF 0%, #F1F5F9 100%))\n- Update badge backgrounds to use the new accent with alpha\n- Keep all content, structure, and block types intact\n\nUse the vela CLI. Save and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "text_present",
+          "text": "#FFFFFF"
+        },
+        {
+          "type": "text_present",
+          "text": "#1E293B"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "edit-delete",
+      "name": "Delete slides and merge",
+      "type": "edit",
+      "difficulty": "medium",
+      "holdout": false,
+      "fixture": "fixture-30.json",
+      "prompt": "In the deck at evals/output/eval-deck.json:\n1. Remove slides 5 through 10 (6 slides total)\n2. Merge slides 11 and 12 into a single slide that combines the best content from both\n\nThe resulting deck should have 23 slides (30 - 6 removed - 1 merged). Use the vela CLI for operations. Save and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 23
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "edit-add",
+      "name": "Add 5 new slides",
+      "type": "edit",
+      "difficulty": "medium",
+      "holdout": false,
+      "fixture": "fixture-30.json",
+      "prompt": "In the deck at evals/output/eval-deck.json, add 5 new slides after slide 15 about 'Security & Compliance':\n1. Security Overview \u2014 icon-row with 4 security features\n2. Compliance Matrix \u2014 table showing certifications (SOC2, GDPR, HIPAA, ISO27001)\n3. Architecture \u2014 flow diagram of security layers\n4. Audit Results \u2014 metric blocks with security scores\n5. Roadmap \u2014 timeline of upcoming security milestones\n\nMatch the existing deck's theme and style. The final deck should have 35 slides. Use the vela CLI. Save and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 35
+        },
+        {
+          "type": "text_present",
+          "text": "Security"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "edit-error-recovery",
+      "name": "Fix malformed deck and extend",
+      "type": "edit",
+      "difficulty": "hard",
+      "holdout": true,
+      "fixture": "malformed-deck.json",
+      "prompt": "The deck at evals/output/eval-deck.json has several problems: missing durations, missing backgrounds, invalid block types, empty slides, and contrast issues. Fix ALL issues so the deck validates cleanly, then add 3 new slides:\n1. A summary slide with icon-row\n2. A data slide with metric blocks\n3. A closing slide with a callout\n\nUse the vela CLI to fix and extend. Save and validate.",
+      "assertions": [
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "create-ship-serve",
+      "name": "Create deck, ship to JSX, and start local server",
+      "type": "create",
+      "difficulty": "medium",
+      "holdout": false,
+      "prompt": "Create a 10-slide Vela presentation deck about 'The Future of Remote Work'. Dark theme with blue accents.\n\nAfter writing the deck JSON, you MUST also complete the full pipeline:\n1. Ship it to a standalone JSX artifact using the vela CLI\n2. Start the Vela local server to serve the deck (use --no-open flag since this is headless, but do NOT use --no-auth — always use the default token auth)\n\nThe server should print a URL with a ?token= parameter. Save the deck as evals/output/eval-deck.json and the JSX as evals/output/eval-deck.jsx.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.jsx"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 10
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "load-sample",
+      "name": "Load app with sample deck",
+      "type": "load",
+      "difficulty": "easy",
+      "prompt": "Load the Vela slides app with the sample deck. Save the assembled artifact as evals/output/eval-deck.jsx and validate it works.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.jsx"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "load-extract",
+      "name": "Extract deck from existing artifact",
+      "type": "load",
+      "difficulty": "easy",
+      "fixture": "fixture-30.json",
+      "prompt": "Extract the deck JSON from the Vela artifact at evals/output/eval-deck.jsx, save it as evals/output/eval-deck.json, then re-ship it as a new artifact. Validate the output.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "ships_ok"
+        }
+      ]
+    }
+  ]
+}

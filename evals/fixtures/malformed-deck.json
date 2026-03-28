@@ -1,0 +1,61 @@
+{
+  "deckTitle": "Broken Deck — Needs Repair",
+  "lanes": [
+    {
+      "title": "Section One",
+      "items": [
+        {
+          "title": "Problems",
+          "status": "todo",
+          "slides": [
+            {
+              "title": "Missing Duration",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "blocks": [
+                {"type": "heading", "text": "This Slide Has No Duration", "size": "2xl"}
+              ]
+            },
+            {
+              "title": "Missing Background",
+              "color": "#e2e8f0",
+              "duration": 30,
+              "blocks": [
+                {"type": "heading", "text": "No Background Color", "size": "2xl"},
+                {"type": "text", "text": "This slide is missing both bg and bgGradient."}
+              ]
+            },
+            {
+              "title": "Invalid Block Type",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "duration": 25,
+              "blocks": [
+                {"type": "heading", "text": "Unknown Block Below", "size": "2xl"},
+                {"type": "chart", "data": [1, 2, 3], "label": "This block type does not exist"},
+                {"type": "text", "text": "The chart block above is invalid."}
+              ]
+            },
+            {
+              "title": "Empty Blocks",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "duration": 20,
+              "blocks": []
+            },
+            {
+              "title": "Low Contrast",
+              "bg": "#f0f0f0",
+              "color": "#e0e0e0",
+              "duration": 30,
+              "blocks": [
+                {"type": "heading", "text": "Light text on light background", "size": "2xl"},
+                {"type": "text", "text": "This has a contrast problem."}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
