@@ -30,11 +30,11 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 ## Try it Now
 
-**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)**
+**[▶ Browse Example Decks](https://agentiapt.github.io/vela-slides/)** — gallery with all sample decks, runs instantly in any browser (no Claude.ai account needed). Note: AI features (Vera chat) are not available on GitHub Pages — use the Claude.ai artifact for the full experience.
 
-A self-contained artifact running on Claude.ai — slides that showcase every feature, with Vera (the built-in AI assistant) ready for live editing. No install, no account setup.
+**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** — full interactive artifact on Claude.ai with Vera AI assistant for live editing.
 
-> The artifact runs entirely in your browser. AI features (Vera chat, batch edit) use your Claude.ai subscription. Vela has no backend and no access to your data. Requires **Settings → Feature Preview → AI-powered artifacts** enabled.
+> The Claude.ai artifact runs entirely in your browser. AI features (Vera chat, batch edit) use your Claude.ai subscription. Vela has no backend and no access to your data. Requires **Settings → Feature Preview → AI-powered artifacts** enabled.
 
 ---
 
@@ -44,6 +44,7 @@ Three ways to use Vela, from fastest to most powerful:
 
 | Approach | Time to first slide | Best for |
 |----------|-------------------|----------|
+| **[Browse the gallery](https://agentiapt.github.io/vela-slides/)** | ~2 seconds | View sample decks instantly, no account needed |
 | **[Open the artifact](#1-open-the-artifact)** | ~5 seconds | Try it instantly, present from Claude.ai |
 | **[Upload as Claude.ai skill](#2-use-as-a-claudeai-skill)** | ~2 minutes | Generate decks from conversation on Claude.ai |
 | **[Run locally with Claude Code](#3-run-locally-with-claude-code)** | ~30 seconds | Full CLI, live preview, file system access |
