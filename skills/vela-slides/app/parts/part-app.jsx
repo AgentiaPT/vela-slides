@@ -75,6 +75,77 @@ function ChangelogDialog({ onClose }) {
   );
 }
 
+// ━━━ Comments Panel (review sidebar) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function CommentsPanel({ state, dispatch, isMobile }) {
+  const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
+  const [selected, setSelected] = useState(new Set()); // for multi-select
+  const allComments = collectComments(state.lanes, filter === "all" ? null : (c) => c.status === filter);
+  const openCount = collectComments(state.lanes, (c) => c.status === "open").length;
+  const resolvedCount = collectComments(state.lanes, (c) => c.status === "resolved").length;
+
+  const toggleSelect = (id) => setSelected((prev) => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
+
+  const grouped = {};
+  for (const c of allComments) { if (!grouped[c.itemTitle]) grouped[c.itemTitle] = []; grouped[c.itemTitle].push(c); }
+
+  const copyForAgent = () => { velaClipboard(formatCommentsForAgent(state.lanes)); };
+
+  return (
+    <div style={{ width: isMobile ? "100%" : 260, display: "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${T.border}`, background: T.bgPanel, flexShrink: 0, height: "100%" }}>
+      {/* Header */}
+      <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: "0.08em" }}>COMMENTS</span>
+        {openCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 5px", minWidth: 16, textAlign: "center", lineHeight: "16px" }}>{openCount}</span>}
+        <div style={{ flex: 1 }} />
+        {!isMobile && <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); }} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 14, padding: "0 2px" }}>✕</button>}
+      </div>
+      {/* Filter tabs */}
+      <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}` }}>
+        {[["all", `All (${openCount + resolvedCount})`], ["open", `Open (${openCount})`], ["resolved", `Done (${resolvedCount})`]].map(([key, label]) => (
+          <button key={key} onClick={() => setFilter(key)} style={{ flex: 1, padding: "6px 4px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: filter === key ? T.accent + "15" : "transparent", color: filter === key ? T.accent : T.textDim, border: "none", borderBottom: filter === key ? `2px solid ${T.accent}` : "2px solid transparent", cursor: "pointer" }}>{label}</button>
+        ))}
+      </div>
+      {/* Comments list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+        {allComments.length === 0 && <div style={{ padding: "20px 12px", textAlign: "center", fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.6 }}>
+          {filter === "open" ? "No open comments.\nClick slides in review mode to add." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
+        </div>}
+        {Object.entries(grouped).map(([modTitle, comments]) => (
+          <div key={modTitle}>
+            <div style={{ padding: "6px 12px 2px", fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textMuted, letterSpacing: "0.05em", textTransform: "uppercase" }}>{modTitle}</div>
+            {comments.map((c) => (
+              <div key={c.id} style={{ padding: "4px 12px", display: "flex", alignItems: "flex-start", gap: 5, opacity: c.status === "resolved" ? 0.5 : 1, background: selected.has(c.id) ? T.accent + "10" : "transparent" }}>
+                <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} style={{ marginTop: 2, accentColor: T.accent, flexShrink: 0 }} />
+                <span onClick={() => dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ cursor: "pointer", fontSize: 11, flexShrink: 0, marginTop: 1 }}>{c.status === "open" ? "○" : "●"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontFamily: FONT.body, color: T.text, textDecoration: c.status === "resolved" ? "line-through" : "none", wordBreak: "break-word", lineHeight: 1.4 }}>{c.text}</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 1 }}>
+                    <span onClick={() => { dispatch({ type: "SELECT", id: c.itemId, slideIndex: c.slideIndex ?? 0 }); }} style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, cursor: "pointer" }}>{c.slideIndex != null ? `s${c.slideIndex + 1}` : "mod"}</span>
+                    {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>"{c.anchor}"</span>}
+                  </div>
+                </div>
+                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.3, flexShrink: 0 }}>×</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {/* Footer with batch actions */}
+      <div style={{ borderTop: `1px solid ${T.border}`, padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
+        {selected.size > 0 && <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => { for (const id of selected) { const c = allComments.find((x) => x.id === id); if (c && c.status === "open") dispatch({ type: "RESOLVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id }); } setSelected(new Set()); }} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px" })}>Resolve ({selected.size})</button>
+          <button onClick={() => { for (const id of selected) { const c = allComments.find((x) => x.id === id); if (c) dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id }); } setSelected(new Set()); }} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", color: T.red })}>Delete ({selected.size})</button>
+        </div>}
+        <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => { dispatch({ type: "RESOLVE_ALL_COMMENTS" }); }} disabled={openCount === 0} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", opacity: openCount > 0 ? 1 : 0.4 })}>Resolve All</button>
+          <button onClick={() => { dispatch({ type: "CLEAR_RESOLVED_COMMENTS" }); }} disabled={resolvedCount === 0} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", opacity: resolvedCount > 0 ? 1 : 0.4 })}>Clear Done</button>
+        </div>
+        <button onClick={copyForAgent} disabled={openCount === 0} style={S.primaryBtn({ fontSize: 9, padding: "4px 8px", opacity: openCount > 0 ? 1 : 0.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 })}>📋 Copy for Agent</button>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ New Deck Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");
@@ -959,10 +1030,23 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); e.stopPropagation(); dispatch({ type: e.shiftKey ? "REDO" : "UNDO" }); }
       if ((e.metaKey || e.ctrlKey) && e.key === "y") { e.preventDefault(); e.stopPropagation(); dispatch({ type: "REDO" }); }
       if (e.key === "?" && !e.metaKey && !e.ctrlKey && !(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) { e.preventDefault(); setShowShortcuts((v) => !v); }
+      if (e.key === "r" && !e.metaKey && !e.ctrlKey && !(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) { e.preventDefault(); window.dispatchEvent(new CustomEvent("vela-toggle-review")); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Review mode toggle via custom event (keyboard shortcut R)
+  useEffect(() => {
+    const h = () => {
+      const entering = !state.reviewMode;
+      dispatch({ type: "SET_REVIEW_MODE", value: entering });
+      if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }
+      else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }
+    };
+    window.addEventListener("vela-toggle-review", h);
+    return () => window.removeEventListener("vela-toggle-review", h);
+  }, [state.reviewMode]);
 
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
@@ -974,6 +1058,7 @@ export default function App() {
   const showList = isMobile ? mobileTab === "list" : !(tocCollapsed && selectedConcept);
   const showSlides = !isMobile || mobileTab === "slides";
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
+  const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
   const slideCount = selectedConcept?.slides?.length || 0;
 
   return (
@@ -1057,7 +1142,8 @@ export default function App() {
           <CostBadge />
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button onClick={() => dispatch({ type: "SET_CHAT", open: !state.chatOpen })} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
+          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Review</button>
+          <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
@@ -1094,7 +1180,8 @@ export default function App() {
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-            <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
+            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Review</button>
+            <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
           </div>
         </div>}
       </header>}
@@ -1158,7 +1245,9 @@ export default function App() {
         )}
 
         {/* Chat panel */}
-        {showChat && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {showChat && !showCommentsPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {/* Comments panel */}
+        {showCommentsPanel && !showChat && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
       </div>
 
       {/* ── MOBILE BOTTOM NAV ──────────────────────────────── */}
@@ -1170,7 +1259,10 @@ export default function App() {
           <Maximize2 size={16} /><span>Slides</span>
           {slideCount > 0 && <span style={{ fontSize: 9, color: T.textDim }}>{slideCount}</span>}
         </button>
-        <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
+        <button className={`mob-tab ${mobileTab === "comments" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("comments"); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }} style={{ color: mobileTab === "comments" ? T.amber : T.textDim }}>
+          <span style={{ fontSize: 16 }}>💬</span><span>Review</span>
+        </button>
+        <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
           <span style={{ fontSize: 16 }}>🤖</span><span>Vera</span>
         </button>
       </nav>}

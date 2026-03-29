@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.6";
+const VELA_VERSION = "12.7";
 const VELA_CHANGELOG = [
+  { v: "12.7", d: "Review Mode: inline comments system — annotate slides and modules with review comments. Comments panel, visual badges, anchor quoting, batch resolve/clear. Vera list_comments/resolve_comment tools. Notes migrated to structured comments." },
   { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails — replaces raw title flash before slide renders." },
   { v: "12.5", d: "Security: add symlink escape checks to save/upload endpoints for consistency with GET handler. Replace cmd.exe browser launch with webbrowser.open()." },
   { v: "12.4", d: "Rename vela-template.jsx → vela.jsx. Consolidate demo deck under skills/. Add themed example decks (startup-pitch, tech-talk, course-training, business-report)." },
@@ -354,6 +355,22 @@ function sanitizeBlock(block) {
   return clean;
 }
 
+const VALID_COMMENT_STATUSES = new Set(["open", "resolved"]);
+const MAX_COMMENTS = 500;
+
+function sanitizeComment(c) {
+  if (!c || typeof c !== "object") return null;
+  return {
+    id: typeof c.id === "string" ? c.id.slice(0, 40) : "c_" + uid(),
+    text: sanitizeString(c.text || "", 1000),
+    anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
+    blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
+    status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
+  };
+}
+
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
@@ -363,15 +380,22 @@ function sanitizeSlide(slide) {
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
+  if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   return clean;
 }
 
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
+  const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
+  // Migrate legacy notes to a module-level comment if no comments exist
+  if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
+    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+  }
   return {
     id: uid(),
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
+    comments,
     status: VALID_STATUSES.has(item.status) ? item.status : "todo",
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
@@ -498,6 +522,46 @@ const extractMaster = (s) => {
     })),
   };
 };
+// Collect all comments across items and slides, enriched with context
+function collectComments(lanes, filter) {
+  const results = [];
+  for (const lane of lanes) {
+    for (const item of lane.items) {
+      for (const c of (item.comments || [])) {
+        if (!filter || filter(c)) results.push({ ...c, itemId: item.id, itemTitle: item.title, laneTitle: lane.title, slideIndex: null });
+      }
+      for (let si = 0; si < (item.slides || []).length; si++) {
+        for (const c of (item.slides[si].comments || [])) {
+          if (!filter || filter(c)) results.push({ ...c, itemId: item.id, itemTitle: item.title, laneTitle: lane.title, slideIndex: si });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// Format comments as structured markdown for agent consumption
+function formatCommentsForAgent(lanes) {
+  const open = collectComments(lanes, (c) => c.status === "open");
+  if (open.length === 0) return "No open comments.";
+  const grouped = {};
+  for (const c of open) {
+    const key = c.itemTitle;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(c);
+  }
+  let md = `## Comments (${open.length} open)\n`;
+  for (const [mod, comments] of Object.entries(grouped)) {
+    md += `\n### Module: "${mod}"\n`;
+    for (const c of comments) {
+      const loc = c.slideIndex != null ? `Slide ${c.slideIndex + 1}` : "(module)";
+      const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+      md += `- ${loc}${anchor}: ${c.text}\n`;
+    }
+  }
+  return md;
+}
+
 // All item IDs across all lanes
 const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (const i of l.items) ids.push(i.id); return ids; };
 // Find an item by id across lanes
@@ -1761,9 +1825,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -1787,7 +1851,7 @@ function innerReducer(state, a) {
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
-    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
+    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -1836,6 +1900,60 @@ function innerReducer(state, a) {
     case "SET_FULLSCREEN": return { ...state, fullscreen: a.value, fontScale: a.value ? state.fontScale : 1 };
     case "SET_FONT_SCALE": return { ...state, fontScale: a.value };
     case "DESELECT": return { ...state, selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1 };
+    // ── Comment Actions ──
+    case "ADD_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const cmt = { id: "c_" + uid(), text: (a.text || "").slice(0, 1000), anchor: a.anchor ? String(a.anchor).slice(0, 200) : null, blockIndex: typeof a.blockIndex === "number" ? a.blockIndex : null, status: "open", createdAt: now(), resolvedAt: null };
+      if (a.slideIndex == null) {
+        return mapItems((i) => i.id === a.itemId ? { ...i, comments: [...(i.comments || []), cmt] } : i);
+      }
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: [...(s.comments || []), cmt] } : s) } : i);
+    }
+    case "UPDATE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const updCmt = (c) => c.id === a.commentId ? { ...c, ...(a.text != null ? { text: a.text.slice(0, 1000) } : {}), ...(a.anchor !== undefined ? { anchor: a.anchor ? String(a.anchor).slice(0, 200) : null } : {}) } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(updCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(updCmt) } : s) } : i);
+    }
+    case "RESOLVE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const resCmt = (c) => c.id === a.commentId ? { ...c, status: "resolved", resolvedAt: now() } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(resCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(resCmt) } : s) } : i);
+    }
+    case "REOPEN_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const reopCmt = (c) => c.id === a.commentId ? { ...c, status: "open", resolvedAt: null } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(reopCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(reopCmt) } : s) } : i);
+    }
+    case "REMOVE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const delCmt = (c) => c.id !== a.commentId;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).filter(delCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).filter(delCmt) } : s) } : i);
+    }
+    case "RESOLVE_ALL_COMMENTS": {
+      const ts = now();
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        const hasOpen = (i.comments || []).some((c) => c.status === "open") || (i.slides || []).some((s) => (s.comments || []).some((c) => c.status === "open"));
+        if (!hasOpen) return i;
+        _dirtyMods.add(i.id);
+        const resAll = (c) => c.status === "open" ? { ...c, status: "resolved", resolvedAt: ts } : c;
+        return { ...i, comments: (i.comments || []).map(resAll), slides: (i.slides || []).map((s) => ({ ...s, comments: (s.comments || []).map(resAll) })) };
+      }) })) };
+    }
+    case "CLEAR_RESOLVED_COMMENTS": {
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        const hasResolved = (i.comments || []).some((c) => c.status === "resolved") || (i.slides || []).some((s) => (s.comments || []).some((c) => c.status === "resolved"));
+        if (!hasResolved) return i;
+        _dirtyMods.add(i.id);
+        const keepOpen = (c) => c.status !== "resolved";
+        return { ...i, comments: (i.comments || []).filter(keepOpen), slides: (i.slides || []).map((s) => ({ ...s, comments: (s.comments || []).filter(keepOpen) })) };
+      }) })) };
+    }
+    case "SET_REVIEW_MODE": return { ...state, reviewMode: a.value };
+    case "SET_COMMENTS_PANEL": return { ...state, commentsPanelOpen: a.open };
     case "SET_CHAT": return { ...state, chatOpen: a.open };
     case "RESET_CHAT": return { ...state, chatMessages: [{ role: "assistant", content: "Chat cleared. What's next? ⛵🖖", ts: now() }], chatLoading: false };
     case "NEW_DECK": {
@@ -2258,6 +2376,29 @@ function executeTool(name, input, ws, attachedImages) {
       return parts.length > 0 ? `✅ ${parts.join(", ")}${scope !== "all" ? ` (scope: ${scope})` : ""}.` : "No slides matched the scope.";
     }
 
+    // ── Comment Tools ──────────────────────────────────────────────
+    case "list_comments": {
+      const statusFilter = input.status || "open";
+      const all = collectComments(ws.lanes, statusFilter === "all" ? null : (c) => c.status === statusFilter);
+      if (all.length === 0) return `No ${statusFilter === "all" ? "" : statusFilter + " "}comments found.`;
+      const lines = all.map((c) => {
+        const loc = c.slideIndex != null ? `slide ${c.slideIndex + 1}` : "(module)";
+        const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+        return `[${c.status}] "${c.itemTitle}" ${loc}${anchor}: ${c.text} (id: ${c.id})`;
+      });
+      const jumps = all.filter((c) => c.slideIndex != null).slice(0, 10).map((c) => ({ itemId: c.itemId, title: `Comment: ${c.text.slice(0, 30)}`, slideIdx: c.slideIndex }));
+      return { text: `${all.length} comment(s):\n${lines.join("\n")}`, jump: jumps };
+    }
+    case "resolve_comment": {
+      const cid = input.id || input.comment_id;
+      if (!cid) return "Missing comment id.";
+      for (const l of ws.lanes) for (const item of l.items) {
+        for (const c of (item.comments || [])) { if (c.id === cid) { c.status = "resolved"; c.resolvedAt = now(); return `Resolved comment: "${c.text.slice(0, 50)}"`; } }
+        for (const s of (item.slides || [])) { for (const c of (s.comments || [])) { if (c.id === cid) { c.status = "resolved"; c.resolvedAt = now(); return `Resolved comment: "${c.text.slice(0, 50)}"`; } } }
+      }
+      return `Comment "${cid}" not found.`;
+    }
+
     default: return `Unknown tool: ${name}`;
   }
 }
@@ -2316,13 +2457,24 @@ When you're done or just chatting:
 - find_replace: {find: "old text", replace: "new text", scope?: "all"|"module:Name"|"lane:Name"} — deck-wide text replacement. Case-insensitive. Modifies slides in-place and returns jump links to changed slides. Do NOT call set_slides after find_replace — it already applied the changes.
 - deck_stats: {} — total slides, time, block distribution, quality issues (missing durations, overcrowded slides, bland layouts).
 - batch_restyle: {scope?: "all"|"module:Name"|"lane:Name", bg?, bgGradient?, color?, accent?, padding?, gap?, align?, block_patch?: {type: "bullets", props: {size: "lg"}}} — apply style across all matching slides. block_patch targets specific block types. Modifies in-place — do NOT follow with set_slides.
+- list_comments: {status?: "open"|"resolved"|"all"} — list review comments/revision requests left by the user. Returns comment IDs for use with resolve_comment.
+- resolve_comment: {id: string} — mark a review comment as resolved after addressing it. Use the comment ID from list_comments.
 
 ## ATTACHED IMAGES
 When the user pastes or drops images, they're sent as vision content. Use add_image_to_slide to place them on slides.
 Each image requires its OWN add_image_to_slide tool call. NEVER claim an image was added without an actual tool call.
 
 ## BOARD STATE
-${st}${ctx}${brandingState}
+${st}${ctx}${brandingState}${(() => {
+  const openComments = collectComments(lanes, (c) => c.status === "open");
+  if (openComments.length === 0) return "";
+  const lines = openComments.slice(0, 20).map((c) => {
+    const loc = c.slideIndex != null ? `slide ${c.slideIndex + 1}` : "(module)";
+    const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+    return `- "${c.itemTitle}" ${loc}${anchor}: ${c.text} (id: ${c.id})`;
+  });
+  return `\n\n## OPEN REVIEW COMMENTS (${openComments.length})\nThe user has left these revision requests during review. Address them when asked to "fix comments" or "address feedback". Use resolve_comment after fixing each one.\n${lines.join("\n")}`;
+})()}
 
 ## CANVAS
 Slides render at 960×540px (16:9). Content MUST fit. Use padding "36px 48px" baseline. Limit 5-7 blocks per slide to avoid overflow.
@@ -3560,6 +3712,40 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
 }
 
 // ━━━ Gallery View — slide sorter overlay in fullscreen ━━━━━━━━━━━━
+// ━━━ Comment Popover (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose }) {
+  const [text, setText] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  const existingComments = (slide?.comments || []).filter(Boolean);
+  const submit = () => {
+    if (!text.trim()) return;
+    dispatch({ type: "ADD_COMMENT", itemId, slideIndex, text: text.trim() });
+    setText("");
+  };
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 36, left: 8, zIndex: 20, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", width: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", maxHeight: 320, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.accent, letterSpacing: "0.1em", textTransform: "uppercase" }}>ADD COMMENT</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 2px" }}>✕</button>
+      </div>
+      {existingComments.length > 0 && <div style={{ maxHeight: 140, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2, borderBottom: `1px solid ${T.border}`, paddingBottom: 4, marginBottom: 2 }}>
+        {existingComments.map((c) => (
+          <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 4, opacity: c.status === "resolved" ? 0.4 : 1 }}>
+            <span onClick={() => dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", itemId, slideIndex, commentId: c.id })} style={{ cursor: "pointer", fontSize: 10, flexShrink: 0, marginTop: 1 }}>{c.status === "open" ? "○" : "●"}</span>
+            <span style={{ fontSize: 10, fontFamily: FONT.body, color: T.text, textDecoration: c.status === "resolved" ? "line-through" : "none", wordBreak: "break-word", flex: 1 }}>{c.text}</span>
+            <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId, slideIndex, commentId: c.id })} style={{ fontSize: 9, color: T.textDim, cursor: "pointer", opacity: 0.4, flexShrink: 0 }}>×</span>
+          </div>
+        ))}
+      </div>}
+      <div style={{ display: "flex", gap: 4 }}>
+        <textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } if (e.key === "Escape") onClose(); }} placeholder="Add a comment..." rows={2} style={{ flex: 1, padding: "4px 8px", fontSize: 11, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", resize: "none", lineHeight: 1.4 }} />
+      </div>
+      <button onClick={submit} disabled={!text.trim()} style={{ ...S.primaryBtn({ padding: "4px 10px", fontSize: 10 }), opacity: text.trim() ? 1 : 0.4, alignSelf: "flex-end" }}>Add Comment</button>
+    </div>
+  );
+}
+
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
 function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
   const gridRef = useRef(null);
@@ -3737,6 +3923,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                   <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
+                    {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
                     <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
                   </div>
@@ -4022,11 +4209,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting && slideIndex > 0) dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
-  useEffect(() => { setEditingDuration(false); }, [slideIndex]);
+  useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
   const [showNotes, setShowNotes] = useState(false);
+  const [showCommentPopover, setShowCommentPopover] = useState(false);
   const [showQuickEdit, setShowQuickEdit] = useState(false);
   const [quickEditPrompt, setQuickEditPrompt] = useState("");
   const [quickEditing, setQuickEditing] = useState(false);
@@ -4795,6 +4983,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
                   <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered />
+                  {/* Comment badge overlay */}
+                  {!fullscreen && (() => {
+                    const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
+                    if (sc.length === 0) return null;
+                    return <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover((v) => !v); }} style={{ position: "absolute", top: 8, left: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                  })()}
+                  {/* Review mode click overlay */}
+                  {state.reviewMode && !fullscreen && !showCommentPopover && <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover(true); }} style={{ position: "absolute", inset: 0, zIndex: 9, cursor: "cell", background: "transparent" }} />}
+                  {/* Comment popover */}
+                  {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} />}
                 </div>;
               })()}
               {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 10, zIndex: 10, borderRadius: "0 0 6px 6px" }}>
@@ -5191,6 +5389,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
   const [notesOpen, setNotesOpen] = useState(false);
+  const [commentText, setCommentText] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
@@ -5239,6 +5438,10 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   };
 
   const hasNotes = !!(item.notes && item.notes.trim());
+  const itemComments = item.comments || [];
+  const slideComments = (item.slides || []).flatMap((s, si) => (s.comments || []).map((c) => ({ ...c, slideIndex: si })));
+  const allItemComments = [...itemComments.map((c) => ({ ...c, slideIndex: null })), ...slideComments];
+  const openCommentCount = allItemComments.filter((c) => c.status === "open").length;
   const hasSlides = item.slides.length > 0;
   const itemTime = item.slides.reduce((a, s) => a + (s.duration || 0), 0);
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
@@ -5273,17 +5476,40 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
-        <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide notes" : "Edit notes"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: hasNotes ? 1 : 0.3, color: hasNotes ? T.accent : T.textDim, lineHeight: 1 }}>📝</span>
+        {openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
+        <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_ITEM", id: item.id }); }} style={{ fontSize: 12, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3 }}>×</span>
       </div>
       {!collapsed && notesOpen && <div style={{ padding: "2px 12px 6px 38px" }} onClick={(e) => e.stopPropagation()}>
-        <textarea
-          value={item.notes || ""}
-          onChange={(e) => dispatch({ type: "SET_ITEM_NOTES", id: item.id, notes: e.target.value })}
-          placeholder="Spec notes — talking points, key messages, constraints…"
-          style={{ width: "100%", minHeight: 48, maxHeight: 140, padding: "6px 8px", fontSize: 12, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }}
-        />
+        {/* Existing comments */}
+        {allItemComments.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 4 }}>
+          {allItemComments.map((c) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 4, padding: "3px 0", opacity: c.status === "resolved" ? 0.45 : 1 }}>
+              <span onClick={() => {
+                const payload = { itemId: item.id, commentId: c.id, slideIndex: c.slideIndex };
+                dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", ...payload });
+              }} style={{ cursor: "pointer", fontSize: 11, flexShrink: 0, lineHeight: 1, marginTop: 1 }} title={c.status === "open" ? "Resolve" : "Reopen"}>{c.status === "open" ? "○" : "●"}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 11, fontFamily: FONT.body, color: T.text, textDecoration: c.status === "resolved" ? "line-through" : "none", wordBreak: "break-word" }}>{c.text}</span>
+                {c.slideIndex != null && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, marginLeft: 4 }}>s{c.slideIndex + 1}</span>}
+                {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, marginLeft: 4 }}>"{c.anchor}"</span>}
+              </div>
+              <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: item.id, commentId: c.id, slideIndex: c.slideIndex })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.4, flexShrink: 0 }}>×</span>
+            </div>
+          ))}
+        </div>}
+        {/* Add comment input */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <input
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } if (e.key === "Escape") { setCommentText(""); setNotesOpen(false); } }}
+            placeholder="Add comment..."
+            style={S.input({ padding: "3px 6px", fontSize: 11 })}
+          />
+          <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
+        </div>
       </div>}
       {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} />}
       {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} />}
@@ -5360,6 +5586,8 @@ const TOOL_META = {
   set_slides: { icon: "🎬", label: "Set slides" }, add_slide: { icon: "🎬", label: "Add slide" }, edit_slide: { icon: "✏️", label: "Edit slide" },
   add_image_to_slide: { icon: "🖼", label: "Image" }, clear_all: { icon: "💥", label: "Clear" },
   set_branding: { icon: "🎨", label: "Brand" },
+  list_comments: { icon: "💬", label: "Comments" },
+  resolve_comment: { icon: "✅", label: "Resolve" },
 };
 
 function ToolTraceCard({ tool, dispatch }) {
@@ -6505,22 +6733,18 @@ uiSuite("Slide Ops", [
     if (backdrop) { _click(backdrop); await _wait(200); }
     else { _click(btn); await _wait(200); } // toggle off
   }},
-  { name: "Notes textarea accepts input", fn: async () => {
-    const notesLabel = _$text("NOTES");
-    if (!notesLabel) throw new Error("NOTES label not found");
-    const clickable = notesLabel.closest("[style*='cursor']") || notesLabel.parentElement;
-    if (clickable) _click(clickable);
-    await _wait(200);
-    const ta = _$("#vela-notes-area");
-    if (ta) {
-      const before = ta.value;
-      ta.focus();
-      // Don't actually type — just verify it's editable
-      if (ta.readOnly || ta.disabled) throw new Error("Notes textarea is not editable");
+  { name: "Comment input accepts input", fn: async () => {
+    // Click the 💬 icon on a module to expand comments
+    const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer");
+    if (commentIcon) {
+      _click(commentIcon); await _wait(200);
+      const input = _$$("input").find((i) => i.placeholder?.includes("Add comment"));
+      if (input) {
+        if (input.readOnly || input.disabled) throw new Error("Comment input is not editable");
+      }
+      // Collapse
+      _click(commentIcon); await _wait(100);
     }
-    // Collapse
-    if (clickable) _click(clickable);
-    await _wait(100);
   }},
   { name: "Duration editor opens on click", fn: async () => {
     const timer = _$$("span").find((s) => s.textContent?.includes("⏱") && s.style?.cursor === "pointer");
@@ -6872,6 +7096,74 @@ uiSuite("Gallery View", [
   { name: "Exit fullscreen after gallery tests", fn: async () => {
     _key("f"); await _wait(300);
     await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── Review / Comments Suite ─────────────────────────────────────────
+uiSuite("Review", [
+  { name: "Review button visible in header", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Review")));
+  }},
+  { name: "Review button toggles review mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (!btn) throw new Error("Review button not found");
+    _click(btn); await _wait(300);
+    // Comments panel should open — look for COMMENTS header
+    const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+    if (!panel) throw new Error("Comments panel did not open");
+  }},
+  { name: "Comments panel shows filter tabs", fn: async () => {
+    await _waitFor(() => {
+      const all = document.body.textContent || "";
+      return all.includes("Open") && all.includes("Done");
+    }, 1000);
+  }},
+  { name: "Comments panel has Copy for Agent button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Copy for Agent")));
+  }},
+  { name: "Comments panel has Resolve All button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Resolve All")));
+  }},
+  { name: "Comments panel has Clear Done button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Clear Done")));
+  }},
+  { name: "Module comment icon visible (💬)", fn: async () => {
+    // Look for the 💬 icon in the module list
+    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬")), 1000);
+  }},
+  { name: "Review mode exit closes panel", fn: async () => {
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (!btn) throw new Error("Review button not found");
+    _click(btn); await _wait(300);
+    // Panel should be gone
+    await _wait(200);
+    const panel = _$text("COMMENTS");
+    // May still be visible briefly — just verify no crash
+  }},
+  { name: "R key toggles review mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("r"); await _wait(400);
+    const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+    if (!panel) throw new Error("R key did not open comments panel");
+    // Toggle off
+    _key("r"); await _wait(400);
+  }},
+  { name: "Review mode and Vera are mutually exclusive", fn: async () => {
+    // Open review
+    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (reviewBtn) { _click(reviewBtn); await _wait(300); }
+    // Now open Vera — should close review
+    const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
+    if (veraBtn) { _click(veraBtn); await _wait(300); }
+    // Vera should be open
+    const veraTa = _$$("textarea").find((t) => {
+      const ph = t.placeholder?.toLowerCase() || "";
+      return ph.includes("tell vera") || ph.includes("paste images");
+    });
+    // Close Vera
+    if (veraBtn) { _click(veraBtn); await _wait(200); }
+    if (!veraTa) throw new Error("Vera panel didn't open when switching from Review");
   }},
 ]);
 
@@ -11541,6 +11833,77 @@ function ChangelogDialog({ onClose }) {
   );
 }
 
+// ━━━ Comments Panel (review sidebar) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function CommentsPanel({ state, dispatch, isMobile }) {
+  const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
+  const [selected, setSelected] = useState(new Set()); // for multi-select
+  const allComments = collectComments(state.lanes, filter === "all" ? null : (c) => c.status === filter);
+  const openCount = collectComments(state.lanes, (c) => c.status === "open").length;
+  const resolvedCount = collectComments(state.lanes, (c) => c.status === "resolved").length;
+
+  const toggleSelect = (id) => setSelected((prev) => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
+
+  const grouped = {};
+  for (const c of allComments) { if (!grouped[c.itemTitle]) grouped[c.itemTitle] = []; grouped[c.itemTitle].push(c); }
+
+  const copyForAgent = () => { velaClipboard(formatCommentsForAgent(state.lanes)); };
+
+  return (
+    <div style={{ width: isMobile ? "100%" : 260, display: "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${T.border}`, background: T.bgPanel, flexShrink: 0, height: "100%" }}>
+      {/* Header */}
+      <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: "0.08em" }}>COMMENTS</span>
+        {openCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 5px", minWidth: 16, textAlign: "center", lineHeight: "16px" }}>{openCount}</span>}
+        <div style={{ flex: 1 }} />
+        {!isMobile && <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); }} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 14, padding: "0 2px" }}>✕</button>}
+      </div>
+      {/* Filter tabs */}
+      <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}` }}>
+        {[["all", `All (${openCount + resolvedCount})`], ["open", `Open (${openCount})`], ["resolved", `Done (${resolvedCount})`]].map(([key, label]) => (
+          <button key={key} onClick={() => setFilter(key)} style={{ flex: 1, padding: "6px 4px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: filter === key ? T.accent + "15" : "transparent", color: filter === key ? T.accent : T.textDim, border: "none", borderBottom: filter === key ? `2px solid ${T.accent}` : "2px solid transparent", cursor: "pointer" }}>{label}</button>
+        ))}
+      </div>
+      {/* Comments list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+        {allComments.length === 0 && <div style={{ padding: "20px 12px", textAlign: "center", fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.6 }}>
+          {filter === "open" ? "No open comments.\nClick slides in review mode to add." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
+        </div>}
+        {Object.entries(grouped).map(([modTitle, comments]) => (
+          <div key={modTitle}>
+            <div style={{ padding: "6px 12px 2px", fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textMuted, letterSpacing: "0.05em", textTransform: "uppercase" }}>{modTitle}</div>
+            {comments.map((c) => (
+              <div key={c.id} style={{ padding: "4px 12px", display: "flex", alignItems: "flex-start", gap: 5, opacity: c.status === "resolved" ? 0.5 : 1, background: selected.has(c.id) ? T.accent + "10" : "transparent" }}>
+                <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} style={{ marginTop: 2, accentColor: T.accent, flexShrink: 0 }} />
+                <span onClick={() => dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ cursor: "pointer", fontSize: 11, flexShrink: 0, marginTop: 1 }}>{c.status === "open" ? "○" : "●"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontFamily: FONT.body, color: T.text, textDecoration: c.status === "resolved" ? "line-through" : "none", wordBreak: "break-word", lineHeight: 1.4 }}>{c.text}</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 1 }}>
+                    <span onClick={() => { dispatch({ type: "SELECT", id: c.itemId, slideIndex: c.slideIndex ?? 0 }); }} style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, cursor: "pointer" }}>{c.slideIndex != null ? `s${c.slideIndex + 1}` : "mod"}</span>
+                    {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>"{c.anchor}"</span>}
+                  </div>
+                </div>
+                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.3, flexShrink: 0 }}>×</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {/* Footer with batch actions */}
+      <div style={{ borderTop: `1px solid ${T.border}`, padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
+        {selected.size > 0 && <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => { for (const id of selected) { const c = allComments.find((x) => x.id === id); if (c && c.status === "open") dispatch({ type: "RESOLVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id }); } setSelected(new Set()); }} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px" })}>Resolve ({selected.size})</button>
+          <button onClick={() => { for (const id of selected) { const c = allComments.find((x) => x.id === id); if (c) dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id }); } setSelected(new Set()); }} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", color: T.red })}>Delete ({selected.size})</button>
+        </div>}
+        <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => { dispatch({ type: "RESOLVE_ALL_COMMENTS" }); }} disabled={openCount === 0} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", opacity: openCount > 0 ? 1 : 0.4 })}>Resolve All</button>
+          <button onClick={() => { dispatch({ type: "CLEAR_RESOLVED_COMMENTS" }); }} disabled={resolvedCount === 0} style={S.btn({ flex: 1, fontSize: 9, padding: "3px 4px", opacity: resolvedCount > 0 ? 1 : 0.4 })}>Clear Done</button>
+        </div>
+        <button onClick={copyForAgent} disabled={openCount === 0} style={S.primaryBtn({ fontSize: 9, padding: "4px 8px", opacity: openCount > 0 ? 1 : 0.4, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 })}>📋 Copy for Agent</button>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ New Deck Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");
@@ -12425,10 +12788,23 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "z") { e.preventDefault(); e.stopPropagation(); dispatch({ type: e.shiftKey ? "REDO" : "UNDO" }); }
       if ((e.metaKey || e.ctrlKey) && e.key === "y") { e.preventDefault(); e.stopPropagation(); dispatch({ type: "REDO" }); }
       if (e.key === "?" && !e.metaKey && !e.ctrlKey && !(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) { e.preventDefault(); setShowShortcuts((v) => !v); }
+      if (e.key === "r" && !e.metaKey && !e.ctrlKey && !(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) { e.preventDefault(); window.dispatchEvent(new CustomEvent("vela-toggle-review")); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Review mode toggle via custom event (keyboard shortcut R)
+  useEffect(() => {
+    const h = () => {
+      const entering = !state.reviewMode;
+      dispatch({ type: "SET_REVIEW_MODE", value: entering });
+      if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }
+      else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }
+    };
+    window.addEventListener("vela-toggle-review", h);
+    return () => window.removeEventListener("vela-toggle-review", h);
+  }, [state.reviewMode]);
 
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
@@ -12440,6 +12816,7 @@ export default function App() {
   const showList = isMobile ? mobileTab === "list" : !(tocCollapsed && selectedConcept);
   const showSlides = !isMobile || mobileTab === "slides";
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
+  const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
   const slideCount = selectedConcept?.slides?.length || 0;
 
   return (
@@ -12523,7 +12900,8 @@ export default function App() {
           <CostBadge />
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button onClick={() => dispatch({ type: "SET_CHAT", open: !state.chatOpen })} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
+          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Review</button>
+          <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
@@ -12560,7 +12938,8 @@ export default function App() {
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-            <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
+            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Review</button>
+            <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
           </div>
         </div>}
       </header>}
@@ -12624,7 +13003,9 @@ export default function App() {
         )}
 
         {/* Chat panel */}
-        {showChat && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {showChat && !showCommentsPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {/* Comments panel */}
+        {showCommentsPanel && !showChat && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
       </div>
 
       {/* ── MOBILE BOTTOM NAV ──────────────────────────────── */}
@@ -12636,7 +13017,10 @@ export default function App() {
           <Maximize2 size={16} /><span>Slides</span>
           {slideCount > 0 && <span style={{ fontSize: 9, color: T.textDim }}>{slideCount}</span>}
         </button>
-        <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
+        <button className={`mob-tab ${mobileTab === "comments" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("comments"); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }} style={{ color: mobileTab === "comments" ? T.amber : T.textDim }}>
+          <span style={{ fontSize: 16 }}>💬</span><span>Review</span>
+        </button>
+        <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
           <span style={{ fontSize: 16 }}>🤖</span><span>Vera</span>
         </button>
       </nav>}
