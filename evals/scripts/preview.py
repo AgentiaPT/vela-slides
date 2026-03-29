@@ -10,7 +10,7 @@ Usage:
   python3 preview.py <deck.json> --audit            # Color audit (detect issues)
 """
 
-import json, sys, os, re, colorsys
+import json, sys, os, re, colorsys, html as _html
 
 def hex_to_rgb(h):
     """Convert hex color to RGB tuple (0-255)."""
@@ -112,6 +112,35 @@ def _esc(text):
     """Escape HTML special chars."""
     return str(text).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
 
+
+# ━━━ CSS value sanitization ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_SAFE_CSS_COLOR_RE = re.compile(
+    r'^('
+    r'#[0-9A-Fa-f]{3,8}'
+    r'|rgba?\(\s*[\d.%,\s/]+\)'
+    r'|hsla?\(\s*[\d.deg,%\s/]+\)'
+    r'|transparent'
+    r'|currentColor'
+    r'|[a-zA-Z]{3,20}'
+    r')$', re.ASCII
+)
+_SAFE_CSS_GRADIENT_RE = re.compile(
+    r'^(linear|radial|conic)-gradient\([^;"\'>()]*\)$', re.ASCII
+)
+
+def _css(value, fallback="#000000"):
+    """Sanitize a CSS color/gradient value for safe interpolation into style attributes."""
+    if not isinstance(value, str):
+        return fallback
+    v = value.strip()
+    if not v:
+        return fallback
+    if _SAFE_CSS_COLOR_RE.match(v):
+        return v
+    if _SAFE_CSS_GRADIENT_RE.match(v):
+        return v
+    return fallback
+
 def generate_html(deck_path, output_path=None):
     """Generate an HTML preview matching Vela's actual rendering."""
     with open(deck_path) as f:
@@ -127,10 +156,10 @@ def generate_html(deck_path, output_path=None):
 
     html_slides = []
     for i, s in enumerate(slides):
-        bg = s.get("bg", "#0A0F1C")
-        bg_grad = s.get("bgGradient", "")
-        color = s.get("color", "#E6F1FF")
-        accent = s.get("accent", "#3B82F6")
+        bg = _css(s.get("bg", "#0A0F1C"), "#0A0F1C")
+        bg_grad = _css(s.get("bgGradient", ""), "")
+        color = _css(s.get("color", "#E6F1FF"), "#E6F1FF")
+        accent = _css(s.get("accent", "#3B82F6"), "#3B82F6")
         align = s.get("align", "left")
         raw_pad = s.get("padding", "36px 48px")
         # Scale padding to half for preview
@@ -150,8 +179,8 @@ def generate_html(deck_path, output_path=None):
             bt = b.get("type", b.get("_", ""))
             text = _esc(b.get("text", b.get("x", "")))
             size = b.get("size", b.get("s", "md"))
-            bc = b.get("color", b.get("c", color))
-            bbg = b.get("bg", b.get("b", ""))
+            bc = _css(b.get("color", b.get("c", color)), color)
+            bbg = _css(b.get("bg", b.get("b", "")), "")
             fs = SIZES.get(size, SIZES["md"])
             if isinstance(size, str) and "px" in size:
                 try: fs = max(7, int(size.replace("px","")) // 2)
@@ -172,8 +201,8 @@ def generate_html(deck_path, output_path=None):
                 items = b.get("items", b.get("I", []))
                 items_html = ""
                 for item in items:
-                    ic = item.get("iconColor", item.get("ic", accent))
-                    ib = item.get("iconBg", item.get("ib", ""))
+                    ic = _css(item.get("iconColor", item.get("ic", accent)), accent)
+                    ib = _css(item.get("iconBg", item.get("ib", "")), "")
                     t = _esc(item.get("title", ""))
                     x = _esc(item.get("text", item.get("x", "")))
                     icon = item.get("icon", "")
@@ -188,10 +217,10 @@ def generate_html(deck_path, output_path=None):
             elif bt == "table":
                 headers = b.get("headers", b.get("H", []))
                 rows = b.get("rows", b.get("R", []))
-                hbg = b.get("headerBg", b.get("hb", "#1e293b"))
-                hc = b.get("headerColor", b.get("hc", color))
-                bc2 = b.get("cellColor", b.get("cc", color))
-                bdc = b.get("borderColor", b.get("bc", "rgba(255,255,255,0.08)"))
+                hbg = _css(b.get("headerBg", b.get("hb", "#1e293b")), "#1e293b")
+                hc = _css(b.get("headerColor", b.get("hc", color)), color)
+                bc2 = _css(b.get("cellColor", b.get("cc", color)), color)
+                bdc = _css(b.get("borderColor", b.get("bc", "rgba(255,255,255,0.08)")), "rgba(255,255,255,0.08)")
                 th = "".join(f'<th style="padding:3px 5px;text-align:left;color:{hc};font-size:13px;font-weight:700;border-bottom:1px solid {bdc}">{_esc(h)}</th>' for h in headers)
                 trs = ""
                 for ri, row in enumerate(rows):
@@ -201,7 +230,7 @@ def generate_html(deck_path, output_path=None):
                 blocks_html += f'<table style="width:100%;border-collapse:collapse;margin:4px 0"><thead style="background:{hbg}"><tr>{th}</tr></thead><tbody>{trs}</tbody></table>'
             elif bt == "flow":
                 items = b.get("items", b.get("I", []))
-                ac = b.get("arrowColor", accent)
+                ac = _css(b.get("arrowColor", accent), accent)
                 flow_html = ""
                 for fi, item in enumerate(items):
                     lb = _esc(item.get("label", item.get("lb", "")))
@@ -220,14 +249,14 @@ def generate_html(deck_path, output_path=None):
                 loop_html = f'<div style="text-align:center;font-size:12px;color:{ac};opacity:0.5;margin-top:2px">↩ {_esc(b.get("loopLabel",""))}</div>' if loop else ""
                 blocks_html += f'<div style="margin:4px 0"><div style="display:flex;align-items:center;gap:2px">{flow_html}</div>{loop_html}</div>'
             elif bt == "callout":
-                border = b.get("border", accent)
+                border = _css(b.get("border", accent), accent)
                 title_text = _esc(b.get("title", ""))
                 title_html = f'<div style="font-size:14px;font-weight:700;margin-bottom:2px">{title_text}</div>' if title_text else ""
                 blocks_html += f'<div style="padding:8px 10px;border-left:2px solid {border};background:{bbg or "rgba(255,255,255,0.04)"};border-radius:4px;margin:4px 0;font-size:14px;color:{bc or color};line-height:1.4">{title_html}{text}</div>'
             elif bt == "metric":
                 val = _esc(b.get("value", ""))
                 lb = _esc(b.get("label", b.get("lb", "")))
-                mc = b.get("color", b.get("c", accent))
+                mc = _css(b.get("color", b.get("c", accent)), accent)
                 ms = SIZES.get(b.get("size", b.get("s", "3xl")), SIZES["3xl"])
                 blocks_html += f'<div style="text-align:center;margin:3px 0"><div style="font-size:{ms}px;font-weight:800;color:{mc};line-height:1">{val}</div><div style="font-size:13px;color:{color};opacity:0.6;margin-top:2px">{lb}</div></div>'
             elif bt == "grid":
@@ -236,10 +265,11 @@ def generate_html(deck_path, output_path=None):
                 grid_html = ""
                 for gi in items:
                     style = gi.get("style", {})
-                    gbg = style.get("background", "rgba(255,255,255,0.04)")
+                    gbg = _css(style.get("background", "rgba(255,255,255,0.04)"), "rgba(255,255,255,0.04)")
                     gpad = "8px"
-                    gbr = style.get("borderRadius", "6px")
-                    gbl = f"border-left:2px solid {style['borderLeft'].split()[-1]};" if "borderLeft" in style else ""
+                    gbr = _esc(str(style.get("borderRadius", "6px")))
+                    gbl_color = _css(style['borderLeft'].split()[-1], accent) if "borderLeft" in style else ""
+                    gbl = f"border-left:2px solid {gbl_color};" if gbl_color else ""
                     inner = ""
                     for gb in gi.get("blocks", []):
                         if isinstance(gb, int):
@@ -249,13 +279,13 @@ def generate_html(deck_path, output_path=None):
                             if gbt == "metric":
                                 v = _esc(gb.get("value",""))
                                 l = _esc(gb.get("label",gb.get("lb","")))
-                                mc = gb.get("color",gb.get("c",accent))
+                                mc = _css(gb.get("color",gb.get("c",accent)), accent)
                                 inner += f'<div style="font-size:20px;font-weight:800;color:{mc};line-height:1">{v}</div><div style="font-size:12px;color:{color};opacity:0.6;margin-top:1px">{l}</div>'
                             elif gbt == "heading":
-                                inner += f'<div style="font-size:14px;font-weight:700;color:{gb.get("color",gb.get("c",color))}">{_esc(gb.get("text",gb.get("x","")))}</div>'
+                                inner += f'<div style="font-size:14px;font-weight:700;color:{_css(gb.get("color",gb.get("c",color)), color)}">{_esc(gb.get("text",gb.get("x","")))}</div>'
                             elif gbt == "icon":
-                                ic2 = gb.get("color",gb.get("c",accent))
-                                ib2 = gb.get("bg",gb.get("b",""))
+                                ic2 = _css(gb.get("color",gb.get("c",accent)), accent)
+                                ib2 = _css(gb.get("bg",gb.get("b","")), "")
                                 inner += f'<div style="width:18px;height:18px;border-radius:50%;background:{ib2 or ic2+"20"};display:flex;align-items:center;justify-content:center;margin-bottom:2px"><span style="color:{ic2};font-size:14px">●</span></div>'
                             else:
                                 inner += f'<div style="font-size:13px;color:{color};opacity:0.7">{_esc(gb.get("text",gb.get("x","")))}</div>'
@@ -266,7 +296,7 @@ def generate_html(deck_path, output_path=None):
                 variant = b.get("variant", b.get("v", "outline"))
                 tags_html = ""
                 for tag in items:
-                    tc = tag.get("color", tag.get("c", accent))
+                    tc = _css(tag.get("color", tag.get("c", accent)), accent)
                     tx = _esc(tag.get("text", tag.get("x", "")))
                     if variant == "filled":
                         tags_html += f'<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:{tc};color:#fff;font-size:13px;font-weight:600;margin:1px 2px">{tx}</span>'
@@ -275,7 +305,7 @@ def generate_html(deck_path, output_path=None):
                 blocks_html += f'<div style="margin:3px 0;display:flex;flex-wrap:wrap;gap:2px;{"justify-content:center" if align=="center" else ""}">{tags_html}</div>'
             elif bt in ("steps", "timeline"):
                 items = b.get("items", b.get("I", []))
-                lc = b.get("lineColor", b.get("lnc", accent))
+                lc = _css(b.get("lineColor", b.get("lnc", accent)), accent)
                 steps_html = ""
                 for si, item in enumerate(items):
                     if isinstance(item, str): item = {"title": item}
@@ -297,8 +327,8 @@ def generate_html(deck_path, output_path=None):
                 author = _esc(b.get("author", ""))
                 blocks_html += f'<div style="border-left:2px solid {accent};padding:6px 10px;margin:3px 0;font-style:italic;color:{bc or color};font-size:12px;line-height:1.4">"{text}"<div style="font-size:13px;margin-top:2px;opacity:0.6;font-style:normal">— {author}</div></div>'
             elif bt == "icon":
-                ic2 = b.get("color", b.get("c", accent))
-                ib2 = b.get("bg", b.get("b", ""))
+                ic2 = _css(b.get("color", b.get("c", accent)), accent)
+                ib2 = _css(b.get("bg", b.get("b", "")), "")
                 sz = {"sm":12,"md":18,"lg":24,"xl":32}.get(b.get("size",b.get("s","lg")), 24)
                 circle = b.get("circle", False)
                 if circle:
@@ -310,13 +340,13 @@ def generate_html(deck_path, output_path=None):
                 for pi in items:
                     pl = _esc(pi.get("label", pi.get("lb", "")))
                     pv = pi.get("value", 0)
-                    pc = pi.get("color", pi.get("c", accent))
+                    pc = _css(pi.get("color", pi.get("c", accent)), accent)
                     blocks_html += f'''<div style="margin:2px 0">
                         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:1px"><span style="color:{color}">{pl}</span><span style="color:{color};opacity:0.5">{pv}%</span></div>
                         <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden"><div style="height:100%;width:{pv}%;background:{pc};border-radius:2px"></div></div>
                     </div>'''
             elif bt == "divider":
-                dc = b.get("color", b.get("c", "rgba(255,255,255,0.1)"))
+                dc = _css(b.get("color", b.get("c", "rgba(255,255,255,0.1)")), "rgba(255,255,255,0.1)")
                 blocks_html += f'<div style="height:1px;background:{dc};margin:4px 0"></div>'
 
         va = s.get("verticalAlign", "top")
