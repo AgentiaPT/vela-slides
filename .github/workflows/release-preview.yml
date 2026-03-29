@@ -1,50 +1,47 @@
 name: Release Preview
 
+# Builds a preview release ZIP from a PR branch.
+# Triggered by the release-preview-trigger.yml workflow (via /release-preview comment).
+# Can also be triggered manually from the Actions tab.
+
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number'
+        required: true
+        type: string
+      pr_sha:
+        description: 'PR head SHA (pinned for safety)'
+        required: true
+        type: string
+      pr_ref:
+        description: 'PR head branch'
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  release-preview:
-    name: Build Preview Release
-    if: |
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/release-preview')
+  build:
+    name: Build & Publish Preview
     runs-on: ubuntu-latest
 
     steps:
-      - name: React to comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'rocket',
-            });
-
-      - name: Get PR branch
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            core.setOutput('ref', pr.head.ref);
-            core.setOutput('sha', pr.head.sha.slice(0, 7));
-            core.setOutput('number', context.issue.number);
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.pr.outputs.ref }}
+          ref: ${{ inputs.pr_sha }}
+
+      - name: Verify SHA matches branch tip
+        run: |
+          git fetch origin "${{ inputs.pr_ref }}" --depth=1
+          BRANCH_TIP=$(git rev-parse FETCH_HEAD)
+          if [ "$BRANCH_TIP" != "${{ inputs.pr_sha }}" ]; then
+            echo "⚠️  Branch has moved since dispatch. Expected ${{ inputs.pr_sha }}, got $BRANCH_TIP."
+            echo "Building pinned SHA anyway for safety."
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,7 +60,7 @@ jobs:
           m = re.search(r'const VELA_VERSION\s*=\s*\"([^\"]+)\"', content)
           print(m.group(1) if m else 'unknown')
           ")
-          TAG="v${VERSION}-rc.pr${{ steps.pr.outputs.number }}"
+          TAG="v${VERSION}-rc.pr${{ inputs.pr_number }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION → Tag: $TAG"
@@ -97,7 +94,7 @@ jobs:
       - name: Delete existing preview release
         run: |
           gh release delete "${{ steps.version.outputs.tag }}" --yes 2>/dev/null || true
-          git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
+          git push --delete origin "refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -105,8 +102,8 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             vela-slides-skill-${{ steps.version.outputs.tag }}.zip \
-            --title "Vela Slides ${{ steps.version.outputs.version }} (Preview PR #${{ steps.pr.outputs.number }})" \
-            --notes "## Preview Release — PR #${{ steps.pr.outputs.number }}
+            --title "Vela Slides ${{ steps.version.outputs.version }} (Preview PR #${{ inputs.pr_number }})" \
+            --notes "## Preview Release — PR #${{ inputs.pr_number }}
 
           > **This is a pre-release for testing.** The official release will be created when the PR is merged to main.
 
@@ -119,32 +116,23 @@ jobs:
           3. Upload the ZIP — done!
 
           ---
-          📌 Branch: \`${{ steps.pr.outputs.ref }}\` · Commit: \`${{ steps.pr.outputs.sha }}\`" \
+          📌 Branch: \`${{ inputs.pr_ref }}\` · Commit: \`${{ inputs.pr_sha }}\`" \
             --prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Comment on PR with download link
+      - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
             const tag = '${{ steps.version.outputs.tag }}';
             const version = '${{ steps.version.outputs.version }}';
-            const sha = '${{ steps.pr.outputs.sha }}';
+            const sha = '${{ inputs.pr_sha }}'.slice(0, 7);
             const releaseUrl = `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
-            const zipUrl = `${releaseUrl}/vela-slides-skill-${tag}.zip`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `## ⛵ Preview Release Ready
-
-            **Vela Slides v${version}** — [\`${tag}\`](${releaseUrl})
-
-            📦 [Download ZIP](${releaseUrl}) · 📌 Commit: \`${sha}\`
-
-            Install in Claude.ai: **Customize → Skills → + → Upload a skill**
-
-            <!-- vela-preview-release -->`,
+              issue_number: parseInt('${{ inputs.pr_number }}'),
+              body: `## ⛵ Preview Release Ready\n\n**Vela Slides v${version}** — [\`${tag}\`](${releaseUrl})\n\n📦 [Download ZIP](${releaseUrl}) · 📌 Commit: \`${sha}\`\n\nInstall in Claude.ai: **Customize → Skills → + → Upload a skill**\n\n<!-- vela-preview-release -->`,
             });
