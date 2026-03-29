@@ -32,8 +32,6 @@ function resolvePlaywright() {
   } catch {}
   const candidates = [
     ...globalPaths,
-    '/opt/node22/lib/node_modules/playwright',
-    '/usr/local/lib/node_modules/playwright',
     path.join(ROOT, 'node_modules', 'playwright'),
   ];
   for (const p of candidates) {

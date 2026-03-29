@@ -87,7 +87,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install react@18 react-dom@18 @babel/standalone lucide-react@0.344.0 playwright
+          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.52.0
           npx playwright install --with-deps chromium
 
       - name: Run Review Mode e2e tests

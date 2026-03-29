@@ -80,9 +80,9 @@ function innerReducer(state, a) {
       _dirtyMods.add(a.itemId);
       const cmt = { id: "c_" + uid(), text: (a.text || "").slice(0, 1000), anchor: a.anchor ? String(a.anchor).slice(0, 200) : null, blockIndex: typeof a.blockIndex === "number" ? a.blockIndex : null, status: "open", createdAt: now(), resolvedAt: null };
       if (a.slideIndex == null) {
-        return mapItems((i) => i.id === a.itemId ? { ...i, comments: [...(i.comments || []), cmt] } : i);
+        return mapItems((i) => i.id === a.itemId ? { ...i, comments: [...(i.comments || []), cmt].slice(0, MAX_COMMENTS) } : i);
       }
-      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: [...(s.comments || []), cmt] } : s) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: [...(s.comments || []), cmt].slice(0, MAX_COMMENTS) } : s) } : i);
     }
     case "UPDATE_COMMENT": {
       _dirtyMods.add(a.itemId);

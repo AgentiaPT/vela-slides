@@ -508,7 +508,7 @@ const BASE_SIZES = { xs: "0.85rem", sm: "0.95rem", md: "1.05rem", lg: "1.2rem", 
 // ━━━ Style Factories & Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const saveKV = (k, v) => window.storage.set(k, JSON.stringify(v)).catch((e) => { dbg("Storage error:", e); });
 const delKV = (k) => window.storage.delete(k).catch((e) => { dbg("Storage delete error:", e); });
-const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
+const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
 
 // Distributed storage: master has items with metadata only (no slides)
 const extractMaster = (s) => {
