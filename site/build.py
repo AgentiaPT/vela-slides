@@ -295,9 +295,11 @@ def generate_gallery_html(decks, version):
 
         cards_html += f'''
       <a href="vela.html?deck=examples/{html.escape(d['filename'])}" class="card" style="--card-accent: {d['accent']};">
-        <div class="card-preview" style="{bg_style}">
-          <div class="card-slide-title" style="color: {d['color']};">{heading_text}</div>
-          {f'<div class="card-slide-sub" style="color: {d["color"]}; opacity: 0.6;">{subtitle_text}</div>' if subtitle_text else ''}
+        <div class="card-preview" data-deck="{html.escape(d['filename'])}" style="{bg_style}">
+          <div class="card-placeholder">
+            <div class="card-slide-title" style="color: {d['color']};">{heading_text}</div>
+            {f'<div class="card-slide-sub" style="color: {d["color"]}; opacity: 0.6;">{subtitle_text}</div>' if subtitle_text else ''}
+          </div>
         </div>
         <div class="card-info">
           <div class="card-title">{deck_title}</div>
@@ -370,10 +372,35 @@ def generate_gallery_html(decks, version):
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 32px 40px;
+      padding: 0;
       text-align: center;
       position: relative;
       overflow: hidden;
+    }}
+    .card-placeholder {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 40px;
+      width: 100%;
+      height: 100%;
+      transition: opacity 0.4s ease;
+    }}
+    .card-preview.live .card-placeholder {{
+      opacity: 0;
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+    }}
+    .card-preview .vela-live-slide {{
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }}
+    .card-preview.live .vela-live-slide {{
+      opacity: 1;
     }}
     .card-slide-title {{
       font-size: 18px;
@@ -462,6 +489,151 @@ def generate_gallery_html(decks, version):
     <span> &middot; </span>
     <a href="https://github.com/agentiapt/vela-slides/blob/main/LICENSE">ELv2</a>
   </div>
+
+  <!-- ━━━ Live slide preview engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- Load React + Lucide once, transpile vela.jsx once, render all previews -->
+  <script type="importmap">
+  {{
+    "imports": {{
+      "react": "https://esm.sh/react@18.3.1",
+      "react-dom": "https://esm.sh/react-dom@18.3.1",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react"
+    }}
+  }}
+  </script>
+
+  <script type="module">
+    import * as React from 'react';
+    import * as ReactDOM from 'react-dom';
+    import * as lucideReact from 'lucide-react';
+    import {{ createRoot }} from 'react-dom/client';
+    window.React = React;
+    window.ReactDOM = ReactDOM;
+    window.lucideReact = lucideReact;
+    window._createRoot = createRoot;
+    window._depsReady = true;
+  </script>
+
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+
+  <!-- Storage polyfill (required by Vela engine) -->
+  <script>
+    window.storage = {{
+      get: function(key) {{ return Promise.resolve(localStorage.getItem(key)); }},
+      set: function(key, value) {{ try {{ localStorage.setItem(key, value); }} catch(e) {{}} return Promise.resolve(); }},
+      delete: function(key) {{ localStorage.removeItem(key); return Promise.resolve(); }}
+    }};
+  </script>
+
+  <!-- Single-engine gallery preview loader -->
+  <script>
+    (function() {{
+      var cards = document.querySelectorAll('.card-preview[data-deck]');
+      if (!cards.length) return;
+
+      // Collect deck filenames to fetch
+      var deckFiles = [];
+      cards.forEach(function(el) {{
+        var fname = el.getAttribute('data-deck');
+        if (fname) deckFiles.push({{ el: el, filename: fname }});
+      }});
+
+      // Fetch vela.jsx engine
+      var jsxPromise = fetch('vela.jsx').then(function(r) {{
+        if (!r.ok) throw new Error('Engine fetch failed: ' + r.status);
+        return r.text();
+      }});
+
+      // Fetch all deck JSONs in parallel
+      var decksPromise = Promise.all(deckFiles.map(function(d) {{
+        return fetch('examples/' + d.filename)
+          .then(function(r) {{ return r.ok ? r.json() : null; }})
+          .catch(function() {{ return null; }});
+      }}));
+
+      Promise.all([jsxPromise, decksPromise]).then(function(results) {{
+        var jsxSource = results[0];
+        var deckDataArr = results[1];
+
+        // Wait for React + Babel
+        function boot() {{
+          if (!window._depsReady || !window.Babel) {{
+            setTimeout(boot, 100);
+            return;
+          }}
+
+          // Strip imports, add UMD shim (same as vela.html viewer)
+          jsxSource = jsxSource.replace(/^import\\s+.*?from\\s+["'][^"']+["'];?\\s*$/gm, '');
+          jsxSource = jsxSource.replace(/^import\\s*\\*\\s*as\\s+.*?from\\s+["'][^"']+["'];?\\s*$/gm, '');
+          jsxSource = jsxSource.replace(/^import\\s*\\{{[^}}]*\\}}\\s*from\\s+["'][^"']+["'];?\\s*$/gm, '');
+          jsxSource = jsxSource.replace(/^export\\s+default\\s+/gm, '');
+
+          var umdShim = 'const {{ useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo }} = React;\\n'
+            + 'const _LucideAll = window.lucideReact;\\n'
+            + 'const {{ ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown }} = window.lucideReact;\\n';
+          jsxSource = umdShim + jsxSource;
+
+          // Instead of mounting App, expose a render function for gallery previews.
+          // This runs inside the eval scope so VirtualSlide is accessible.
+          jsxSource += '\\n;window.__VelaRenderSlide = function(container, slide) {{' +
+            'var root = window._createRoot(container);' +
+            'root.render(React.createElement(VirtualSlide, {{ slide: slide, mode: "fit-width" }}));' +
+            '}};\\n';
+
+          try {{
+            var code = Babel.transform(jsxSource, {{
+              presets: ['react'],
+              filename: 'vela.jsx'
+            }}).code;
+
+            new Function(code)();
+          }} catch(e) {{
+            console.error('[vela-gallery] Engine boot failed:', e);
+            return;
+          }}
+
+          // Render each deck's first slide into its card
+          deckFiles.forEach(function(d, i) {{
+            var deckData = deckDataArr[i];
+            if (!deckData) return;
+
+            // Extract first slide from deck structure
+            var firstSlide = null;
+            var lanes = deckData.lanes || [];
+            for (var li = 0; li < lanes.length && !firstSlide; li++) {{
+              var items = lanes[li].items || [];
+              for (var ii = 0; ii < items.length && !firstSlide; ii++) {{
+                var slides = items[ii].slides || [];
+                if (slides.length) firstSlide = slides[0];
+              }}
+            }}
+            if (!firstSlide) return;
+
+            // Create a container for the live slide render
+            var liveDiv = document.createElement('div');
+            liveDiv.className = 'vela-live-slide';
+            d.el.appendChild(liveDiv);
+
+            try {{
+              window.__VelaRenderSlide(liveDiv, firstSlide);
+              // Fade in after a tick to allow React to paint
+              requestAnimationFrame(function() {{
+                requestAnimationFrame(function() {{
+                  d.el.classList.add('live');
+                }});
+              }});
+            }} catch(e) {{
+              console.error('[vela-gallery] Slide render failed for ' + d.filename + ':', e);
+            }}
+          }});
+        }}
+        boot();
+      }}).catch(function(err) {{
+        console.error('[vela-gallery] Preview load failed:', err);
+      }});
+    }})();
+  </script>
 </body>
 </html>'''
 
