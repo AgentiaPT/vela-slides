@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.5";
+const VELA_VERSION = "12.6";
 const VELA_CHANGELOG = [
+  { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails — replaces raw title flash before slide renders." },
   { v: "12.5", d: "Security: add symlink escape checks to save/upload endpoints for consistency with GET handler. Replace cmd.exe browser launch with webbrowser.open()." },
   { v: "12.4", d: "Rename vela-template.jsx → vela.jsx. Consolidate demo deck under skills/. Add themed example decks (startup-pitch, tech-talk, course-training, business-report)." },
   { v: "12.3", d: "Security hardening: DNS rebinding protection, path traversal on /poll/, symlink escape checks, safe Content-Length parsing, security headers, bounded thread pool, XSS-safe deck name injection, no info leakage." },

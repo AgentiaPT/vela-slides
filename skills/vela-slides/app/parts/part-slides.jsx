@@ -544,6 +544,37 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   );
 }
 
+// ━━━ Gallery Thumbnail — shimmer loading overlay until slide renders ━━━
+const GALLERY_SHIMMER_ID = "vela-gallery-shimmer";
+function _ensureGalleryShimmer() {
+  if (document.getElementById(GALLERY_SHIMMER_ID)) return;
+  const style = document.createElement("style");
+  style.id = GALLERY_SHIMMER_ID;
+  style.textContent = `@keyframes velaGalleryShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}`;
+  document.head.appendChild(style);
+}
+function GalleryThumb({ slide, slideIdx, total, branding }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    _ensureGalleryShimmer();
+    const raf = requestAnimationFrame(() => { requestAnimationFrame(() => { setLoaded(true); }); });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const shimmerBg = T.isDark
+    ? "linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%)"
+    : "linear-gradient(90deg, rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.07) 50%, rgba(0,0,0,0.03) 75%)";
+  return (
+    <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
+      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
+      {!loaded && (
+        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: slide?.bg || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
+          <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ━━━ Gallery View — slide sorter overlay in fullscreen ━━━━━━━━━━━━
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
 function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
@@ -719,9 +750,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
-                    <VirtualSlide slide={s.slide} index={s.slideIdx} total={allSlides.length} branding={branding} editable={false} mode="fit-width" bordered />
-                  </div>
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
