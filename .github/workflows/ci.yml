@@ -68,8 +68,8 @@ jobs:
 
           echo "✅ Version bumped from $BASE_VERSION → $PR_VERSION."
 
-  e2e:
-    name: E2E UI Tests
+  test:
+    name: Test Suite
     runs-on: ubuntu-latest
 
     steps:
@@ -84,46 +84,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Install dependencies
-        run: |
-          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.52.0
-          npx playwright install --with-deps chromium
-
-      - name: Run Review Mode e2e tests
-        id: e2e
-        run: |
-          set +e
-          start_time=$(date +%s)
-          output=$(node tests/test_review_ui.cjs 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
-          failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: Run unit tests
         id: unit
@@ -228,6 +188,36 @@ jobs:
           echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
           exit $exit_code
 
+      - name: Install e2e dependencies
+        if: always()
+        run: |
+          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.52.0
+          npx playwright install --with-deps chromium
+
+      - name: Run e2e UI tests
+        id: e2e
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(node tests/test_review_ui.cjs 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+          failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
       - name: Post test status comment on PR
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -237,13 +227,13 @@ jobs:
             const integrationExit = '${{ steps.integration.outputs.exit_code }}';
             const serverExit = '${{ steps.server.outputs.exit_code }}';
             const concatExit = '${{ steps.concat.outputs.exit_code }}';
-            // e2e results come from a separate job — not available here
-            // They report independently in the checks UI
+            const e2eExit = '${{ steps.e2e.outputs.exit_code }}';
 
             const unitOutput = `${{ steps.unit.outputs.output }}`;
             const integrationOutput = `${{ steps.integration.outputs.output }}`;
             const serverOutput = `${{ steps.server.outputs.output }}`;
             const concatOutput = `${{ steps.concat.outputs.output }}`;
+            const e2eOutput = `${{ steps.e2e.outputs.output }}`;
 
             const unitPassed = '${{ steps.unit.outputs.passed }}' || '0';
             const unitFailed = '${{ steps.unit.outputs.failed }}' || '0';
@@ -255,20 +245,23 @@ jobs:
             const srvFailed = '${{ steps.server.outputs.failed }}' || '0';
             const srvTime = '${{ steps.server.outputs.elapsed }}' || '?';
             const concatTime = '${{ steps.concat.outputs.elapsed }}' || '?';
+            const e2ePassed = '${{ steps.e2e.outputs.passed }}' || '0';
+            const e2eFailed = '${{ steps.e2e.outputs.failed }}' || '0';
+            const e2eTime = '${{ steps.e2e.outputs.elapsed }}' || '?';
 
             const sha = '${{ github.event.pull_request.head.sha }}'.slice(0, 7);
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
-            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && concatExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && concatExit === '0' && e2eExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
 
-            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed);
-            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed);
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(e2ePassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(e2eFailed);
             const totalTests = totalPassed + totalFailed;
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 
-            let body = `## 🧪 CI Test Results — Python 3.12\n\n`;
+            let body = `## 🧪 CI Test Results — Python 3.12 + Node 22\n\n`;
             body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
             if (totalFailed > 0) body += `, ${totalFailed} failed`;
             body += `\n\n`;
@@ -276,6 +269,7 @@ jobs:
             body += `| Unit Tests | ${status(unitExit)} | ${unitPassed} passed${unitFailed !== '0' ? ', ' + unitFailed + ' failed' : ''} | ${unitTime} |\n`;
             body += `| Integration Tests | ${status(integrationExit)} | ${intPassed} passed${intFailed !== '0' ? ', ' + intFailed + ' failed' : ''} | ${intTime} |\n`;
             body += `| Server Tests | ${status(serverExit)} | ${srvPassed} passed${srvFailed !== '0' ? ', ' + srvFailed + ' failed' : ''} | ${srvTime} |\n`;
+            body += `| E2E UI Tests | ${status(e2eExit)} | ${e2ePassed} passed${e2eFailed !== '0' ? ', ' + e2eFailed + ' failed' : ''} | ${e2eTime} |\n`;
             body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
 
             // Add error details for failed steps
@@ -283,6 +277,7 @@ jobs:
             if (unitExit !== '0') failures.push({ name: 'Unit Tests', output: unitOutput });
             if (integrationExit !== '0') failures.push({ name: 'Integration Tests', output: integrationOutput });
             if (serverExit !== '0') failures.push({ name: 'Server Tests', output: serverOutput });
+            if (e2eExit !== '0') failures.push({ name: 'E2E UI Tests', output: e2eOutput });
             if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
 
             if (failures.length > 0) {
