@@ -10,20 +10,22 @@
           "slides": [
             {
               "title": "Title Slide",
-              "bg": "#0a1f1a",
-              "bgGradient": "linear-gradient(135deg, #0a1f1a 0%, #0f2922 50%, #0a1f1a 100%)",
+              "bg": "#022c22",
+              "bgGradient": "linear-gradient(150deg, #022c22 0%, #064e3b 40%, #0f766e 100%)",
               "color": "#d1fae5",
               "accent": "#34d399",
-              "padding": "60px 80px",
+              "padding": "48px 80px",
               "duration": 30,
-              "layout": "center",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "MODULE 3", "icon": "BookOpen", "color": "#34d399", "bg": "#34d39915", "border": "#34d39940" },
-                { "type": "spacer", "h": 8 },
-                { "type": "heading", "text": "Introduction to Prompt Engineering", "size": "3xl", "align": "center" },
-                { "type": "text", "text": "AI Foundations Course — Spring 2026", "size": "lg", "color": "#6ee7b7", "align": "center" },
-                { "type": "spacer", "h": 20 },
-                { "type": "icon-row", "items": [
+                { "type": "badge", "text": "MODULE 3", "icon": "BookOpen", "color": "#022c22", "bg": "#34d399", "border": "#34d399" },
+                { "type": "spacer", "h": 16 },
+                { "type": "heading", "text": "Introduction to Prompt Engineering", "size": "3xl" },
+                { "type": "spacer", "h": 4 },
+                { "type": "text", "text": "AI Foundations Course — Spring 2026", "size": "lg", "color": "#6ee7b7" },
+                { "type": "spacer", "h": 24 },
+                { "type": "icon-row", "iconColor": "#34d399", "iconBg": "#34d39920", "items": [
                   { "icon": "Clock", "text": "90 Minutes" },
                   { "icon": "Wrench", "text": "Hands-on" },
                   { "icon": "Award", "text": "Certificate" }

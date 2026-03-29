@@ -10,20 +10,22 @@
           "slides": [
             {
               "title": "Title",
-              "bg": "#0a1628",
-              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0f2035 50%, #0a1628 100%)",
-              "color": "#e2e8f0",
-              "accent": "#06b6d4",
-              "padding": "60px 80px",
+              "bg": "#0c4a6e",
+              "bgGradient": "linear-gradient(135deg, #0c4a6e 0%, #155e75 35%, #164e63 65%, #0e7490 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "48px 80px",
               "duration": 30,
-              "layout": "center",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "TECHCONF 2026", "icon": "Radio", "color": "#22d3ee", "bg": "#22d3ee15", "border": "#22d3ee40" },
-                { "type": "spacer", "h": 8 },
-                { "type": "heading", "text": "Building Resilient APIs with Edge Computing", "size": "3xl", "align": "center" },
-                { "type": "text", "text": "Sarah Chen — Principal Engineer, Cloudfront Systems", "size": "lg", "color": "#94a3b8", "align": "center" },
+                { "type": "badge", "text": "TECHCONF 2026", "icon": "Radio", "color": "#0c4a6e", "bg": "#22d3ee", "border": "#22d3ee" },
                 { "type": "spacer", "h": 16 },
-                { "type": "icon-row", "items": [
+                { "type": "heading", "text": "Building Resilient APIs with Edge Computing", "size": "3xl" },
+                { "type": "spacer", "h": 8 },
+                { "type": "text", "text": "Sarah Chen — Principal Engineer, Cloudfront Systems", "size": "lg", "color": "#a5f3fc" },
+                { "type": "spacer", "h": 24 },
+                { "type": "icon-row", "iconColor": "#67e8f9", "iconBg": "#22d3ee25", "items": [
                   { "icon": "Clock", "text": "45 min" },
                   { "icon": "Signal", "text": "Intermediate" },
                   { "icon": "Play", "text": "Live Demo" }
