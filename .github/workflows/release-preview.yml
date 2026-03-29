@@ -1,0 +1,150 @@
+name: Release Preview
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-preview:
+    name: Build Preview Release
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/release-preview')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: React to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            });
+
+      - name: Get PR branch
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput('ref', pr.head.ref);
+            core.setOutput('sha', pr.head.sha.slice(0, 7));
+            core.setOutput('number', context.issue.number);
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: python3 tests/test_vela.py
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(python3 -c "
+          import re
+          content = open('skills/vela-slides/app/parts/part-imports.jsx').read()
+          m = re.search(r'const VELA_VERSION\s*=\s*\"([^\"]+)\"', content)
+          print(m.group(1) if m else 'unknown')
+          ")
+          TAG="v${VERSION}-rc.pr${{ steps.pr.outputs.number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION → Tag: $TAG"
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          NOTES=$(python3 -c "
+          import re
+          content = open('skills/vela-slides/app/parts/part-imports.jsx').read()
+          m = re.search(r'const VELA_CHANGELOG\s*=\s*\[([^\]]+)\]', content, re.DOTALL)
+          if m:
+              entry = re.search(r'd:\s*\"([^\"]+)\"', m.group(1))
+              print(entry.group(1) if entry else 'Preview release')
+          else:
+              print('Preview release')
+          ")
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build skill ZIP
+        run: |
+          python3 skills/vela-slides/scripts/concat.py skills/vela-slides/app/parts skills/vela-slides/app/vela.jsx
+          cd skills
+          zip -r ../vela-slides-skill-${{ steps.version.outputs.tag }}.zip vela-slides/
+          cd ..
+          echo "Built: vela-slides-skill-${{ steps.version.outputs.tag }}.zip"
+          ls -lh vela-slides-skill-*.zip
+
+      - name: Delete existing preview release
+        run: |
+          gh release delete "${{ steps.version.outputs.tag }}" --yes 2>/dev/null || true
+          git push --delete origin "${{ steps.version.outputs.tag }}" 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create preview release
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            vela-slides-skill-${{ steps.version.outputs.tag }}.zip \
+            --title "Vela Slides ${{ steps.version.outputs.version }} (Preview PR #${{ steps.pr.outputs.number }})" \
+            --notes "## Preview Release — PR #${{ steps.pr.outputs.number }}
+
+          > **This is a pre-release for testing.** The official release will be created when the PR is merged to main.
+
+          ${{ steps.changelog.outputs.notes }}
+
+          ### Installation
+
+          1. Download \`vela-slides-skill-${{ steps.version.outputs.tag }}.zip\` below
+          2. In Claude.ai → **Customize → Skills** → **\"+\"** → **Upload a skill**
+          3. Upload the ZIP — done!
+
+          ---
+          📌 Branch: \`${{ steps.pr.outputs.ref }}\` · Commit: \`${{ steps.pr.outputs.sha }}\`" \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR with download link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.version.outputs.tag }}';
+            const version = '${{ steps.version.outputs.version }}';
+            const sha = '${{ steps.pr.outputs.sha }}';
+            const releaseUrl = `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+            const zipUrl = `${releaseUrl}/vela-slides-skill-${tag}.zip`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ⛵ Preview Release Ready
+
+            **Vela Slides v${version}** — [\`${tag}\`](${releaseUrl})
+
+            📦 [Download ZIP](${releaseUrl}) · 📌 Commit: \`${sha}\`
+
+            Install in Claude.ai: **Customize → Skills → + → Upload a skill**
+
+            <!-- vela-preview-release -->`,
+            });
