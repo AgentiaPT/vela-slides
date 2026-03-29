@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.6";
+const VELA_VERSION = "12.7";
 const VELA_CHANGELOG = [
+  { v: "12.7", d: "Review Mode: inline comments system — annotate slides and modules with review comments. Comments panel, visual badges, anchor quoting, batch resolve/clear. Vera list_comments/resolve_comment tools. Notes migrated to structured comments." },
   { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails — replaces raw title flash before slide renders." },
   { v: "12.5", d: "Security: add symlink escape checks to save/upload endpoints for consistency with GET handler. Replace cmd.exe browser launch with webbrowser.open()." },
   { v: "12.4", d: "Rename vela-template.jsx → vela.jsx. Consolidate demo deck under skills/. Add themed example decks (startup-pitch, tech-talk, course-training, business-report)." },
@@ -354,6 +355,22 @@ function sanitizeBlock(block) {
   return clean;
 }
 
+const VALID_COMMENT_STATUSES = new Set(["open", "resolved"]);
+const MAX_COMMENTS = 500;
+
+function sanitizeComment(c) {
+  if (!c || typeof c !== "object") return null;
+  return {
+    id: typeof c.id === "string" ? c.id.slice(0, 40) : "c_" + uid(),
+    text: sanitizeString(c.text || "", 1000),
+    anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
+    blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
+    status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
+  };
+}
+
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
@@ -363,15 +380,22 @@ function sanitizeSlide(slide) {
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
+  if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   return clean;
 }
 
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
+  const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
+  // Migrate legacy notes to a module-level comment if no comments exist
+  if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
+    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+  }
   return {
     id: uid(),
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
+    comments,
     status: VALID_STATUSES.has(item.status) ? item.status : "todo",
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
@@ -484,7 +508,7 @@ const BASE_SIZES = { xs: "0.85rem", sm: "0.95rem", md: "1.05rem", lg: "1.2rem", 
 // ━━━ Style Factories & Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const saveKV = (k, v) => window.storage.set(k, JSON.stringify(v)).catch((e) => { dbg("Storage error:", e); });
 const delKV = (k) => window.storage.delete(k).catch((e) => { dbg("Storage delete error:", e); });
-const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
+const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
 
 // Distributed storage: master has items with metadata only (no slides)
 const extractMaster = (s) => {
@@ -498,6 +522,46 @@ const extractMaster = (s) => {
     })),
   };
 };
+// Collect all comments across items and slides, enriched with context
+function collectComments(lanes, filter) {
+  const results = [];
+  for (const lane of lanes) {
+    for (const item of lane.items) {
+      for (const c of (item.comments || [])) {
+        if (!filter || filter(c)) results.push({ ...c, itemId: item.id, itemTitle: item.title, laneTitle: lane.title, slideIndex: null });
+      }
+      for (let si = 0; si < (item.slides || []).length; si++) {
+        for (const c of (item.slides[si].comments || [])) {
+          if (!filter || filter(c)) results.push({ ...c, itemId: item.id, itemTitle: item.title, laneTitle: lane.title, slideIndex: si });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// Format comments as structured markdown for agent consumption
+function formatCommentsForAgent(lanes) {
+  const open = collectComments(lanes, (c) => c.status === "open");
+  if (open.length === 0) return "No open comments.";
+  const grouped = {};
+  for (const c of open) {
+    const key = c.itemTitle;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(c);
+  }
+  let md = `## Comments (${open.length} open)\n`;
+  for (const [mod, comments] of Object.entries(grouped)) {
+    md += `\n### Module: "${mod}"\n`;
+    for (const c of comments) {
+      const loc = c.slideIndex != null ? `Slide ${c.slideIndex + 1}` : "(module)";
+      const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+      md += `- ${loc}${anchor}: ${c.text}\n`;
+    }
+  }
+  return md;
+}
+
 // All item IDs across all lanes
 const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (const i of l.items) ids.push(i.id); return ids; };
 // Find an item by id across lanes

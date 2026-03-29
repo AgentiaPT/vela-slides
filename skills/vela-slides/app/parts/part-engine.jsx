@@ -317,6 +317,29 @@ function executeTool(name, input, ws, attachedImages) {
       return parts.length > 0 ? `✅ ${parts.join(", ")}${scope !== "all" ? ` (scope: ${scope})` : ""}.` : "No slides matched the scope.";
     }
 
+    // ── Comment Tools ──────────────────────────────────────────────
+    case "list_comments": {
+      const statusFilter = input.status || "open";
+      const all = collectComments(ws.lanes, statusFilter === "all" ? null : (c) => c.status === statusFilter);
+      if (all.length === 0) return `No ${statusFilter === "all" ? "" : statusFilter + " "}comments found.`;
+      const lines = all.map((c) => {
+        const loc = c.slideIndex != null ? `slide ${c.slideIndex + 1}` : "(module)";
+        const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+        return `[${c.status}] "${c.itemTitle}" ${loc}${anchor}: ${c.text} (id: ${c.id})`;
+      });
+      const jumps = all.filter((c) => c.slideIndex != null).slice(0, 10).map((c) => ({ itemId: c.itemId, title: `Comment: ${c.text.slice(0, 30)}`, slideIdx: c.slideIndex }));
+      return { text: `${all.length} comment(s):\n${lines.join("\n")}`, jump: jumps };
+    }
+    case "resolve_comment": {
+      const cid = input.id || input.comment_id;
+      if (!cid) return "Missing comment id.";
+      for (const l of ws.lanes) for (const item of l.items) {
+        for (const c of (item.comments || [])) { if (c.id === cid) { c.status = "resolved"; c.resolvedAt = now(); return `Resolved comment: "${c.text.slice(0, 50)}"`; } }
+        for (const s of (item.slides || [])) { for (const c of (s.comments || [])) { if (c.id === cid) { c.status = "resolved"; c.resolvedAt = now(); return `Resolved comment: "${c.text.slice(0, 50)}"`; } } }
+      }
+      return `Comment "${cid}" not found.`;
+    }
+
     default: return `Unknown tool: ${name}`;
   }
 }
@@ -375,13 +398,24 @@ When you're done or just chatting:
 - find_replace: {find: "old text", replace: "new text", scope?: "all"|"module:Name"|"lane:Name"} — deck-wide text replacement. Case-insensitive. Modifies slides in-place and returns jump links to changed slides. Do NOT call set_slides after find_replace — it already applied the changes.
 - deck_stats: {} — total slides, time, block distribution, quality issues (missing durations, overcrowded slides, bland layouts).
 - batch_restyle: {scope?: "all"|"module:Name"|"lane:Name", bg?, bgGradient?, color?, accent?, padding?, gap?, align?, block_patch?: {type: "bullets", props: {size: "lg"}}} — apply style across all matching slides. block_patch targets specific block types. Modifies in-place — do NOT follow with set_slides.
+- list_comments: {status?: "open"|"resolved"|"all"} — list review comments/revision requests left by the user. Returns comment IDs for use with resolve_comment.
+- resolve_comment: {id: string} — mark a review comment as resolved after addressing it. Use the comment ID from list_comments.
 
 ## ATTACHED IMAGES
 When the user pastes or drops images, they're sent as vision content. Use add_image_to_slide to place them on slides.
 Each image requires its OWN add_image_to_slide tool call. NEVER claim an image was added without an actual tool call.
 
 ## BOARD STATE
-${st}${ctx}${brandingState}
+${st}${ctx}${brandingState}${(() => {
+  const openComments = collectComments(lanes, (c) => c.status === "open");
+  if (openComments.length === 0) return "";
+  const lines = openComments.slice(0, 20).map((c) => {
+    const loc = c.slideIndex != null ? `slide ${c.slideIndex + 1}` : "(module)";
+    const anchor = c.anchor ? ` ["${c.anchor}"]` : "";
+    return `- "${c.itemTitle}" ${loc}${anchor}: ${c.text} (id: ${c.id})`;
+  });
+  return `\n\n## OPEN REVIEW COMMENTS (${openComments.length})\nThe user has left these revision requests during review. Address them when asked to "fix comments" or "address feedback". Use resolve_comment after fixing each one.\n${lines.join("\n")}`;
+})()}
 
 ## CANVAS
 Slides render at 960×540px (16:9). Content MUST fit. Use padding "36px 48px" baseline. Limit 5-7 blocks per slide to avoid overflow.

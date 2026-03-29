@@ -1,0 +1,73 @@
+name: Release Preview (Trigger)
+
+# Lightweight handler: validates the /release-preview command, checks permissions,
+# then dispatches the actual build workflow. Never checks out PR code.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+  actions: write
+
+jobs:
+  trigger:
+    name: Validate & Dispatch
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/release-preview')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check commenter permissions
+        id: auth
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login,
+            });
+            const level = perm.permission;
+            if (level !== 'admin' && level !== 'write') {
+              core.setFailed(`User ${context.payload.comment.user.login} has '${level}' permission — need write or admin.`);
+              return;
+            }
+            core.info(`User ${context.payload.comment.user.login} has '${level}' permission — authorized.`);
+
+      - name: React to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            });
+
+      - name: Get PR details and dispatch build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release-preview.yml',
+              ref: pr.head.ref,
+              inputs: {
+                pr_number: String(context.issue.number),
+                pr_sha: pr.head.sha,
+                pr_ref: pr.head.ref,
+              },
+            });
+
+            core.info(`Dispatched release-preview build for PR #${context.issue.number} @ ${pr.head.sha.slice(0, 7)}`);

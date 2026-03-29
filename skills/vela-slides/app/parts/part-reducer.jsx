@@ -1,8 +1,8 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -26,7 +26,7 @@ function innerReducer(state, a) {
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
-    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
+    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -75,6 +75,60 @@ function innerReducer(state, a) {
     case "SET_FULLSCREEN": return { ...state, fullscreen: a.value, fontScale: a.value ? state.fontScale : 1 };
     case "SET_FONT_SCALE": return { ...state, fontScale: a.value };
     case "DESELECT": return { ...state, selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1 };
+    // ── Comment Actions ──
+    case "ADD_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const cmt = { id: "c_" + uid(), text: (a.text || "").slice(0, 1000), anchor: a.anchor ? String(a.anchor).slice(0, 200) : null, blockIndex: typeof a.blockIndex === "number" ? a.blockIndex : null, status: "open", createdAt: now(), resolvedAt: null };
+      if (a.slideIndex == null) {
+        return mapItems((i) => i.id === a.itemId ? { ...i, comments: [...(i.comments || []), cmt].slice(0, MAX_COMMENTS) } : i);
+      }
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: [...(s.comments || []), cmt].slice(0, MAX_COMMENTS) } : s) } : i);
+    }
+    case "UPDATE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const updCmt = (c) => c.id === a.commentId ? { ...c, ...(a.text != null ? { text: a.text.slice(0, 1000) } : {}), ...(a.anchor !== undefined ? { anchor: a.anchor ? String(a.anchor).slice(0, 200) : null } : {}) } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(updCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(updCmt) } : s) } : i);
+    }
+    case "RESOLVE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const resCmt = (c) => c.id === a.commentId ? { ...c, status: "resolved", resolvedAt: now() } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(resCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(resCmt) } : s) } : i);
+    }
+    case "REOPEN_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const reopCmt = (c) => c.id === a.commentId ? { ...c, status: "open", resolvedAt: null } : c;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).map(reopCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).map(reopCmt) } : s) } : i);
+    }
+    case "REMOVE_COMMENT": {
+      _dirtyMods.add(a.itemId);
+      const delCmt = (c) => c.id !== a.commentId;
+      if (a.slideIndex == null) return mapItems((i) => i.id === a.itemId ? { ...i, comments: (i.comments || []).filter(delCmt) } : i);
+      return mapItems((i) => i.id === a.itemId ? { ...i, slides: i.slides.map((s, idx) => idx === a.slideIndex ? { ...s, comments: (s.comments || []).filter(delCmt) } : s) } : i);
+    }
+    case "RESOLVE_ALL_COMMENTS": {
+      const ts = now();
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        const hasOpen = (i.comments || []).some((c) => c.status === "open") || (i.slides || []).some((s) => (s.comments || []).some((c) => c.status === "open"));
+        if (!hasOpen) return i;
+        _dirtyMods.add(i.id);
+        const resAll = (c) => c.status === "open" ? { ...c, status: "resolved", resolvedAt: ts } : c;
+        return { ...i, comments: (i.comments || []).map(resAll), slides: (i.slides || []).map((s) => ({ ...s, comments: (s.comments || []).map(resAll) })) };
+      }) })) };
+    }
+    case "CLEAR_RESOLVED_COMMENTS": {
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        const hasResolved = (i.comments || []).some((c) => c.status === "resolved") || (i.slides || []).some((s) => (s.comments || []).some((c) => c.status === "resolved"));
+        if (!hasResolved) return i;
+        _dirtyMods.add(i.id);
+        const keepOpen = (c) => c.status !== "resolved";
+        return { ...i, comments: (i.comments || []).filter(keepOpen), slides: (i.slides || []).map((s) => ({ ...s, comments: (s.comments || []).filter(keepOpen) })) };
+      }) })) };
+    }
+    case "SET_REVIEW_MODE": return { ...state, reviewMode: a.value };
+    case "SET_COMMENTS_PANEL": return { ...state, commentsPanelOpen: a.open };
     case "SET_CHAT": return { ...state, chatOpen: a.open };
     case "RESET_CHAT": return { ...state, chatMessages: [{ role: "assistant", content: "Chat cleared. What's next? ⛵🖖", ts: now() }], chatLoading: false };
     case "NEW_DECK": {

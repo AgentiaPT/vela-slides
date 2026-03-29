@@ -37,6 +37,8 @@ const TOOL_META = {
   set_slides: { icon: "🎬", label: "Set slides" }, add_slide: { icon: "🎬", label: "Add slide" }, edit_slide: { icon: "✏️", label: "Edit slide" },
   add_image_to_slide: { icon: "🖼", label: "Image" }, clear_all: { icon: "💥", label: "Clear" },
   set_branding: { icon: "🎨", label: "Brand" },
+  list_comments: { icon: "💬", label: "Comments" },
+  resolve_comment: { icon: "✅", label: "Resolve" },
 };
 
 function ToolTraceCard({ tool, dispatch }) {

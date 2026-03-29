@@ -252,6 +252,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
   const [notesOpen, setNotesOpen] = useState(false);
+  const [commentText, setCommentText] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
@@ -300,6 +301,10 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   };
 
   const hasNotes = !!(item.notes && item.notes.trim());
+  const itemComments = item.comments || [];
+  const slideComments = (item.slides || []).flatMap((s, si) => (s.comments || []).map((c) => ({ ...c, slideIndex: si })));
+  const allItemComments = [...itemComments.map((c) => ({ ...c, slideIndex: null })), ...slideComments];
+  const openCommentCount = allItemComments.filter((c) => c.status === "open").length;
   const hasSlides = item.slides.length > 0;
   const itemTime = item.slides.reduce((a, s) => a + (s.duration || 0), 0);
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
@@ -334,17 +339,40 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
-        <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide notes" : "Edit notes"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: hasNotes ? 1 : 0.3, color: hasNotes ? T.accent : T.textDim, lineHeight: 1 }}>📝</span>
+        {openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
+        <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_ITEM", id: item.id }); }} style={{ fontSize: 12, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3 }}>×</span>
       </div>
       {!collapsed && notesOpen && <div style={{ padding: "2px 12px 6px 38px" }} onClick={(e) => e.stopPropagation()}>
-        <textarea
-          value={item.notes || ""}
-          onChange={(e) => dispatch({ type: "SET_ITEM_NOTES", id: item.id, notes: e.target.value })}
-          placeholder="Spec notes — talking points, key messages, constraints…"
-          style={{ width: "100%", minHeight: 48, maxHeight: 140, padding: "6px 8px", fontSize: 12, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }}
-        />
+        {/* Existing comments */}
+        {allItemComments.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 4 }}>
+          {allItemComments.map((c) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 4, padding: "3px 0", opacity: c.status === "resolved" ? 0.45 : 1 }}>
+              <span onClick={() => {
+                const payload = { itemId: item.id, commentId: c.id, slideIndex: c.slideIndex };
+                dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", ...payload });
+              }} style={{ cursor: "pointer", fontSize: 11, flexShrink: 0, lineHeight: 1, marginTop: 1 }} title={c.status === "open" ? "Resolve" : "Reopen"}>{c.status === "open" ? "○" : "●"}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 11, fontFamily: FONT.body, color: T.text, textDecoration: c.status === "resolved" ? "line-through" : "none", wordBreak: "break-word" }}>{c.text}</span>
+                {c.slideIndex != null && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, marginLeft: 4 }}>s{c.slideIndex + 1}</span>}
+                {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, marginLeft: 4 }}>"{c.anchor}"</span>}
+              </div>
+              <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: item.id, commentId: c.id, slideIndex: c.slideIndex })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.4, flexShrink: 0 }}>×</span>
+            </div>
+          ))}
+        </div>}
+        {/* Add comment input */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <input
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } if (e.key === "Escape") { setCommentText(""); setNotesOpen(false); } }}
+            placeholder="Add comment..."
+            style={S.input({ padding: "3px 6px", fontSize: 11 })}
+          />
+          <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
+        </div>
       </div>}
       {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} />}
       {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} />}

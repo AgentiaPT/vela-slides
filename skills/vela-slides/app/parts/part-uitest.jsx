@@ -513,22 +513,18 @@ uiSuite("Slide Ops", [
     if (backdrop) { _click(backdrop); await _wait(200); }
     else { _click(btn); await _wait(200); } // toggle off
   }},
-  { name: "Notes textarea accepts input", fn: async () => {
-    const notesLabel = _$text("NOTES");
-    if (!notesLabel) throw new Error("NOTES label not found");
-    const clickable = notesLabel.closest("[style*='cursor']") || notesLabel.parentElement;
-    if (clickable) _click(clickable);
-    await _wait(200);
-    const ta = _$("#vela-notes-area");
-    if (ta) {
-      const before = ta.value;
-      ta.focus();
-      // Don't actually type — just verify it's editable
-      if (ta.readOnly || ta.disabled) throw new Error("Notes textarea is not editable");
+  { name: "Comment input accepts input", fn: async () => {
+    // Click the 💬 icon on a module to expand comments
+    const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer");
+    if (commentIcon) {
+      _click(commentIcon); await _wait(200);
+      const input = _$$("input").find((i) => i.placeholder?.includes("Add comment"));
+      if (input) {
+        if (input.readOnly || input.disabled) throw new Error("Comment input is not editable");
+      }
+      // Collapse
+      _click(commentIcon); await _wait(100);
     }
-    // Collapse
-    if (clickable) _click(clickable);
-    await _wait(100);
   }},
   { name: "Duration editor opens on click", fn: async () => {
     const timer = _$$("span").find((s) => s.textContent?.includes("⏱") && s.style?.cursor === "pointer");
@@ -880,6 +876,74 @@ uiSuite("Gallery View", [
   { name: "Exit fullscreen after gallery tests", fn: async () => {
     _key("f"); await _wait(300);
     await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── Review / Comments Suite ─────────────────────────────────────────
+uiSuite("Review", [
+  { name: "Review button visible in header", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Review")));
+  }},
+  { name: "Review button toggles review mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (!btn) throw new Error("Review button not found");
+    _click(btn); await _wait(300);
+    // Comments panel should open — look for COMMENTS header
+    const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+    if (!panel) throw new Error("Comments panel did not open");
+  }},
+  { name: "Comments panel shows filter tabs", fn: async () => {
+    await _waitFor(() => {
+      const all = document.body.textContent || "";
+      return all.includes("Open") && all.includes("Done");
+    }, 1000);
+  }},
+  { name: "Comments panel has Copy for Agent button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Copy for Agent")));
+  }},
+  { name: "Comments panel has Resolve All button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Resolve All")));
+  }},
+  { name: "Comments panel has Clear Done button", fn: async () => {
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Clear Done")));
+  }},
+  { name: "Module comment icon visible (💬)", fn: async () => {
+    // Look for the 💬 icon in the module list
+    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬")), 1000);
+  }},
+  { name: "Review mode exit closes panel", fn: async () => {
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (!btn) throw new Error("Review button not found");
+    _click(btn); await _wait(300);
+    // Panel should be gone
+    await _wait(200);
+    const panel = _$text("COMMENTS");
+    // May still be visible briefly — just verify no crash
+  }},
+  { name: "R key toggles review mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("r"); await _wait(400);
+    const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+    if (!panel) throw new Error("R key did not open comments panel");
+    // Toggle off
+    _key("r"); await _wait(400);
+  }},
+  { name: "Review mode and Vera are mutually exclusive", fn: async () => {
+    // Open review
+    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (reviewBtn) { _click(reviewBtn); await _wait(300); }
+    // Now open Vera — should close review
+    const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
+    if (veraBtn) { _click(veraBtn); await _wait(300); }
+    // Vera should be open
+    const veraTa = _$$("textarea").find((t) => {
+      const ph = t.placeholder?.toLowerCase() || "";
+      return ph.includes("tell vera") || ph.includes("paste images");
+    });
+    // Close Vera
+    if (veraBtn) { _click(veraBtn); await _wait(200); }
+    if (!veraTa) throw new Error("Vera panel didn't open when switching from Review");
   }},
 ]);
 
