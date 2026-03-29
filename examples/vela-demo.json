@@ -22,20 +22,21 @@
               "align": "center",
               "verticalAlign": "center",
               "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#60a5fa",
+              "bgGradient": "linear-gradient(140deg, #0f172a 0%, #1e1b4b 40%, #312e81 70%, #1e3a5f 100%)",
+              "color": "#f1f5f9",
+              "accent": "#818cf8",
               "blocks": [
                 {
                   "type": "spacer",
-                  "h": 32
+                  "h": 24
                 },
                 {
                   "type": "badge",
                   "text": "v10.2 · MARCH 2026",
                   "icon": "Sailboat",
-                  "color": "#60a5fa",
-                  "bg": "#60a5fa15",
-                  "border": "#60a5fa40"
+                  "color": "#c4b5fd",
+                  "bg": "#818cf820",
+                  "border": "#818cf850"
                 },
                 {
                   "type": "spacer",
@@ -66,7 +67,7 @@
                   "text": "AI-native presentations inside Claude.ai",
                   "size": "lg",
                   "align": "center",
-                  "color": "#94a3b8"
+                  "color": "#a5b4fc"
                 },
                 {
                   "type": "spacer",
@@ -76,12 +77,12 @@
                   "type": "text",
                   "text": "Think in slides. Let AI build them.\nEvery slide in this deck demonstrates the feature it describes.",
                   "size": "lg",
-                  "color": "#64748b",
+                  "color": "#7c8aaf",
                   "align": "center"
                 },
                 {
                   "type": "spacer",
-                  "h": 32
+                  "h": 24
                 }
               ]
             },

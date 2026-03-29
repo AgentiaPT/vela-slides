@@ -10,20 +10,20 @@
           "slides": [
             {
               "title": "Title",
-              "bg": "#1a0f00",
-              "bgGradient": "linear-gradient(135deg, #1a0f00 0%, #2d1b00 50%, #1a0f00 100%)",
-              "color": "#fef3c7",
-              "accent": "#f59e0b",
-              "padding": "60px 80px",
+              "bg": "#7c2d12",
+              "bgGradient": "linear-gradient(135deg, #431407 0%, #7c2d12 35%, #92400e 65%, #78350f 100%)",
+              "color": "#fff7ed",
+              "accent": "#fbbf24",
+              "padding": "48px 80px",
               "duration": 30,
               "layout": "center",
               "blocks": [
-                { "type": "badge", "text": "SERIES A", "icon": "Rocket", "color": "#f59e0b", "bg": "#f59e0b15", "border": "#f59e0b40" },
-                { "type": "spacer", "h": 8 },
+                { "type": "badge", "text": "SERIES A", "icon": "Rocket", "color": "#431407", "bg": "#fbbf24", "border": "#fbbf24" },
+                { "type": "spacer", "h": 12 },
                 { "type": "heading", "text": "NovaPay", "size": "4xl", "align": "center" },
-                { "type": "text", "text": "Instant cross-border payments for the gig economy", "size": "xl", "color": "#fde68a", "align": "center" },
+                { "type": "text", "text": "Instant cross-border payments for the gig economy", "size": "xl", "color": "#fed7aa", "align": "center" },
                 { "type": "spacer", "h": 20 },
-                { "type": "icon-row", "items": [
+                { "type": "icon-row", "iconColor": "#fbbf24", "iconBg": "#fbbf2420", "items": [
                   { "icon": "Globe", "text": "42 Countries" },
                   { "icon": "Zap", "text": "< 30s Settlement" },
                   { "icon": "Users", "text": "185K Users" },

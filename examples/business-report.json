@@ -10,21 +10,27 @@
           "slides": [
             {
               "title": "Title",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#6366f1",
-              "padding": "36px 48px",
+              "bg": "#1e1b4b",
+              "bgGradient": "linear-gradient(140deg, #1e1b4b 0%, #312e81 40%, #3b0764 100%)",
+              "color": "#e0e7ff",
+              "accent": "#a78bfa",
+              "padding": "48px 60px",
               "duration": 60,
+              "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "CONFIDENTIAL", "size": "sm" },
-                { "type": "heading", "text": "Q1 2026 Review", "size": "xl" },
-                { "type": "text", "text": "Product & Engineering — Quarterly Business Review", "size": "lg" },
+                { "type": "badge", "text": "CONFIDENTIAL", "icon": "Lock", "color": "#c4b5fd", "bg": "#a78bfa20", "border": "#a78bfa50" },
+                { "type": "spacer", "h": 12 },
+                { "type": "heading", "text": "Q1 2026 Review", "size": "3xl", "weight": "bold" },
+                { "type": "text", "text": "Product & Engineering — Quarterly Business Review", "size": "lg", "color": "#a5b4fc" },
+                { "type": "spacer", "h": 20 },
                 {
                   "type": "icon-row",
+                  "iconColor": "#c4b5fd",
+                  "iconBg": "#a78bfa20",
                   "items": [
-                    { "icon": "rocket", "label": "12 Releases" },
-                    { "icon": "server", "label": "99.7% Uptime" },
-                    { "icon": "trending-up", "label": "+18% ARR" }
+                    { "icon": "Rocket", "text": "12 Releases" },
+                    { "icon": "Server", "text": "99.7% Uptime" },
+                    { "icon": "TrendingUp", "text": "+18% ARR" }
                   ]
                 }
               ]
