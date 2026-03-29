@@ -102,10 +102,20 @@ function buildTestHTML() {
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const filePath = path.join(SERVE_DIR, req.url === '/' ? 'index.html' : req.url);
+      let requestedPath;
       try {
-        const data = fs.readFileSync(filePath);
-        const ext = path.extname(filePath);
+        const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+        requestedPath = urlObj.pathname === '/' ? 'index.html' : urlObj.pathname.replace(/^\/+/, '');
+      } catch {
+        res.writeHead(400); res.end('Bad request'); return;
+      }
+      const resolvedPath = path.resolve(SERVE_DIR, requestedPath);
+      if (!resolvedPath.startsWith(SERVE_DIR + path.sep) && resolvedPath !== path.join(SERVE_DIR, 'index.html')) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      try {
+        const data = fs.readFileSync(resolvedPath);
+        const ext = path.extname(resolvedPath);
         const ct = { '.html': 'text/html', '.js': 'application/javascript' }[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': ct });
         res.end(data);
