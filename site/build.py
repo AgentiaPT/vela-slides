@@ -18,6 +18,41 @@ Usage:
 import json, os, re, shutil, sys, html
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ━━━ CSS value sanitization ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Deck JSON colors are interpolated into HTML style attributes.
+# Without validation, a value like  red;" onmouseover="alert(1)
+# could break out of a style attribute and inject event handlers.
+
+_SAFE_CSS_COLOR_RE = re.compile(
+    r'^('
+    r'#[0-9A-Fa-f]{3,8}'                             # hex: #abc, #aabbcc, #aabbccdd
+    r'|rgba?\(\s*[\d.%,\s/]+\)'                       # rgb()/rgba()
+    r'|hsla?\(\s*[\d.deg,%\s/]+\)'                    # hsl()/hsla()
+    r'|transparent'
+    r'|currentColor'
+    r'|[a-zA-Z]{3,20}'                                # named colors (red, slateblue, …)
+    r')$', re.ASCII
+)
+
+_SAFE_CSS_GRADIENT_RE = re.compile(
+    r'^(linear|radial|conic)-gradient\([^;"\'>()]*\)$', re.ASCII
+)
+
+
+def _sanitize_css_color(value, fallback="#000000"):
+    """Return *value* if it looks like a safe CSS color/gradient, else *fallback*."""
+    if not isinstance(value, str):
+        return fallback
+    v = value.strip()
+    if not v:
+        return fallback
+    if _SAFE_CSS_COLOR_RE.match(v):
+        return v
+    if _SAFE_CSS_GRADIENT_RE.match(v):
+        return v
+    return fallback
+
 SKILL_DIR = os.path.join(ROOT, "skills", "vela-slides")
 TEMPLATE_JSX = os.path.join(SKILL_DIR, "app", "vela.jsx")
 EXAMPLES_DIR = os.path.join(ROOT, "examples")
@@ -84,10 +119,10 @@ def load_deck_meta(json_path):
         "slides": total_slides,
         "duration": total_duration,
         "lanes": len(lanes),
-        "bg": bg,
-        "accent": accent,
-        "color": color,
-        "bgGradient": bg_gradient,
+        "bg": _sanitize_css_color(bg, "#0f172a"),
+        "accent": _sanitize_css_color(accent, "#3b82f6"),
+        "color": _sanitize_css_color(color, "#e2e8f0"),
+        "bgGradient": _sanitize_css_color(bg_gradient, None) if bg_gradient else None,
         "filename": os.path.basename(json_path),
     }
 
