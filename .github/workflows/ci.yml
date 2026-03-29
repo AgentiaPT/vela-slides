@@ -68,6 +68,51 @@ jobs:
 
           echo "✅ Version bumped from $BASE_VERSION → $PR_VERSION."
 
+  e2e:
+    name: E2E UI Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          npm install react@18 react-dom@18 @babel/standalone lucide-react@0.344.0 playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run Review Mode e2e tests
+        id: e2e
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(node tests/test_review_ui.cjs 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+          failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -192,6 +237,8 @@ jobs:
             const integrationExit = '${{ steps.integration.outputs.exit_code }}';
             const serverExit = '${{ steps.server.outputs.exit_code }}';
             const concatExit = '${{ steps.concat.outputs.exit_code }}';
+            // e2e results come from a separate job — not available here
+            // They report independently in the checks UI
 
             const unitOutput = `${{ steps.unit.outputs.output }}`;
             const integrationOutput = `${{ steps.integration.outputs.output }}`;

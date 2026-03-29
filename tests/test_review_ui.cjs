@@ -1,18 +1,129 @@
 /**
- * Vela Slides — Review Mode / Comments UI Tests
- * Real Playwright end-to-end tests against a live app instance.
+ * Vela Slides — Review Mode / Comments UI Tests (Playwright e2e)
  *
- * Run: node tests/test_review_ui.cjs
- * Requires: npm install playwright react@18 react-dom@18 @babel/standalone
- *           Server running on localhost:8765 (see test setup below)
+ * Self-contained: builds the app, starts a local server, runs 32 tests.
+ *
+ * Usage:
+ *   node tests/test_review_ui.cjs              # auto-setup + run
+ *   node tests/test_review_ui.cjs --skip-setup  # reuse running server on :8765
+ *
+ * CI: the GitHub Actions workflow installs deps and calls this script.
  */
 
-const { chromium } = require('/opt/node22/lib/node_modules/playwright');
+const { execSync, spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const http = require('http');
 
-const APP_URL = 'http://localhost:8765/';
-const LOAD_TIMEOUT = 180000; // Babel transpiles 1MB JSX
+// ── Config ───────────────────────────────────────────────────────────
+const PORT = 8765;
+const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-e2e-serve');
+const ROOT = path.resolve(__dirname, '..');
+const ASSEMBLED = path.join(ROOT, 'welcome-to-vela-slides.jsx');
 
-let browser, page;
+// ── Resolve Playwright ──────────────────────────────────────────────
+function resolvePlaywright() {
+  // Try global installs first (pre-installed browsers), then local node_modules
+  const globalPaths = [];
+  try {
+    // Resolve from the `playwright` CLI binary location
+    const bin = execSync('which playwright 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (bin) globalPaths.push(path.resolve(path.dirname(bin), '..', 'lib', 'node_modules', 'playwright'));
+  } catch {}
+  const candidates = [
+    ...globalPaths,
+    '/opt/node22/lib/node_modules/playwright',
+    '/usr/local/lib/node_modules/playwright',
+    path.join(ROOT, 'node_modules', 'playwright'),
+  ];
+  for (const p of candidates) {
+    try { return require(p); } catch {}
+  }
+  throw new Error(
+    'Playwright not found. Install: npm install --save-dev playwright\n' +
+    'Then: npx playwright install chromium'
+  );
+}
+
+// ── Build self-contained HTML ───────────────────────────────────────
+function buildTestHTML() {
+  fs.mkdirSync(SERVE_DIR, { recursive: true });
+
+  // Assemble the deck
+  console.log('Assembling deck...');
+  execSync(
+    `python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.json --from-parts`,
+    { cwd: ROOT, stdio: 'pipe' }
+  );
+
+  // Copy UMD deps from node_modules
+  const deps = {
+    'react.js': 'react/umd/react.production.min.js',
+    'react-dom.js': 'react-dom/umd/react-dom.production.min.js',
+    'babel.js': '@babel/standalone/babel.min.js',
+    'lucide.js': 'lucide-react/dist/umd/lucide-react.js',
+  };
+  for (const [dest, src] of Object.entries(deps)) {
+    const full = path.join(ROOT, 'node_modules', src);
+    if (!fs.existsSync(full)) throw new Error(`Missing dep: npm install ${src.split('/')[0]}`);
+    fs.copyFileSync(full, path.join(SERVE_DIR, dest));
+  }
+
+  // Transform JSX imports → globals, build HTML
+  const jsx = fs.readFileSync(ASSEMBLED, 'utf8')
+    .replace(/^import {.*} from "react";/m,
+      'const { useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;')
+    .replace(/^import {.*} from "lucide-react";/m,
+      'const { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown } = LucideReact;')
+    .replace(/^import \* as _LucideAll from "lucide-react";/m,
+      'const _LucideAll = LucideReact;')
+    .replace(/^export default function App/m, 'function App');
+
+  const html = [
+    '<!DOCTYPE html><html><head><meta charset="UTF-8">',
+    '<style>*{margin:0;padding:0;box-sizing:border-box}html,body,#root{width:100%;height:100%;overflow:hidden}</style>',
+    '<script src="react.js"></script>',
+    '<script src="react-dom.js"></script>',
+    '<script>window.react = React;</script>',
+    '<script src="lucide.js"></script>',
+    '<script src="babel.js"></script>',
+    '</head><body><div id="root"></div>',
+    '<script type="text/babel" data-presets="react">',
+    jsx,
+    '',
+    'const root = ReactDOM.createRoot(document.getElementById("root"));',
+    'root.render(React.createElement(App));',
+    '</script></body></html>',
+  ].join('\n');
+
+  fs.writeFileSync(path.join(SERVE_DIR, 'index.html'), html);
+  console.log(`Built test HTML (${Math.round(html.length / 1024)}KB)`);
+}
+
+// ── Start HTTP server ───────────────────────────────────────────────
+function startServer() {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const filePath = path.join(SERVE_DIR, req.url === '/' ? 'index.html' : req.url);
+      try {
+        const data = fs.readFileSync(filePath);
+        const ext = path.extname(filePath);
+        const ct = { '.html': 'text/html', '.js': 'application/javascript' }[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': ct });
+        res.end(data);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+    });
+    server.listen(PORT, 'localhost', () => {
+      console.log(`Test server on http://localhost:${PORT}`);
+      resolve(server);
+    });
+  });
+}
+
+// ── Test runner ──────────────────────────────────────────────────────
 let passed = 0, failed = 0;
 const results = [];
 
@@ -21,401 +132,286 @@ async function test(name, fn) {
   try {
     await fn();
     passed++;
-    results.push({ name, pass: true, ms: Date.now() - t0 });
-    console.log(`  ✅ ${name} (${Date.now() - t0}ms)`);
+    const ms = Date.now() - t0;
+    results.push({ name, pass: true, ms });
+    console.log(`  ✅ ${name} (${ms}ms)`);
   } catch (e) {
     failed++;
-    results.push({ name, pass: false, error: e.message, ms: Date.now() - t0 });
-    console.log(`  ❌ ${name} — ${e.message} (${Date.now() - t0}ms)`);
+    const ms = Date.now() - t0;
+    results.push({ name, pass: false, error: e.message, ms });
+    console.log(`  ❌ ${name} — ${e.message} (${ms}ms)`);
   }
 }
 
-async function setup() {
-  browser = await chromium.launch();
-  page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+// ── Helpers (use Playwright auto-waiting, avoid fixed sleeps) ────────
+let page;
 
-  // Suppress Babel noise
-  page.on('pageerror', () => {});
-
-  console.log('Loading app (Babel transpilation, may take 1-2 min)...');
-  await page.goto(APP_URL, { timeout: 60000, waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('header', { timeout: LOAD_TIMEOUT });
-  // Let React settle
-  await page.waitForTimeout(2000);
-  console.log('App loaded.\n');
-
-  // Select first module so we have a slide visible
-  const mods = page.locator('.concept-row');
-  if (await mods.count() > 0) {
-    await mods.first().click();
-    await page.waitForTimeout(1000);
-  }
-}
-
-async function teardown() {
-  await browser?.close();
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-async function clickButton(textMatch) {
-  const btn = page.locator('button').filter({ hasText: textMatch }).first();
+/** Click a button matching text, wait for DOM to settle. */
+async function clickBtn(text) {
+  const btn = page.locator('button').filter({ hasText: text }).first();
   await btn.click();
-  await page.waitForTimeout(400);
-  return btn;
+  // Wait for React re-render — one rAF cycle
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
 
-async function findText(text, timeout = 3000) {
-  return page.locator(`text=${text}`).first().waitFor({ timeout });
+/** Assert text is visible (uses Playwright auto-retry). */
+async function expectText(text, timeout = 2000) {
+  await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout });
 }
 
-// ── Tests ────────────────────────────────────────────────────────────
+/** Assert text is NOT visible. */
+async function expectNoText(text, timeout = 1000) {
+  await page.locator(`text=${text}`).first().waitFor({ state: 'hidden', timeout }).catch(() => {});
+  const visible = await page.locator(`text=${text}`).first().isVisible().catch(() => false);
+  if (visible) throw new Error(`"${text}" still visible`);
+}
+
+/** Click first span with exact text and cursor:pointer. */
+async function clickIconSpan(text) {
+  const span = page.locator('span').filter({ hasText: text }).and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
+  await span.click();
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+}
+
+/** Wait for React to settle after a state change. */
+async function settle() {
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+}
+
+// ── Test suites ─────────────────────────────────────────────────────
 
 async function runTests() {
-  console.log('⛵ Vela Review Mode — UI Tests\n');
+  console.log('\n⛵ Vela Review Mode — UI Tests (32)\n');
 
-  // ── Header / Toggle ──
+  // ── 1. Panel Basics ──
   await test('Review button visible in header', async () => {
-    await findText('Review');
     const btn = page.locator('header button').filter({ hasText: 'Review' });
-    if (await btn.count() === 0) throw new Error('Review button not in header');
+    await btn.waitFor({ state: 'visible', timeout: 2000 });
   });
 
   await test('Clicking Review opens Comments panel', async () => {
-    await clickButton('Review');
-    await findText('COMMENTS');
+    await clickBtn('Review');
+    await expectText('COMMENTS');
   });
 
-  await test('Comments panel shows filter tabs (All/Open/Done)', async () => {
-    await findText('Open');
-    await findText('Done');
+  await test('Comments panel shows filter tabs', async () => {
+    await expectText('Open');
+    await expectText('Done');
   });
 
   await test('Comments panel has Resolve All button', async () => {
-    const btn = page.locator('button').filter({ hasText: 'Resolve All' });
-    if (await btn.count() === 0) throw new Error('Resolve All button missing');
+    await page.locator('button').filter({ hasText: 'Resolve All' }).waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Comments panel has Clear Done button', async () => {
-    const btn = page.locator('button').filter({ hasText: 'Clear Done' });
-    if (await btn.count() === 0) throw new Error('Clear Done button missing');
+    await page.locator('button').filter({ hasText: 'Clear Done' }).waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Comments panel has Copy for Agent button', async () => {
-    const btn = page.locator('button').filter({ hasText: 'Copy for Agent' });
-    if (await btn.count() === 0) throw new Error('Copy for Agent button missing');
+    await page.locator('button').filter({ hasText: 'Copy for Agent' }).waitFor({ state: 'visible', timeout: 1000 });
   });
 
-  await test('Empty state shows "No open comments"', async () => {
-    await findText('No open comments');
+  await test('Empty state shows no open comments', async () => {
+    await expectText('No open comments');
   });
 
-  // ── Mutual Exclusion ──
+  // ── 2. Mutual Exclusion ──
   await test('Opening Vera closes Comments panel', async () => {
-    // Comments panel should be open from previous test
-    await clickButton('Vera');
-    await page.waitForTimeout(300);
-    // Vera panel should be visible (textarea with "Tell Vera")
-    const veraTa = page.locator('textarea').filter({ hasText: '' }).first();
-    // COMMENTS header should be gone
-    const commentsHeader = page.locator('text=COMMENTS').first();
-    const visible = await commentsHeader.isVisible().catch(() => false);
-    if (visible) throw new Error('Comments panel still visible after opening Vera');
+    await clickBtn('Vera');
+    await expectNoText('COMMENTS');
   });
 
   await test('Opening Review closes Vera panel', async () => {
-    // Vera should be open from previous test
-    await clickButton('Review');
-    await page.waitForTimeout(300);
-    await findText('COMMENTS');
-    // Vera textarea should be gone
+    await clickBtn('Review');
+    await expectText('COMMENTS');
     const veraTa = page.locator('textarea[placeholder*="Tell Vera"]');
-    const visible = await veraTa.isVisible().catch(() => false);
-    if (visible) throw new Error('Vera panel still visible after opening Review');
+    const vis = await veraTa.isVisible().catch(() => false);
+    if (vis) throw new Error('Vera panel still visible');
   });
 
-  // ── Module-level Comments via TOC ──
-  await test('💬 icon visible on modules', async () => {
-    const icon = page.locator('span').filter({ hasText: '💬' }).first();
-    if (await icon.count() === 0) throw new Error('💬 icon not found');
+  // ── 3. Module-level Comments via TOC ──
+  await test('Comment icon visible on modules', async () => {
+    await page.locator('span').filter({ hasText: '💬' }).first().waitFor({ state: 'visible', timeout: 2000 });
   });
 
-  await test('Clicking 💬 expands inline comment area', async () => {
-    const icons = page.locator('span').filter({ hasText: '💬' });
-    // Click the first one that has cursor:pointer
-    for (let i = 0; i < await icons.count(); i++) {
-      const cursor = await icons.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') {
-        await icons.nth(i).click();
-        await page.waitForTimeout(400);
-        break;
-      }
-    }
-    const input = page.locator('input[placeholder="Add comment..."]');
-    if (await input.count() === 0) throw new Error('Comment input not found');
+  await test('Clicking comment icon expands inline area', async () => {
+    await clickIconSpan('💬');
+    await page.locator('input[placeholder="Add comment..."]').waitFor({ state: 'visible', timeout: 2000 });
   });
 
-  await test('Adding a module-level comment via TOC', async () => {
+  await test('Adding a module-level comment', async () => {
     const input = page.locator('input[placeholder="Add comment..."]');
     await input.fill('Test module spec: needs a timeline block');
     await input.press('Enter');
-    await page.waitForTimeout(300);
-    // The comment text should appear
-    await findText('Test module spec: needs a timeline block');
+    await expectText('Test module spec: needs a timeline block');
   });
 
   await test('Comment appears in Comments panel', async () => {
-    // The comments panel should be open (review mode)
-    await findText('Test module spec: needs a timeline block', 2000);
-    // Should show "1" in the open count badge
+    // Panel is on the right; verify the text shows there too
+    await expectText('Test module spec: needs a timeline block');
   });
 
-  await test('Comment count badge appears on module', async () => {
-    // Look for small badge with count near the module — has min-width, border-radius, and a number
-    const badges = page.locator('span');
-    let found = false;
-    for (let i = 0; i < await badges.count(); i++) {
-      const info = await badges.nth(i).evaluate(el => ({
-        text: el.textContent?.trim(),
-        bg: el.style?.background,
-        minW: el.style?.minWidth,
-        br: el.style?.borderRadius,
-        fs: el.style?.fontSize,
-      }));
-      if (info.text && /^[0-9]+$/.test(info.text) && info.minW && info.br && info.fs === '9px') {
-        found = true;
-        break;
-      }
-    }
-    if (!found) throw new Error('Count badge not found on module');
+  await test('Comment count badge on module', async () => {
+    // Badge: small span with number, 9px font, min-width, border-radius
+    await page.waitForFunction(() => {
+      const spans = document.querySelectorAll('span');
+      return Array.from(spans).some(el =>
+        /^[0-9]+$/.test(el.textContent?.trim() || '') &&
+        el.style.minWidth && el.style.borderRadius && el.style.fontSize === '9px'
+      );
+    }, { timeout: 2000 });
   });
 
   await test('Adding a second comment', async () => {
     const input = page.locator('input[placeholder="Add comment..."]');
     await input.fill('Fix the color scheme');
     await input.press('Enter');
-    await page.waitForTimeout(300);
-    await findText('Fix the color scheme');
+    await expectText('Fix the color scheme');
   });
 
-  // ── Resolve / Reopen ──
-  await test('Resolving a comment via ○ toggle', async () => {
-    // Find the first ○ (open comment marker) in the comments area
-    const markers = page.locator('span').filter({ hasText: '○' });
-    for (let i = 0; i < await markers.count(); i++) {
-      const cursor = await markers.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') {
-        await markers.nth(i).click();
-        await page.waitForTimeout(300);
-        break;
-      }
-    }
-    // After resolve, should see a ● (resolved marker)
-    const resolved = page.locator('span').filter({ hasText: '●' });
-    let found = false;
-    for (let i = 0; i < await resolved.count(); i++) {
-      const cursor = await resolved.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') { found = true; break; }
-    }
-    if (!found) throw new Error('No resolved (●) marker found after resolve');
+  // ── 4. Resolve / Reopen ──
+  await test('Resolving a comment via toggle', async () => {
+    // Click first ○ marker with cursor:pointer
+    const marker = page.locator('span').filter({ hasText: '○' })
+      .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
+    await marker.click();
+    await settle();
+    // Verify ● appears
+    const resolved = page.locator('span').filter({ hasText: '●' })
+      .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
+    await resolved.waitFor({ state: 'visible', timeout: 2000 });
   });
 
-  await test('Reopening a comment via ● toggle', async () => {
-    const markers = page.locator('span').filter({ hasText: '●' });
-    for (let i = 0; i < await markers.count(); i++) {
-      const cursor = await markers.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') {
-        await markers.nth(i).click();
-        await page.waitForTimeout(300);
-        break;
-      }
-    }
-    // Should be back to ○
+  await test('Reopening a comment via toggle', async () => {
+    const marker = page.locator('span').filter({ hasText: '●' })
+      .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
+    await marker.click();
+    await settle();
   });
 
-  // ── Slide-level Comment Popover ──
+  // ── 5. Slide-level Comment Popover ──
   await test('Review mode shows click overlay on slide', async () => {
-    const overlay = page.locator('[style*="cursor: cell"]');
-    if (await overlay.count() === 0) throw new Error('No click overlay (cursor:cell) found — review mode not active?');
+    await page.locator('[style*="cursor: cell"]').first().waitFor({ state: 'visible', timeout: 2000 });
   });
 
   await test('Clicking slide opens CommentPopover', async () => {
-    const overlay = page.locator('[style*="cursor: cell"]').first();
-    await overlay.click();
-    await page.waitForTimeout(400);
-    await findText('ADD COMMENT');
+    await page.locator('[style*="cursor: cell"]').first().click();
+    await expectText('ADD COMMENT');
   });
 
   await test('CommentPopover has textarea and Add button', async () => {
-    const ta = page.locator('textarea[placeholder="Add a comment..."]');
-    if (await ta.count() === 0) throw new Error('Popover textarea not found');
-    const btn = page.locator('button').filter({ hasText: 'Add Comment' });
-    if (await btn.count() === 0) throw new Error('Add Comment button not found');
+    await page.locator('textarea[placeholder="Add a comment..."]').waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('button').filter({ hasText: 'Add Comment' }).waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Adding a slide-level comment via popover', async () => {
     const ta = page.locator('textarea[placeholder="Add a comment..."]');
     await ta.fill('Slide comment: increase heading size');
-    await clickButton('Add Comment');
-    await page.waitForTimeout(300);
-    // Comment should now appear in the popover's existing list
-    await findText('Slide comment: increase heading size');
+    await clickBtn('Add Comment');
+    await expectText('Slide comment: increase heading size');
   });
 
-  await test('Slide comment badge appears on slide', async () => {
-    // Close the popover first
+  await test('Slide comment badge appears', async () => {
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
-    // Look for badge with count on the slide — a div with a number, border-radius, and positioned absolutely
-    const badges = page.locator('div');
-    let found = false;
-    for (let i = 0; i < await badges.count(); i++) {
-      const info = await badges.nth(i).evaluate(el => ({
-        text: el.textContent?.trim(),
-        pos: el.style?.position,
-        minW: el.style?.minWidth,
-        br: el.style?.borderRadius,
-        cursor: el.style?.cursor,
-      }));
-      if (info.text && /^[0-9]+$/.test(info.text) && info.pos === 'absolute' && info.minW && info.br && info.cursor === 'pointer') {
-        found = true;
-        break;
-      }
-    }
-    if (!found) throw new Error('Slide comment badge not found');
+    await settle();
+    // Badge: absolute-positioned div with number, min-width, border-radius, cursor:pointer
+    await page.waitForFunction(() => {
+      const divs = document.querySelectorAll('div');
+      return Array.from(divs).some(el =>
+        /^[0-9]+$/.test(el.textContent?.trim() || '') &&
+        el.style.position === 'absolute' &&
+        el.style.minWidth && el.style.borderRadius && el.style.cursor === 'pointer'
+      );
+    }, { timeout: 2000 });
   });
 
-  // ── Filter Tabs ──
-  await test('Done filter shows resolved comments', async () => {
-    // Resolve one comment first
-    const markers = page.locator('span').filter({ hasText: '○' });
-    for (let i = 0; i < await markers.count(); i++) {
-      const cursor = await markers.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') {
-        await markers.nth(i).click();
-        await page.waitForTimeout(200);
-        break;
-      }
-    }
-    // Click Done filter tab
-    const doneTab = page.locator('button').filter({ hasText: /^Done/ });
-    await doneTab.click();
-    await page.waitForTimeout(300);
-    // Should still see some comments (the resolved one)
-    const commentTexts = page.locator('text=Test module spec').or(page.locator('text=Fix the color')).or(page.locator('text=Slide comment'));
-    if (await commentTexts.count() === 0) throw new Error('No resolved comments visible in Done tab');
+  // ── 6. Filter Tabs ──
+  await test('Done tab shows resolved comments', async () => {
+    // Resolve one first
+    const marker = page.locator('span').filter({ hasText: '○' })
+      .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
+    await marker.click();
+    await settle();
+    // Switch to Done tab
+    await page.locator('button').filter({ hasText: /^Done/ }).click();
+    await settle();
+    const count = await page.locator('text=Test module spec').or(page.locator('text=Fix the color')).or(page.locator('text=Slide comment')).count();
+    if (count === 0) throw new Error('No comments in Done tab');
   });
 
-  await test('Open filter shows only open comments', async () => {
-    const openTab = page.locator('button').filter({ hasText: /^Open/ });
-    await openTab.click();
-    await page.waitForTimeout(300);
-    // Should still show some open comments
+  await test('Open tab shows only open comments', async () => {
+    await page.locator('button').filter({ hasText: /^Open/ }).click();
+    await settle();
   });
 
-  await test('All filter shows everything', async () => {
-    const allTab = page.locator('button').filter({ hasText: /^All/ });
-    await allTab.click();
-    await page.waitForTimeout(300);
+  await test('All tab shows everything', async () => {
+    await page.locator('button').filter({ hasText: /^All/ }).click();
+    await settle();
   });
 
-  // ── Batch Operations ──
+  // ── 7. Batch Operations ──
   await test('Resolve All resolves all open comments', async () => {
-    // Switch to Open tab first to see count
-    const openTab = page.locator('button').filter({ hasText: /^Open/ });
-    await openTab.click();
-    await page.waitForTimeout(200);
-    await clickButton('Resolve All');
-    await page.waitForTimeout(300);
-    // Should now show "No open comments"
-    await findText('No open comments');
+    await page.locator('button').filter({ hasText: /^Open/ }).click();
+    await settle();
+    await clickBtn('Resolve All');
+    await expectText('No open comments');
   });
 
-  await test('Clear Done removes all resolved comments', async () => {
-    const allTab = page.locator('button').filter({ hasText: /^All/ });
-    await allTab.click();
-    await page.waitForTimeout(200);
-    await clickButton('Clear Done');
-    await page.waitForTimeout(300);
-    // All comments should be gone
-    const openTab = page.locator('button').filter({ hasText: /^Open/ });
-    await openTab.click();
-    await page.waitForTimeout(200);
-    await findText('No open comments');
+  await test('Clear Done removes all resolved', async () => {
+    await page.locator('button').filter({ hasText: /^All/ }).click();
+    await settle();
+    await clickBtn('Clear Done');
+    await page.locator('button').filter({ hasText: /^Open/ }).click();
+    await settle();
+    await expectText('No open comments');
   });
 
-  // ── Keyboard Shortcut ──
-  await test('Closing review mode via button', async () => {
-    await clickButton('Review');
-    await page.waitForTimeout(300);
-    // Comments panel should be gone
-    const header = page.locator('text=COMMENTS').first();
-    const visible = await header.isVisible().catch(() => false);
-    if (visible) throw new Error('Comments panel still visible after toggling off');
+  // ── 8. Keyboard Shortcuts ──
+  await test('Closing review via button', async () => {
+    await clickBtn('Review');
+    await expectNoText('COMMENTS');
   });
 
   await test('R key toggles review mode on', async () => {
-    // Blur any focused element
     await page.evaluate(() => document.activeElement?.blur());
-    await page.waitForTimeout(100);
     await page.keyboard.press('r');
-    await page.waitForTimeout(500);
-    await findText('COMMENTS');
+    await expectText('COMMENTS');
   });
 
   await test('R key toggles review mode off', async () => {
     await page.evaluate(() => document.activeElement?.blur());
-    await page.waitForTimeout(100);
     await page.keyboard.press('r');
-    await page.waitForTimeout(500);
-    const header = page.locator('text=COMMENTS').first();
-    const visible = await header.isVisible().catch(() => false);
-    if (visible) throw new Error('Comments panel still visible after R key toggle off');
+    await expectNoText('COMMENTS');
   });
 
-  // ── Comments hidden in fullscreen ──
-  await test('Comment badges hidden in fullscreen/present mode', async () => {
-    // First add a comment so there's a badge
-    await page.keyboard.press('r'); // enter review mode
-    await page.waitForTimeout(400);
-    const icons = page.locator('span').filter({ hasText: '💬' });
-    for (let i = 0; i < await icons.count(); i++) {
-      const cursor = await icons.nth(i).evaluate(el => el.style?.cursor);
-      if (cursor === 'pointer') {
-        await icons.nth(i).click();
-        await page.waitForTimeout(300);
-        break;
-      }
-    }
+  // ── 9. Fullscreen Hides Comments ──
+  await test('Comments hidden in fullscreen', async () => {
+    // Enter review mode, add a comment
+    await page.keyboard.press('r');
+    await settle();
+    await clickIconSpan('💬');
     const input = page.locator('input[placeholder="Add comment..."]');
-    if (await input.count() > 0) {
-      await input.fill('Fullscreen test comment');
+    if (await input.isVisible()) {
+      await input.fill('Fullscreen test');
       await input.press('Enter');
-      await page.waitForTimeout(300);
+      await settle();
     }
     // Enter fullscreen
     await page.evaluate(() => document.activeElement?.blur());
-    await page.waitForTimeout(100);
     await page.keyboard.press('f');
-    await page.waitForTimeout(500);
-    // Header should be gone (fullscreen)
-    const headerGone = await page.locator('header').count() === 0;
-    // Comment badge should not be visible
-    const badge = page.locator('[style*="cursor: cell"]');
-    const cellVisible = await badge.isVisible().catch(() => false);
-    if (cellVisible) throw new Error('Review overlay visible in fullscreen');
+    await page.waitForFunction(() => !document.querySelector('header'), { timeout: 3000 });
+    // Verify review overlay not visible
+    const overlay = page.locator('[style*="cursor: cell"]');
+    const vis = await overlay.isVisible().catch(() => false);
+    if (vis) throw new Error('Review overlay visible in fullscreen');
     // Exit fullscreen
     await page.keyboard.press('f');
-    await page.waitForTimeout(500);
+    await page.waitForSelector('header', { timeout: 3000 });
   });
 
-  // ── Cleanup: undo all test changes ──
-  await test('Undo cleans up test comments', async () => {
-    for (let i = 0; i < 10; i++) {
-      await page.keyboard.press('Control+z');
-      await page.waitForTimeout(100);
-    }
-    // App should still be alive
+  // ── 10. Cleanup ──
+  await test('Undo restores original state', async () => {
+    for (let i = 0; i < 10; i++) await page.keyboard.press('Control+z');
     await page.waitForSelector('header', { timeout: 3000 });
   });
 }
@@ -423,26 +419,59 @@ async function runTests() {
 // ── Main ─────────────────────────────────────────────────────────────
 
 (async () => {
+  const skipSetup = process.argv.includes('--skip-setup');
+  let server = null;
+  const t0 = Date.now();
+
   try {
-    await setup();
+    const { chromium } = resolvePlaywright();
+
+    if (!skipSetup) {
+      buildTestHTML();
+      server = await startServer();
+    }
+
+    console.log('Launching browser...');
+    const browser = await chromium.launch();
+    page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    page.on('pageerror', () => {}); // suppress Babel deopt warning
+
+    console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');
+    await page.goto(`http://localhost:${PORT}/`, { timeout: 60000, waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('header', { timeout: 180000 });
+    // Wait for React to mount fully
+    await page.waitForFunction(() => document.querySelectorAll('.concept-row').length > 0, { timeout: 10000 });
+
+    // Select first module to have a slide visible
+    await page.locator('.concept-row').first().click();
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-block-type]').length > 0,
+      { timeout: 5000 }
+    ).catch(() => {}); // soft — blocks may not have data attrs in all builds
+
     await runTests();
+
+    await browser.close();
   } catch (e) {
     console.error('\n💥 Fatal error:', e.message);
   } finally {
-    await teardown();
+    server?.close();
   }
+
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   if (failed === 0) {
-    console.log(`  ✅ ${passed} passed`);
+    console.log(`  ✅ ${passed} passed (${elapsed}s)`);
   } else {
-    console.log(`  ❌ ${passed} passed, ${failed} failed`);
+    console.log(`  ❌ ${passed} passed, ${failed} failed (${elapsed}s)`);
   }
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
   if (failed > 0) {
     console.log('Failures:');
     results.filter(r => !r.pass).forEach(r => console.log(`  ✗ ${r.name}: ${r.error}`));
+    console.log('');
   }
 
   process.exit(failed > 0 ? 1 : 0);
