@@ -1107,6 +1107,48 @@ class VelaLocalServer:
     def _open_browser(self, url):
         webbrowser.open(url)
 
+    def _retry_after_stale_kill(self, handler_class):
+        """Kill the stale process on our port and retry binding."""
+        import subprocess
+        print(f"  [port]   Port {self.port} in use — killing stale process...")
+        # Try reading PID from .vela.json first (most reliable)
+        runtime_path = os.path.join(os.getcwd(), ".vela.json")
+        killed = False
+        try:
+            with open(runtime_path) as f:
+                info = json.load(f)
+            stale_pid = info.get("pid")
+            if stale_pid and info.get("port") == self.port:
+                os.kill(stale_pid, 9)
+                killed = True
+                print(f"  [port]   Killed stale PID {stale_pid}")
+        except (OSError, json.JSONDecodeError, ProcessLookupError):
+            pass
+        # Fallback: use lsof to find the process
+        if not killed:
+            try:
+                result = subprocess.run(["lsof", "-ti", f":{self.port}"], capture_output=True, text=True, timeout=3)
+                for pid_str in result.stdout.strip().split("\n"):
+                    if pid_str.strip():
+                        try:
+                            os.kill(int(pid_str.strip()), 9)
+                            killed = True
+                            print(f"  [port]   Killed stale PID {pid_str.strip()}")
+                        except (ProcessLookupError, ValueError):
+                            pass
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+        if not killed:
+            print(f"  [port]   ERROR: Could not free port {self.port}. Is another service using it?", file=sys.stderr)
+            sys.exit(1)
+        import time
+        time.sleep(0.5)
+        try:
+            return ThreadedHTTPServer((self.host, self.port), handler_class)
+        except OSError:
+            print(f"  [port]   ERROR: Port {self.port} still in use after kill.", file=sys.stderr)
+            sys.exit(1)
+
     # ── Run ──────────────────────────────────────────────────────────
 
     def _write_runtime_info(self):
@@ -1170,7 +1212,13 @@ class VelaLocalServer:
 
         VelaHTTPHandler.server_ref = self
 
-        httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
+        try:
+            httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                httpd = self._retry_after_stale_kill(VelaHTTPHandler)
+            else:
+                raise
 
         # Template hot reload
         self._start_template_watcher()
@@ -1231,7 +1279,13 @@ class VelaLocalServer:
         VelaHTTPHandler.version_tracker = self.version_tracker
         VelaHTTPHandler.server_ref = self
 
-        httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
+        try:
+            httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                httpd = self._retry_after_stale_kill(VelaHTTPHandler)
+            else:
+                raise
 
         self.file_watcher = FileWatcher(self.deck_path, self._on_file_change)
         self.file_watcher.start()

@@ -514,7 +514,9 @@ uiSuite("Slide Ops", [
     else { _click(btn); await _wait(200); } // toggle off
   }},
   { name: "Comment input accepts input", fn: async () => {
-    // Click the 💬 icon on a module to expand comments
+    // 💬 icon only visible in review mode — activate it first
+    document.activeElement?.blur(); await _wait(100);
+    _key("r"); await _wait(400);
     const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer");
     if (commentIcon) {
       _click(commentIcon); await _wait(200);
@@ -525,6 +527,8 @@ uiSuite("Slide Ops", [
       // Collapse
       _click(commentIcon); await _wait(100);
     }
+    // Exit review mode
+    _key("r"); await _wait(300);
   }},
   { name: "Duration editor opens on click", fn: async () => {
     const timer = _$$("span").find((s) => s.textContent?.includes("⏱") && s.style?.cursor === "pointer");
@@ -908,9 +912,19 @@ uiSuite("Review", [
   { name: "Comments panel has Clear Done button", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Clear Done")));
   }},
-  { name: "Module comment icon visible (💬)", fn: async () => {
-    // Look for the 💬 icon in the module list
-    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬")), 1000);
+  { name: "Module comment icon visible in review mode (💬)", fn: async () => {
+    // 💬 icon only visible in review mode — ensure review is active (toggled on by prior test)
+    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (reviewOn) { _click(reviewOn); await _wait(300); }
+    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1000);
+    // Exit review mode
+    if (reviewOn) { _click(reviewOn); await _wait(300); }
+  }},
+  { name: "Module comment icon hidden in editor mode", fn: async () => {
+    // In editor mode (review off), 💬 toggle should NOT be in the module list
+    await _wait(200);
+    const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer" && !s.closest("button"));
+    if (commentIcon) throw new Error("💬 icon should be hidden in editor mode");
   }},
   { name: "Review mode exit closes panel", fn: async () => {
     const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
@@ -944,6 +958,21 @@ uiSuite("Review", [
     // Close Vera
     if (veraBtn) { _click(veraBtn); await _wait(200); }
     if (!veraTa) throw new Error("Vera panel didn't open when switching from Review");
+  }},
+  { name: "Comment badge click opens comments panel", fn: async () => {
+    // Ensure review mode is off first
+    document.activeElement?.blur(); await _wait(100);
+    // Look for the amber comment count badge on the slide canvas (top-right circle)
+    const badge = _$$("div").find((d) => d.style?.borderRadius === "11px" && d.style?.background && d.style?.cursor === "pointer" && d.style?.position === "absolute");
+    if (badge) {
+      _click(badge); await _wait(400);
+      const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+      if (!panel) throw new Error("Clicking comment badge did not open comments panel");
+      // Close review mode
+      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+      if (reviewBtn) { _click(reviewBtn); await _wait(300); }
+    }
+    // If no badge, test passes (no comments on current slide)
   }},
 ]);
 

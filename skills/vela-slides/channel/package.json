@@ -7,7 +7,7 @@
     "start": "npx tsx vela-channel.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.0"
+    "@modelcontextprotocol/sdk": "~1.27.1"
   },
   "devDependencies": {
     "tsx": "^4.0.0"

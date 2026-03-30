@@ -128,10 +128,11 @@
   <script>
     window.storage = {
       get: function(key) {
-        return Promise.resolve(localStorage.getItem(key));
+        var v = localStorage.getItem(key);
+        return Promise.resolve(v != null ? { value: v } : null);
       },
       set: function(key, value) {
-        try { localStorage.setItem(key, value); } catch(e) {}
+        try { localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value)); } catch(e) {}
         return Promise.resolve();
       },
       delete: function(key) {

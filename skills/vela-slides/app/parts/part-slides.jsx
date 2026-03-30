@@ -114,7 +114,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -184,7 +184,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} />}
       </div>
     </div>
   );
@@ -577,7 +577,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
 
 // ━━━ Gallery View — slide sorter overlay in fullscreen ━━━━━━━━━━━━
 // ━━━ Comment Popover (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose }) {
+function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose, anchor }) {
   const [text, setText] = useState("");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -586,9 +586,10 @@ function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose }) {
     if (!text.trim()) return;
     dispatch({ type: "ADD_COMMENT", itemId, slideIndex, text: text.trim() });
     setText("");
+    onClose();
   };
   return (
-    <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 36, left: 8, zIndex: 20, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", width: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", maxHeight: 320, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 36, ...(anchor === "right" ? { right: 8 } : { left: 8 }), zIndex: 20, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", width: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", maxHeight: 320, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
         <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.accent, letterSpacing: "0.1em", textTransform: "uppercase" }}>ADD COMMENT</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 2px" }}>✕</button>
@@ -1846,17 +1847,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered />
-                  {/* Comment badge overlay */}
-                  {!fullscreen && (() => {
+                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} />
+                  {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
+                  {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover((v) => !v); }} style={{ position: "absolute", top: 8, left: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
-                  {/* Review mode click overlay */}
-                  {state.reviewMode && !fullscreen && !showCommentPopover && <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover(true); }} style={{ position: "absolute", inset: 0, zIndex: 9, cursor: "cell", background: "transparent" }} />}
+                  {/* Review mode visual border indicator */}
+                  {state.reviewMode && !fullscreen && <div style={{ position: "absolute", inset: 0, zIndex: 8, border: `2px solid ${T.amber}40`, borderRadius: 6, pointerEvents: "none" }} />}
                   {/* Comment popover */}
-                  {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} />}
+                  {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} anchor="right" />}
                 </div>;
               })()}
               {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 10, zIndex: 10, borderRadius: "0 0 6px 6px" }}>
