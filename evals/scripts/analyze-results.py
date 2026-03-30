@@ -37,7 +37,7 @@ def load_results(results_dir):
         for f in sorted(ver_dir.glob("*.json")):
             if f.name.endswith("-deck.json"):
                 continue
-            with open(f) as fh:
+            with open(f, encoding="utf-8") as fh:
                 r = json.load(fh)
             scenario = r.get("scenario", "")
             t = r.get("totals", {})
@@ -215,7 +215,7 @@ def save_report(data, results_dir):
     reports_dir = EVAL_DIR / "reports"
     reports_dir.mkdir(exist_ok=True)
     out_path = reports_dir / f"{run_id}.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
         f.write("\n")
     print(f"\nReport saved: {out_path}")

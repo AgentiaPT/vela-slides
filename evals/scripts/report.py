@@ -39,7 +39,7 @@ def load_results(results_dir):
         version = version_dir.name
         runs = []
         for f in sorted(version_dir.glob("*.json")):
-            with open(f) as fh:
+            with open(f, encoding="utf-8") as fh:
                 data = json.load(fh)
                 if isinstance(data, list):
                     runs.extend(data)

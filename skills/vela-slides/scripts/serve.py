@@ -515,7 +515,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             slide_count = 0
             is_compact = False
             try:
-                with open(fpath, "r") as f:
+                with open(fpath, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
@@ -627,7 +627,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w") as f:
+                with open(deck_path, "w", encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False, indent=2)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
@@ -681,7 +681,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             # Write formatted
-            with open(dest, "w") as f:
+            with open(dest, "w", encoding="utf-8") as f:
                 json.dump(deck_data, f, ensure_ascii=False, indent=2)
 
             print(f"[import] Saved {filename} ({os.path.getsize(dest)} bytes)")
@@ -949,7 +949,7 @@ class VelaLocalServer:
             def on_change(name=deck_name):
                 try:
                     fpath = os.path.join(self.folder_path, name)
-                    with open(fpath, "r") as f:
+                    with open(fpath, "r", encoding="utf-8") as f:
                         new_data = json.load(f)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
@@ -985,9 +985,9 @@ class VelaLocalServer:
         Returns:
             HTML string (not yet encoded to bytes)
         """
-        with open(LOCAL_HTML_PATH, "r") as f:
+        with open(LOCAL_HTML_PATH, "r", encoding="utf-8") as f:
             html_template = f.read()
-        with open(TEMPLATE_PATH, "r") as f:
+        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             vela_jsx = f.read()
 
         # Inject deck data into STARTUP_PATCH
@@ -1026,7 +1026,7 @@ class VelaLocalServer:
 
     def _build_html_for_deck(self, deck_path, deck_name):
         """Build the Vela app HTML for a specific deck file (folder mode)."""
-        with open(deck_path, "r") as f:
+        with open(deck_path, "r", encoding="utf-8") as f:
             deck_data = self._normalize_deck(json.load(f))
 
         self.set_deck_data(deck_name, deck_data)
@@ -1092,11 +1092,11 @@ class VelaLocalServer:
     # ── Helpers ──────────────────────────────────────────────────────
 
     def _read_deck(self):
-        with open(self.deck_path, "r") as f:
+        with open(self.deck_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _write_deck(self, data):
-        with open(self.deck_path, "w") as f:
+        with open(self.deck_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _on_file_change(self):
@@ -1119,7 +1119,7 @@ class VelaLocalServer:
         runtime_path = os.path.join(os.getcwd(), ".vela.json")
         killed = False
         try:
-            with open(runtime_path) as f:
+            with open(runtime_path, encoding="utf-8") as f:
                 info = json.load(f)
             stale_pid = info.get("pid")
             if stale_pid and info.get("port") == self.port:
@@ -1181,7 +1181,7 @@ class VelaLocalServer:
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
         # Legacy pidfile
         pidfile = os.path.join(os.getcwd(), ".vela.pid")
-        with open(pidfile, "w") as f:
+        with open(pidfile, "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
 
     def _on_template_change(self):

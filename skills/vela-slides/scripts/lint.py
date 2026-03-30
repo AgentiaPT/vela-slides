@@ -105,7 +105,7 @@ def check_balanced_braces(source, label="file"):
 
 def lint_monolith(filepath):
     """Lint the assembled monolith template."""
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding="utf-8") as f:
         source = f.read()
 
     label = os.path.basename(filepath)
@@ -133,7 +133,7 @@ def lint_parts(parts_dir):
             errors.append(f"Missing part file: {part_name}")
             continue
 
-        with open(part_path, 'r') as f:
+        with open(part_path, 'r', encoding="utf-8") as f:
             source = f.read()
 
         errors += check_copyright_header(source, part_name)
@@ -145,7 +145,7 @@ def lint_parts(parts_dir):
     for part_name in PART_ORDER:
         part_path = os.path.join(parts_dir, part_name)
         if os.path.exists(part_path):
-            with open(part_path, 'r') as f:
+            with open(part_path, 'r', encoding="utf-8") as f:
                 combined += f.read()
 
     errors += check_duplicates(combined, "combined parts")

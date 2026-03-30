@@ -47,7 +47,7 @@ def concat(parts_dir, output_path):
         if not os.path.exists(part_path):
             print(f"ERROR: Missing part: {part_path}", file=sys.stderr)
             sys.exit(1)
-        with open(part_path, 'r') as f:
+        with open(part_path, 'r', encoding="utf-8") as f:
             content = f.read()
         lines = content.count('\n') + (0 if content.endswith('\n') else 1)
         total_lines += lines
@@ -57,7 +57,7 @@ def concat(parts_dir, output_path):
     result = ''.join(chunks)
 
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding="utf-8") as f:
         f.write(result)
 
     size_kb = os.path.getsize(output_path) // 1024

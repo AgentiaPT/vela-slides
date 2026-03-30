@@ -22,7 +22,7 @@ VELA_PATH = os.environ.get("VELA_PATH", "vela")
 
 def load_deck(path):
     """Load and parse deck JSON, handling compact/full/turbo."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     # Extract slides regardless of format
@@ -62,7 +62,7 @@ def check_assertion(assertion, deck_path, raw_data, slides):
     elif atype == "json_valid":
         try:
             p = assertion.get("path", deck_path)
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 json.load(f)
             return True, "valid JSON"
         except Exception as e:
@@ -163,7 +163,7 @@ def main():
             {"type": "ships_ok"},
         ]
     elif len(sys.argv) >= 3 and not sys.argv[2].startswith("--"):
-        with open(sys.argv[2]) as f:
+        with open(sys.argv[2], encoding="utf-8") as f:
             scenarios_data = json.load(f)
         # Support --scenario <id> to pick a specific scenario
         scenario_id = None

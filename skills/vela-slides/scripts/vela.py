@@ -110,14 +110,14 @@ def _load_deck(path):
         _err(EXIT_NOT_FOUND, f"File not found: {path}",
              suggestions=["Check the file path", "Run: ls /home/claude/*.json"])
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as e:
         _err(EXIT_FAIL, f"Invalid JSON: {e}",
              suggestions=["Check JSON syntax", "Run: python3 -m json.tool " + path])
 
 def _save_deck(deck, path):
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding="utf-8") as f:
         json.dump(deck, f, ensure_ascii=False, indent=2)
 
 def _all_slides(deck):
@@ -991,7 +991,7 @@ def deck_extract(args):
     if not os.path.isfile(source):
         _err(EXIT_NOT_FOUND, f"File not found: {source}")
 
-    with open(source, 'r') as f:
+    with open(source, 'r', encoding="utf-8") as f:
         content = f.read()
 
     match = _re.search(r'const STARTUP_PATCH = ({.*?});\s*\n', content, _re.DOTALL)
@@ -1005,7 +1005,7 @@ def deck_extract(args):
     except json.JSONDecodeError as e:
         _err(EXIT_FAIL, f"STARTUP_PATCH JSON is invalid: {e}")
 
-    with open(output, 'w') as f:
+    with open(output, 'w', encoding="utf-8") as f:
         json.dump(deck, f, ensure_ascii=False)
 
     lanes = len(deck.get('lanes', []))
@@ -1262,7 +1262,7 @@ def deck_compact(args):
     compact_bytes = len(compact_mini.encode())
     savings = (1 - compact_bytes / full_bytes) * 100 if full_bytes > 0 else 0
 
-    with open(out_path, 'w') as f:
+    with open(out_path, 'w', encoding="utf-8") as f:
         json.dump(compacted, f, ensure_ascii=False, separators=(',',':'))
 
     slide_count = len(compacted.get("S", []))
@@ -1307,7 +1307,7 @@ def deck_turbo(args):
     turbo_bytes = len(turbo_mini.encode())
     savings = (1 - turbo_bytes / full_bytes) * 100 if full_bytes > 0 else 0
 
-    with open(out_path, 'w') as f:
+    with open(out_path, 'w', encoding="utf-8") as f:
         json.dump(turbo, f, ensure_ascii=False, separators=(',',':'))
 
     slide_count = sum(1 for _ in _all_slides(deck))
@@ -1542,7 +1542,7 @@ def slide_insert(args):
     slide_file = _safe_resolve(slide_file, "slide file")
     if not os.path.exists(slide_file):
         _err(EXIT_NOT_FOUND, f"Slide file not found: {slide_file}")
-    with open(slide_file) as f:
+    with open(slide_file, encoding="utf-8") as f:
         new_slide = json.load(f)
     deck = _load_full(path)
     slides, si, _ = _get_slide(deck, after_num)
@@ -2031,7 +2031,7 @@ def deck_extract_text(args):
 
     result = json.dumps(texts, ensure_ascii=False, indent=2)
     if output:
-        with open(output, "w") as f:
+        with open(output, "w", encoding="utf-8") as f:
             f.write(result)
         if _is_json():
             _ok({"extracted": len(texts), "output": output})
@@ -2052,7 +2052,7 @@ def deck_patch_text(args):
              suggestions=["vela deck patch-text deck.json translated.json"])
     path, texts_path = args[0], args[1]
     deck = _load_full(path)
-    with open(texts_path, "r") as f:
+    with open(texts_path, "r", encoding="utf-8") as f:
         texts = json.load(f)
     patched = _patch_texts(deck, texts)
     _save_deck(deck, path)
@@ -2290,7 +2290,7 @@ def deck_init(args):
         deck["T"] = themes
     deck["G"] = [{"g": s, "S": []} for s in sections]
 
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding="utf-8") as f:
         json.dump(deck, f, ensure_ascii=False)
     section_count = len(sections)
     _ok({"path": path, "sections": section_count},
@@ -2310,7 +2310,7 @@ def slide_append(args):
     # Accept @file or inline JSON
     if slide_arg.startswith("@"):
         safe = _safe_resolve(slide_arg[1:], "slide @file")
-        with open(safe) as f:
+        with open(safe, encoding="utf-8") as f:
             slide = json.load(f)
     else:
         slide = json.loads(slide_arg)
@@ -2332,7 +2332,7 @@ def slide_append(args):
     else:
         _err(EXIT_FAIL, "Deck has no G or S key — run deck init first")
 
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding="utf-8") as f:
         json.dump(deck, f, ensure_ascii=False)
 
     slide_name = slide.get("n", "untitled")

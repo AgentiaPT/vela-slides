@@ -3,7 +3,7 @@
 import json, sys
 
 def summarize(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         d = json.load(f)
     slides = []
     if "lanes" in d:

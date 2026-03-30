@@ -30,7 +30,7 @@ def read_status():
     path = get_status_path()
     if not os.path.exists(path):
         return {}
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     # Strip "var EVAL_STATUS = " prefix and ";" suffix
     prefix = "var EVAL_STATUS = "
@@ -44,7 +44,7 @@ def read_status():
 def write_status(data):
     path = get_status_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("var EVAL_STATUS = ")
         json.dump(data, f, indent=2)
         f.write(";\n")
@@ -124,7 +124,7 @@ def cmd_complete_run(args):
 
     totals = {}
     if harvest_file and os.path.exists(harvest_file):
-        with open(harvest_file) as f:
+        with open(harvest_file, encoding="utf-8") as f:
             data = json.load(f)
         raw = data[0]["totals"] if isinstance(data, list) else data["totals"]
         totals = {

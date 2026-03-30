@@ -107,16 +107,16 @@ class FolderServerTestBase(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = tempfile.mkdtemp()
         # Write the default sample deck
-        with open(os.path.join(cls._tmpdir, "sample.json"), "w") as f:
+        with open(os.path.join(cls._tmpdir, "sample.json"), "w", encoding="utf-8") as f:
             json.dump(SAMPLE_DECK, f)
         # Write any extra files the subclass declared
         for name, content in cls._extra_files.items():
             path = os.path.join(cls._tmpdir, name)
             if isinstance(content, dict):
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     json.dump(content, f)
             else:
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
 
         cls._server = VelaLocalServer(cls._tmpdir, port=0, no_open=True, channel_port=0, no_auth=True)
@@ -143,7 +143,7 @@ class FolderServerTestBase(unittest.TestCase):
     def _write_temp_deck(self, name, data=None):
         """Write a deck file in _tmpdir and register cleanup."""
         path = os.path.join(self._tmpdir, name)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data or SAMPLE_DECK, f)
         self.addCleanup(lambda p=path: os.unlink(p) if os.path.exists(p) else None)
         return path
@@ -248,7 +248,7 @@ class TestFileWatcher(unittest.TestCase):
         watcher.start()
         self.addCleanup(watcher.stop)
         time.sleep(0.3)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write('{"v":2}')
         time.sleep(0.8)
         self.assertGreater(len(changes), 0)
@@ -261,7 +261,7 @@ class TestFileWatcher(unittest.TestCase):
         self.addCleanup(watcher.stop)
         time.sleep(0.3)
         watcher.ignore_next(2.0)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write('{"v":2}')
         time.sleep(0.8)
         self.assertEqual(len(changes), 0)
@@ -282,7 +282,7 @@ class TestFileWatcher(unittest.TestCase):
         watcher.start()
         watcher.stop()
         time.sleep(0.2)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write('{"v":2}')
         time.sleep(0.5)
         self.assertEqual(len(changes), 0)
@@ -295,7 +295,7 @@ class TestFileWatcher(unittest.TestCase):
         self.addCleanup(watcher.stop)
         time.sleep(0.3)
         for i in range(3):
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(f'{{"v":{i+2}}}')
             time.sleep(0.4)
         self.assertGreaterEqual(len(changes), 2,
@@ -410,7 +410,7 @@ class TestFolderModeRouting(FolderServerTestBase):
         modified["deckTitle"] = "Saved to Disk"
         payload = json.dumps({"type": "deck_save", "deck": modified})
         fetch(self._port, "POST", "/save/save-target.json", body=payload)
-        with open(os.path.join(self._tmpdir, "save-target.json"), "r") as f:
+        with open(os.path.join(self._tmpdir, "save-target.json"), "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data["deckTitle"], "Saved to Disk")
 
@@ -439,7 +439,7 @@ class TestFolderModeRouting(FolderServerTestBase):
         self.addCleanup(lambda: os.unlink(path) if os.path.exists(path) else None)
         fetch(self._port, "POST", "/api/upload", body=payload)
         self.assertTrue(os.path.exists(path))
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data["deckTitle"], "Test Deck")
 
@@ -500,7 +500,7 @@ class TestSingleModeRouting(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = tempfile.mkdtemp()
         deck_path = os.path.join(cls._tmpdir, "single.json")
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(SAMPLE_DECK, f)
 
         cls._server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=0, no_auth=True)
@@ -661,7 +661,7 @@ class TestSecurity(FolderServerTestBase):
         """A symlink pointing outside the folder should NOT serve the target."""
         outside_dir = tempfile.mkdtemp()
         outside_file = os.path.join(outside_dir, "secret.txt")
-        with open(outside_file, "w") as f:
+        with open(outside_file, "w", encoding="utf-8") as f:
             f.write("SECRET DATA")
         self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
 
@@ -683,7 +683,7 @@ class TestSecurity(FolderServerTestBase):
         """A symlink to a valid JSON deck outside the folder must be blocked."""
         outside_dir = tempfile.mkdtemp()
         outside_deck = os.path.join(outside_dir, "outside.json")
-        with open(outside_deck, "w") as f:
+        with open(outside_deck, "w", encoding="utf-8") as f:
             json.dump({"deckTitle": "Escaped!", "lanes": [{"title": "X", "items": [
                 {"title": "M", "status": "todo", "importance": "must",
                  "slides": [{"bg": "#000", "blocks": []}]}
@@ -797,7 +797,7 @@ class TestSecurity(FolderServerTestBase):
         })
         status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
         self.assertEqual(status, 200)
-        with open(original_path, "r") as f:
+        with open(original_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data["deckTitle"], "Overwritten",
                          "Upload silently overwrites (documented behavior)")
@@ -883,7 +883,7 @@ class TestHTMLGeneration(unittest.TestCase):
     def _make_server(self, deck_data):
         """Helper to create a single-mode server with given deck data."""
         deck_path = os.path.join(self._tmpdir, "gen.json")
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(deck_data, f)
         server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=0, no_auth=True)
         server._deck_data = deck_data
@@ -916,7 +916,7 @@ class TestHTMLGeneration(unittest.TestCase):
     def test_build_html_bare_slides_normalized(self):
         """Deck with only 'slides' (no 'lanes') should be auto-wrapped."""
         deck_path = os.path.join(self._tmpdir, "bare.json")
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(BARE_SLIDES_DECK, f)
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
         html = server._build_html_for_deck(deck_path, "bare.json").decode("utf-8")
@@ -926,7 +926,7 @@ class TestHTMLGeneration(unittest.TestCase):
     def test_build_html_vela_export_unwrapped(self):
         """Deck in _vela export format should be unwrapped automatically."""
         deck_path = os.path.join(self._tmpdir, "export.json")
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(VELA_EXPORT_DECK, f)
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
         html = server._build_html_for_deck(deck_path, "export.json").decode("utf-8")
@@ -934,7 +934,7 @@ class TestHTMLGeneration(unittest.TestCase):
 
     def test_build_html_channel_port_injected(self):
         deck_path = os.path.join(self._tmpdir, "gen.json")
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(SAMPLE_DECK, f)
         server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=9999, no_auth=True)
         server._deck_data = SAMPLE_DECK
@@ -971,7 +971,7 @@ class TestEdgeCases(FolderServerTestBase):
         self.assertEqual(len(errors), 0, f"Concurrent save errors: {errors}")
 
         # File must be valid JSON afterward
-        with open(os.path.join(self._tmpdir, "concurrent.json"), "r") as f:
+        with open(os.path.join(self._tmpdir, "concurrent.json"), "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertIn("deckTitle", data)
 

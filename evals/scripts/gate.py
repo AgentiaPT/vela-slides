@@ -38,7 +38,7 @@ def load_results(results_dir):
 
     # Try flat directory first
     for f in sorted(results_dir.glob("*.json")):
-        with open(f) as fh:
+        with open(f, encoding="utf-8") as fh:
             data = json.load(fh)
             if isinstance(data, list):
                 runs.extend(data)
@@ -50,7 +50,7 @@ def load_results(results_dir):
         for vdir in sorted(results_dir.iterdir()):
             if vdir.is_dir():
                 for f in sorted(vdir.glob("*.json")):
-                    with open(f) as fh:
+                    with open(f, encoding="utf-8") as fh:
                         data = json.load(fh)
                         if isinstance(data, list):
                             runs.extend(data)
@@ -68,7 +68,7 @@ def load_baseline(path=None):
 
     if not p.exists():
         return None
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         return json.load(f)
 
 

@@ -61,7 +61,7 @@ def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
             sys.exit(1)
 
     # Step 1: read deck JSON
-    with open(deck_json_path, 'r') as f:
+    with open(deck_json_path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
 
     # Normalize: wrap bare slides array in deck structure
@@ -87,7 +87,7 @@ def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
     deck_json_str = json.dumps(deck, ensure_ascii=False, separators=(',', ':'))
 
     # Step 2: read template
-    with open(TEMPLATE, 'r') as f:
+    with open(TEMPLATE, 'r', encoding="utf-8") as f:
         template = f.read()
 
     marker = "const STARTUP_PATCH = null;"
@@ -109,7 +109,7 @@ def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding="utf-8") as f:
         f.write(assembled)
 
     # Stats

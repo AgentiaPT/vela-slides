@@ -44,7 +44,7 @@ ALL_BLOCK_TYPES = {
 
 def load_deck(path):
     """Load deck JSON and extract slides + blocks in any format."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     slides = []
@@ -160,7 +160,7 @@ def deterministic_scores(data, slides):
 
 def generate_prompt(deck_path):
     """Generate the user prompt for a blind judge subagent."""
-    with open(deck_path) as f:
+    with open(deck_path, encoding="utf-8") as f:
         deck_text = f.read()
 
     # Truncate very large decks to avoid token waste
@@ -218,9 +218,9 @@ def generate_ab_prompt(deck_path_a, deck_path_b):
 
     Returns (prompt, mapping) where mapping records which file is Deck 1 vs 2.
     """
-    with open(deck_path_a) as f:
+    with open(deck_path_a, encoding="utf-8") as f:
         text_a = f.read()
-    with open(deck_path_b) as f:
+    with open(deck_path_b, encoding="utf-8") as f:
         text_b = f.read()
 
     # Truncate large decks
@@ -361,7 +361,7 @@ def main():
             # Output prompt + mapping file for later resolution
             mapping_path = EVAL_DIR / "output" / "ab-mapping.json"
             mapping_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(mapping_path, "w") as f:
+            with open(mapping_path, "w", encoding="utf-8") as f:
                 json.dump(mapping, f, indent=2)
             print(prompt)
             print(f"\n# Mapping saved to {mapping_path}", file=sys.stderr)
@@ -400,7 +400,7 @@ def main():
                 break
 
         if response_path:
-            with open(response_path) as f:
+            with open(response_path, encoding="utf-8") as f:
                 text = f.read()
         else:
             text = sys.stdin.read()
@@ -412,7 +412,7 @@ def main():
 
         # Resolve mapping
         if mapping_path.exists():
-            with open(mapping_path) as f:
+            with open(mapping_path, encoding="utf-8") as f:
                 mapping = json.load(f)
             resolved = resolve_ab_result(ab_result, mapping)
             ab_result["resolved"] = resolved
@@ -426,7 +426,7 @@ def main():
         if len(args) >= 2:
             idx = args.index("--parse-response")
             if idx + 1 < len(args):
-                with open(args[idx + 1]) as f:
+                with open(args[idx + 1], encoding="utf-8") as f:
                     text = f.read()
             else:
                 text = sys.stdin.read()

@@ -19,7 +19,7 @@ VALID_BLOCK_TYPES = {
 SIZE_TOKENS = {"xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"}
 
 def validate(path):
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
 
     # Auto-expand compact/turbo format to full format before validating
@@ -34,7 +34,7 @@ def validate(path):
             if real_path != os.path.abspath(path):
                 print(f"WARNING: refusing to write through symlink: {path}", file=sys.stderr)
             else:
-                with open(real_path, 'w') as f:
+                with open(real_path, 'w', encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False)
         except ImportError:
             pass
