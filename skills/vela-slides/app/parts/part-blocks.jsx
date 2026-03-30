@@ -581,7 +581,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
       const hdrBg = block.headerBg || `${st.accent}20`;
-      const hdrColor = block.headerColor || st.accent;
+      const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
       return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
@@ -724,11 +724,25 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function BrandingOverlay({ branding, index, total }) {
+function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
   if (!branding?.enabled) return null;
   const b = branding;
-  const slideNum = `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
+  const di = displayIndex != null ? displayIndex : index;
+  const dt = displayTotal != null ? displayTotal : total;
+  const slideNum = `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
   const rightText = b.footerRight === "auto" ? slideNum : (b.footerRight || "");
+  // Detect light slides for contrast-appropriate footer defaults
+  const isLight = (() => {
+    if (!slideBg || slideBg.startsWith("linear") || slideBg.startsWith("radial")) return false;
+    const c = slideBg.replace("#", "");
+    if (c.length < 6) return false;
+    const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), bl = parseInt(c.slice(4, 6), 16);
+    return (r * 299 + g * 587 + bl * 114) / 1000 > 140;
+  })();
+  const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
+  const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
     {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
@@ -742,10 +756,10 @@ function BrandingOverlay({ branding, index, total }) {
       if (isLeft) style.left = 16; else style.right = 16;
       return <img src={b.logo} alt="" data-branding-logo="true" style={style} />;
     })()}
-    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 28, background: b.footerBg || "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", zIndex: 5 }}>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 500 }}>{b.footerLeft || ""}</span>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 400, opacity: 0.7 }}>{b.footerCenter || ""}</span>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 500 }}>{rightText}</span>
+    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 28, background: footerBg, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", zIndex: 5 }}>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 500 }}>{b.footerLeft || ""}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 400, opacity: 0.7 }}>{b.footerCenter || ""}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 500 }}>{rightText}</span>
     </div>
   </>;
 }
@@ -768,7 +782,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   const blocks = slide.blocks || [];
   const align = slide.align || "left";
@@ -952,8 +966,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           </div>;
         })()}
         {branding?.enabled
-          ? <BrandingOverlay branding={branding} index={index} total={total} />
-          : <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: T.textDim, opacity: 0.35 }}>{String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}</div>
+          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: st.muted, opacity: 0.35 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>

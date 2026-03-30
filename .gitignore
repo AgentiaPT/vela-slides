@@ -26,8 +26,10 @@ dist/
 build/
 *.log
 
-# Node (if anyone runs npm for any reason)
+# Node / pnpm
 node_modules/
+.pnpm-store/
+package-lock.json
 
 # Temporary files
 *.tmp

@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.12";
+const VELA_VERSION = "12.14";
 const VELA_CHANGELOG = [
+  { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
+  { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set. Global slide counter uses displayIndex/displayTotal to avoid breaking comments." },
   { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
   { v: "12.10", d: "Fix: folder/local mode deck loading — STARTUP_PATCH (file on disk) is now authoritative over localStorage, preventing wrong deck from loading when multiple decks share the same origin." },
   { v: "12.9", d: "Comments UX: slide count badge always visible (hidden when panel/popover open). Module list comment count + 💬 toggle only in review mode." },
@@ -1504,7 +1506,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
       const hdrBg = block.headerBg || `${st.accent}20`;
-      const hdrColor = block.headerColor || st.accent;
+      const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
       return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
@@ -1647,11 +1649,25 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function BrandingOverlay({ branding, index, total }) {
+function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
   if (!branding?.enabled) return null;
   const b = branding;
-  const slideNum = `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
+  const di = displayIndex != null ? displayIndex : index;
+  const dt = displayTotal != null ? displayTotal : total;
+  const slideNum = `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
   const rightText = b.footerRight === "auto" ? slideNum : (b.footerRight || "");
+  // Detect light slides for contrast-appropriate footer defaults
+  const isLight = (() => {
+    if (!slideBg || slideBg.startsWith("linear") || slideBg.startsWith("radial")) return false;
+    const c = slideBg.replace("#", "");
+    if (c.length < 6) return false;
+    const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), bl = parseInt(c.slice(4, 6), 16);
+    return (r * 299 + g * 587 + bl * 114) / 1000 > 140;
+  })();
+  const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
+  const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
     {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
@@ -1665,10 +1681,10 @@ function BrandingOverlay({ branding, index, total }) {
       if (isLeft) style.left = 16; else style.right = 16;
       return <img src={b.logo} alt="" data-branding-logo="true" style={style} />;
     })()}
-    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 28, background: b.footerBg || "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", zIndex: 5 }}>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 500 }}>{b.footerLeft || ""}</span>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 400, opacity: 0.7 }}>{b.footerCenter || ""}</span>
-      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: b.footerColor || "#94a3b8", fontWeight: 500 }}>{rightText}</span>
+    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 28, background: footerBg, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 18px", zIndex: 5 }}>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 500 }}>{b.footerLeft || ""}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 400, opacity: 0.7 }}>{b.footerCenter || ""}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: b.footerSize || 9, color: footerColor, fontWeight: 500 }}>{rightText}</span>
     </div>
   </>;
 }
@@ -1691,7 +1707,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   const blocks = slide.blocks || [];
   const align = slide.align || "left";
@@ -1875,8 +1891,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           </div>;
         })()}
         {branding?.enabled
-          ? <BrandingOverlay branding={branding} index={index} total={total} />
-          : <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: T.textDim, opacity: 0.35 }}>{String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}</div>
+          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: st.muted, opacity: 0.35 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -3311,7 +3327,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -3381,7 +3397,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
       </div>
     </div>
   );
@@ -4942,7 +4958,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     <div ref={containerRef} tabIndex={0} style={{ position: "fixed", inset: 0, zIndex: 9999, background: T.bg, display: "flex", flexDirection: "row", outline: "none" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-        <FullscreenSlide slide={presSlides[slideIndex]} index={globalSlideIndex - presOffset} total={globalSlideTotal} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" />
+        <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -4956,12 +4972,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && VELA_LOCAL_MODE && <div className="slide-nav-btn" onClick={() => {
-          if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-          else (containerRef.current || document.documentElement).requestFullscreen?.().catch(() => {});
-        }} title="Toggle browser fullscreen" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><Maximize2 size={18} color="#fff" /></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
@@ -5059,7 +5072,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={globalSlideIndex} total={globalSlideTotal} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} />
+                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -12147,12 +12160,13 @@ function ShortcutHelp({ onClose }) {
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
       ["[", "Toggle navigator panel"],
+      ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
+      ["T", "Toggle TOC panel (fullscreen)"],
       ["D", "Toggle dark / light theme"],
-      ["⛵", "Cinema mode — drag bookmarklet to bar"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
     ]},
@@ -12163,6 +12177,7 @@ function ShortcutHelp({ onClose }) {
       ["Ctrl+C", "Copy slide to clipboard"],
       ["Ctrl+V", "Paste slide / image / JSON"],
       ["Del", "Delete current slide"],
+      ["R", "Toggle review / comments"],
     ]},
     { title: "AI Tools", items: [
       ["Shift+I", "Quick improve slide via Vera"],
@@ -13163,6 +13178,7 @@ export default function App() {
           <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 600, color: T.textDim, letterSpacing: "0.05em" }}>VELA v{VELA_VERSION}</span>
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, height: 12, borderRadius: "50%", border: `1px solid ${T.textDim}50`, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.textDim, lineHeight: 1, opacity: 0.6 }}>i</span>
         </span>
+        <span onClick={() => setShowShortcuts(true)} style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, cursor: "pointer" }} title="Keyboard shortcuts">Press <kbd style={{ fontSize: 8, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 2, padding: "0 3px", color: T.text }}>?</kbd> for shortcuts</span>
         <span style={{ fontFamily: FONT.body, fontSize: 9, color: T.textDim }}>© 2025-present <a href="https://www.linkedin.com/in/rquintino/" target="_blank" rel="noopener noreferrer" style={{ color: T.textMuted, textDecoration: "none" }}>Rui Quintino</a> · <a href="https://github.com/agentiapt/vela-slides/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" style={{ color: T.textDim, textDecoration: "none" }}>ELv2</a></span>
       </div>}
 
