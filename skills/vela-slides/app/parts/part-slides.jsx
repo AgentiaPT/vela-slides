@@ -1759,12 +1759,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && VELA_LOCAL_MODE && <div className="slide-nav-btn" onClick={() => {
-          if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-          else (containerRef.current || document.documentElement).requestFullscreen?.().catch(() => {});
-        }} title="Toggle browser fullscreen" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><Maximize2 size={18} color="#fff" /></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}

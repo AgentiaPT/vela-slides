@@ -4972,12 +4972,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && VELA_LOCAL_MODE && <div className="slide-nav-btn" onClick={() => {
-          if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-          else (containerRef.current || document.documentElement).requestFullscreen?.().catch(() => {});
-        }} title="Toggle browser fullscreen" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><Maximize2 size={18} color="#fff" /></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
@@ -12163,12 +12160,13 @@ function ShortcutHelp({ onClose }) {
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
       ["[", "Toggle navigator panel"],
+      ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
+      ["T", "Toggle TOC panel (fullscreen)"],
       ["D", "Toggle dark / light theme"],
-      ["⛵", "Cinema mode — drag bookmarklet to bar"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
     ]},
@@ -12179,6 +12177,7 @@ function ShortcutHelp({ onClose }) {
       ["Ctrl+C", "Copy slide to clipboard"],
       ["Ctrl+V", "Paste slide / image / JSON"],
       ["Del", "Delete current slide"],
+      ["R", "Toggle review / comments"],
     ]},
     { title: "AI Tools", items: [
       ["Shift+I", "Quick improve slide via Vera"],
@@ -13179,6 +13178,7 @@ export default function App() {
           <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 600, color: T.textDim, letterSpacing: "0.05em" }}>VELA v{VELA_VERSION}</span>
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, height: 12, borderRadius: "50%", border: `1px solid ${T.textDim}50`, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.textDim, lineHeight: 1, opacity: 0.6 }}>i</span>
         </span>
+        <span onClick={() => setShowShortcuts(true)} style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, cursor: "pointer" }} title="Keyboard shortcuts">Press <kbd style={{ fontSize: 8, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 2, padding: "0 3px", color: T.text }}>?</kbd> for shortcuts</span>
         <span style={{ fontFamily: FONT.body, fontSize: 9, color: T.textDim }}>© 2025-present <a href="https://www.linkedin.com/in/rquintino/" target="_blank" rel="noopener noreferrer" style={{ color: T.textMuted, textDecoration: "none" }}>Rui Quintino</a> · <a href="https://github.com/agentiapt/vela-slides/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" style={{ color: T.textDim, textDecoration: "none" }}>ELv2</a></span>
       </div>}
 
