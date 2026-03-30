@@ -118,9 +118,9 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDragOver = (e, si) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.dataTransfer.dropEffect = "move";
     const rect = e.currentTarget.getBoundingClientRect();
     const mid = rect.top + rect.height / 2;
@@ -128,6 +128,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDrop = (e, si) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
@@ -149,6 +150,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleContainerDrop = (e) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
@@ -247,13 +249,14 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
   const [notesOpen, setNotesOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
 
@@ -314,6 +317,8 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       onDragOver={handleSectionDragOver}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropPos(null); }}
       onDrop={handleSectionDrop}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         borderTop: dropPos === "top" ? `2px solid ${T.accent}` : "2px solid transparent",
         borderBottom: dropPos === "bottom" ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -342,6 +347,10 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
+        {hovered && <span style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0 }}>
+          <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REORDER", id: item.id, dir: "up" }); }} title="Move up" style={{ fontSize: 8, color: isFirst ? T.border : T.textDim, cursor: isFirst ? "default" : "pointer", lineHeight: 1, padding: "0 1px", opacity: isFirst ? 0.3 : 0.7 }}>▲</span>
+          <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REORDER", id: item.id, dir: "down" }); }} title="Move down" style={{ fontSize: 8, color: isLast ? T.border : T.textDim, cursor: isLast ? "default" : "pointer", lineHeight: 1, padding: "0 1px", opacity: isLast ? 0.3 : 0.7 }}>▼</span>
+        </span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_ITEM", id: item.id }); }} style={{ fontSize: 12, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3 }}>×</span>
       </div>
       {!collapsed && notesOpen && <div style={{ padding: "2px 12px 6px 38px" }} onClick={(e) => e.stopPropagation()}>
@@ -393,13 +402,13 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
 
   return (
     <div onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-section")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
-      {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item) => {
+      {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />

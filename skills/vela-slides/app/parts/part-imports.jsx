@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.10";
+const VELA_VERSION = "12.12";
 const VELA_CHANGELOG = [
+  { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
   { v: "12.10", d: "Fix: folder/local mode deck loading — STARTUP_PATCH (file on disk) is now authoritative over localStorage, preventing wrong deck from loading when multiple decks share the same origin." },
   { v: "12.9", d: "Comments UX: slide count badge always visible (hidden when panel/popover open). Module list comment count + 💬 toggle only in review mode." },
   { v: "12.8", d: "Review Mode: inline comment cards rendered next to referenced blocks (blockIndex). Resolve/delete buttons directly on each comment row in both inline cards and sidebar panel. Better UX — no need to scroll to batch actions." },
