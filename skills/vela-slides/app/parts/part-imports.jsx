@@ -57,9 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.17";
+const VELA_VERSION = "12.18";
 const VELA_CHANGELOG = [
-  { v: "12.17", d: "Security: SVG sanitizer — loop until stable to prevent incomplete multi-char sanitization, permissive closing tags to match browser-accepted variants like </script >." },
+  { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
   { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
   { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
   { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
@@ -294,27 +294,37 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   } catch (_) { return ""; }
 }
 
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
-  let prev, s = raw, i = 0;
-  do {
-    prev = s;
-    s = s
-      .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, "")
-      .replace(/<foreignObject\b[\s\S]*?<\/foreignObject\b[^>]*>/gi, "")
-      .replace(/<iframe[\s>][\s\S]*?(?:<\/iframe\b[^>]*>|\/>)/gi, "")
-      .replace(/<embed[\s>][^]*?(?:<\/embed\b[^>]*>|\/>)/gi, "")
-      .replace(/<object\b[\s\S]*?<\/object\b[^>]*>/gi, "")
-      .replace(/<use[\s>][^]*?(?:<\/use\b[^>]*>|\/>)/gi, "")
-      .replace(/<animate[\s>][^]*?(?:<\/animate\b[^>]*>|\/>)/gi, "")
-      .replace(/<set[\s>][^]*?(?:<\/set\b[^>]*>|\/>)/gi, "")
-      .replace(/\bon\w+\s*=/gi, "data-blocked=")
-      .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-      .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-      .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-      .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-  } while (s !== prev && ++i < 5);
-  return s;
+  try {
+    const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
+    const err = doc.querySelector("parsererror");
+    if (err) return "";
+    const walk = (node) => {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        if (child.nodeType === 1) {
+          const tag = child.localName.toLowerCase();
+          if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          const attrs = Array.from(child.attributes);
+          for (const a of attrs) {
+            const name = a.name.toLowerCase();
+            if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            const val = a.value.trim().toLowerCase();
+            if ((name === "href" || name === "xlink:href") && val.startsWith("javascript:")) { child.removeAttribute(a.name); continue; }
+            if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
+            if (name === "style" && (/url\s*\([^)]*javascript:/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+          }
+          walk(child);
+        }
+      }
+    };
+    const root = doc.documentElement;
+    walk(root);
+    return root.innerHTML;
+  } catch (_) { return ""; }
 }
 
 function sanitizeBlock(block) {
