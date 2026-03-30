@@ -564,10 +564,15 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         deck_path = os.path.join(srv.folder_path, deck_name)
 
-        # Security: symlink escape check
-        real_path = os.path.realpath(deck_path)
+        # Security: ensure resolved path stays within the configured folder
         real_folder = os.path.realpath(srv.folder_path)
-        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+        real_path = os.path.realpath(deck_path)
+        try:
+            common = os.path.commonpath([real_folder, real_path])
+        except ValueError:
+            self.send_error(403, "Access denied")
+            return
+        if common != real_folder:
             self.send_error(403, "Access denied")
             return
 
@@ -617,10 +622,15 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return
             if deck:
                 deck_path = os.path.join(srv.folder_path, deck_name)
-                # Security: symlink escape check
-                real_path = os.path.realpath(deck_path)
+                # Security: ensure resolved path stays within the configured folder
                 real_folder = os.path.realpath(srv.folder_path)
-                if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+                real_path = os.path.realpath(deck_path)
+                try:
+                    common = os.path.commonpath([real_folder, real_path])
+                except ValueError:
+                    self.send_error(403, "Access denied")
+                    return
+                if common != real_folder:
                     self.send_error(403, "Access denied")
                     return
                 srv.set_deck_data(deck_name, deck)
@@ -673,10 +683,15 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             srv = self.server_ref
             dest = os.path.join(srv.folder_path, filename)
 
-            # Security: symlink escape check
-            real_dest = os.path.realpath(dest)
+            # Security: ensure resolved path stays within the configured folder
             real_folder = os.path.realpath(srv.folder_path)
-            if not real_dest.startswith(real_folder + os.sep) and real_dest != real_folder:
+            real_dest = os.path.realpath(dest)
+            try:
+                common = os.path.commonpath([real_folder, real_dest])
+            except ValueError:
+                self._json_response(403, {"ok": False, "error": "Access denied"})
+                return
+            if common != real_folder:
                 self._json_response(403, {"ok": False, "error": "Access denied"})
                 return
 
