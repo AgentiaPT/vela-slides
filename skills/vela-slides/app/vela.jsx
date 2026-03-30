@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.19";
+const VELA_VERSION = "12.20";
 const VELA_CHANGELOG = [
+  { v: "12.20", d: "Browser tab title syncs with deck title — shows 'DeckName — Vela Slides' instead of generic page title." },
   { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
   { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
   { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
@@ -12945,6 +12946,12 @@ export default function App() {
       } catch (err) { dbg("Save error:", err); }
     }, 1500);
   }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
+
+  // Sync browser tab title with deck title
+  React.useEffect(() => {
+    const name = state.deckTitle || "Untitled";
+    document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+  }, [state.deckTitle]);
 
   // Export
   const exportDeck = () => {

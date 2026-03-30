@@ -988,6 +988,12 @@ export default function App() {
     }, 1500);
   }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
 
+  // Sync browser tab title with deck title
+  React.useEffect(() => {
+    const name = state.deckTitle || "Untitled";
+    document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+  }, [state.deckTitle]);
+
   // Export
   const exportDeck = () => {
     const save = extractSave(state);

@@ -28,6 +28,8 @@ import path from "node:path";
 const PORT = parseInt(process.env.VELA_CHANNEL_PORT || "8787");
 const SERVER_NAME = "vela-channel";
 const LOG_PATH = path.join(process.env.HOME || "/tmp", "projects/vela-slides/vela-channel.log");
+const CACHE_DIR = path.resolve(process.cwd(), ".channel-cache");
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 function log(msg: string) {
   const ts = new Date().toISOString();
@@ -60,7 +62,8 @@ const mcp = new Server(
       `The content is a JSON object with an "action" field and optional parameters.`,
       ``,
       `ACTIONS:`,
-      `  complete — LLM completion proxy: Vera sends {system, messages, temperature, max_tokens, _callType}.`,
+      `  complete — LLM completion proxy. The channel event contains a _summary and _payloadFile path.`,
+      `    Read the payload file to get {system, messages, temperature, max_tokens, _callType}.`,
       `    You ARE the LLM backend. Read the system prompt and messages, then reply with ONLY the raw text`,
       `    output (no markdown fences, no commentary). Match the role: follow the system prompt instructions`,
       `    exactly as if you were the API. The _callType hint tells you the context (chat, quick-edit,`,
@@ -165,7 +168,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     // Also broadcast to any SSE listeners (skip silent/engine replies)
     broadcastSSE(JSON.stringify({ type: "reply", text, request_id, ...(silent ? { _silent: true } : {}) }));
 
-    return { content: [{ type: "text", text: "Reply sent to browser" }] };
+    const snippet = text.length > 60 ? text.slice(0, 60) + "…" : text;
+    return { content: [{ type: "text", text: `Reply sent (${text.length} chars): ${snippet}` }] };
   }
   throw new Error(`Unknown tool: ${req.params.name}`);
 });
@@ -216,23 +220,52 @@ const httpServer = http.createServer(async (req, res) => {
         replyQueue.set(requestId, { resolve, timeout, silent: isSilent });
       });
 
-      // Push to Claude via channel notification — send full action payload
-      // Strip base64 image data from messages to avoid huge payloads
+      // Push to Claude via channel notification
+      // For complete actions: write full payload to temp file, send compact summary
       const isComplete = action.action === "complete";
-      let cleanedAction = action;
-      if (isComplete && action.messages) {
-        cleanedAction = { ...action, messages: action.messages.map((m: any) => {
-          if (typeof m.content === "string") return m;
-          if (Array.isArray(m.content)) {
-            const imageCount = m.content.filter((p: any) => p.type === "image").length;
-            if (imageCount === 0) return m;
-            const cleaned = m.content.map((p: any) => p.type === "image" ? { type: "text", text: "[image]" } : p);
-            return { ...m, content: cleaned };
-          }
-          return m;
-        })};
+      let notificationContent: string;
+
+      if (isComplete) {
+        // Strip base64 image data before writing
+        let cleanedAction = action;
+        if (action.messages) {
+          cleanedAction = { ...action, messages: action.messages.map((m: any) => {
+            if (typeof m.content === "string") return m;
+            if (Array.isArray(m.content)) {
+              const imageCount = m.content.filter((p: any) => p.type === "image").length;
+              if (imageCount === 0) return m;
+              const cleaned = m.content.map((p: any) => p.type === "image" ? { type: "text", text: "[image]" } : p);
+              return { ...m, content: cleaned };
+            }
+            return m;
+          })};
+        }
+        // Write full payload to temp file
+        const payloadPath = path.join(CACHE_DIR, `vela-channel-${requestId}.json`);
+        fs.writeFileSync(payloadPath, JSON.stringify(cleanedAction, null, 2));
+
+        // Build compact summary for console display
+        const callType = action._callType || "chat";
+        const msgCount = action.messages?.length || 0;
+        const lastMsg = action.messages?.[msgCount - 1];
+        const userSnippet = lastMsg?.content
+          ? (typeof lastMsg.content === "string" ? lastMsg.content : "[multipart]").slice(0, 80)
+          : "";
+        notificationContent = JSON.stringify({
+          action: "complete",
+          _callType: callType,
+          _silent: !!action._silent,
+          request_id: requestId,
+          _summary: `${callType} | ${msgCount} msg(s) | "${userSnippet}"`,
+          _payloadFile: payloadPath,
+        });
+      } else {
+        // Non-complete actions: send as-is but compact
+        const { slide_context, ...rest } = action;
+        const summary: any = { ...rest, request_id: requestId };
+        if (slide_context) summary._slideHint = `slide ${slide_context.slideIndex ?? "?"}`;
+        notificationContent = JSON.stringify(summary);
       }
-      const notificationContent = JSON.stringify({ ...cleanedAction, request_id: requestId });
 
       await mcp.notification({
         method: "notifications/claude/channel",

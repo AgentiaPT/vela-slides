@@ -1,5 +1,6 @@
 # Runtime
 .vela.pid
+.channel-cache/
 
 # OS
 .DS_Store
