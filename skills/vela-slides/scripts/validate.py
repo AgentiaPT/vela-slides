@@ -30,8 +30,12 @@ def validate(path):
             from vela import _load_full
             deck = _load_full(path)
             # Save expanded version back so assembly works
-            with open(path, 'w') as f:
-                json.dump(deck, f, ensure_ascii=False)
+            real_path = os.path.realpath(path)
+            if real_path != os.path.abspath(path):
+                print(f"WARNING: refusing to write through symlink: {path}", file=sys.stderr)
+            else:
+                with open(real_path, 'w') as f:
+                    json.dump(deck, f, ensure_ascii=False)
         except ImportError:
             pass
 

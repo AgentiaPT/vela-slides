@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.14";
+const VELA_VERSION = "12.16";
 const VELA_CHANGELOG = [
+  { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
+  { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
   { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
   { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set. Global slide counter uses displayIndex/displayTotal to avoid breaking comments." },
   { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
@@ -280,6 +282,35 @@ function sanitizeString(val, maxLen = 500) {
   return val.replace(/<[^>]*>/g, "").slice(0, maxLen);
 }
 
+function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
+  if (typeof url !== "string") return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed, "https://placeholder.invalid");
+    if (allowedProtocols.includes(parsed.protocol)) return trimmed;
+    return "";
+  } catch (_) { return ""; }
+}
+
+function sanitizeSvgMarkup(raw) {
+  if (typeof raw !== "string") return "";
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
+    .replace(/<iframe[\s>][\s\S]*?(?:<\/iframe>|\/>)/gi, "")
+    .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
+    .replace(/<object[\s\S]*?<\/object>/gi, "")
+    .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
+    .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
+    .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
+    .replace(/\bon\w+\s*=/gi, "data-blocked=")
+    .replace(/href\s*=\s*["']javascript:/gi, 'href="')
+    .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
+    .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
+    .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+}
+
 function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
@@ -291,10 +322,12 @@ function sanitizeBlock(block) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  if (clean.link) clean.link = sanitizeUrl(clean.link);
+  if (clean.src && clean.type === "image") clean.src = sanitizeUrl(clean.src, ["http:", "https:", "data:"]);
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
-        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeString(it.link, 500) } : {}) } : ""
+        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeUrl(it.link) } : {}) } : ""
       );
     }
     if (clean.type === "grid") {

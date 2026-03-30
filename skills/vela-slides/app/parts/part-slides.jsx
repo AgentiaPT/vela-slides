@@ -823,7 +823,7 @@ function TeacherMessage({ text }) {
   if (allMatches.length === 0 && !hasOpenSvg) return <ChatMarkdown text={remaining} />;
   for (const m of allMatches) {
     if (m.start > lastIdx) parts.push({ type: "text", content: remaining.slice(lastIdx, m.start).trim() });
-    parts.push({ type: "svg", content: m.svg });
+    parts.push({ type: "svg", content: sanitizeSvgMarkup(m.svg) });
     lastIdx = m.end;
   }
   if (lastIdx < remaining.length) parts.push({ type: "text", content: remaining.slice(lastIdx).trim() });
