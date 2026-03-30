@@ -41,6 +41,14 @@ EXIT_CONFLICT = 5
 # ── Helpers ────────────────────────────────────────────────────────────
 _json_mode = False
 
+def _safe_resolve(file_path, label="file"):
+    """Resolve a file path and reject directory traversal / symlink escapes."""
+    resolved = os.path.realpath(file_path)
+    cwd = os.path.realpath(os.getcwd())
+    if not resolved.startswith(cwd + os.sep) and resolved != cwd:
+        _err(EXIT_USAGE, f"Path traversal blocked for {label}: {file_path}")
+    return resolved
+
 def _extract_output_flag(args):
     """Extract --output <path> from args. Returns (output_path, remaining_args)."""
     output_path = None
@@ -1531,6 +1539,7 @@ def slide_insert(args):
     if len(args) < 3:
         _err(EXIT_USAGE, "Need: <deck.json> <after_num> <slide_file.json>")
     path, after_num, slide_file = args[0], int(args[1]), args[2]
+    slide_file = _safe_resolve(slide_file, "slide file")
     if not os.path.exists(slide_file):
         _err(EXIT_NOT_FOUND, f"Slide file not found: {slide_file}")
     with open(slide_file) as f:
@@ -2300,7 +2309,8 @@ def slide_append(args):
 
     # Accept @file or inline JSON
     if slide_arg.startswith("@"):
-        with open(slide_arg[1:]) as f:
+        safe = _safe_resolve(slide_arg[1:], "slide @file")
+        with open(safe) as f:
             slide = json.load(f)
     else:
         slide = json.loads(slide_arg)

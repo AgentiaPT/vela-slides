@@ -57,8 +57,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.14";
+const VELA_VERSION = "12.19";
 const VELA_CHANGELOG = [
+  { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
+  { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
+  { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
+  { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
   { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
   { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set. Global slide counter uses displayIndex/displayTotal to avoid breaking comments." },
   { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
@@ -280,6 +284,50 @@ function sanitizeString(val, maxLen = 500) {
   return val.replace(/<[^>]*>/g, "").slice(0, maxLen);
 }
 
+function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
+  if (typeof url !== "string") return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed, "https://placeholder.invalid");
+    if (allowedProtocols.includes(parsed.protocol)) return trimmed;
+    return "";
+  } catch (_) { return ""; }
+}
+
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+
+function sanitizeSvgMarkup(raw) {
+  if (typeof raw !== "string") return "";
+  try {
+    const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
+    const err = doc.querySelector("parsererror");
+    if (err) return "";
+    const walk = (node) => {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        if (child.nodeType === 1) {
+          const tag = child.localName.toLowerCase();
+          if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          const attrs = Array.from(child.attributes);
+          for (const a of attrs) {
+            const name = a.name.toLowerCase();
+            if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            const val = a.value.trim().toLowerCase();
+            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
+            if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
+            if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+          }
+          walk(child);
+        }
+      }
+    };
+    const root = doc.documentElement;
+    walk(root);
+    return root.innerHTML;
+  } catch (_) { return ""; }
+}
+
 function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
@@ -291,10 +339,12 @@ function sanitizeBlock(block) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  if (clean.link) clean.link = sanitizeUrl(clean.link);
+  if (clean.src && clean.type === "image") clean.src = sanitizeUrl(clean.src, ["http:", "https:", "data:"]);
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
-        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeString(it.link, 500) } : {}) } : ""
+        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeUrl(it.link) } : {}) } : ""
       );
     }
     if (clean.type === "grid") {
@@ -2676,41 +2726,61 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
   messages.push({ role: "user", content: studentQuestion || "Generate study notes and follow-up questions for the current slide." });
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
     const t0 = performance.now();
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, temperature: 0.3, system: sysPrompt, messages, stream: true, cache_control: { type: "ephemeral" } })
-    });
-    clearTimeout(timer);
-    if (!r.ok) { const e = await r.text(); throw new Error(`API ${r.status}: ${e.slice(0, 100)}`); }
     let fullText = "";
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "", inTok = 0, outTok = 0, cacheR = 0, cacheW = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop() || "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const raw = line.slice(6).trim();
-        if (raw === "[DONE]") continue;
-        try {
-          const evt = JSON.parse(raw);
-          if (evt.type === "content_block_delta" && evt.delta?.text) {
-            fullText += evt.delta.text;
-            if (onText) onText(fullText);
-          }
-          if (evt.type === "message_start" && evt.message?.usage) { inTok = evt.message.usage.input_tokens || 0; cacheR = evt.message.usage.cache_read_input_tokens || 0; cacheW = evt.message.usage.cache_creation_input_tokens || 0; }
-          if (evt.type === "message_delta" && evt.usage) { outTok = evt.usage.output_tokens || 0; }
-        } catch {}
+
+    // Local mode: route through MCP channel server (no streaming)
+    if (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) {
+      const timer = setTimeout(() => controller.abort(), 120000);
+      const r = await fetch(`http://localhost:${VELA_CHANNEL_PORT}/action`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({ action: "complete", _silent: true, system: sysPrompt, messages, temperature: 0.3, max_tokens: 1500, _callType: "teacher" })
+      });
+      clearTimeout(timer);
+      if (!r.ok) throw new Error(`Channel ${r.status}`);
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || "Channel error");
+      fullText = data.reply || "";
+      if (onText) onText(fullText);
+      velaSessionStats.add({ type: "teacher", input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_create_tokens: 0, model: "claude-code-channel", tool_calls: 0, duration_ms: Math.round(performance.now() - t0), stop_reason: "channel" });
+    } else {
+      // Artifact mode: direct Anthropic API with streaming
+      const timer = setTimeout(() => controller.abort(), 25000);
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, temperature: 0.3, system: sysPrompt, messages, stream: true, cache_control: { type: "ephemeral" } })
+      });
+      clearTimeout(timer);
+      if (!r.ok) { const e = await r.text(); throw new Error(`API ${r.status}: ${e.slice(0, 100)}`); }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "", inTok = 0, outTok = 0, cacheR = 0, cacheW = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === "content_block_delta" && evt.delta?.text) {
+              fullText += evt.delta.text;
+              if (onText) onText(fullText);
+            }
+            if (evt.type === "message_start" && evt.message?.usage) { inTok = evt.message.usage.input_tokens || 0; cacheR = evt.message.usage.cache_read_input_tokens || 0; cacheW = evt.message.usage.cache_creation_input_tokens || 0; }
+            if (evt.type === "message_delta" && evt.usage) { outTok = evt.usage.output_tokens || 0; }
+          } catch {}
+        }
       }
+      velaSessionStats.add({ type: "teacher", input_tokens: inTok, output_tokens: outTok, cache_read_tokens: cacheR, cache_create_tokens: cacheW, model: "claude-haiku-4-5-20251001", tool_calls: 0, duration_ms: Math.round(performance.now() - t0), stop_reason: "end_turn" });
     }
-    velaSessionStats.add({ type: "teacher", input_tokens: inTok, output_tokens: outTok, cache_read_tokens: cacheR, cache_create_tokens: cacheW, model: "claude-haiku-4-5-20251001", tool_calls: 0, duration_ms: Math.round(performance.now() - t0), stop_reason: "end_turn" });
+
     const parts = fullText.split(/---\s*QUESTIONS\s*---/i);
     const message = (parts[0] || "").trim();
     const questions = parts[1] ? parts[1].trim().split("\n").map(q => q.replace(/^\d+[\.\)]\s*/, "").replace(/^[-•]\s*/, "").trim()).filter(q => q.length > 5 && q.endsWith("?")).slice(0, 3) : [];
@@ -4036,7 +4106,7 @@ function TeacherMessage({ text }) {
   if (allMatches.length === 0 && !hasOpenSvg) return <ChatMarkdown text={remaining} />;
   for (const m of allMatches) {
     if (m.start > lastIdx) parts.push({ type: "text", content: remaining.slice(lastIdx, m.start).trim() });
-    parts.push({ type: "svg", content: m.svg });
+    parts.push({ type: "svg", content: sanitizeSvgMarkup(m.svg) });
     lastIdx = m.end;
   }
   if (lastIdx < remaining.length) parts.push({ type: "text", content: remaining.slice(lastIdx).trim() });

@@ -1075,8 +1075,12 @@ class VelaLocalServer:
                 continue
             for serve_path, (nm_path, ctype) in vendor_map.items():
                 full = os.path.join(nm, nm_path)
-                if os.path.isfile(full):
-                    with open(full, "rb") as f:
+                real_full = os.path.realpath(full)
+                real_nm = os.path.realpath(nm)
+                if not real_full.startswith(real_nm + os.sep):
+                    continue  # Reject symlink escape
+                if os.path.isfile(real_full):
+                    with open(real_full, "rb") as f:
                         VelaHTTPHandler.static_files[serve_path] = (f.read(), ctype)
                     self._vendor_available = True
             if self._vendor_available:
