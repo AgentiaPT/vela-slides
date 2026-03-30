@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.18";
+const VELA_VERSION = "12.19";
 const VELA_CHANGELOG = [
+  { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
   { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
   { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
   { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
@@ -313,9 +314,9 @@ function sanitizeSvgMarkup(raw) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
             const val = a.value.trim().toLowerCase();
-            if ((name === "href" || name === "xlink:href") && val.startsWith("javascript:")) { child.removeAttribute(a.name); continue; }
+            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
-            if (name === "style" && (/url\s*\([^)]*javascript:/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+            if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
