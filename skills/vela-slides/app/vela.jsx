@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.16";
+const VELA_VERSION = "12.17";
 const VELA_CHANGELOG = [
+  { v: "12.17", d: "Security: SVG sanitizer — loop until stable to prevent incomplete multi-char sanitization, permissive closing tags to match browser-accepted variants like </script >." },
   { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
   { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
   { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
@@ -295,20 +296,25 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
-  return raw
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-    .replace(/<iframe[\s>][\s\S]*?(?:<\/iframe>|\/>)/gi, "")
-    .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-    .replace(/<object[\s\S]*?<\/object>/gi, "")
-    .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-    .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-    .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-    .replace(/\bon\w+\s*=/gi, "data-blocked=")
-    .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-    .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-    .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-    .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+  let prev, s = raw, i = 0;
+  do {
+    prev = s;
+    s = s
+      .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, "")
+      .replace(/<foreignObject\b[\s\S]*?<\/foreignObject\b[^>]*>/gi, "")
+      .replace(/<iframe[\s>][\s\S]*?(?:<\/iframe\b[^>]*>|\/>)/gi, "")
+      .replace(/<embed[\s>][^]*?(?:<\/embed\b[^>]*>|\/>)/gi, "")
+      .replace(/<object\b[\s\S]*?<\/object\b[^>]*>/gi, "")
+      .replace(/<use[\s>][^]*?(?:<\/use\b[^>]*>|\/>)/gi, "")
+      .replace(/<animate[\s>][^]*?(?:<\/animate\b[^>]*>|\/>)/gi, "")
+      .replace(/<set[\s>][^]*?(?:<\/set\b[^>]*>|\/>)/gi, "")
+      .replace(/\bon\w+\s*=/gi, "data-blocked=")
+      .replace(/href\s*=\s*["']javascript:/gi, 'href="')
+      .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
+      .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
+      .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+  } while (s !== prev && ++i < 5);
+  return s;
 }
 
 function sanitizeBlock(block) {
