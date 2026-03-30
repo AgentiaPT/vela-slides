@@ -28,7 +28,15 @@ function resolvePlaywright() {
   try {
     // Resolve from the `playwright` CLI binary location
     const bin = execSync('which playwright 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (bin) globalPaths.push(path.resolve(path.dirname(bin), '..', 'lib', 'node_modules', 'playwright'));
+    if (bin) {
+      // npm/nvm layout: <prefix>/lib/node_modules/playwright
+      globalPaths.push(path.resolve(path.dirname(bin), '..', 'lib', 'node_modules', 'playwright'));
+      // pnpm global layout: find via pnpm root -g
+      try {
+        const pnpmRoot = execSync('pnpm root -g 2>/dev/null', { encoding: 'utf8' }).trim();
+        if (pnpmRoot) globalPaths.push(path.join(pnpmRoot, 'playwright'));
+      } catch {}
+    }
   } catch {}
   const candidates = [
     ...globalPaths,
@@ -163,15 +171,40 @@ async function clickBtn(text) {
 }
 
 /** Assert text is visible (uses Playwright auto-retry). */
-async function expectText(text, timeout = 2000) {
+async function expectText(text, timeout = 1000) {
   await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout });
 }
 
 /** Assert text is NOT visible. */
-async function expectNoText(text, timeout = 1000) {
+async function expectNoText(text, timeout = 500) {
   await page.locator(`text=${text}`).first().waitFor({ state: 'hidden', timeout }).catch(() => {});
   const visible = await page.locator(`text=${text}`).first().isVisible().catch(() => false);
   if (visible) throw new Error(`"${text}" still visible`);
+}
+
+/** Check if comments panel is open (has COMMENTS header in mono font). */
+async function isPanelOpen() {
+  return page.evaluate(() => {
+    const spans = document.querySelectorAll('span');
+    return Array.from(spans).some(el =>
+      el.textContent?.trim() === 'COMMENTS' &&
+      el.style.fontWeight === '700' &&
+      el.style.letterSpacing
+    );
+  });
+}
+
+/** Wait for comments panel to appear/disappear. */
+async function expectPanel(open, timeout = 1000) {
+  await page.waitForFunction((wantOpen) => {
+    const spans = document.querySelectorAll('span');
+    const found = Array.from(spans).some(el =>
+      el.textContent?.trim() === 'COMMENTS' &&
+      el.style.fontWeight === '700' &&
+      el.style.letterSpacing
+    );
+    return found === wantOpen;
+  }, open, { timeout });
 }
 
 /** Click first span with exact text and cursor:pointer. */
@@ -193,12 +226,12 @@ async function runTests() {
 
   // ── 1. Panel Basics ──
   await test('Review button visible in header', async () => {
-    const btn = page.locator('header button').filter({ hasText: 'Review' });
-    await btn.waitFor({ state: 'visible', timeout: 2000 });
+    const btn = page.locator('header button').filter({ hasText: 'Comments' });
+    await btn.waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Clicking Review opens Comments panel', async () => {
-    await clickBtn('Review');
+    await clickBtn('Comments');
     await expectText('COMMENTS');
   });
 
@@ -226,12 +259,12 @@ async function runTests() {
   // ── 2. Mutual Exclusion ──
   await test('Opening Vera closes Comments panel', async () => {
     await clickBtn('Vera');
-    await expectNoText('COMMENTS');
+    await expectPanel(false);
   });
 
   await test('Opening Review closes Vera panel', async () => {
-    await clickBtn('Review');
-    await expectText('COMMENTS');
+    await clickBtn('Comments');
+    await expectPanel(true);
     const veraTa = page.locator('textarea[placeholder*="Tell Vera"]');
     const vis = await veraTa.isVisible().catch(() => false);
     if (vis) throw new Error('Vera panel still visible');
@@ -239,12 +272,12 @@ async function runTests() {
 
   // ── 3. Module-level Comments via TOC ──
   await test('Comment icon visible on modules', async () => {
-    await page.locator('span').filter({ hasText: '💬' }).first().waitFor({ state: 'visible', timeout: 2000 });
+    await page.locator('span').filter({ hasText: '💬' }).first().waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Clicking comment icon expands inline area', async () => {
     await clickIconSpan('💬');
-    await page.locator('input[placeholder="Add comment..."]').waitFor({ state: 'visible', timeout: 2000 });
+    await page.locator('input[placeholder="Add comment..."]').waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Adding a module-level comment', async () => {
@@ -267,7 +300,7 @@ async function runTests() {
         /^[0-9]+$/.test(el.textContent?.trim() || '') &&
         el.style.minWidth && el.style.borderRadius && el.style.fontSize === '9px'
       );
-    }, { timeout: 2000 });
+    }, { timeout: 1000 });
   });
 
   await test('Adding a second comment', async () => {
@@ -287,7 +320,7 @@ async function runTests() {
     // Verify ● appears
     const resolved = page.locator('span').filter({ hasText: '●' })
       .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
-    await resolved.waitFor({ state: 'visible', timeout: 2000 });
+    await resolved.waitFor({ state: 'visible', timeout: 1000 });
   });
 
   await test('Reopening a comment via toggle', async () => {
@@ -297,40 +330,47 @@ async function runTests() {
     await settle();
   });
 
-  // ── 5. Slide-level Comment Popover ──
-  await test('Review mode shows click overlay on slide', async () => {
-    await page.locator('[style*="cursor: cell"]').first().waitFor({ state: 'visible', timeout: 2000 });
+  // ── 5. Slide-level Comments via Block Hover ──
+  await test('Block hover shows comment button (💬)', async () => {
+    // Hover over a block on the slide to reveal the 💬 button
+    const block = page.locator('[data-block-type]').first();
+    await block.hover();
+    await settle();
+    const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.waitFor({ state: 'visible', timeout: 1000 });
   });
 
-  await test('Clicking slide opens CommentPopover', async () => {
-    await page.locator('[style*="cursor: cell"]').first().click();
-    await expectText('ADD COMMENT');
+  await test('Block comment button opens inline comment input', async () => {
+    const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.click();
+    await settle();
+    const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
+    await input.waitFor({ state: 'visible', timeout: 1000 });
   });
 
-  await test('CommentPopover has textarea and Add button', async () => {
-    await page.locator('textarea[placeholder="Add a comment..."]').waitFor({ state: 'visible', timeout: 1000 });
-    await page.locator('button').filter({ hasText: 'Add Comment' }).waitFor({ state: 'visible', timeout: 1000 });
-  });
-
-  await test('Adding a slide-level comment via popover', async () => {
-    const ta = page.locator('textarea[placeholder="Add a comment..."]');
-    await ta.fill('Slide comment: increase heading size');
-    await clickBtn('Add Comment');
+  await test('Adding a slide-level comment via block', async () => {
+    const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
+    await input.fill('Slide comment: increase heading size');
+    await input.press('Enter');
+    await settle();
     await expectText('Slide comment: increase heading size');
   });
 
-  await test('Slide comment badge appears', async () => {
-    await page.keyboard.press('Escape');
+  await test('Slide comment appears in comments panel', async () => {
+    // Comment was added — verify it shows in the comments panel (still open)
+    await expectText('Slide comment: increase heading size');
+  });
+
+  await test('Comments panel reopens via R key after close', async () => {
+    // Close panel
+    await clickBtn('Comments');
     await settle();
-    // Badge: absolute-positioned div with number, min-width, border-radius, cursor:pointer
-    await page.waitForFunction(() => {
-      const divs = document.querySelectorAll('div');
-      return Array.from(divs).some(el =>
-        /^[0-9]+$/.test(el.textContent?.trim() || '') &&
-        el.style.position === 'absolute' &&
-        el.style.minWidth && el.style.borderRadius && el.style.cursor === 'pointer'
-      );
-    }, { timeout: 2000 });
+    await expectPanel(false);
+    // Reopen via R
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('r');
+    await settle();
+    await expectPanel(true);
   });
 
   // ── 6. Filter Tabs ──
@@ -376,42 +416,47 @@ async function runTests() {
 
   // ── 8. Keyboard Shortcuts ──
   await test('Closing review via button', async () => {
-    await clickBtn('Review');
-    await expectNoText('COMMENTS');
+    // Ensure panel is open first
+    if (!(await isPanelOpen())) await clickBtn('Comments');
+    await settle();
+    await clickBtn('Comments');
+    await expectPanel(false);
   });
 
   await test('R key toggles review mode on', async () => {
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('r');
-    await expectText('COMMENTS');
+    await expectPanel(true);
   });
 
   await test('R key toggles review mode off', async () => {
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('r');
-    await expectNoText('COMMENTS');
+    await expectPanel(false);
   });
 
-  // ── 9. Fullscreen Hides Comments ──
-  await test('Comments hidden in fullscreen', async () => {
-    // Enter review mode, add a comment
-    await page.keyboard.press('r');
-    await settle();
-    await clickIconSpan('💬');
-    const input = page.locator('input[placeholder="Add comment..."]');
-    if (await input.isVisible()) {
-      await input.fill('Fullscreen test');
-      await input.press('Enter');
+  // ── 9. Fullscreen Hides Badge ──
+  await test('Comment badge hidden in fullscreen', async () => {
+    // Ensure review mode is off so badge would show
+    await page.evaluate(() => document.activeElement?.blur());
+    if (await isPanelOpen()) {
+      await page.keyboard.press('r');
       await settle();
     }
     // Enter fullscreen
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('f');
     await page.waitForFunction(() => !document.querySelector('header'), { timeout: 3000 });
-    // Verify review overlay not visible
-    const overlay = page.locator('[style*="cursor: cell"]');
-    const vis = await overlay.isVisible().catch(() => false);
-    if (vis) throw new Error('Review overlay visible in fullscreen');
+    // Verify no comment badge overlay (guarded by !fullscreen)
+    const hasBadge = await page.evaluate(() => {
+      const divs = document.querySelectorAll('div');
+      return Array.from(divs).some(el =>
+        /^[0-9]+$/.test(el.textContent?.trim() || '') &&
+        el.style.position === 'absolute' &&
+        el.style.borderRadius === '11px' && el.style.cursor === 'pointer'
+      );
+    });
+    if (hasBadge) throw new Error('Comment badge visible in fullscreen');
     // Exit fullscreen
     await page.keyboard.press('f');
     await page.waitForSelector('header', { timeout: 3000 });
@@ -442,6 +487,7 @@ async function runTests() {
     console.log('Launching browser...');
     const browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    page.setDefaultTimeout(1000);
     page.on('pageerror', () => {}); // suppress Babel deopt warning
 
     console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');

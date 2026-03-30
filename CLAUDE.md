@@ -160,6 +160,19 @@ If you forget, CI will fail with:
 - Claude.ai artifact storage API for persistence across sessions
 - localStorage keys: `"vela-deck"` (main), `"vela-m-<moduleId>"` (per-module dirty tracking)
 
+## CRITICAL: Public Repository — No Sensitive Information
+
+**This is a PUBLIC repository. Everything committed or included in PRs is visible to everyone.**
+
+- **NEVER** include Claude Code session URLs (e.g., `claude.ai/chat/...`, `claude.ai/p/...`) in commit messages, PR descriptions, comments, or any committed file. These are personal and must not be shared.
+- **NEVER** include API keys, tokens, passwords, credentials, or secrets of any kind.
+- **NEVER** include personal information (email addresses, phone numbers, private URLs, internal company links, etc.).
+- **NEVER** reference private conversations, session IDs, or internal tool URLs in any git-visible content.
+- PR descriptions must contain only technical information about the changes — what changed, why, and how to test. Nothing else.
+- Before every commit and PR, review all content for accidental leaks of sensitive or personal information.
+
+Violations of this policy cannot be undone — git history is permanent and public.
+
 ## License
 
 ELv2 (source-available, commercial use allowed for presentations)

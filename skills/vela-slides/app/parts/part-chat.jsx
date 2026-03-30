@@ -94,6 +94,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [state.chatMessages]);
+  // Auto-focus input when chat panel opens
+  useEffect(() => { setTimeout(() => textareaRef.current?.focus(), 50); }, []);
 
   const addImageFromDataTransfer = (dt) => {
     const items = dt?.items || dt?.files;

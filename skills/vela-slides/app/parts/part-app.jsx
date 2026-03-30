@@ -79,6 +79,7 @@ function ChangelogDialog({ onClose }) {
 function CommentsPanel({ state, dispatch, isMobile }) {
   const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
   const [selected, setSelected] = useState(new Set()); // for multi-select
+  const [newComment, setNewComment] = useState("");
   const allComments = collectComments(state.lanes, filter === "all" ? null : (c) => c.status === filter);
   const openCount = collectComments(state.lanes, (c) => c.status === "open").length;
   const resolvedCount = collectComments(state.lanes, (c) => c.status === "resolved").length;
@@ -105,10 +106,18 @@ function CommentsPanel({ state, dispatch, isMobile }) {
           <button key={key} onClick={() => setFilter(key)} style={{ flex: 1, padding: "6px 4px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: filter === key ? T.accent + "15" : "transparent", color: filter === key ? T.accent : T.textDim, border: "none", borderBottom: filter === key ? `2px solid ${T.accent}` : "2px solid transparent", cursor: "pointer" }}>{label}</button>
         ))}
       </div>
+      {/* Quick add comment */}
+      {state.selectedId && <div style={{ padding: "6px 8px", borderBottom: `1px solid ${T.border}`, display: "flex", gap: 4 }}>
+        <input value={newComment} onChange={(e) => setNewComment(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && newComment.trim()) { dispatch({ type: "ADD_COMMENT", itemId: state.selectedId, slideIndex: state.slideIndex, text: newComment.trim() }); setNewComment(""); } if (e.key === "Escape") setNewComment(""); }}
+          placeholder={`Comment on slide ${state.slideIndex + 1}...`}
+          style={{ flex: 1, padding: "4px 8px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", minWidth: 0 }} />
+        <button onClick={() => { if (newComment.trim()) { dispatch({ type: "ADD_COMMENT", itemId: state.selectedId, slideIndex: state.slideIndex, text: newComment.trim() }); setNewComment(""); } }} disabled={!newComment.trim()} style={S.primaryBtn({ padding: "4px 8px", fontSize: 9, opacity: newComment.trim() ? 1 : 0.4 })}>Add</button>
+      </div>}
       {/* Comments list */}
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
         {allComments.length === 0 && <div style={{ padding: "20px 12px", textAlign: "center", fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.6 }}>
-          {filter === "open" ? "No open comments.\nClick slides in review mode to add." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
+          {filter === "open" ? "No open comments.\nAdd one above or use 💬 on blocks." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
         </div>}
         {Object.entries(grouped).map(([modTitle, comments]) => (
           <div key={modTitle}>
@@ -124,7 +133,8 @@ function CommentsPanel({ state, dispatch, isMobile }) {
                     {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>"{c.anchor}"</span>}
                   </div>
                 </div>
-                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.3, flexShrink: 0 }}>×</span>
+                <span onClick={() => dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 9, fontFamily: FONT.mono, color: c.status === "open" ? T.green : T.textDim, cursor: "pointer", opacity: 0.6, flexShrink: 0, padding: "1px 3px", borderRadius: 3 }} title={c.status === "open" ? "Resolve" : "Reopen"}>{c.status === "open" ? "✓" : "↩"}</span>
+                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.red, cursor: "pointer", opacity: 0.5, flexShrink: 0, padding: "1px 3px", borderRadius: 3 }} title="Delete">✕</span>
               </div>
             ))}
           </div>
@@ -876,7 +886,11 @@ export default function App() {
       } catch (err) { dbg("Load error:", err); }
       // ━━━ Startup Patch: first run OR new version merge ━━━━━━━━━
       if (STARTUP_PATCH) {
-        if (!loadedDeck) {
+        if (VELA_LOCAL_MODE) {
+          // Local/folder mode: file on disk is always authoritative — apply directly
+          // (localStorage may contain a different deck from the same origin)
+          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+        } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (STARTUP_PATCH._patchId && loadedDeck._lastPatchId !== STARTUP_PATCH._patchId) {
@@ -1142,7 +1156,7 @@ export default function App() {
           <CostBadge />
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Review</button>
+          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
@@ -1180,7 +1194,7 @@ export default function App() {
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Review</button>
+            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
           </div>
         </div>}
@@ -1200,7 +1214,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}
@@ -1260,7 +1274,7 @@ export default function App() {
           {slideCount > 0 && <span style={{ fontSize: 9, color: T.textDim }}>{slideCount}</span>}
         </button>
         <button className={`mob-tab ${mobileTab === "comments" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("comments"); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }} style={{ color: mobileTab === "comments" ? T.amber : T.textDim }}>
-          <span style={{ fontSize: 16 }}>💬</span><span>Review</span>
+          <span style={{ fontSize: 16 }}>💬</span><span>Comments</span>
         </button>
         <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
           <span style={{ fontSize: 16 }}>🤖</span><span>Vera</span>

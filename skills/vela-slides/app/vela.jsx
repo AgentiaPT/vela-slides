@@ -57,8 +57,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.7";
+const VELA_VERSION = "12.12";
 const VELA_CHANGELOG = [
+  { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
+  { v: "12.10", d: "Fix: folder/local mode deck loading — STARTUP_PATCH (file on disk) is now authoritative over localStorage, preventing wrong deck from loading when multiple decks share the same origin." },
+  { v: "12.9", d: "Comments UX: slide count badge always visible (hidden when panel/popover open). Module list comment count + 💬 toggle only in review mode." },
+  { v: "12.8", d: "Review Mode: inline comment cards rendered next to referenced blocks (blockIndex). Resolve/delete buttons directly on each comment row in both inline cards and sidebar panel. Better UX — no need to scroll to batch actions." },
   { v: "12.7", d: "Review Mode: inline comments system — annotate slides and modules with review comments. Comments panel, visual badges, anchor quoting, batch resolve/clear. Vera list_comments/resolve_comment tools. Notes migrated to structured comments." },
   { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails — replaces raw title flash before slide renders." },
   { v: "12.5", d: "Security: add symlink escape checks to save/upload endpoints for consistency with GET handler. Replace cmd.exe browser launch with webbrowser.open()." },
@@ -1670,7 +1674,24 @@ function BrandingOverlay({ branding, index, total }) {
 }
 
 // ━━━ Slide Content ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1 }) {
+// ━━━ Inline Comment Card (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
+  const [hover, setHover] = useState(false);
+  const resolved = comment.status === "resolved";
+  return (
+    <div
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 6px 2px 5px", margin: "2px 0", background: resolved ? T.amber + "08" : T.amber + "12", border: `1px solid ${resolved ? T.amber + "20" : T.amber + "35"}`, borderRadius: 4, opacity: resolved ? 0.5 : 1, transition: "opacity 0.15s", width: "fit-content" }}>
+      <span style={{ fontSize: 10, flexShrink: 0, lineHeight: 1 }}>💬</span>
+      <span style={{ fontSize: 10, fontFamily: FONT.body, color: T.text, textDecoration: resolved ? "line-through" : "none", whiteSpace: "nowrap", lineHeight: 1.4 }}>{comment.text}</span>
+      {comment.anchor && <span style={{ fontSize: 8, fontFamily: FONT.mono, color: T.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80, flexShrink: 0 }}>"{comment.anchor}"</span>}
+      <span onClick={(e) => { e.stopPropagation(); dispatch({ type: resolved ? "REOPEN_COMMENT" : "RESOLVE_COMMENT", itemId, slideIndex, commentId: comment.id }); }} style={{ cursor: "pointer", fontSize: 10, flexShrink: 0, opacity: hover ? 0.9 : 0.4, transition: "opacity 0.15s" }} title={resolved ? "Reopen" : "Resolve"}>{resolved ? "↩" : "✓"}</span>
+      <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_COMMENT", itemId, slideIndex, commentId: comment.id }); }} style={{ cursor: "pointer", fontSize: 10, color: T.red, flexShrink: 0, opacity: hover ? 0.9 : 0.3, transition: "opacity 0.15s" }} title="Delete">✕</span>
+    </div>
+  );
+}
+
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   const blocks = slide.blocks || [];
   const align = slide.align || "left";
@@ -1688,6 +1709,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
   const [blockPrompt, setBlockPrompt] = useState("");
+  const [commentingBlockIdx, setCommentingBlockIdx] = useState(null);
+  const [commentText, setCommentText] = useState("");
 
   // Close popup when blockEditing finishes
   const prevEditing = useRef(blockEditing);
@@ -1758,7 +1781,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
-        <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
+        <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
+        {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
@@ -1779,6 +1803,18 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
+      {/* Block comment popup */}
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+        <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
+        <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}
+          placeholder="Add a comment..."
+          style={{ width: 220, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: "rgba(255,255,255,0.06)", color: "#fff", border: `1px solid rgba(255,255,255,0.1)`, borderRadius: 4, outline: "none" }} />
+        <button onClick={() => { if (commentText.trim()) { externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } }} disabled={!commentText.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: commentText.trim() ? T.amber : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: commentText.trim() ? "pointer" : "default", opacity: commentText.trim() ? 1 : 0.4, flexShrink: 0 }}>Add</button>
+        <button onClick={() => { setCommentingBlockIdx(null); setCommentText(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
+      </div>}
+      {/* Comment count badge (edit mode, not review) */}
+      {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
       {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
       {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
@@ -1791,20 +1827,37 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     </div>
   );
 
+  // Slide comments — always computed for badges, inline cards only in review mode
+  const slideComments = slide?.comments ? slide.comments.filter(Boolean) : [];
+  const renderInlineComments = (blockIdx) => {
+    if (!reviewMode || !externalDispatch || slideComments.length === 0) return null;
+    const matching = slideComments.filter((c) => c.blockIndex === blockIdx);
+    if (matching.length === 0) return null;
+    return matching.map((c) => <InlineCommentCard key={c.id} comment={c} itemId={itemId} slideIndex={index} dispatch={externalDispatch} />);
+  };
+
+  // Render a block followed by its inline comments
+  const renderBlockWithComments = (b, i) => {
+    const block = renderBlockItem(b, i);
+    const comments = renderInlineComments(i);
+    if (!comments) return [block];
+    return [block, ...comments];
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isSplit) {
       const contentIdxs = [], imageIdxs = [];
       blocks.forEach((b, i) => { (b.type === "image" ? imageIdxs : contentIdxs).push(i); });
       // Fallback: if no images found, render as stack
-      if (imageIdxs.length === 0) return blocks.map((b, i) => renderBlockItem(b, i));
+      if (imageIdxs.length === 0) return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const imageOnRight = layout === "image-right";
-      const contentCol = <div key="__content" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: fitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.map((i) => renderBlockItem(blocks[i], i))}</div>;
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.map((i) => renderBlockItem(blocks[i], i))}</div>;
+      const contentCol = <div key="__content" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: fitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
+      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
-    if (isSoloImage) return [renderBlockItem({ ...blocks[0], _solo: true }, 0)];
-    return blocks.map((b, i) => renderBlockItem(b, i));
+    if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
+    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
   };
 
   return (
@@ -1813,6 +1866,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, boxSizing: "border-box" }}>
           {renderBlocks()}
         </div>
+        {/* Slide-level comments (no blockIndex) — top-right */}
+        {reviewMode && externalDispatch && (() => {
+          const unanchored = slideComments.filter((c) => c.blockIndex == null);
+          if (unanchored.length === 0) return null;
+          return <div style={{ position: "absolute", top: 8, right: 8, zIndex: 5, display: "flex", flexDirection: "column", gap: 2, maxWidth: "45%" }}>
+            {unanchored.map((c) => <InlineCommentCard key={c.id} comment={c} itemId={itemId} slideIndex={index} dispatch={externalDispatch} />)}
+          </div>;
+        })()}
         {branding?.enabled
           ? <BrandingOverlay branding={branding} index={index} total={total} />
           : <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: T.textDim, opacity: 0.35 }}>{String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}</div>
@@ -3250,7 +3311,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -3320,7 +3381,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} />}
       </div>
     </div>
   );
@@ -3713,7 +3774,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
 
 // ━━━ Gallery View — slide sorter overlay in fullscreen ━━━━━━━━━━━━
 // ━━━ Comment Popover (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose }) {
+function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose, anchor }) {
   const [text, setText] = useState("");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -3722,9 +3783,10 @@ function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose }) {
     if (!text.trim()) return;
     dispatch({ type: "ADD_COMMENT", itemId, slideIndex, text: text.trim() });
     setText("");
+    onClose();
   };
   return (
-    <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 36, left: 8, zIndex: 20, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", width: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", maxHeight: 320, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 36, ...(anchor === "right" ? { right: 8 } : { left: 8 }), zIndex: 20, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", width: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", maxHeight: 320, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
         <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.accent, letterSpacing: "0.1em", textTransform: "uppercase" }}>ADD COMMENT</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 2px" }}>✕</button>
@@ -4171,6 +4233,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     };
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
+
+  // Global slide index/total across all modules (for slide counter display)
+  const { globalSlideIndex, globalSlideTotal } = useMemo(() => {
+    let offset = 0, total = 0;
+    let found = false;
+    for (const l of (lanes || [])) {
+      for (const item of l.items) {
+        const count = (item.slides || []).length;
+        if (item.id === concept.id) { offset += slideIndex; found = true; }
+        else if (!found) { offset += count; }
+        total += count;
+      }
+    }
+    return { globalSlideIndex: offset, globalSlideTotal: total };
+  }, [lanes, concept.id, slideIndex]);
 
   const handleSlideEdit = useCallback((patch) => {
     if (fullscreen && presOffset && slideIndex === 0) return; // Don't edit virtual slide
@@ -4865,7 +4942,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     <div ref={containerRef} tabIndex={0} style={{ position: "fixed", inset: 0, zIndex: 9999, background: T.bg, display: "flex", flexDirection: "row", outline: "none" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-        <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" />
+        <FullscreenSlide slide={presSlides[slideIndex]} index={globalSlideIndex - presOffset} total={globalSlideTotal} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" />
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -4982,17 +5059,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered />
-                  {/* Comment badge overlay */}
-                  {!fullscreen && (() => {
+                  <VirtualSlide slide={displaySlide} index={globalSlideIndex} total={globalSlideTotal} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} />
+                  {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
+                  {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover((v) => !v); }} style={{ position: "absolute", top: 8, left: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
-                  {/* Review mode click overlay */}
-                  {state.reviewMode && !fullscreen && !showCommentPopover && <div onClick={(e) => { e.stopPropagation(); setShowCommentPopover(true); }} style={{ position: "absolute", inset: 0, zIndex: 9, cursor: "cell", background: "transparent" }} />}
+                  {/* Review mode visual border indicator */}
+                  {state.reviewMode && !fullscreen && <div style={{ position: "absolute", inset: 0, zIndex: 8, border: `2px solid ${T.amber}40`, borderRadius: 6, pointerEvents: "none" }} />}
                   {/* Comment popover */}
-                  {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} />}
+                  {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} anchor="right" />}
                 </div>;
               })()}
               {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 10, zIndex: 10, borderRadius: "0 0 6px 6px" }}>
@@ -5255,9 +5332,9 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDragOver = (e, si) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.dataTransfer.dropEffect = "move";
     const rect = e.currentTarget.getBoundingClientRect();
     const mid = rect.top + rect.height / 2;
@@ -5265,6 +5342,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDrop = (e, si) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
@@ -5286,6 +5364,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleContainerDrop = (e) => {
+    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
@@ -5384,13 +5463,14 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
   const [notesOpen, setNotesOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
 
@@ -5451,6 +5531,8 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       onDragOver={handleSectionDragOver}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropPos(null); }}
       onDrop={handleSectionDrop}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         borderTop: dropPos === "top" ? `2px solid ${T.accent}` : "2px solid transparent",
         borderBottom: dropPos === "bottom" ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -5476,9 +5558,13 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
-        {openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
-        <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>
+        {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
+        {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
+        {hovered && <span style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0 }}>
+          <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REORDER", id: item.id, dir: "up" }); }} title="Move up" style={{ fontSize: 8, color: isFirst ? T.border : T.textDim, cursor: isFirst ? "default" : "pointer", lineHeight: 1, padding: "0 1px", opacity: isFirst ? 0.3 : 0.7 }}>▲</span>
+          <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REORDER", id: item.id, dir: "down" }); }} title="Move down" style={{ fontSize: 8, color: isLast ? T.border : T.textDim, cursor: isLast ? "default" : "pointer", lineHeight: 1, padding: "0 1px", opacity: isLast ? 0.3 : 0.7 }}>▼</span>
+        </span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_ITEM", id: item.id }); }} style={{ fontSize: 12, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3 }}>×</span>
       </div>
       {!collapsed && notesOpen && <div style={{ padding: "2px 12px 6px 38px" }} onClick={(e) => e.stopPropagation()}>
@@ -5518,7 +5604,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, guidelines }) {
+function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
@@ -5530,13 +5616,13 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
 
   return (
     <div onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-section")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
-      {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item) => {
+      {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -5643,6 +5729,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [state.chatMessages]);
+  // Auto-focus input when chat panel opens
+  useEffect(() => { setTimeout(() => textareaRef.current?.focus(), 50); }, []);
 
   const addImageFromDataTransfer = (dt) => {
     const items = dt?.items || dt?.files;
@@ -6734,7 +6822,9 @@ uiSuite("Slide Ops", [
     else { _click(btn); await _wait(200); } // toggle off
   }},
   { name: "Comment input accepts input", fn: async () => {
-    // Click the 💬 icon on a module to expand comments
+    // 💬 icon only visible in review mode — activate it first
+    document.activeElement?.blur(); await _wait(100);
+    _key("r"); await _wait(400);
     const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer");
     if (commentIcon) {
       _click(commentIcon); await _wait(200);
@@ -6745,6 +6835,8 @@ uiSuite("Slide Ops", [
       // Collapse
       _click(commentIcon); await _wait(100);
     }
+    // Exit review mode
+    _key("r"); await _wait(300);
   }},
   { name: "Duration editor opens on click", fn: async () => {
     const timer = _$$("span").find((s) => s.textContent?.includes("⏱") && s.style?.cursor === "pointer");
@@ -7128,9 +7220,19 @@ uiSuite("Review", [
   { name: "Comments panel has Clear Done button", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Clear Done")));
   }},
-  { name: "Module comment icon visible (💬)", fn: async () => {
-    // Look for the 💬 icon in the module list
-    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬")), 1000);
+  { name: "Module comment icon visible in review mode (💬)", fn: async () => {
+    // 💬 icon only visible in review mode — ensure review is active (toggled on by prior test)
+    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    if (reviewOn) { _click(reviewOn); await _wait(300); }
+    await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1000);
+    // Exit review mode
+    if (reviewOn) { _click(reviewOn); await _wait(300); }
+  }},
+  { name: "Module comment icon hidden in editor mode", fn: async () => {
+    // In editor mode (review off), 💬 toggle should NOT be in the module list
+    await _wait(200);
+    const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer" && !s.closest("button"));
+    if (commentIcon) throw new Error("💬 icon should be hidden in editor mode");
   }},
   { name: "Review mode exit closes panel", fn: async () => {
     const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
@@ -7164,6 +7266,21 @@ uiSuite("Review", [
     // Close Vera
     if (veraBtn) { _click(veraBtn); await _wait(200); }
     if (!veraTa) throw new Error("Vera panel didn't open when switching from Review");
+  }},
+  { name: "Comment badge click opens comments panel", fn: async () => {
+    // Ensure review mode is off first
+    document.activeElement?.blur(); await _wait(100);
+    // Look for the amber comment count badge on the slide canvas (top-right circle)
+    const badge = _$$("div").find((d) => d.style?.borderRadius === "11px" && d.style?.background && d.style?.cursor === "pointer" && d.style?.position === "absolute");
+    if (badge) {
+      _click(badge); await _wait(400);
+      const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
+      if (!panel) throw new Error("Clicking comment badge did not open comments panel");
+      // Close review mode
+      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+      if (reviewBtn) { _click(reviewBtn); await _wait(300); }
+    }
+    // If no badge, test passes (no comments on current slide)
   }},
 ]);
 
@@ -11837,6 +11954,7 @@ function ChangelogDialog({ onClose }) {
 function CommentsPanel({ state, dispatch, isMobile }) {
   const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
   const [selected, setSelected] = useState(new Set()); // for multi-select
+  const [newComment, setNewComment] = useState("");
   const allComments = collectComments(state.lanes, filter === "all" ? null : (c) => c.status === filter);
   const openCount = collectComments(state.lanes, (c) => c.status === "open").length;
   const resolvedCount = collectComments(state.lanes, (c) => c.status === "resolved").length;
@@ -11863,10 +11981,18 @@ function CommentsPanel({ state, dispatch, isMobile }) {
           <button key={key} onClick={() => setFilter(key)} style={{ flex: 1, padding: "6px 4px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: filter === key ? T.accent + "15" : "transparent", color: filter === key ? T.accent : T.textDim, border: "none", borderBottom: filter === key ? `2px solid ${T.accent}` : "2px solid transparent", cursor: "pointer" }}>{label}</button>
         ))}
       </div>
+      {/* Quick add comment */}
+      {state.selectedId && <div style={{ padding: "6px 8px", borderBottom: `1px solid ${T.border}`, display: "flex", gap: 4 }}>
+        <input value={newComment} onChange={(e) => setNewComment(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && newComment.trim()) { dispatch({ type: "ADD_COMMENT", itemId: state.selectedId, slideIndex: state.slideIndex, text: newComment.trim() }); setNewComment(""); } if (e.key === "Escape") setNewComment(""); }}
+          placeholder={`Comment on slide ${state.slideIndex + 1}...`}
+          style={{ flex: 1, padding: "4px 8px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", minWidth: 0 }} />
+        <button onClick={() => { if (newComment.trim()) { dispatch({ type: "ADD_COMMENT", itemId: state.selectedId, slideIndex: state.slideIndex, text: newComment.trim() }); setNewComment(""); } }} disabled={!newComment.trim()} style={S.primaryBtn({ padding: "4px 8px", fontSize: 9, opacity: newComment.trim() ? 1 : 0.4 })}>Add</button>
+      </div>}
       {/* Comments list */}
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
         {allComments.length === 0 && <div style={{ padding: "20px 12px", textAlign: "center", fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.6 }}>
-          {filter === "open" ? "No open comments.\nClick slides in review mode to add." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
+          {filter === "open" ? "No open comments.\nAdd one above or use 💬 on blocks." : filter === "resolved" ? "No resolved comments." : "No comments yet."}
         </div>}
         {Object.entries(grouped).map(([modTitle, comments]) => (
           <div key={modTitle}>
@@ -11882,7 +12008,8 @@ function CommentsPanel({ state, dispatch, isMobile }) {
                     {c.anchor && <span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>"{c.anchor}"</span>}
                   </div>
                 </div>
-                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.textDim, cursor: "pointer", opacity: 0.3, flexShrink: 0 }}>×</span>
+                <span onClick={() => dispatch({ type: c.status === "open" ? "RESOLVE_COMMENT" : "REOPEN_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 9, fontFamily: FONT.mono, color: c.status === "open" ? T.green : T.textDim, cursor: "pointer", opacity: 0.6, flexShrink: 0, padding: "1px 3px", borderRadius: 3 }} title={c.status === "open" ? "Resolve" : "Reopen"}>{c.status === "open" ? "✓" : "↩"}</span>
+                <span onClick={() => dispatch({ type: "REMOVE_COMMENT", itemId: c.itemId, slideIndex: c.slideIndex, commentId: c.id })} style={{ fontSize: 10, color: T.red, cursor: "pointer", opacity: 0.5, flexShrink: 0, padding: "1px 3px", borderRadius: 3 }} title="Delete">✕</span>
               </div>
             ))}
           </div>
@@ -12634,7 +12761,11 @@ export default function App() {
       } catch (err) { dbg("Load error:", err); }
       // ━━━ Startup Patch: first run OR new version merge ━━━━━━━━━
       if (STARTUP_PATCH) {
-        if (!loadedDeck) {
+        if (VELA_LOCAL_MODE) {
+          // Local/folder mode: file on disk is always authoritative — apply directly
+          // (localStorage may contain a different deck from the same origin)
+          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+        } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (STARTUP_PATCH._patchId && loadedDeck._lastPatchId !== STARTUP_PATCH._patchId) {
@@ -12900,7 +13031,7 @@ export default function App() {
           <CostBadge />
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Review</button>
+          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
@@ -12938,7 +13069,7 @@ export default function App() {
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Review</button>
+            <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
           </div>
         </div>}
@@ -12958,7 +13089,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}
@@ -13018,7 +13149,7 @@ export default function App() {
           {slideCount > 0 && <span style={{ fontSize: 9, color: T.textDim }}>{slideCount}</span>}
         </button>
         <button className={`mob-tab ${mobileTab === "comments" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("comments"); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }} style={{ color: mobileTab === "comments" ? T.amber : T.textDim }}>
-          <span style={{ fontSize: 16 }}>💬</span><span>Review</span>
+          <span style={{ fontSize: 16 }}>💬</span><span>Comments</span>
         </button>
         <button className={`mob-tab ${mobileTab === "chat" ? "mob-tab-active" : ""}`} onClick={() => { setMobileTab("chat"); dispatch({ type: "SET_CHAT", open: true }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }} style={{ color: mobileTab === "chat" ? T.accent : T.textDim }}>
           <span style={{ fontSize: 16 }}>🤖</span><span>Vera</span>
