@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.13";
+const VELA_VERSION = "12.14";
 const VELA_CHANGELOG = [
+  { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
   { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set. Global slide counter uses displayIndex/displayTotal to avoid breaking comments." },
   { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
   { v: "12.10", d: "Fix: folder/local mode deck loading — STARTUP_PATCH (file on disk) is now authoritative over localStorage, preventing wrong deck from loading when multiple decks share the same origin." },
