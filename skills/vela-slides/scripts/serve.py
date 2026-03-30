@@ -615,16 +615,19 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                deck_path = os.path.join(srv.folder_path, deck_name)
+                base_dir = Path(srv.folder_path).resolve()
+                resolved_deck_path = (base_dir / deck_name).resolve()
                 # Security: ensure resolved path stays within the configured folder
-                if not Path(deck_path).resolve().is_relative_to(Path(srv.folder_path).resolve()):
+                try:
+                    resolved_deck_path.relative_to(base_dir)
+                except ValueError:
                     self.send_error(403, "Access denied")
                     return
                 srv.set_deck_data(deck_name, deck)
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w", encoding="utf-8") as f:
+                with open(resolved_deck_path, "w", encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False, indent=2)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
