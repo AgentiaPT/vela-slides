@@ -886,7 +886,11 @@ export default function App() {
       } catch (err) { dbg("Load error:", err); }
       // ━━━ Startup Patch: first run OR new version merge ━━━━━━━━━
       if (STARTUP_PATCH) {
-        if (!loadedDeck) {
+        if (VELA_LOCAL_MODE) {
+          // Local/folder mode: file on disk is always authoritative — apply directly
+          // (localStorage may contain a different deck from the same origin)
+          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+        } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (STARTUP_PATCH._patchId && loadedDeck._lastPatchId !== STARTUP_PATCH._patchId) {
