@@ -37,7 +37,7 @@ def parse_subagent_usage(stdin_data):
 def cmd_before():
     usage = parse_subagent_usage(sys.stdin.read())
     os.makedirs(os.path.dirname(SNAPSHOT_FILE), exist_ok=True)
-    with open(SNAPSHOT_FILE, "w") as f:
+    with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
         json.dump(usage, f)
     print(f"Snapshot saved: cost=${usage['cost']:.4f}")
 
@@ -45,7 +45,7 @@ def cmd_after():
     if not os.path.exists(SNAPSHOT_FILE):
         print("No snapshot found — run 'before' first", file=sys.stderr)
         sys.exit(1)
-    with open(SNAPSHOT_FILE) as f:
+    with open(SNAPSHOT_FILE, encoding="utf-8") as f:
         before = json.load(f)
     after = parse_subagent_usage(sys.stdin.read())
 

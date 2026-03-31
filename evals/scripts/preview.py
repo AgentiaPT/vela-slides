@@ -53,7 +53,7 @@ def extract_slides(deck):
 
 def audit_deck(deck_path):
     """Audit a deck for common color/quality issues."""
-    with open(deck_path) as f:
+    with open(deck_path, encoding="utf-8") as f:
         deck = json.load(f)
 
     slides = extract_slides(deck)
@@ -143,7 +143,7 @@ def _css(value, fallback="#000000"):
 
 def generate_html(deck_path, output_path=None):
     """Generate an HTML preview matching Vela's actual rendering."""
-    with open(deck_path) as f:
+    with open(deck_path, encoding="utf-8") as f:
         deck = json.load(f)
 
     slides = extract_slides(deck)
@@ -373,7 +373,7 @@ body{{background:#0a0a0a;padding:16px;display:flex;flex-wrap:wrap;justify-conten
 
     if not output_path:
         output_path = deck_path.replace(".json", "-preview.html")
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
     return output_path
 

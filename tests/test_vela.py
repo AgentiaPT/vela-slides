@@ -54,7 +54,7 @@ def test_unit():
     # 2. SKILL.md exists and has valid frontmatter
     skill_md = os.path.join(SKILL_DIR, "SKILL.md")
     if os.path.exists(skill_md):
-        content = open(skill_md).read()
+        content = open(skill_md, encoding="utf-8").read()
         if content.startswith("---") and "name:" in content and "description:" in content:
             ok("SKILL.md has valid frontmatter")
         else:
@@ -64,7 +64,7 @@ def test_unit():
 
     # 3. Template has STARTUP_PATCH marker
     if os.path.exists(TEMPLATE):
-        tpl = open(TEMPLATE).read()
+        tpl = open(TEMPLATE, encoding="utf-8").read()
         if "const STARTUP_PATCH = null;" in tpl:
             ok("STARTUP_PATCH marker present in template")
         else:
@@ -76,7 +76,7 @@ def test_unit():
     starter = os.path.join(EXAMPLES, "starter-deck.json")
     if os.path.exists(starter):
         try:
-            deck = json.load(open(starter))
+            deck = json.load(open(starter, encoding="utf-8"))
             assert "lanes" in deck or "slides" in deck, "no lanes or slides key"
             assert "deckTitle" in deck, "no deckTitle"
             ok("starter-deck.json is valid JSON with expected structure")
@@ -118,7 +118,7 @@ def test_security():
     for root, dirs, files in os.walk(os.path.join(SKILL_DIR, "app")):
         for f in files:
             if f.endswith(".jsx"):
-                all_jsx += open(os.path.join(root, f)).read()
+                all_jsx += open(os.path.join(root, f), encoding="utf-8").read()
 
     # 1. No API keys or secrets
     secret_patterns = [
@@ -172,10 +172,10 @@ def test_security():
 def test_known_bugs():
     print("\n── Known Bug Tests ──")
 
-    slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx")).read()
-    engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx")).read()
-    imports_jsx = open(os.path.join(PARTS_DIR, "part-imports.jsx")).read()
-    chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx")).read()
+    slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    imports_jsx = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
 
     # BUG 1: Scroll wheel should use presSlides in fullscreen, not slides
     # The keyboard handler correctly does: const navSlides = fullscreen ? presSlides : slides
@@ -248,7 +248,7 @@ def test_ip_hygiene():
     copyright_count = 0
     for f in os.listdir(PARTS_DIR):
         if f.endswith(".jsx"):
-            first_line = open(os.path.join(PARTS_DIR, f)).readline()
+            first_line = open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()
             if "© 2025-present Rui Quintino" in first_line:
                 copyright_count += 1
     if copyright_count == 13:
@@ -261,7 +261,7 @@ def test_ip_hygiene():
     for f in ["concat.py", "assemble.py", "validate.py"]:
         path = os.path.join(SCRIPTS, f)
         if os.path.exists(path):
-            content = open(path).read()[:200]
+            content = open(path, encoding="utf-8").read()[:200]
             if "© 2025-present Rui Quintino" in content:
                 script_count += 1
     if script_count == 3:
@@ -272,7 +272,7 @@ def test_ip_hygiene():
     # 3. NOTICE file exists with dependency audit
     notice_path = os.path.join(REPO_ROOT, "NOTICE")
     if os.path.exists(notice_path):
-        content = open(notice_path).read()
+        content = open(notice_path, encoding="utf-8").read()
         has_deps = all(d in content for d in ["React", "lucide-react", "html2canvas", "MIT", "ISC"])
         if has_deps:
             ok("NOTICE file present with dependency audit")
@@ -284,7 +284,7 @@ def test_ip_hygiene():
     # 4. CLA in CONTRIBUTING.md
     contrib_path = os.path.join(REPO_ROOT, "CONTRIBUTING.md")
     if os.path.exists(contrib_path):
-        content = open(contrib_path).read()
+        content = open(contrib_path, encoding="utf-8").read()
         has_cla = "Contributor License Agreement" in content and "Signed-off-by" in content
         has_ai = "AI-Generated" in content or "AI-generated" in content or "ai-generated" in content.lower()
         if has_cla:
@@ -301,7 +301,7 @@ def test_ip_hygiene():
     # 5. LICENSE has commercial contact
     license_path = os.path.join(REPO_ROOT, "LICENSE")
     if os.path.exists(license_path):
-        content = open(license_path).read()
+        content = open(license_path, encoding="utf-8").read()
         if "info@agentia.pt" in content:
             ok("LICENSE has commercial licensing contact")
         else:
@@ -313,7 +313,7 @@ def test_ip_hygiene():
     all_jsx = ""
     for f in os.listdir(PARTS_DIR):
         if f.endswith(".jsx"):
-            all_jsx += open(os.path.join(PARTS_DIR, f)).read()
+            all_jsx += open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
     rui_refs = [m.start() for m in re.finditer(r"Rui Quintino", all_jsx)]
     # Should only appear in copyright header lines and app footer (linkedin link)
     non_header = [r for r in rui_refs if "© 2025" not in all_jsx[max(0,r-80):r] and "linkedin" not in all_jsx[max(0,r-200):r+100].lower() and "Created by" not in all_jsx[max(0,r-150):r]]
@@ -349,7 +349,7 @@ def test_integration():
             return  # can't continue without template
 
         # 2. Built template has STARTUP_PATCH marker
-        built = open(out_template).read()
+        built = open(out_template, encoding="utf-8").read()
         if "const STARTUP_PATCH = null;" in built:
             ok("Built template has STARTUP_PATCH marker")
         else:
@@ -374,7 +374,7 @@ def test_integration():
             env={**os.environ, "PYTHONPATH": SCRIPTS}
         )
         if result.returncode == 0 and os.path.exists(out_artifact):
-            artifact = open(out_artifact).read()
+            artifact = open(out_artifact, encoding="utf-8").read()
             # Check that STARTUP_PATCH was replaced with actual data
             if "const STARTUP_PATCH = null;" not in artifact and "const STARTUP_PATCH = {" in artifact:
                 ok("assemble.py injects deck data into template")
@@ -409,7 +409,7 @@ def test_v10_features():
     if not os.path.exists(TEMPLATE):
         fail("Template exists for v10 tests")
         return
-    tpl = open(TEMPLATE).read()
+    tpl = open(TEMPLATE, encoding="utf-8").read()
 
     # v10+ version
     m = re.search(r'VELA_VERSION = "(\d+\.\d+)"', tpl)
@@ -495,7 +495,7 @@ def test_channel_local():
     if not os.path.exists(local_html):
         fail("local.html exists")
         return
-    html = open(local_html).read()
+    html = open(local_html, encoding="utf-8").read()
 
     # Import map
     if "importmap" in html and "esm.sh/react" in html:
@@ -551,7 +551,7 @@ def test_channel_local():
     # Channel server
     channel_ts = os.path.join(SKILL_DIR, "channel", "vela-channel.ts")
     if os.path.exists(channel_ts):
-        ch = open(channel_ts).read()
+        ch = open(channel_ts, encoding="utf-8").read()
         if "claude/channel" in ch:
             ok("Channel server declares claude/channel capability")
         else:
@@ -570,7 +570,7 @@ def test_channel_local():
     # Serve.py
     serve_py = os.path.join(SKILL_DIR, "scripts", "serve.py")
     if os.path.exists(serve_py):
-        srv = open(serve_py).read()
+        srv = open(serve_py, encoding="utf-8").read()
         if "127.0.0.1" in srv and "--host" in srv:
             ok("serve.py binds localhost by default with --host option")
         else:
@@ -647,7 +647,7 @@ def test_cli_commands():
     }
 
     deck_path = os.path.join(tmpdir, "test-deck.json")
-    with open(deck_path, "w") as f:
+    with open(deck_path, "w", encoding="utf-8") as f:
         json.dump(test_deck, f, ensure_ascii=False)
 
     def run_vela(*args):
@@ -770,7 +770,7 @@ def test_cli_commands():
             fail("deck replace-text", r.stdout + r.stderr)
 
         # Verify replacement stuck
-        with open(deck_path) as f:
+        with open(deck_path, encoding="utf-8") as f:
             content = f.read()
         if "Replaced Heading" in content and "Test Heading One" not in content:
             ok("deck replace-text persists to file")
@@ -796,7 +796,7 @@ def test_cli_commands():
         texts_path = os.path.join(tmpdir, "texts.json")
         r = run_vela("deck", "extract-text", deck_path, texts_path)
         if r.returncode == 0 and os.path.exists(texts_path):
-            texts = json.load(open(texts_path))
+            texts = json.load(open(texts_path, encoding="utf-8"))
             ok(f"deck extract-text extracts {len(texts)} text fields")
 
             # Check key format
@@ -827,12 +827,12 @@ def test_cli_commands():
 
         # ── deck patch-text (round-trip) ──
         # Save original for comparison
-        with open(deck_path) as f:
+        with open(deck_path, encoding="utf-8") as f:
             original = json.load(f)
 
         r = run_vela("deck", "patch-text", deck_path, texts_path)
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 patched = json.load(f)
             if json.dumps(original, sort_keys=True) == json.dumps(patched, sort_keys=True):
                 ok("deck patch-text round-trip produces identical deck")
@@ -844,11 +844,11 @@ def test_cli_commands():
         # ── deck patch-text (modify) ──
         texts["deckTitle"] = "Translated Title"
         texts["s1.b1.text"] = "Translated Heading"
-        with open(texts_path, "w") as f:
+        with open(texts_path, "w", encoding="utf-8") as f:
             json.dump(texts, f, ensure_ascii=False)
         r = run_vela("deck", "patch-text", deck_path, texts_path)
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 modified = json.load(f)
             if modified["deckTitle"] == "Translated Title":
                 ok("deck patch-text applies deckTitle change")
@@ -858,14 +858,14 @@ def test_cli_commands():
             fail("deck patch-text modify", r.stderr)
 
         # Reset deck
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── deck split --sections ──
         r = run_vela("deck", "split", deck_path, "--sections", "Part A:2,Part B:3")
         if r.returncode == 0 and "2 sections" in r.stdout:
             ok("deck split --sections creates named sections")
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 split_deck = json.load(f)
             items = split_deck["lanes"][0]["items"]
             if len(items) == 2 and items[0]["title"] == "Part A" and len(items[0]["slides"]) == 2:
@@ -878,7 +878,7 @@ def test_cli_commands():
         # ── deck split --flat ──
         r = run_vela("deck", "split", deck_path, "--flat")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 flat_deck = json.load(f)
             items = flat_deck["lanes"][0]["items"]
             if len(items) == 1 and len(items[0]["slides"]) == 5:
@@ -891,7 +891,7 @@ def test_cli_commands():
         # ── deck split --size ──
         r = run_vela("deck", "split", deck_path, "--size", "2")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 sized = json.load(f)
             items = sized["lanes"][0]["items"]
             if len(items) == 3:  # 2+2+1
@@ -914,12 +914,12 @@ def test_cli_commands():
 
         # ── slide edit ──
         # Reset to flat first
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         r = run_vela("slide", "edit", deck_path, "1", "block.1.text", "Edited Heading")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 edited = json.load(f)
             h = edited["lanes"][0]["items"][0]["slides"][0]["blocks"][1]["text"]
             if h == "Edited Heading":
@@ -932,7 +932,7 @@ def test_cli_commands():
         # ── slide edit slide-level property ──
         r = run_vela("slide", "edit", deck_path, "1", "duration", "120")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 edited = json.load(f)
             # Duration might be stored as string or int depending on implementation
             ok("slide edit changes slide-level property")
@@ -962,11 +962,11 @@ def test_cli_commands():
         rgba_deck["lanes"][0]["items"][0]["slides"][0]["blocks"].append(
             {"type": "callout", "text": "Test", "bg": "rgba(59,130,246,0.15)", "border": "#3b82f6"}
         )
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(rgba_deck, f, ensure_ascii=False)
         r = run_vela("deck", "replace-text", deck_path, "#3b82f6", "#2563eb")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 content = f.read()
             if "rgba(37,99,235,0.15)" in content and "#3b82f6" not in content:
                 ok("replace-text cascades hex to rgba values")
@@ -978,13 +978,13 @@ def test_cli_commands():
             fail("replace-text rgba cascade", r.stderr)
 
         # Revert
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── extract-text includes lane/module titles ──
         r = run_vela("deck", "extract-text", deck_path, texts_path)
         if r.returncode == 0:
-            texts_full = json.load(open(texts_path))
+            texts_full = json.load(open(texts_path, encoding="utf-8"))
             has_lane = any(k.startswith("l") and k.endswith(".title") for k in texts_full)
             has_module = any(".m" in k and k.endswith(".title") for k in texts_full)
             if has_lane and has_module:
@@ -999,7 +999,7 @@ def test_cli_commands():
         overflow_deck["lanes"][0]["items"][0]["slides"][0]["blocks"] = [
             {"type": "text", "text": f"Block {i}"} for i in range(9)
         ]
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(overflow_deck, f, ensure_ascii=False)
         r = run_vela("deck", "stats", deck_path)
         if r.returncode == 0 and "overflow" in r.stdout.lower():
@@ -1007,7 +1007,7 @@ def test_cli_commands():
         else:
             fail("deck stats overflow", r.stdout[:200])
 
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── slide view ──
@@ -1034,7 +1034,7 @@ def test_cli_commands():
         # ── slide remove ──
         r = run_vela("slide", "remove", deck_path, "5")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 removed_deck = json.load(f)
             slide_count = sum(len(it.get("slides", [])) for l in removed_deck["lanes"] for it in l["items"])
             if slide_count == 4:
@@ -1045,13 +1045,13 @@ def test_cli_commands():
             fail("slide remove", r.stderr)
 
         # Reset
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── slide duplicate ──
         r = run_vela("slide", "duplicate", deck_path, "1")
         if r.returncode == 0:
-            with open(deck_path) as f:
+            with open(deck_path, encoding="utf-8") as f:
                 duped = json.load(f)
             slide_count = sum(len(it.get("slides", [])) for l in duped["lanes"] for it in l["items"])
             if slide_count == 6:
@@ -1061,7 +1061,7 @@ def test_cli_commands():
         else:
             fail("slide duplicate", r.stderr)
 
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── slide move ──
@@ -1071,7 +1071,7 @@ def test_cli_commands():
         else:
             fail("slide move", r.stderr)
 
-        with open(deck_path, "w") as f:
+        with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── sync-skill-docs.py exists ──
@@ -1455,7 +1455,7 @@ def test_serve_auth():
     runtime_file = os.path.join(os.getcwd(), ".vela.json")
     if os.path.exists(runtime_file):
         try:
-            with open(runtime_file) as f:
+            with open(runtime_file, encoding="utf-8") as f:
                 info = json.load(f)
             if "pid" in info and "port" in info and "host" in info and "mode" in info:
                 ok("Runtime .vela.json has pid, port, host, mode fields")
@@ -1471,7 +1471,7 @@ def test_serve_auth():
         fail("Runtime .vela.json exists")
 
     # ── Static code checks for auth (serve.py source) ──
-    with open(os.path.join(SCRIPTS, "serve.py")) as _f:
+    with open(os.path.join(SCRIPTS, "serve.py"), encoding="utf-8") as _f:
         serve_src = _f.read()
 
     if "hmac.compare_digest" in serve_src:

@@ -364,6 +364,26 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 and "<" not in name and ">" not in name and "`" not in name
                 and name.strip())
 
+    @staticmethod
+    def _safe_deck_path(folder, name):
+        """Resolve a deck path and verify it stays inside the folder.
+
+        Security: resolves symlinks via realpath then checks containment with
+        startswith(folder + sep).  _validate_deck_name() rejects '..', '/', '\\',
+        and other traversal characters upstream; this is the belt-and-suspenders
+        check.  CodeQL flags the callers as py/path-injection because its static
+        analysis does not model any Python path-containment check as a sanitizer
+        (known limitation — see github/codeql#10948, #17226).
+
+        Returns the joined path on success, raises ValueError on traversal.
+        """
+        joined = os.path.join(folder, name)
+        real_path = os.path.realpath(joined)
+        real_folder = os.path.realpath(folder)
+        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+            raise ValueError(f"Path escapes folder: {name}")
+        return joined
+
     def _check_auth(self):
         """Validate token or session cookie. Returns True if authorized.
         Returns False if response was already sent (redirect or error)."""
@@ -515,7 +535,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             slide_count = 0
             is_compact = False
             try:
-                with open(fpath, "r") as f:
+                with open(fpath, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
@@ -562,12 +582,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400, "Invalid deck name")
             return
 
-        deck_path = os.path.join(srv.folder_path, deck_name)
-
-        # Security: symlink escape check
-        real_path = os.path.realpath(deck_path)
-        real_folder = os.path.realpath(srv.folder_path)
-        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+        try:
+            deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+        except ValueError:
             self.send_error(403, "Access denied")
             return
 
@@ -616,18 +633,16 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                deck_path = os.path.join(srv.folder_path, deck_name)
-                # Security: symlink escape check
-                real_path = os.path.realpath(deck_path)
-                real_folder = os.path.realpath(srv.folder_path)
-                if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+                try:
+                    deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+                except ValueError:
                     self.send_error(403, "Access denied")
                     return
                 srv.set_deck_data(deck_name, deck)
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w") as f:
+                with open(deck_path, "w", encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False, indent=2)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
@@ -671,17 +686,14 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             srv = self.server_ref
-            dest = os.path.join(srv.folder_path, filename)
-
-            # Security: symlink escape check
-            real_dest = os.path.realpath(dest)
-            real_folder = os.path.realpath(srv.folder_path)
-            if not real_dest.startswith(real_folder + os.sep) and real_dest != real_folder:
+            try:
+                dest = self._safe_deck_path(srv.folder_path, filename)
+            except ValueError:
                 self._json_response(403, {"ok": False, "error": "Access denied"})
                 return
 
             # Write formatted
-            with open(dest, "w") as f:
+            with open(dest, "w", encoding="utf-8") as f:
                 json.dump(deck_data, f, ensure_ascii=False, indent=2)
 
             print(f"[import] Saved {filename} ({os.path.getsize(dest)} bytes)")
@@ -949,7 +961,7 @@ class VelaLocalServer:
             def on_change(name=deck_name):
                 try:
                     fpath = os.path.join(self.folder_path, name)
-                    with open(fpath, "r") as f:
+                    with open(fpath, "r", encoding="utf-8") as f:
                         new_data = json.load(f)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
@@ -985,9 +997,9 @@ class VelaLocalServer:
         Returns:
             HTML string (not yet encoded to bytes)
         """
-        with open(LOCAL_HTML_PATH, "r") as f:
+        with open(LOCAL_HTML_PATH, "r", encoding="utf-8") as f:
             html_template = f.read()
-        with open(TEMPLATE_PATH, "r") as f:
+        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             vela_jsx = f.read()
 
         # Inject deck data into STARTUP_PATCH
@@ -1026,7 +1038,7 @@ class VelaLocalServer:
 
     def _build_html_for_deck(self, deck_path, deck_name):
         """Build the Vela app HTML for a specific deck file (folder mode)."""
-        with open(deck_path, "r") as f:
+        with open(deck_path, "r", encoding="utf-8") as f:
             deck_data = self._normalize_deck(json.load(f))
 
         self.set_deck_data(deck_name, deck_data)
@@ -1092,11 +1104,11 @@ class VelaLocalServer:
     # ── Helpers ──────────────────────────────────────────────────────
 
     def _read_deck(self):
-        with open(self.deck_path, "r") as f:
+        with open(self.deck_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _write_deck(self, data):
-        with open(self.deck_path, "w") as f:
+        with open(self.deck_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _on_file_change(self):
@@ -1119,7 +1131,7 @@ class VelaLocalServer:
         runtime_path = os.path.join(os.getcwd(), ".vela.json")
         killed = False
         try:
-            with open(runtime_path) as f:
+            with open(runtime_path, encoding="utf-8") as f:
                 info = json.load(f)
             stale_pid = info.get("pid")
             if stale_pid and info.get("port") == self.port:
@@ -1181,7 +1193,7 @@ class VelaLocalServer:
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
         # Legacy pidfile
         pidfile = os.path.join(os.getcwd(), ".vela.pid")
-        with open(pidfile, "w") as f:
+        with open(pidfile, "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
 
     def _on_template_change(self):

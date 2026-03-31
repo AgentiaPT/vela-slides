@@ -26,7 +26,7 @@ def load_version_results(version):
         return []
     runs = []
     for f in sorted(version_dir.glob("*.json")):
-        with open(f) as fh:
+        with open(f, encoding="utf-8") as fh:
             data = json.load(fh)
             if isinstance(data, list):
                 runs.extend(data)
@@ -50,7 +50,7 @@ def save_baseline(version):
     }
 
     out_path = BASELINES_DIR / f"{version}.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(baseline, f, indent=2)
 
     # Update latest symlink
@@ -72,7 +72,7 @@ def load_baseline(version=None):
 
     if not path.exists():
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -149,7 +149,7 @@ def list_baselines():
         if f.name == "latest.json":
             continue
         ver = f.stem
-        with open(f) as fh:
+        with open(f, encoding="utf-8") as fh:
             data = json.load(fh)
         n = data.get("run_count", len(data.get("runs", [])))
         marker = " (latest)" if ver == latest else ""
@@ -184,7 +184,7 @@ def main():
     elif cmd == "latest":
         latest = BASELINES_DIR / "latest.json"
         if latest.exists():
-            with open(latest) as f:
+            with open(latest, encoding="utf-8") as f:
                 data = json.load(f)
             print(f"Latest baseline: {data['version']} ({data.get('run_count', '?')} runs)")
         else:

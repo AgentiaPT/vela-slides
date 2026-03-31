@@ -78,7 +78,7 @@ def main():
     caps = get_capabilities()
     section = generate_section(caps)
 
-    with open(SKILL_MD, "r") as f:
+    with open(SKILL_MD, "r", encoding="utf-8") as f:
         content = f.read()
 
     if START_MARKER in content and END_MARKER in content:
@@ -96,7 +96,7 @@ def main():
             return
 
     if write:
-        with open(SKILL_MD, "w") as f:
+        with open(SKILL_MD, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"✅ Updated {SKILL_MD}")
         # Show diff
