@@ -364,6 +364,26 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 and "<" not in name and ">" not in name and "`" not in name
                 and name.strip())
 
+    @staticmethod
+    def _safe_deck_path(folder, name):
+        """Resolve a deck path and verify it stays inside the folder.
+
+        Security: resolves symlinks via realpath then checks containment with
+        startswith(folder + sep).  _validate_deck_name() rejects '..', '/', '\\',
+        and other traversal characters upstream; this is the belt-and-suspenders
+        check.  CodeQL flags the callers as py/path-injection because its static
+        analysis does not model any Python path-containment check as a sanitizer
+        (known limitation — see github/codeql#10948, #17226).
+
+        Returns the joined path on success, raises ValueError on traversal.
+        """
+        joined = os.path.join(folder, name)
+        real_path = os.path.realpath(joined)
+        real_folder = os.path.realpath(folder)
+        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:
+            raise ValueError(f"Path escapes folder: {name}")
+        return joined
+
     def _check_auth(self):
         """Validate token or session cookie. Returns True if authorized.
         Returns False if response was already sent (redirect or error)."""
@@ -562,17 +582,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400, "Invalid deck name")
             return
 
-        # Security: path containment — resolve symlinks then verify the real
-        # path sits inside the configured folder.  _validate_deck_name() above
-        # already rejects '..', '/', '\' and other traversal characters; realpath +
-        # startswith(folder + sep) is the belt-and-suspenders check.
-        # CodeQL flags this as py/path-injection because its static analysis does
-        # not model startswith/is_relative_to as sanitizers (known limitation, see
-        # github/codeql#10948, #17226).  The check is sound.
-        deck_path = os.path.join(srv.folder_path, deck_name)
-        real_path = os.path.realpath(deck_path)
-        real_folder = os.path.realpath(srv.folder_path)
-        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:  # codeql[py/path-injection]
+        try:
+            deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+        except ValueError:
             self.send_error(403, "Access denied")
             return
 
@@ -621,11 +633,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                # Security: path containment (see _handle_serve_deck for rationale)
-                deck_path = os.path.join(srv.folder_path, deck_name)
-                real_path = os.path.realpath(deck_path)
-                real_folder = os.path.realpath(srv.folder_path)
-                if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:  # codeql[py/path-injection]
+                try:
+                    deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+                except ValueError:
                     self.send_error(403, "Access denied")
                     return
                 srv.set_deck_data(deck_name, deck)
@@ -676,11 +686,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             srv = self.server_ref
-            # Security: path containment (see _handle_serve_deck for rationale)
-            dest = os.path.join(srv.folder_path, filename)
-            real_dest = os.path.realpath(dest)
-            real_folder = os.path.realpath(srv.folder_path)
-            if not real_dest.startswith(real_folder + os.sep) and real_dest != real_folder:  # codeql[py/path-injection]
+            try:
+                dest = self._safe_deck_path(srv.folder_path, filename)
+            except ValueError:
                 self._json_response(403, {"ok": False, "error": "Access denied"})
                 return
 
