@@ -21,7 +21,6 @@ Exit codes:
 """
 
 import json, sys, os, subprocess, copy, shutil
-from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────
 SKILL_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -44,11 +43,11 @@ _json_mode = False
 
 def _safe_resolve(file_path, label="file"):
     """Resolve a file path and reject directory traversal / symlink escapes."""
-    resolved = Path(file_path).resolve()
-    cwd = Path.cwd().resolve()
-    if not resolved.is_relative_to(cwd):
+    resolved = os.path.realpath(file_path)
+    cwd = os.path.realpath(os.getcwd())
+    if not resolved.startswith(cwd + os.sep) and resolved != cwd:
         _err(EXIT_USAGE, f"Path traversal blocked for {label}: {file_path}")
-    return str(resolved)
+    return resolved
 
 def _extract_output_flag(args):
     """Extract --output <path> from args. Returns (output_path, remaining_args)."""

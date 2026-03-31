@@ -20,7 +20,6 @@ import http.cookies
 import http.server
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import sys
@@ -563,10 +562,17 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400, "Invalid deck name")
             return
 
+        # Security: path containment — resolve symlinks then verify the real
+        # path sits inside the configured folder.  _validate_deck_name() above
+        # already rejects '..', '/', '\' and other traversal characters; realpath +
+        # startswith(folder + sep) is the belt-and-suspenders check.
+        # CodeQL flags this as py/path-injection because its static analysis does
+        # not model startswith/is_relative_to as sanitizers (known limitation, see
+        # github/codeql#10948, #17226).  The check is sound.
         deck_path = os.path.join(srv.folder_path, deck_name)
-
-        # Security: ensure resolved path stays within the configured folder
-        if not Path(deck_path).resolve().is_relative_to(Path(srv.folder_path).resolve()):
+        real_path = os.path.realpath(deck_path)
+        real_folder = os.path.realpath(srv.folder_path)
+        if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:  # codeql[py/path-injection]
             self.send_error(403, "Access denied")
             return
 
@@ -615,9 +621,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
+                # Security: path containment (see _handle_serve_deck for rationale)
                 deck_path = os.path.join(srv.folder_path, deck_name)
-                # Security: ensure resolved path stays within the configured folder
-                if not Path(deck_path).resolve().is_relative_to(Path(srv.folder_path).resolve()):
+                real_path = os.path.realpath(deck_path)
+                real_folder = os.path.realpath(srv.folder_path)
+                if not real_path.startswith(real_folder + os.sep) and real_path != real_folder:  # codeql[py/path-injection]
                     self.send_error(403, "Access denied")
                     return
                 srv.set_deck_data(deck_name, deck)
@@ -668,10 +676,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return
 
             srv = self.server_ref
+            # Security: path containment (see _handle_serve_deck for rationale)
             dest = os.path.join(srv.folder_path, filename)
-
-            # Security: ensure resolved path stays within the configured folder
-            if not Path(dest).resolve().is_relative_to(Path(srv.folder_path).resolve()):
+            real_dest = os.path.realpath(dest)
+            real_folder = os.path.realpath(srv.folder_path)
+            if not real_dest.startswith(real_folder + os.sep) and real_dest != real_folder:  # codeql[py/path-injection]
                 self._json_response(403, {"ok": False, "error": "Access denied"})
                 return
 
@@ -1070,7 +1079,9 @@ class VelaLocalServer:
                 continue
             for serve_path, (nm_path, ctype) in vendor_map.items():
                 full = os.path.join(nm, nm_path)
-                if not Path(full).resolve().is_relative_to(Path(nm).resolve()):
+                real_full = os.path.realpath(full)
+                real_nm = os.path.realpath(nm)
+                if not real_full.startswith(real_nm + os.sep):
                     continue  # Reject symlink escape
                 if os.path.isfile(real_full):
                     with open(real_full, "rb") as f:
