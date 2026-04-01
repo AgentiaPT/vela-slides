@@ -570,3 +570,80 @@ The ultimate reference deck. Both documentation and demo.
 - 20:08:xx — Round 4 complete (wild ideas H16-H30)
 
 Total research time: ~14 minutes. 15 hypotheses + 15 wild ideas = 30 raw ideas saved.
+
+---
+
+## LATE-ARRIVING RESEARCH: Excalidraw Deep Dive + MCP Ecosystem
+
+### Excalidraw MCP — The Reference Implementation
+
+**Official MCP (excalidraw/excalidraw-mcp, 3,653 stars): ONLY 5 TOOLS**
+1. `read_me` — returns element format reference, palettes, examples
+2. `create_view` — renders diagram from JSON elements with streaming draw-on animations
+3. `export_to_excalidraw` — encrypts + uploads, returns shareable URL
+4. `save_checkpoint` — persists diagram state for incremental editing
+5. `read_checkpoint` — retrieves saved state
+
+**Community MCP (yctimlin/mcp_excalidraw, 1,597 stars): 26 TOOLS**
+- Full CRUD on elements, layout tools, canvas inspection, mermaid import
+- Two-process architecture: Canvas Server (Express+WebSocket) + MCP Server (stdio)
+- "Draw-look-adjust loop": create → inspect via screenshot → refine → repeat
+
+**Key insight: Official = minimal, community = full-featured.**
+Ship small, let community extend. The 5-tool server IS the quick start.
+
+### Excalidraw Distribution Layers (confirmed)
+| Layer | Implementation | Stars |
+|-------|---------------|-------|
+| Zero-install web | excalidraw.com (PWA, offline, file association) | 120K |
+| npm library | @excalidraw/excalidraw React component | (part of monorepo) |
+| VS Code extension | Custom editor for .excalidraw files | 728 |
+| Official MCP | 5 tools, .mcpb bundle, Vercel-deployable | 3,653 |
+| Community MCPs | 26-tool version, animation pipelines, etc. | 1,597+ |
+| Paid cloud | Excalidraw Plus (persistence, teams) | commercial |
+
+### New Insights for Vela
+
+1. **Streaming block-by-block rendering** — Excalidraw streams elements with
+   draw-on animations + pencil-scratch audio. Vela could stream slide construction
+   block-by-block for a "building the deck" feel in MCP viewers.
+
+2. **Source embedded in exports** — .excalidraw.svg contains full JSON inside it.
+   Exported images remain re-editable. Vela could embed deck JSON in PDF metadata
+   or in HTML comments of exported files. "Every export is also a source file."
+
+3. **.mcpb bundle = one-click install** — The MCP Bundle format (.mcpb, Nov 2025)
+   is a ZIP with manifest.json. Single-click install across Claude Desktop,
+   Claude Code, VS Code. This is the 2026 distribution standard for agent tools.
+   Vela should ship a .mcpb.
+
+4. **GitHub MCP Registry** — 8,600+ servers listed. Central discovery + install.
+   Vela should be listed there.
+
+5. **Excalidraw keeps AI EXTERNAL** — no built-in LLM calls. The tool is the
+   canvas, the AI is the caller. Contrast with Vela's Vera engine which embeds
+   Claude directly. Both models have merits. For the MCP story, the "dumb renderer
+   + smart agent" model is simpler and more universal.
+
+6. **Encrypted URL sharing** — key in URL fragment (#key=...), data on server,
+   fragment never sent to server. Zero-install viewing without exposing content.
+
+### Additional Web Research Findings (from parallel agent)
+
+**MCP Distribution Evolution:**
+- Phase 1 (2024): Manual JSON config editing — high friction
+- Phase 2 (2025): npx/uvx shortcuts — medium friction
+- Phase 3 (Nov 2025): .mcpb bundles — one-click install
+- Phase 4 (2026): GitHub MCP Registry — central discovery
+- Phase 5 (2026): IDE-native discovery (VS Code `@mcp` search)
+
+**AI Tool Onboarding Patterns (ranked by friction):**
+1. Browser-only prompt-to-product (v0, bolt.new, Gamma) — near zero
+2. One CLI command (Slidev `pnpm create slidev`) — very low
+3. Auto-discovered markdown (CLAUDE.md, .cursorrules) — low
+4. One-click bundle install (.mcpb, VS Code extensions) — low
+5. JSON config editing — high (the OLD way)
+
+**Industry direction:** Natural language replaces structured config.
+Browser replaces local setup. Convention-based file discovery replaces
+explicit registration.
