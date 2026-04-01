@@ -92,7 +92,7 @@ These are consumed at runtime via CDN (see §5), not bundled. The `package.json`
 
 Node built-in modules used by channel: `node:http`, `node:fs`, `node:path`
 
-> **No lock files exist** (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`). The root devDependencies are reference-only; the app loads libraries from CDN at runtime.
+> **Lockfile integrity:** `pnpm-lock.yaml` is committed with SHA-512 hashes for reproducible builds and tamper detection. The root devDependencies are reference-only; the app loads libraries from CDN at runtime. Supply chain protections: `ignore-scripts=true` (.npmrc), 7-day release cooldown, no native builds (pnpm-workspace.yaml).
 
 ---
 

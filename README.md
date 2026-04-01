@@ -18,7 +18,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 > **No human has reviewed the source code.**
 >
-> Every line of Vela — 12,650+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 250+ automated tests, and static analysis, but no human has ever read or audited the code.
+> Every line of Vela — 12,650+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
 >
 > **You are responsible for your own review before using this in any production or sensitive context.**
 >
@@ -56,8 +56,8 @@ Full CLI access, live browser preview, file system integration:
 ```bash
 git clone https://github.com/AgentiaPT/vela-slides.git
 cd vela-slides
-python3 skills/vela-slides/scripts/serve.py examples/starter-deck.json
-# → Opens browser at localhost:3030 with live slides
+python3 skills/vela-slides/scripts/vela.py server start examples/
+# → Opens browser at localhost:3030 with deck browser and live editing
 ```
 
 With the skill installed, Claude Code can generate, edit, translate, and rebrand decks using the `vela` CLI — saving 80-97% of tokens vs manual JSON editing.
@@ -118,8 +118,11 @@ Headings, bullets, flows, grids, metrics, timelines, steps, tables, callouts, qu
 ### Vera — Built-in AI Assistant
 An agentic AI chat panel inside the slide engine. Vera can search your deck, batch-edit across slides, restyle sections, add slides from descriptions, and improve designs — all through conversation within the artifact.
 
+### `.vela` File Extension
+Decks use the `.vela` extension — a standard JSON file with a dedicated identity. All CLI tools, the local server, and imports recognize both `.vela` and `.json`.
+
 ### Presenter Mode
-Fullscreen presentation with font scaling, keyboard navigation, and speaker notes. Designed for 16:9 projection.
+Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
 
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
@@ -164,7 +167,7 @@ Once a Vela artifact is running, click the Vera button to open the chat panel. Y
 
 Try the self-demonstrating deck — slides that showcase every block type, with Vera ready for hands-on editing:
 
-**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`skills/vela-slides/examples/vela-demo.json`](skills/vela-slides/examples/vela-demo.json)
+**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`skills/vela-slides/examples/vela-demo.vela`](skills/vela-slides/examples/vela-demo.vela)
 
 See [`examples/`](examples/) for themed sample decks (startup pitch, tech talk, course, business report).
 
@@ -189,18 +192,18 @@ vela-slides/
 │       │   ├── lint.py        ← Code linting checks
 │       │   └── sync-skill-docs.py ← Sync CLI reference into SKILL.md
 │       ├── references/        ← Block schema, design patterns, themes, formats
-│       ├── examples/          ← vela-demo.json (bundled demo deck)
+│       ├── examples/          ← vela-demo.vela (bundled demo deck)
 │       └── evals/             ← Skill quality test cases
 ├── docs/
 │   ├── ARCHITECTURE.md        ← Technical deep dive
 │   └── SECURITY.md            ← Security model + audit
 ├── examples/
-│   ├── starter-deck.json      ← Sample deck JSON
-│   └── *.json                 ← Themed example decks
+│   ├── starter-deck.vela      ← Sample deck
+│   └── *.vela                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/
-│   ├── test_vela.py           ← Core engine tests (161 tests)
-│   └── test_serve.py          ← Server endpoint & security tests (91 tests)
+│   ├── test_vela.py           ← Core engine tests (198 tests)
+│   └── test_serve.py          ← Server endpoint & security tests (72 tests)
 ├── LICENSE                    ← Elastic License v2
 ├── CONTRIBUTING.md
 └── README.md
@@ -216,6 +219,7 @@ Vela runs entirely in Claude.ai's sandboxed artifact environment. See [docs/SECU
 - Import validation and block-type whitelisting
 - Content-length limits on all string inputs
 - Stored XSS prevention in the local development server
+- Supply chain security: `ignore-scripts`, 7-day release cooldown, lockfile integrity (SHA-512)
 - No credentials or secrets in the codebase
 
 Found something? We have a [security bounty program](docs/SECURITY.md#security-bounty-program).

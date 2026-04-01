@@ -5,7 +5,7 @@ Vela Deck Validator
 Checks deck JSON for common quality issues before assembly.
 
 Usage:
-  python3 validate.py <deck.json>
+  python3 validate.py <deck.vela>
 """
 
 import sys, json, os
@@ -140,7 +140,7 @@ def validate(path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 validate.py <deck.json>", file=sys.stderr)
+        print("Usage: python3 validate.py <deck.vela>", file=sys.stderr)
         sys.exit(1)
 
     errors, warnings, stats = validate(sys.argv[1])

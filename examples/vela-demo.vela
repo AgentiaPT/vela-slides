@@ -1,16 +1,16 @@
 {
   "deckTitle": "Vela Slides — Live Demo",
-  "guidelines": "",
   "lanes": [
     {
-      "id": "80a9aa93",
+      "id": "2c0639b3",
       "title": "Introduction",
       "collapsed": false,
       "items": [
         {
-          "id": "31a0064f",
+          "id": "badac887",
           "title": "Title",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 0,
@@ -268,14 +268,25 @@
       ]
     },
     {
-      "id": "9edd7c13",
+      "id": "4a33b9e0",
       "title": "What's New — v10",
       "collapsed": false,
       "items": [
         {
-          "id": "d1445aee",
+          "id": "7e937d4e",
           "title": "v10 Features",
           "notes": "The hero feature for the LinkedIn announcement",
+          "comments": [
+            {
+              "id": "c_aad7a641",
+              "text": "The hero feature for the LinkedIn announcement",
+              "anchor": null,
+              "blockIndex": null,
+              "status": "open",
+              "createdAt": "2026-04-01T13:39:40.829Z",
+              "resolvedAt": null
+            }
+          ],
           "status": "done",
           "importance": "must",
           "order": 0,
@@ -471,14 +482,15 @@
       ]
     },
     {
-      "id": "6985f0b5",
+      "id": "08a25b3c",
       "title": "Block Showcase",
       "collapsed": false,
       "items": [
         {
-          "id": "8053dd20",
+          "id": "ae2e2c23",
           "title": "Text & Typography",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 0,
@@ -582,9 +594,10 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "738a1c2b",
+          "id": "20cacaee",
           "title": "Process & Flow",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 1,
@@ -735,9 +748,10 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "774ae826",
+          "id": "3e647b23",
           "title": "Data & Metrics",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 2,
@@ -904,9 +918,10 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "51f7d8ef",
+          "id": "6fa2fbc4",
           "title": "Code & Visual",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 3,
@@ -1015,14 +1030,15 @@
       ]
     },
     {
-      "id": "c9e295ab",
+      "id": "cd9b460f",
       "title": "AI & Platform",
       "collapsed": false,
       "items": [
         {
-          "id": "51819d39",
+          "id": "7468c4f2",
           "title": "Vera AI",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 0,
@@ -1268,9 +1284,10 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "c28b7a6f",
+          "id": "08ff0305",
           "title": "CLI & Skill",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 1,
@@ -1357,9 +1374,10 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "ec5856d8",
+          "id": "1a262244",
           "title": "Platform Features",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 1,
@@ -1681,14 +1699,15 @@
       ]
     },
     {
-      "id": "533f64c9",
+      "id": "7a832f02",
       "title": "Closing",
       "collapsed": false,
       "items": [
         {
-          "id": "0fd2162a",
+          "id": "a3a2b412",
           "title": "Get Started",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
           "order": 0,
@@ -2095,17 +2114,6 @@
       ]
     }
   ],
-  "selectedId": "31a0064f",
-  "slideIndex": 0,
-  "fontScale": 1,
-  "chatOpen": false,
-  "chatMessages": [
-    {
-      "role": "assistant",
-      "content": "Deck imported successfully! Ready to sail. ⛵🖖",
-      "ts": "2026-03-23T23:14:42.516Z"
-    }
-  ],
   "branding": {
     "enabled": false,
     "accentBar": true,
@@ -2123,8 +2131,5 @@
     "imgMaxWidth": 600,
     "imgQuality": 0.45
   },
-  "veraMode": "editor",
-  "teacherHistory": {},
-  "teacherLoading": false,
-  "_lastPatchId": "demo-v10-2026-03-23d"
+  "guidelines": ""
 }

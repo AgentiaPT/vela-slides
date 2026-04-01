@@ -8,7 +8,8 @@ Usage:
   vela --help                  Human-readable help
 
 Resources:
-  deck     Deck-level operations (list, validate, extract, split, dump, stats, find, extract-text, patch-text, replace-text, assemble, ship, compact, expand, turbo, serve)
+  deck     Deck-level operations (list, validate, extract, split, dump, stats, find, extract-text, patch-text, replace-text, assemble, ship, compact, expand, turbo)
+  server   Local server operations (start)
   slide    Slide-level operations (view, edit, remove, move, duplicate, insert, remove-block)
 
 Exit codes:
@@ -108,7 +109,7 @@ def _ok(data, message=None):
 def _load_deck(path):
     if not os.path.exists(path):
         _err(EXIT_NOT_FOUND, f"File not found: {path}",
-             suggestions=["Check the file path", "Run: ls /home/claude/*.json"])
+             suggestions=["Check the file path", "Run: ls /home/claude/*.vela"])
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -835,34 +836,40 @@ CAPABILITIES = {
     "resources": {
         "deck": {
             "commands": {
-                "list": "vela deck list <deck.json> — TOC with slide#, title, blocks, duration",
-                "validate": "vela deck validate <deck.json> — check deck JSON integrity",
-                "split": "vela deck split <deck.json> --sections \"Title:N,...\" | --flat | --size N — regroup slides into sections (--flat to merge all into one)",
-                "assemble": "vela deck assemble <deck.json> [--output <path>] — inject deck into JSX artifact",
-                "ship": "vela deck ship <deck.json> [--output <path>] — validate + assemble in one call",
-                "replace-text": "vela deck replace-text <deck.json> \"old\" \"new\" — find/replace across all slides (hex colors auto-cascade to rgba)",
-                "stats": "vela deck stats <deck.json> — health audit: block distribution, missing durations, overflow, monotony issues",
-                "find": "vela deck find <deck.json> --query \"text\" | --type flow | --missing duration — search slides by content, block type, or missing props",
-                "dump": "vela deck dump <deck.json> [--full] — compact text-only view of all slides (--full for all text fields)",
-                "extract-text": "vela deck extract-text <deck.json> [output.json] — extract all translatable text as key-value map",
-                "patch-text": "vela deck patch-text <deck.json> <texts.json> — apply translated text map back into deck",
-                "expand": "vela deck expand <compact.json> <full.json> — compact/turbo → full format",
-                "compact": "vela deck compact <full.json> <compact.json> — full → compact format",
-                "turbo": "vela deck turbo <deck.json> <turbo.json> — any → turbo format",
-                "serve": "vela deck serve <deck.json> [--port N] — live preview with two-way sync",
+                "list": "vela deck list <deck.vela> — TOC with slide#, title, blocks, duration",
+                "validate": "vela deck validate <deck.vela> — check deck JSON integrity",
+                "split": "vela deck split <deck.vela> --sections \"Title:N,...\" | --flat | --size N — regroup slides into sections (--flat to merge all into one)",
+                "assemble": "vela deck assemble <deck.vela> [--output <path>] — inject deck into JSX artifact",
+                "ship": "vela deck ship <deck.vela> [--output <path>] — validate + assemble in one call",
+                "replace-text": "vela deck replace-text <deck.vela> \"old\" \"new\" — find/replace across all slides (hex colors auto-cascade to rgba)",
+                "stats": "vela deck stats <deck.vela> — health audit: block distribution, missing durations, overflow, monotony issues",
+                "find": "vela deck find <deck.vela> --query \"text\" | --type flow | --missing duration — search slides by content, block type, or missing props",
+                "dump": "vela deck dump <deck.vela> [--full] — compact text-only view of all slides (--full for all text fields)",
+                "extract-text": "vela deck extract-text <deck.vela> [output.json] — extract all translatable text as key-value map",
+                "patch-text": "vela deck patch-text <deck.vela> <texts.json> — apply translated text map back into deck",
+                "expand": "vela deck expand <compact.vela> <full.vela> — compact/turbo → full format",
+                "compact": "vela deck compact <full.vela> <compact.vela> — full → compact format",
+                "turbo": "vela deck turbo <deck.vela> <turbo.vela> — any → turbo format",
                 "zip": "vela deck zip [--output <path>] — build clean skill ZIP for Claude.ai upload",
             },
             "description": "Deck-level operations (auto-detects full/compact/turbo format)"
         },
+        "server": {
+            "commands": {
+                "start": "vela server start <folder-or-file> [--port N] [--replace] — Jupyter-style deck browser with live sync",
+                "stop": "vela server stop [--port N] — stop a running Vela server",
+            },
+            "description": "Local server operations"
+        },
         "slide": {
             "commands": {
-                "view": "vela slide view <deck.json> <N> — show slide content summary",
-                "edit": "vela slide edit <deck.json> <N> <key> <value> — edit slide/block property (block.I.key for blocks)",
-                "remove": "vela slide remove <deck.json> <N> — remove a slide",
-                "move": "vela slide move <deck.json> <from> <to> — reorder a slide",
-                "duplicate": "vela slide duplicate <deck.json> <N> — copy a slide",
-                "insert": "vela slide insert <deck.json> <N> <slide.json> — insert slide from file",
-                "remove-block": "vela slide remove-block <deck.json> <N> <block#> — remove a block from a slide",
+                "view": "vela slide view <deck.vela> <N> — show slide content summary",
+                "edit": "vela slide edit <deck.vela> <N> <key> <value> — edit slide/block property (block.I.key for blocks)",
+                "remove": "vela slide remove <deck.vela> <N> — remove a slide",
+                "move": "vela slide move <deck.vela> <from> <to> — reorder a slide",
+                "duplicate": "vela slide duplicate <deck.vela> <N> — copy a slide",
+                "insert": "vela slide insert <deck.vela> <N> <slide.json> — insert slide from file",
+                "remove-block": "vela slide remove-block <deck.vela> <N> <block#> — remove a block from a slide",
             },
             "description": "Slide-level operations (1-indexed slide numbers)"
         }
@@ -875,9 +882,9 @@ CAPABILITIES = {
 # ── DECK COMMANDS ──────────────────────────────────────────────────────
 
 def deck_list(args):
-    """List slides as compact TOC. Usage: vela deck list <deck.json>"""
+    """List slides as compact TOC. Usage: vela deck list <deck.vela>"""
     if not args:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck list /home/claude/deck.json"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck list /home/claude/deck.vela"])
     deck = _load_full(args[0])
     slides = []
     for idx, slide, item, si in _all_slides(deck):
@@ -912,9 +919,9 @@ def deck_list(args):
         sys.exit(EXIT_OK)
 
 def deck_validate(args):
-    """Validate deck JSON. Usage: vela deck validate <deck.json>"""
+    """Validate deck JSON. Usage: vela deck validate <deck.vela>"""
     if not args:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck validate /home/claude/deck.json"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck validate /home/claude/deck.vela"])
     # Auto-expand to a temp file for validation — preserve original format on disk
     path = args[0]
     deck = _load_deck(path)
@@ -925,13 +932,13 @@ def deck_validate(args):
         tmp_fd, validate_path = tempfile.mkstemp(suffix=".json")
         os.close(tmp_fd)
         _save_deck(expanded, validate_path)
-    result = subprocess.run(["python3", VALIDATE_PY, validate_path], capture_output=True, text=True)
+    result = subprocess.run([sys.executable, VALIDATE_PY, validate_path], capture_output=True, text=True)
     if validate_path != path:
         os.unlink(validate_path)
     if result.returncode != 0:
         if _is_json():
             _err(EXIT_VALIDATION, result.stdout.strip() or result.stderr.strip(), retryable=True,
-                 suggestions=["Fix the reported errors and re-run: vela deck validate <deck.json>",
+                 suggestions=["Fix the reported errors and re-run: vela deck validate <deck.vela>",
                               "Use --json for structured error details"])
         else:
             print(result.stdout, end="")
@@ -946,11 +953,11 @@ def deck_validate(args):
 
 def deck_assemble(args):
     """Assemble deck JSON into JSX artifact.
-    Usage: vela deck assemble <deck.json> [--output <path>]"""
+    Usage: vela deck assemble <deck.vela> [--output <path>]"""
     # Parse --output flag
     output_path, filtered = _extract_output_flag(args)
     if not filtered:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck assemble deck.json", "vela deck assemble deck.json --output out.jsx"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck assemble deck.vela", "vela deck assemble deck.vela --output out.jsx"])
     # Auto-expand to temp file for assembly — preserve original format on disk
     path = filtered[0]
     assemble_path = path
@@ -961,7 +968,7 @@ def deck_assemble(args):
         tmp_fd, assemble_path = tempfile.mkstemp(suffix=".json")
         os.close(tmp_fd)
         _save_deck(expanded, assemble_path)
-    cmd = ["python3", ASSEMBLE_PY, assemble_path]
+    cmd = [sys.executable, ASSEMBLE_PY, assemble_path]
     if output_path:
         cmd += ["--output", output_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -984,9 +991,9 @@ def deck_extract(args):
     if not args:
         _err(EXIT_USAGE, "Missing source .jsx path",
              suggestions=["vela deck extract artifact.jsx",
-                          "vela deck extract artifact.jsx deck.json"])
+                          "vela deck extract artifact.jsx deck.vela"])
     source = args[0]
-    output = args[1] if len(args) > 1 else source.replace('.jsx', '-deck.json')
+    output = args[1] if len(args) > 1 else source.replace('.jsx', '-deck.vela')
 
     if not os.path.isfile(source):
         _err(EXIT_NOT_FOUND, f"File not found: {source}")
@@ -1024,19 +1031,19 @@ def deck_extract(args):
 def deck_ship(args):
     """Validate + assemble + copy JSON to outputs. One-shot pipeline.
     Auto-expands compact format before processing.
-    Usage: vela deck ship <deck.json> [--output <path>]"""
+    Usage: vela deck ship <deck.vela> [--output <path>]"""
     output_path, filtered = _extract_output_flag(args)
 
     # Handle --sample flag
     if "--sample" in filtered:
         filtered = [a for a in filtered if a != "--sample"]
-        sample_path = os.path.join(SKILL_ROOT, "..", "..", "examples", "starter-deck.json")
+        sample_path = os.path.join(SKILL_ROOT, "..", "..", "examples", "starter-deck.vela")
         sample_path = os.path.normpath(sample_path)
         if not os.path.isfile(sample_path):
             _err(EXIT_NOT_FOUND, "Sample deck not found",
                  suggestions=[f"Expected at: {sample_path}"])
         # Copy sample to a working location
-        work_path = os.path.join(OUTPUT_DIR, "sample-deck.json")
+        work_path = os.path.join(OUTPUT_DIR, "sample-deck.vela")
         os.makedirs(os.path.dirname(work_path) or '.', exist_ok=True)
         shutil.copy2(sample_path, work_path)
         filtered = [work_path]
@@ -1044,17 +1051,17 @@ def deck_ship(args):
     # Handle --demo flag (bundled demo deck showcasing all block types)
     elif "--demo" in filtered:
         filtered = [a for a in filtered if a != "--demo"]
-        demo_path = os.path.join(SKILL_ROOT, "examples", "vela-demo.json")
+        demo_path = os.path.join(SKILL_ROOT, "examples", "vela-demo.vela")
         if not os.path.isfile(demo_path):
             _err(EXIT_NOT_FOUND, "Demo deck not found",
                  suggestions=[f"Expected at: {demo_path}"])
-        work_path = os.path.join(OUTPUT_DIR, "vela-demo.json")
+        work_path = os.path.join(OUTPUT_DIR, "vela-demo.vela")
         os.makedirs(os.path.dirname(work_path) or '.', exist_ok=True)
         shutil.copy2(demo_path, work_path)
         filtered = [work_path]
 
     if not filtered:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck ship deck.json", "vela deck ship deck.json --output out.jsx"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck ship deck.vela", "vela deck ship deck.vela --output out.jsx"])
     path = filtered[0]
     steps = []
     was_compact = False
@@ -1076,7 +1083,7 @@ def deck_ship(args):
                        "output": f"Expanded {fmt_name} format ({slides_n} slides)"})
 
     # Step 1: Validate
-    result = subprocess.run(["python3", VALIDATE_PY, ship_path], capture_output=True, text=True)
+    result = subprocess.run([sys.executable, VALIDATE_PY, ship_path], capture_output=True, text=True)
     steps.append({"step": "validate", "success": result.returncode == 0, "output": result.stdout.strip()})
     if result.returncode != 0:
         if ship_path != path:
@@ -1089,7 +1096,7 @@ def deck_ship(args):
             sys.exit(EXIT_VALIDATION)
 
     # Step 2: Assemble
-    assemble_cmd = ["python3", ASSEMBLE_PY, ship_path, "--minify"]
+    assemble_cmd = [sys.executable, ASSEMBLE_PY, ship_path, "--minify"]
     if output_path:
         assemble_cmd += ["--output", output_path]
     result = subprocess.run(assemble_cmd, capture_output=True, text=True)
@@ -1110,7 +1117,7 @@ def deck_ship(args):
     # Step 3: Copy JSON to outputs (skip if already in output dir)
     basename = os.path.splitext(os.path.basename(path))[0]
     out_dir = os.path.dirname(os.path.abspath(output_path)) if output_path else OUTPUT_DIR
-    json_out = os.path.join(out_dir, basename + ".json")
+    json_out = os.path.join(out_dir, basename + ".vela")
     if os.path.abspath(path) != os.path.abspath(json_out):
         os.makedirs(out_dir, exist_ok=True)
         shutil.copy2(path, json_out)
@@ -1158,11 +1165,11 @@ def _is_hex_color(s):
 def deck_replace_text(args):
     """Find/replace text across entire deck. Idempotent.
     When replacing hex colors, also cascades into rgba() values automatically.
-    Usage: vela deck replace-text <deck.json> <old> <new>"""
+    Usage: vela deck replace-text <deck.vela> <old> <new>"""
     if len(args) < 3:
-        _err(EXIT_USAGE, "Need: <deck.json> <old> <new>",
-             suggestions=["vela deck replace-text deck.json \"old text\" \"new text\"",
-                          "vela deck replace-text deck.json \"#3b82f6\" \"#2563eb\"  (also remaps rgba)"])
+        _err(EXIT_USAGE, "Need: <deck.vela> <old> <new>",
+             suggestions=["vela deck replace-text deck.vela \"old text\" \"new text\"",
+                          "vela deck replace-text deck.vela \"#3b82f6\" \"#2563eb\"  (also remaps rgba)"])
     path, old, new = args[0], args[1], args[2]
     deck = _load_deck(path)
     raw = json.dumps(deck, ensure_ascii=False)
@@ -1208,10 +1215,10 @@ def deck_replace_text(args):
 
 def deck_expand(args):
     """Expand compact or turbo deck to full Vela JSON.
-    Usage: vela deck expand <deck.json> [output.json]"""
+    Usage: vela deck expand <deck.vela> [output.json]"""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck expand compact.json full.json"])
+             suggestions=["vela deck expand compact.vela full.vela"])
     path = args[0]
     output = args[1] if len(args) > 1 else None
     deck = _load_deck(path)
@@ -1239,10 +1246,10 @@ def deck_expand(args):
 
 def deck_compact(args):
     """Compact a full deck to compact format (~61% fewer tokens).
-    Usage: vela deck compact <full.json> [output.json]"""
+    Usage: vela deck compact <full.vela> [output.json]"""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck compact full.json compact.json"])
+             suggestions=["vela deck compact full.vela compact.vela"])
     path = args[0]
     output = args[1] if len(args) > 1 else None
     deck = _load_deck(path)
@@ -1279,10 +1286,10 @@ def deck_compact(args):
 def deck_turbo(args):
     """Convert deck to turbo format (positional arrays + color palette).
     ~44% token savings. For storage/cache, not LLM generation.
-    Usage: vela deck turbo <deck.json> [output.json]"""
+    Usage: vela deck turbo <deck.vela> [output.json]"""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck turbo deck.json turbo.json"])
+             suggestions=["vela deck turbo deck.vela turbo.vela"])
     path = args[0]
     output = args[1] if len(args) > 1 else None
     deck = _load_deck(path)
@@ -1371,10 +1378,10 @@ def _block_summary(block):
     return f"[{t}]"
 
 def slide_view(args):
-    """View a single slide. Usage: vela slide view <deck.json> <num> [--json|--raw]"""
+    """View a single slide. Usage: vela slide view <deck.vela> <num> [--json|--raw]"""
     if len(args) < 2:
-        _err(EXIT_USAGE, "Need: <deck.json> <slide_num>",
-             suggestions=["vela slide view deck.json 3", "vela slide view deck.json 3 --raw"])
+        _err(EXIT_USAGE, "Need: <deck.vela> <slide_num>",
+             suggestions=["vela slide view deck.vela 3", "vela slide view deck.vela 3 --raw"])
     path, num = args[0], int(args[1])
     raw_mode = "--raw" in args
     deck = _load_full(path)
@@ -1405,11 +1412,11 @@ def slide_view(args):
         sys.exit(EXIT_OK)
 
 def slide_edit(args):
-    """Edit a slide property. Usage: vela slide edit <deck.json> <num> <key> <value>"""
+    """Edit a slide property. Usage: vela slide edit <deck.vela> <num> <key> <value>"""
     if len(args) < 4:
-        _err(EXIT_USAGE, "Need: <deck.json> <slide_num> <key> <value>",
-             suggestions=["vela slide edit deck.json 3 duration 90",
-                          "vela slide edit deck.json 3 bg \"#ffffff\""])
+        _err(EXIT_USAGE, "Need: <deck.vela> <slide_num> <key> <value>",
+             suggestions=["vela slide edit deck.vela 3 duration 90",
+                          "vela slide edit deck.vela 3 bg \"#ffffff\""])
     path, num, key, value = args[0], int(args[1]), args[2], args[3]
 
     # Check for block edit: "block.N.key"
@@ -1417,7 +1424,7 @@ def slide_edit(args):
         parts = key.split(".")
         if len(parts) != 3:
             _err(EXIT_USAGE, "Block edit format: block.<index>.<property>",
-                 suggestions=["vela slide edit deck.json 3 block.2.text \"New heading\""])
+                 suggestions=["vela slide edit deck.vela 3 block.2.text \"New heading\""])
         bnum, bkey = int(parts[1]), parts[2]
         deck = _load_full(path)
         slides, si, _ = _get_slide(deck, num)
@@ -1470,9 +1477,9 @@ def slide_edit(args):
         f"Slide {num}.{key}: {old} → {value}")
 
 def slide_remove(args):
-    """Remove a slide. Usage: vela slide remove <deck.json> <num> [--dry-run]"""
+    """Remove a slide. Usage: vela slide remove <deck.vela> <num> [--dry-run]"""
     if len(args) < 2:
-        _err(EXIT_USAGE, "Need: <deck.json> <slide_num>")
+        _err(EXIT_USAGE, "Need: <deck.vela> <slide_num>")
     path, num = args[0], int(args[1])
     deck = _load_full(path)
     slides, si, item = _get_slide(deck, num)
@@ -1494,9 +1501,9 @@ def slide_remove(args):
     _ok({"removed": num, "title": title}, f"Removed slide {num}: \"{title}\"")
 
 def slide_move(args):
-    """Move a slide. Usage: vela slide move <deck.json> <from_num> <to_num>"""
+    """Move a slide. Usage: vela slide move <deck.vela> <from_num> <to_num>"""
     if len(args) < 3:
-        _err(EXIT_USAGE, "Need: <deck.json> <from> <to>")
+        _err(EXIT_USAGE, "Need: <deck.vela> <from> <to>")
     path, from_num, to_num = args[0], int(args[1]), int(args[2])
     deck = _load_full(path)
 
@@ -1520,9 +1527,9 @@ def slide_move(args):
     _ok({"from": from_num, "to": to_num}, f"Moved slide {from_num} → position {to_num}")
 
 def slide_duplicate(args):
-    """Duplicate a slide. Usage: vela slide duplicate <deck.json> <num>"""
+    """Duplicate a slide. Usage: vela slide duplicate <deck.vela> <num>"""
     if len(args) < 2:
-        _err(EXIT_USAGE, "Need: <deck.json> <slide_num>")
+        _err(EXIT_USAGE, "Need: <deck.vela> <slide_num>")
     path, num = args[0], int(args[1])
     deck = _load_full(path)
     slides, si, _ = _get_slide(deck, num)
@@ -1535,9 +1542,9 @@ def slide_duplicate(args):
     _ok({"duplicated": num, "new_position": num + 1}, f"Duplicated slide {num} → {num + 1}")
 
 def slide_insert(args):
-    """Insert a slide from JSON file. Usage: vela slide insert <deck.json> <after_num> <slide.json>"""
+    """Insert a slide from JSON file. Usage: vela slide insert <deck.vela> <after_num> <slide.json>"""
     if len(args) < 3:
-        _err(EXIT_USAGE, "Need: <deck.json> <after_num> <slide_file.json>")
+        _err(EXIT_USAGE, "Need: <deck.vela> <after_num> <slide_file.json>")
     path, after_num, slide_file = args[0], int(args[1]), args[2]
     slide_file = _safe_resolve(slide_file, "slide file")
     if not os.path.exists(slide_file):
@@ -1553,9 +1560,9 @@ def slide_insert(args):
     _ok({"inserted_after": after_num}, f"Inserted slide after {after_num}")
 
 def slide_remove_block(args):
-    """Remove a block from a slide. Usage: vela slide remove-block <deck.json> <slide_num> <block_num>"""
+    """Remove a block from a slide. Usage: vela slide remove-block <deck.vela> <slide_num> <block_num>"""
     if len(args) < 3:
-        _err(EXIT_USAGE, "Need: <deck.json> <slide_num> <block_num>")
+        _err(EXIT_USAGE, "Need: <deck.vela> <slide_num> <block_num>")
     path, snum, bnum = args[0], int(args[1]), int(args[2])
     deck = _load_full(path)
     slides, si, _ = _get_slide(deck, snum)
@@ -1581,10 +1588,10 @@ def slide_remove_block(args):
 
 def deck_stats(args):
     """Audit deck health: block distribution, quality issues, missing properties.
-    Usage: vela deck stats <deck.json>
+    Usage: vela deck stats <deck.vela>
     Mirrors Vera's deck_stats tool — finds missing durations, overflow, monotony."""
     if not args:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck stats deck.json"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck stats deck.vela"])
     path = args[0]
     deck = _load_full(path)
 
@@ -1677,13 +1684,13 @@ def deck_stats(args):
 
 def deck_find(args):
     """Search slides by text, block type, or missing properties.
-    Usage: vela deck find <deck.json> [--query "text"] [--type flow] [--missing duration]
+    Usage: vela deck find <deck.vela> [--query "text"] [--type flow] [--missing duration]
     Mirrors Vera's find_slides tool — fuzzy text search + block type + property filters."""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck find deck.json --query 'ReAct'",
-                          "vela deck find deck.json --type flow",
-                          "vela deck find deck.json --missing duration"])
+             suggestions=["vela deck find deck.vela --query 'ReAct'",
+                          "vela deck find deck.vela --type flow",
+                          "vela deck find deck.vela --missing duration"])
     path = args[0]
     deck = _load_full(path)
 
@@ -1707,9 +1714,9 @@ def deck_find(args):
 
     if not query and not block_type and not prop_missing:
         _err(EXIT_USAGE, "Need at least one of: --query, --type, --missing",
-             suggestions=["vela deck find deck.json --query 'agent'",
-                          "vela deck find deck.json --type table",
-                          "vela deck find deck.json --missing duration"])
+             suggestions=["vela deck find deck.vela --query 'agent'",
+                          "vela deck find deck.vela --type table",
+                          "vela deck find deck.vela --missing duration"])
 
     def walk_text(blocks):
         parts = []
@@ -1800,12 +1807,12 @@ def deck_find(args):
 
 def deck_dump(args):
     """Compact text-only view of entire deck for content review.
-    Usage: vela deck dump <deck.json> [--full]
+    Usage: vela deck dump <deck.vela> [--full]
 
     Default: one line per slide (heading + badge + first body text)
     --full: all text fields per slide (for detailed review/improvement)"""
     if not args:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck dump deck.json", "vela deck dump deck.json --full"])
+        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck dump deck.vela", "vela deck dump deck.vela --full"])
     path = args[0]
     full_mode = "--full" in args
     deck = _load_full(path)
@@ -2018,12 +2025,12 @@ def _patch_texts(deck, texts):
 
 def deck_extract_text(args):
     """Extract all translatable text from a deck into a flat key-value JSON map.
-    Usage: vela deck extract-text <deck.json> [output.json]
+    Usage: vela deck extract-text <deck.vela> [output.json]
     Keys use dot-path format: s1.b0.text, s3.b4.i0.label, s9.b4.r0.c1
     Excludes code block content (but includes code labels)."""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck extract-text deck.json texts.json"])
+             suggestions=["vela deck extract-text deck.vela texts.json"])
     path = args[0]
     output = args[1] if len(args) > 1 else None
     deck = _load_full(path)
@@ -2045,11 +2052,11 @@ def deck_extract_text(args):
 
 def deck_patch_text(args):
     """Apply a translated text map back into a deck.
-    Usage: vela deck patch-text <deck.json> <texts.json>
+    Usage: vela deck patch-text <deck.vela> <texts.json>
     The texts.json must use the same key format as extract-text output."""
     if len(args) < 2:
-        _err(EXIT_USAGE, "Need: <deck.json> <texts.json>",
-             suggestions=["vela deck patch-text deck.json translated.json"])
+        _err(EXIT_USAGE, "Need: <deck.vela> <texts.json>",
+             suggestions=["vela deck patch-text deck.vela translated.json"])
     path, texts_path = args[0], args[1]
     deck = _load_full(path)
     with open(texts_path, "r", encoding="utf-8") as f:
@@ -2067,7 +2074,7 @@ def deck_patch_text(args):
 
 def deck_split(args):
     """Split a flat deck into sections (modules) by slide count or auto-grouping.
-    Usage: vela deck split <deck.json> [--flat] [--size N] [--sections "Title1:3,Title2:4,..."]
+    Usage: vela deck split <deck.vela> [--flat] [--size N] [--sections "Title1:3,Title2:4,..."]
 
     --flat           Flatten all modules into a single module
     --size N         Split every N slides into a section (auto-titled)
@@ -2077,8 +2084,8 @@ def deck_split(args):
     Without flags: auto-groups by scanning for badge/section-break slides."""
     if not args:
         _err(EXIT_USAGE, "Missing deck path",
-             suggestions=["vela deck split deck.json --size 5",
-                          'vela deck split deck.json --sections "Intro:3,Core:5,Close:2"'])
+             suggestions=["vela deck split deck.vela --size 5",
+                          'vela deck split deck.vela --sections "Intro:3,Core:5,Close:2"'])
     path = args[0]
     deck = _load_full(path)
 
@@ -2119,7 +2126,7 @@ def deck_split(args):
             part = part.strip()
             if ":" not in part:
                 _err(EXIT_USAGE, f"Invalid section spec: '{part}' (use 'Title:N')",
-                     suggestions=['vela deck split deck.json --sections "Intro:3,Core:5"'])
+                     suggestions=['vela deck split deck.vela --sections "Intro:3,Core:5"'])
             title, count_str = part.rsplit(":", 1)
             try:
                 count = int(count_str)
@@ -2198,12 +2205,12 @@ def deck_split(args):
         sys.exit(EXIT_OK)
 
 
-# ── DECK SERVE ─────────────────────────────────────────────────────────
+# ── SERVER START ───────────────────────────────────────────────────────
 
-def deck_serve(args):
-    """Start local server for live editing. Usage: vela deck serve <deck.json> [--port 3030] [--no-open] [--no-auth] [--token TOKEN]"""
+def server_start(args):
+    """Start local server (Jupyter-style). Usage: vela server start <folder-or-file> [--port 3030] [--no-open] [--no-auth] [--token TOKEN]"""
     if not args:
-        _err(EXIT_USAGE, "Missing deck path", suggestions=["vela deck serve /path/to/deck.json"])
+        _err(EXIT_USAGE, "Missing path", suggestions=["vela server start /path/to/decks/", "vela server start /path/to/deck.vela"])
     path = args[0]
     if not os.path.isfile(path) and not os.path.isdir(path):
         _err(EXIT_NOT_FOUND, f"Path not found: {path}")
@@ -2216,6 +2223,56 @@ def deck_serve(args):
         sys.exit(proc.returncode)
     except KeyboardInterrupt:
         sys.exit(0)
+
+
+# ── SERVER STOP ────────────────────────────────────────────────────────
+
+def server_stop(args):
+    """Stop a running Vela server. Usage: vela server stop [--port PORT]"""
+    port = None
+    for i, a in enumerate(args):
+        if a == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+
+    runtime_file = os.path.join(os.getcwd(), ".vela.env")
+    if not os.path.exists(runtime_file):
+        _err(EXIT_NOT_FOUND, "No running server found (.vela.env not present)")
+
+    try:
+        with open(runtime_file, encoding="utf-8") as f:
+            info = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        _err(EXIT_FAIL, f"Cannot read .vela.env: {e}")
+
+    pid = info.get("pid")
+    srv_port = info.get("port")
+    if not pid:
+        _err(EXIT_FAIL, "No PID in .vela.env")
+
+    if port and srv_port != port:
+        _err(EXIT_NOT_FOUND, f"Server on port {srv_port}, not {port}")
+
+    # Kill the process
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, timeout=5)
+        else:
+            os.kill(pid, 15)  # SIGTERM — lets cleanup handlers run
+    except ProcessLookupError:
+        pass  # already dead
+    except (OSError, subprocess.TimeoutExpired) as e:
+        _err(EXIT_FAIL, f"Failed to stop server (PID {pid}): {e}")
+
+    # Clean up runtime files
+    for name in (".vela.env", ".vela.pid"):
+        try:
+            os.unlink(os.path.join(os.getcwd(), name))
+        except OSError:
+            pass
+
+    print(f"Stopped Vela server (PID {pid}, port {srv_port})")
+    sys.exit(EXIT_OK)
 
 
 # ── ZIP ────────────────────────────────────────────────────────────────
@@ -2257,10 +2314,10 @@ def deck_zip(args):
 # ── DECK INIT / SLIDE APPEND (incremental deck building) ──────────────
 
 def deck_init(args):
-    """Create a deck skeleton. Usage: vela deck init <output.json> --title "T" --palette '{"A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3"
+    """Create a deck skeleton. Usage: vela deck init <output.vela> --title "T" --palette '{"A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3"
     Creates a valid compact deck with empty sections, ready for slide append."""
     if not args:
-        _err(EXIT_USAGE, "Need: <output.json> --title \"T\" --sections \"S1,S2\"")
+        _err(EXIT_USAGE, "Need: <output.vela> --title \"T\" --sections \"S1,S2\"")
 
     path = args[0]
     rest = args[1:]
@@ -2298,10 +2355,10 @@ def deck_init(args):
 
 
 def slide_append(args):
-    """Append a slide to a deck section. Usage: vela slide append <deck.json> <section_index> '<slide_json>'
+    """Append a slide to a deck section. Usage: vela slide append <deck.vela> <section_index> '<slide_json>'
     Section index is 0-based. Slide JSON is compact format (inline string or @file)."""
     if len(args) < 3:
-        _err(EXIT_USAGE, "Need: <deck.json> <section_index> '<slide_json>'")
+        _err(EXIT_USAGE, "Need: <deck.vela> <section_index> '<slide_json>'")
 
     path = args[0]
     section_idx = int(args[1])
@@ -2358,7 +2415,6 @@ COMMANDS = {
         "extract-text": deck_extract_text,
         "patch-text": deck_patch_text,
         "split": deck_split,
-        "serve": deck_serve,
         "zip": deck_zip,
         "init": deck_init,
     },
@@ -2371,6 +2427,10 @@ COMMANDS = {
         "insert": slide_insert,
         "remove-block": slide_remove_block,
         "append": slide_append,
+    },
+    "server": {
+        "start": server_start,
+        "stop": server_stop,
     }
 }
 

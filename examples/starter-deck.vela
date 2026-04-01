@@ -2,12 +2,12 @@
   "deckTitle": "Welcome to Vela Slides",
   "lanes": [
     {
-      "id": "845f7686",
+      "id": "f388efbf",
       "title": "Introduction",
       "collapsed": false,
       "items": [
         {
-          "id": "c4825914",
+          "id": "cd5d8fce",
           "title": "Welcome",
           "notes": "",
           "comments": [],
@@ -157,7 +157,7 @@
           "createdAt": "2026-03-29T22:32:12.964Z"
         },
         {
-          "id": "71d5c7d8",
+          "id": "56c42f58",
           "title": "Block Showcase",
           "notes": "",
           "comments": [],
@@ -284,12 +284,12 @@
       ]
     },
     {
-      "id": "eadb2c60",
+      "id": "1c079686",
       "title": "Getting Started",
       "collapsed": false,
       "items": [
         {
-          "id": "f9fe33ac",
+          "id": "798cc374",
           "title": "Quick Start",
           "notes": "",
           "comments": [],

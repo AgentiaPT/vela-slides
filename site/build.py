@@ -8,7 +8,7 @@ Generates a static site from the Vela app and example decks:
     index.html          ← Gallery with deck cards
     vela.html           ← Viewer (loads ?deck= at runtime)
     vela.jsx            ← Engine (fetched by vela.html)
-    examples/*.json     ← Example deck files
+    examples/*.vela     ← Example deck files
 
 Usage:
   python3 site/build.py              # build into _site/
@@ -233,7 +233,7 @@ def generate_viewer_html(version):
 
       if (deckParam) {{
         if (/^[a-z][a-z0-9+.-]*:/i.test(deckParam) || deckParam.startsWith('//')) {{
-          showError('External deck URLs are not allowed.<br>Only local deck paths (e.g. <code>examples/deck.json</code>) are supported.<br><a href="./">Back to gallery</a>');
+          showError('External deck URLs are not allowed.<br>Only local deck paths (e.g. <code>examples/deck.vela</code>) are supported.<br><a href="./">Back to gallery</a>');
           return;
         }}
         deckUrl = deckParam;
@@ -708,7 +708,7 @@ def build(output_dir=None):
     decks_meta = []
 
     for fname in sorted(os.listdir(EXAMPLES_DIR)):
-        if not fname.endswith(".json"):
+        if not fname.endswith(".vela"):
             continue
         src = os.path.join(EXAMPLES_DIR, fname)
         shutil.copy2(src, os.path.join(examples_out, fname))
@@ -717,9 +717,9 @@ def build(output_dir=None):
         print(f"  Deck: {meta['title']} ({meta['slides']} slides)")
 
     # Also include skill demo deck if exists
-    skill_demo = os.path.join(SKILL_DIR, "examples", "vela-demo.json")
+    skill_demo = os.path.join(SKILL_DIR, "examples", "vela-demo.vela")
     if os.path.exists(skill_demo):
-        shutil.copy2(skill_demo, os.path.join(examples_out, "vela-demo.json"))
+        shutil.copy2(skill_demo, os.path.join(examples_out, "vela-demo.vela"))
         meta = load_deck_meta(skill_demo)
         decks_meta.insert(0, meta)  # Demo first
         print(f"  Deck: {meta['title']} ({meta['slides']} slides) [demo]")

@@ -52,7 +52,7 @@ The codebase contains zero:
 
 ### Local Development Server (`serve.py`)
 
-The `vela deck serve` command starts a local HTTP server for live editing. Security measures:
+The `vela server start` command starts a local HTTP server for live editing. Security measures:
 
 | Control | Detail |
 |---------|--------|
@@ -64,6 +64,17 @@ The `vela deck serve` command starts a local HTTP server for live editing. Secur
 | Host header check | DNS rebinding protection for localhost mode |
 
 When using `--host 0.0.0.0` (LAN mode), the server is accessible to other devices on the network. Use only on trusted networks.
+
+### Supply Chain Security
+
+Node.js dependencies are managed with strict supply chain protections:
+
+| Control | Config | Purpose |
+|---------|--------|---------|
+| No install scripts | `.npmrc: ignore-scripts=true` | Blocks malicious `postinstall` scripts |
+| No native builds | `pnpm-workspace.yaml: onlyBuiltDependencies: []` | Blocks native binary compilation |
+| 7-day release cooldown | `pnpm-workspace.yaml: minimumReleaseAge: 10080` | New releases must age before install |
+| Lockfile integrity | `pnpm-lock.yaml` with SHA-512 hashes | Pins exact versions + verifies content |
 
 ### CLI Tools (`vela.py`, `assemble.py`, etc.)
 

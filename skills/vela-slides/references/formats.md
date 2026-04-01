@@ -41,17 +41,17 @@ Pipeline: any format → `_load_full()` auto-expands → validate → assemble �
 
 ```bash
 # Convert full → compact (for analysis/storage)
-vela deck compact full.json compact.json
+vela deck compact full.vela compact.vela
 
 # Convert compact → full
-vela deck expand compact.json full.json
+vela deck expand compact.vela full.vela
 
 # Ship auto-expands compact format transparently
-vela deck ship compact.json    # expand → validate → assemble → copy
+vela deck ship compact.vela    # expand → validate → assemble → copy
 
 # All read commands auto-expand compact format
-vela deck list compact.json    # works
-vela slide view compact.json 3 # works
+vela deck list compact.vela    # works
+vela slide view compact.vela 3 # works
 ```
 
 ## Turbo Format (~47% fewer tokens)
@@ -63,33 +63,33 @@ Blocks: `[type_id, ...positional values]` where type IDs: 0=badge, 1=spacer, 2=h
 
 ```bash
 # Convert to turbo
-vela deck turbo full.json turbo.json
-vela deck turbo compact.json turbo.json  # compact→full→turbo automatically
+vela deck turbo full.vela turbo.vela
+vela deck turbo compact.vela turbo.vela  # compact→full→turbo automatically
 
 # Read/ship turbo (auto-expands)
-vela deck list turbo.json
-vela slide view turbo.json 3
-vela deck ship turbo.json
+vela deck list turbo.vela
+vela slide view turbo.vela 3
+vela deck ship turbo.vela
 
 # Expand turbo back to full
-vela deck expand turbo.json full.json
+vela deck expand turbo.vela full.vela
 ```
 
 ## Workflow with Formats
 
 ```bash
 # 1. LLM generates compact JSON (minified, named keys = reliable)
-create_file /home/claude/deck.json   # compact format
+create_file /home/claude/deck.vela   # compact format
 
 # 2. Ship (auto-expands + validates + assembles)
-vela deck ship /home/claude/deck.json
+vela deck ship /home/claude/deck.vela
 
 # 3. Edits work on any format (auto-expand on load)
-vela slide edit /home/claude/deck.json 3 block.2.text "New heading"
-vela deck ship /home/claude/deck.json
+vela slide edit /home/claude/deck.vela 3 block.2.text "New heading"
+vela deck ship /home/claude/deck.vela
 
 # 4. For passing deck context to another LLM call (minimal tokens)
-vela deck turbo deck.json context.json   # 47% fewer tokens
+vela deck turbo deck.vela context.vela   # 47% fewer tokens
 ```
 
 ## Benchmark (6-slide deck, 16 operations)

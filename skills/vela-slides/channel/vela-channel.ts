@@ -11,7 +11,7 @@
  * Requires:
  *   - Claude Code v2.1.80+ with claude.ai login
  *   - @modelcontextprotocol/sdk
- *   - vela deck serve running separately for live preview
+ *   - vela server start running separately for live preview
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";

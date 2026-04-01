@@ -1,6 +1,6 @@
 ---
 name: vela-slides
-version: 12.23
+version: 12.24
 updated: 2026-04-01
 
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
@@ -17,14 +17,17 @@ Senior presentation designer. Assertion headlines, varied block types, grouped s
 ## Fast Paths
 
 ```bash
-vela deck ship <deck.json> --output <name.jsx>       # ship existing
-vela deck ship --sample --output <name.jsx>           # ship starter deck
-vela deck ship --demo --output <name.jsx>             # ship demo deck (all block types)
-vela deck extract <source.jsx> <output.json>          # extract from .jsx
+vela server start <folder-or-file> [--port 3030]        # Jupyter-style deck browser with live sync
+vela deck ship <deck.vela> --output <name.jsx>         # cloud/artifact only — self-contained .jsx
+vela deck extract <source.jsx> <output.vela>           # extract deck from .jsx artifact
 ```
 
 When user asks to "load the demo deck", "show the demo", or "show me what Vela can do": use `--demo`. **Do NOT generate a new deck.**
 `python3 skills/vela-slides/scripts/vela.py <resource> <action> [args...]`
+
+### Runtime modes
+- **Local (default)**: `vela server start` — Jupyter-style HTTP server with folder browser, live two-way sync, hot reload, and per-deck file watching. Pass a folder or a file (auto-resolves to parent folder). Token printed at startup; use `--no-auth` for auth-free local access. Works on Linux, macOS, and Windows.
+- **Cloud artifact**: `vela deck ship` — produces a self-contained `.jsx` artifact. Use ONLY inside Claude.ai artifacts or other sandboxed cloud runtimes where a local server cannot be started.
 
 ## Deck DSL (compact — the ONLY format you write)
 
@@ -49,19 +52,34 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 - 10+ block types, semantically matched. `4xl` cover → `2xl` body → `3xl` CTA
 - Badge every content slide. Closing: recap callout/tag-group + gradient. 960×540 canvas.
 
-## Workflow (STRICT — exactly 2 tool calls)
+## Workflow (STRICT — minimal tool calls)
 
-You MUST complete the deck in exactly 2 tool calls. No exceptions. No Read. No validate. No commentary between calls.
+Complete the deck efficiently. No unnecessary Read, validate, or commentary between calls.
 
-**Call 1** — Write the complete deck JSON to file:
+**Call 1** — Write the complete deck JSON to a `.vela` file:
 ```
-Use the Write tool to write the entire compact deck JSON to the output file.
+Use the Write tool to write the entire compact deck JSON to <name>.vela
 ```
 
-**Call 2** — Ship:
+**Call 2** — Present the deck:
+
+**Local environment (default)** — start the Jupyter-style server:
+```bash
+vela server start <folder-or-file> --port 3030
+```
+The browser auto-opens with the auth token. Server sets a session cookie and 302-redirects to strip the token from the URL.
+
+**Token hygiene**: NEVER read or print the contents of `.vela.env`. The token is for the browser only — the LLM must not see it. If the user needs to authenticate manually, point them to `.vela.env` — do not extract or display the token yourself.
+
+If a server is already running on the same port, use `--replace` to kill it, or pick a different `--port`.
+
+The server shows a folder browser listing all decks. Each deck opens with live two-way sync.
+
+**Cloud artifact runtime only** — assemble a self-contained .jsx:
 ```bash
 vela deck ship <file> --output <name.jsx>
 ```
+Use `ship` ONLY when a local server cannot be started (e.g., Claude.ai artifacts, sandboxed cloud environments).
 
 Done. Do not speak before, between, or after tool calls.
 
@@ -69,5 +87,6 @@ Done. Do not speak before, between, or after tool calls.
 
 ```
 vela deck ship|validate|list|stats|replace-text|extract|extract-text|patch-text
+vela server start
 vela slide edit|view|remove|move|duplicate|insert|remove-block
 ```

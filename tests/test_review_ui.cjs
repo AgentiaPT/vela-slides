@@ -58,7 +58,7 @@ function buildTestHTML() {
   // Assemble the deck
   console.log('Assembling deck...');
   execSync(
-    `python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.json --from-parts`,
+    `python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.vela --from-parts`,
     { cwd: ROOT, stdio: 'pipe' }
   );
 

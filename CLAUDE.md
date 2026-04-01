@@ -74,7 +74,8 @@ Layout: spacer, divider
 ## CLI — `vela.py`
 
 ```bash
-vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble|serve
+vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
+vela server start|stop
 vela slide view|edit|remove|move|duplicate|insert|remove-block
 ```
 
@@ -84,7 +85,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (161 tests)
+# 1. Run full test suite (198 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
@@ -100,10 +101,10 @@ All checks must pass before committing.
 python3 skills/vela-slides/scripts/concat.py
 
 # Assemble with a deck
-python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.json --from-parts
+python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.vela --from-parts
 
 # Validate deck JSON
-python3 skills/vela-slides/scripts/validate.py deck.json
+python3 skills/vela-slides/scripts/validate.py deck.vela
 
 # Run tests
 python3 tests/test_vela.py
@@ -117,12 +118,12 @@ skills/vela-slides/
   app/vela.jsx ← auto-generated monolith
   scripts/             ← vela.py, concat.py, assemble.py, validate.py, serve.py, sync-skill-docs.py
   references/          ← block-schema.md, design-patterns.md, themes.md
-  SKILL.md             ← skill prompt v12.2
-examples/              ← starter-deck.json, themed example decks
+  SKILL.md             ← skill prompt v12.24
+examples/              ← starter-deck.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md
 evals/                 ← skill version benchmarking
-tests/                 ← test_vela.py (161 tests), test_serve.py (91 tests)
+tests/                 ← test_vela.py (198 tests), test_serve.py (72 tests)
 ```
 
 ## AI Features (Vera Engine)
