@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.20";
+const VELA_VERSION = "12.22";
 const VELA_CHANGELOG = [
+  { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize — no longer hardcoded." },
+  { v: "12.21", d: "Add explicit UTF-8 encoding to all file open() calls for Windows compatibility." },
   { v: "12.20", d: "Browser tab title syncs with deck title — shows 'DeckName — Vela Slides' instead of generic page title." },
   { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
   { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
@@ -1462,11 +1464,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div></ZoomWrap>;
     }
 
-    case "badge":
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? "3px 10px" : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
-        {block.icon && <span style={{ display: "flex" }}>{getIcon(block.icon, { size: 12, color: block.color || st.accent, strokeWidth: 2 })}</span>}
+    case "badge": {
+      const badgeFontSize = SIZES[block.size || "xs"];
+      const badgeIconSize = badgeFontSize;
+      const badgePadV = Math.max(3, Math.round(badgeFontSize * 0.25));
+      const badgePadH = Math.max(10, Math.round(badgeFontSize * 0.8));
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontSize * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+        {block.icon && <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span>}
         <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} />
       </div>;
+    }
 
     case "icon": {
       const sz = { sm: 20, md: 28, lg: 40, xl: 56 }[block.size || "md"] || 28;
@@ -1495,22 +1502,28 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const isVert = block.direction === "vertical";
       const cStyle = block.connectorStyle || "arrow";
       const arrowCol = block.arrowColor || st.accent;
-      const iconH = 20 * 1.8; // IconBubble rendered height
+      const flowScale = { xs: 0.7, sm: 1, md: 1.2, lg: 1.4, xl: 1.7, "2xl": 2, "3xl": 2.4, "4xl": 2.8 }[block.labelSize || "sm"] || 1;
+      const iconSz = Math.round(20 * flowScale);
+      const arrowW = Math.round(24 * flowScale);
+      const arrowH = Math.round(12 * flowScale);
+      const arrowVW = Math.round(12 * flowScale);
+      const arrowVH = Math.round(20 * flowScale);
+      const iconH = iconSz * 1.8; // IconBubble rendered height
       const renderArrowSvg = () => {
         if (isVert) return cStyle === "dashed"
-          ? <div style={{ width: 2, height: 20, borderLeft: `2px dashed ${arrowCol}`, opacity: 0.5 }} />
-          : <svg width="12" height="20" viewBox="0 0 12 20" fill="none"><path d={cStyle === "line" ? "M6 0 L6 20" : "M6 0 L6 16 M2 12 L6 18 L10 12"} stroke={arrowCol} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" /></svg>;
+          ? <div style={{ width: 2, height: arrowVH, borderLeft: `2px dashed ${arrowCol}`, opacity: 0.5 }} />
+          : <svg width={arrowVW} height={arrowVH} viewBox="0 0 12 20" fill="none"><path d={cStyle === "line" ? "M6 0 L6 20" : "M6 0 L6 16 M2 12 L6 18 L10 12"} stroke={arrowCol} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" /></svg>;
         return cStyle === "dashed"
-          ? <div style={{ width: 24, height: 2, borderTop: `2px dashed ${arrowCol}`, opacity: 0.5 }} />
-          : <svg width="24" height="12" viewBox="0 0 24 12" fill="none"><path d={cStyle === "line" ? "M0 6 L24 6" : "M0 6 L18 6 M14 2 L20 6 L14 10"} stroke={arrowCol} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" /></svg>;
+          ? <div style={{ width: arrowW, height: 2, borderTop: `2px dashed ${arrowCol}`, opacity: 0.5 }} />
+          : <svg width={arrowW} height={arrowH} viewBox="0 0 24 12" fill="none"><path d={cStyle === "line" ? "M0 6 L24 6" : "M0 6 L18 6 M14 2 L20 6 L14 10"} stroke={arrowCol} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" /></svg>;
       };
       const els = [];
       items.forEach((item, i) => {
         els.push(
           <div key={`item-${i}`} className={stg(staggerIdx, i)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}>
-            {item.icon && <IconBubble icon={item.icon} size={20} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} />}
+            {item.icon && <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} />}
             <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-            {item.sublabel && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
+            {item.sublabel && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
           </div>
         );
         if (i < items.length - 1) {
