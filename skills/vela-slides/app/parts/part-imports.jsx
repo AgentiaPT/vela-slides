@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.21";
+const VELA_VERSION = "12.22";
 const VELA_CHANGELOG = [
+  { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize — no longer hardcoded." },
   { v: "12.21", d: "Add explicit UTF-8 encoding to all file open() calls for Windows compatibility." },
   { v: "12.20", d: "Browser tab title syncs with deck title — shows 'DeckName — Vela Slides' instead of generic page title." },
   { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
