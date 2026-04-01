@@ -56,7 +56,7 @@ Full CLI access, live browser preview, file system integration:
 ```bash
 git clone https://github.com/AgentiaPT/vela-slides.git
 cd vela-slides
-python3 skills/vela-slides/scripts/serve.py examples/starter-deck.json
+python3 skills/vela-slides/scripts/serve.py examples/starter-deck.vela
 # → Opens browser at localhost:3030 with live slides
 ```
 
@@ -164,7 +164,7 @@ Once a Vela artifact is running, click the Vera button to open the chat panel. Y
 
 Try the self-demonstrating deck — slides that showcase every block type, with Vera ready for hands-on editing:
 
-**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`skills/vela-slides/examples/vela-demo.json`](skills/vela-slides/examples/vela-demo.json)
+**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`skills/vela-slides/examples/vela-demo.vela`](skills/vela-slides/examples/vela-demo.vela)
 
 See [`examples/`](examples/) for themed sample decks (startup pitch, tech talk, course, business report).
 
@@ -189,13 +189,13 @@ vela-slides/
 │       │   ├── lint.py        ← Code linting checks
 │       │   └── sync-skill-docs.py ← Sync CLI reference into SKILL.md
 │       ├── references/        ← Block schema, design patterns, themes, formats
-│       ├── examples/          ← vela-demo.json (bundled demo deck)
+│       ├── examples/          ← vela-demo.vela (bundled demo deck)
 │       └── evals/             ← Skill quality test cases
 ├── docs/
 │   ├── ARCHITECTURE.md        ← Technical deep dive
 │   └── SECURITY.md            ← Security model + audit
 ├── examples/
-│   ├── starter-deck.json      ← Sample deck JSON
+│   ├── starter-deck.vela      ← Sample deck
 │   └── *.json                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/

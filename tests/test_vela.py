@@ -3,9 +3,10 @@
 Vela Test Suite — runs unit + integration tests.
 
 Usage:
-  python3 tests/test_vela.py              # run all tests
+  python3 tests/test_vela.py              # run unit + integration
   python3 tests/test_vela.py --unit       # unit only
   python3 tests/test_vela.py --integration # integration only
+  python3 tests/test_vela.py --all        # everything: unit + integration + server + e2e + concat sync
 
 Exit code 0 = all pass, 1 = failures.
 """
@@ -73,17 +74,17 @@ def test_unit():
         fail("vela.jsx exists")
 
     # 4. Validate example deck JSON
-    starter = os.path.join(EXAMPLES, "starter-deck.json")
+    starter = os.path.join(EXAMPLES, "starter-deck.vela")
     if os.path.exists(starter):
         try:
             deck = json.load(open(starter, encoding="utf-8"))
             assert "lanes" in deck or "slides" in deck, "no lanes or slides key"
             assert "deckTitle" in deck, "no deckTitle"
-            ok("starter-deck.json is valid JSON with expected structure")
+            ok("starter-deck.vela is valid JSON with expected structure")
         except Exception as e:
-            fail("starter-deck.json valid", str(e))
+            fail("starter-deck.vela valid", str(e))
     else:
-        fail("starter-deck.json exists")
+        fail("starter-deck.vela exists")
 
     # 5. Scripts exist and are valid Python
     for script in ["concat.py", "assemble.py", "validate.py"]:
@@ -356,13 +357,13 @@ def test_integration():
             fail("Built template STARTUP_PATCH marker")
 
         # 3. Validate starter deck
-        starter = os.path.join(EXAMPLES, "starter-deck.json")
+        starter = os.path.join(EXAMPLES, "starter-deck.vela")
         result = subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "validate.py"), starter],
             capture_output=True, text=True
         )
         if result.returncode == 0:
-            ok("validate.py passes on starter-deck.json")
+            ok("validate.py passes on starter-deck.vela")
         else:
             fail("validate.py on starter-deck", result.stdout + result.stderr)
 
@@ -1107,7 +1108,12 @@ def test_serve_auth():
     TOKEN = "test-auth-token-xyz789"
     PORT = 3099  # unlikely to conflict
     SERVE_PY = os.path.join(SCRIPTS, "serve.py")
-    STARTER = os.path.join(EXAMPLES, "starter-deck.json")
+    STARTER = os.path.join(EXAMPLES, "starter-deck.vela")
+
+    # Create a temp .vela file for folder-mode tests (server only lists .vela files)
+    import shutil
+    VELA_DECK = os.path.join(EXAMPLES, "test-auth.vela")
+    shutil.copy2(STARTER, VELA_DECK)
 
     def http_get(path, headers=None, follow_redirects=False):
         """Make HTTP request, return (status_code, headers_dict, body)."""
@@ -1178,23 +1184,23 @@ def test_serve_auth():
         else:
             fail("GET / without auth", f"expected 401, got {code}")
 
-        code, _, _ = http_get("/deck.json")
+        code, _, _ = http_get("/api/decks")
         if code == 401:
-            ok("GET /deck.json without auth → 401")
+            ok("GET /api/decks without auth → 401")
         else:
-            fail("GET /deck.json without auth", f"expected 401, got {code}")
+            fail("GET /api/decks without auth", f"expected 401, got {code}")
 
-        code, _, _ = http_post("/save")
+        code, _, _ = http_post("/save/test-auth.vela")
         if code == 401:
-            ok("POST /save without auth → 401")
+            ok("POST /save/<deck> without auth → 401")
         else:
-            fail("POST /save without auth", f"expected 401, got {code}")
+            fail("POST /save/<deck> without auth", f"expected 401, got {code}")
 
-        code, _, _ = http_get("/poll?v=0")
+        code, _, _ = http_get("/poll/test-auth.vela?v=0")
         if code == 401:
-            ok("GET /poll without auth → 401")
+            ok("GET /poll/<deck> without auth → 401")
         else:
-            fail("GET /poll without auth", f"expected 401, got {code}")
+            fail("GET /poll/<deck> without auth", f"expected 401, got {code}")
 
         # ── 2. Wrong token → 403 ──
         code, _, _ = http_get("/?token=wrong-token")
@@ -1255,11 +1261,11 @@ def test_serve_auth():
         else:
             fail("Bearer auth", f"expected 200, got {code}")
 
-        code, _, body = http_get("/deck.json", headers={"Authorization": f"Bearer {TOKEN}"})
+        code, _, body = http_get("/api/decks", headers={"Authorization": f"Bearer {TOKEN}"})
         if code == 200:
-            ok("GET /deck.json with Bearer → 200")
+            ok("GET /api/decks with Bearer → 200")
         else:
-            fail("GET /deck.json Bearer", f"expected 200, got {code}")
+            fail("GET /api/decks Bearer", f"expected 200, got {code}")
 
         # ── 7. Wrong Bearer → 403 ──
         code, _, _ = http_get("/", headers={"Authorization": "Bearer wrong-token"})
@@ -1276,42 +1282,42 @@ def test_serve_auth():
             fail("Basic auth fallthrough", f"expected 401, got {code}")
 
         # ── 9. Token on subpath redirects to correct path ──
-        code, hdrs, _ = http_get(f"/deck.json?token={TOKEN}")
+        code, hdrs, _ = http_get(f"/api/decks?token={TOKEN}")
         if code == 302:
             location = hdrs.get("Location", hdrs.get("location", ""))
-            if location == "/deck.json":
-                ok("Token on /deck.json redirects to /deck.json (strips token)")
+            if location == "/api/decks":
+                ok("Token on /api/decks redirects to /api/decks (strips token)")
             else:
-                fail("Subpath redirect Location", f"expected '/deck.json', got {location!r}")
+                fail("Subpath redirect Location", f"expected '/api/decks', got {location!r}")
         else:
             fail("Subpath token redirect", f"expected 302, got {code}")
 
         # ── 10. Origin check blocks cross-origin POST ──
-        code, _, _ = http_post("/save", headers={
+        code, _, _ = http_post("/save/test-auth.vela", headers={
             "Authorization": f"Bearer {TOKEN}",
             "Origin": "http://evil.com"
         })
         if code == 403:
-            ok("POST /save with evil Origin → 403")
+            ok("POST /save/<deck> with evil Origin → 403")
         else:
             fail("Origin check", f"expected 403, got {code}")
 
         # ── 11. Origin check allows localhost ──
-        code, _, _ = http_post("/save", headers={
+        code, _, _ = http_post("/save/test-auth.vela", headers={
             "Authorization": f"Bearer {TOKEN}",
             "Origin": f"http://localhost:{PORT}"
         })
         if code == 200:
-            ok("POST /save with localhost Origin → 200")
+            ok("POST /save/<deck> with localhost Origin → 200")
         else:
             fail("Origin localhost", f"expected 200, got {code}")
 
         # ── 12. No Origin header on POST is allowed (same-origin) ──
-        code, _, _ = http_post("/save", headers={
+        code, _, _ = http_post("/save/test-auth.vela", headers={
             "Authorization": f"Bearer {TOKEN}",
         })
         if code == 200:
-            ok("POST /save without Origin header → 200 (same-origin)")
+            ok("POST /save/<deck> without Origin header → 200 (same-origin)")
         else:
             fail("POST no Origin", f"expected 200, got {code}")
 
@@ -1329,12 +1335,12 @@ def test_serve_auth():
         else:
             fail("Empty token param", f"expected 401, got {code}")
 
-        # ── 15. Bearer auth on POST /save ──
-        code, _, body = http_post("/save", headers={"Authorization": f"Bearer {TOKEN}"})
+        # ── 15. Bearer auth on POST /save/<deck> ──
+        code, _, body = http_post("/save/test-auth.vela", headers={"Authorization": f"Bearer {TOKEN}"})
         if code == 200:
-            ok("POST /save with Bearer → 200")
+            ok("POST /save/<deck> with Bearer → 200")
         else:
-            fail("Bearer POST /save", f"expected 200, got {code}")
+            fail("Bearer POST /save/<deck>", f"expected 200, got {code}")
 
         # ── 16. Multiple session cookies (each token visit creates new session) ──
         code1, hdrs1, _ = http_get(f"/?token={TOKEN}")
@@ -1389,17 +1395,17 @@ def test_serve_auth():
         else:
             fail("--no-auth GET /", f"expected 200, got {code}")
 
-        code, _, _ = http_get("/deck.json")
+        code, _, _ = http_get("/api/decks")
         if code == 200:
-            ok("--no-auth: GET /deck.json → 200")
+            ok("--no-auth: GET /api/decks → 200")
         else:
-            fail("--no-auth /deck.json", f"expected 200, got {code}")
+            fail("--no-auth /api/decks", f"expected 200, got {code}")
 
-        code, _, _ = http_post("/save")
+        code, _, _ = http_post("/save/test-auth.vela")
         if code == 200:
-            ok("--no-auth: POST /save → 200")
+            ok("--no-auth: POST /save/<deck> → 200")
         else:
-            fail("--no-auth POST /save", f"expected 200, got {code}")
+            fail("--no-auth POST /save/<deck>", f"expected 200, got {code}")
 
     finally:
         proc2.terminate()
@@ -1444,6 +1450,25 @@ def test_serve_auth():
         else:
             fail("VELA_TOKEN wrong", f"expected 403, got {code}")
 
+        # ── Test runtime info file (.vela.env) — must check while server is running ──
+        runtime_file = os.path.join(os.getcwd(), ".vela.env")
+        if os.path.exists(runtime_file):
+            try:
+                with open(runtime_file, encoding="utf-8") as f:
+                    info = json.load(f)
+                if "pid" in info and "port" in info and "host" in info and "mode" in info:
+                    ok("Runtime .vela.env has pid, port, host, mode fields")
+                else:
+                    fail("Runtime file fields", f"keys={list(info.keys())}")
+                if "token" in info:
+                    ok("Runtime .vela.env includes auth token")
+                else:
+                    fail("Runtime file token field")
+            except json.JSONDecodeError:
+                fail("Runtime .vela.env is valid JSON")
+        else:
+            fail("Runtime .vela.env exists")
+
     finally:
         proc3.terminate()
         try:
@@ -1451,24 +1476,9 @@ def test_serve_auth():
         except subprocess.TimeoutExpired:
             proc3.kill()
 
-    # ── Test runtime info file (.vela.json) ──
-    runtime_file = os.path.join(os.getcwd(), ".vela.json")
-    if os.path.exists(runtime_file):
-        try:
-            with open(runtime_file, encoding="utf-8") as f:
-                info = json.load(f)
-            if "pid" in info and "port" in info and "host" in info and "mode" in info:
-                ok("Runtime .vela.json has pid, port, host, mode fields")
-            else:
-                fail("Runtime file fields", f"keys={list(info.keys())}")
-            if "token" in info:
-                ok("Runtime .vela.json includes auth token")
-            else:
-                fail("Runtime file token field")
-        except json.JSONDecodeError:
-            fail("Runtime .vela.json is valid JSON")
-    else:
-        fail("Runtime .vela.json exists")
+    # Clean up temp .vela file
+    if os.path.exists(VELA_DECK):
+        os.unlink(VELA_DECK)
 
     # ── Static code checks for auth (serve.py source) ──
     with open(os.path.join(SCRIPTS, "serve.py"), encoding="utf-8") as _f:
@@ -1520,10 +1530,93 @@ def test_serve_auth():
         fail("Runtime file permissions")
 
 
+def run_server_tests():
+    """Run test_serve.py (unittest-based server tests)."""
+    print("\n── Server Tests (test_serve.py) ──")
+    result = subprocess.run(
+        [sys.executable, "-m", "unittest", "tests.test_serve", "-v"],
+        cwd=REPO_ROOT, capture_output=True, text=True
+    )
+    # unittest prints to stderr
+    output = result.stderr or result.stdout
+    # Count results
+    srv_passed = len(re.findall(r'\.\.\. ok$', output, re.MULTILINE))
+    srv_failed = len(re.findall(r'\.\.\. FAIL$', output, re.MULTILINE))
+    srv_errors = len(re.findall(r'\.\.\. ERROR$', output, re.MULTILINE))
+    if result.returncode == 0:
+        print(f"  ✅ {srv_passed} server tests passed")
+    else:
+        print(output)
+        print(f"  ❌ Server tests: {srv_passed} passed, {srv_failed + srv_errors} failed")
+    return result.returncode
+
+def run_concat_sync():
+    """Verify concat.py produces a template identical to the committed one."""
+    print("\n── Template Sync Check ──")
+    original = os.path.join(REPO_ROOT, "skills", "vela-slides", "app", "vela.jsx")
+    with open(original, "r", encoding="utf-8") as f:
+        before = f.read()
+    subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "skills", "vela-slides", "scripts", "concat.py")],
+        capture_output=True, text=True
+    )
+    with open(original, "r", encoding="utf-8") as f:
+        after = f.read()
+    if before == after:
+        print("  ✅ Template in sync with parts")
+        return 0
+    else:
+        print("  ❌ vela.jsx is out of sync with parts! Run: python3 skills/vela-slides/scripts/concat.py")
+        return 1
+
+def run_e2e_tests():
+    """Run e2e UI tests (test_review_ui.cjs via Node)."""
+    print("\n── E2E UI Tests (test_review_ui.cjs) ──")
+    test_script = os.path.join(REPO_ROOT, "tests", "test_review_ui.cjs")
+    if not os.path.exists(test_script):
+        print("  ⚠️  test_review_ui.cjs not found, skipping")
+        return 0
+    # Check if node is available
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("  ⚠️  Node.js not available, skipping e2e tests")
+        return 0
+    # Check if playwright is installed
+    try:
+        result = subprocess.run(
+            ["node", "-e", "require('playwright')"],
+            capture_output=True, text=True, cwd=REPO_ROOT
+        )
+        if result.returncode != 0:
+            print("  ⚠️  Playwright not installed, skipping e2e tests")
+            print("  Install: npm install playwright && npx playwright install chromium")
+            return 0
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("  ⚠️  Playwright not installed, skipping e2e tests")
+        return 0
+
+    result = subprocess.run(
+        ["node", test_script],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=120
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode == 0:
+        e2e_passed = re.search(r'(\d+)\s+passed', result.stdout)
+        count = e2e_passed.group(1) if e2e_passed else "?"
+        print(f"  ✅ {count} e2e tests passed")
+    else:
+        print(f"  ❌ E2E tests failed (exit code {result.returncode})")
+    return result.returncode
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
-    run_unit = "--unit" in args or not args
-    run_integration = "--integration" in args or not args
+    run_all = "--all" in args
+    run_unit = "--unit" in args or (not args) or run_all
+    run_integration = "--integration" in args or (not args) or run_all
 
     print("⛵ Vela Slides Test Suite\n")
 
@@ -1539,8 +1632,18 @@ if __name__ == "__main__":
         test_cli_commands()
         test_serve_auth()
 
+    extra_fails = 0
+    if run_all:
+        extra_fails += run_server_tests()
+        extra_fails += run_concat_sync()
+        extra_fails += run_e2e_tests()
+
+    total_fails = fails + (1 if extra_fails else 0)
+
     print(f"\n{'━' * 40}")
     print(f"  ✅ {passes} passed  {'❌ ' + str(fails) + ' failed' if fails else ''}")
+    if run_all and extra_fails:
+        print(f"  ❌ External test suites had failures")
     print(f"{'━' * 40}")
 
-    sys.exit(1 if fails else 0)
+    sys.exit(1 if total_fails else 0)

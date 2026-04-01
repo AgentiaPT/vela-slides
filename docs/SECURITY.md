@@ -52,7 +52,7 @@ The codebase contains zero:
 
 ### Local Development Server (`serve.py`)
 
-The `vela deck serve` command starts a local HTTP server for live editing. Security measures:
+The `vela server start` command starts a local HTTP server for live editing. Security measures:
 
 | Control | Detail |
 |---------|--------|

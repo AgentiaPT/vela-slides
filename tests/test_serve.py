@@ -5,7 +5,6 @@ Comprehensive test suite covering:
   - DeckVersionTracker: version bumping, reload flags, long-poll wait
   - FileWatcher: polling, change detection, ignore suppression
   - Folder mode routing: GET/POST for all endpoints
-  - Single-deck mode routing: GET/POST for all endpoints
   - Security: path traversal, symlink escape, payload limits, XSS, info leakage
   - Content types and cache headers
   - HTML generation with deck injection
@@ -107,7 +106,7 @@ class FolderServerTestBase(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = tempfile.mkdtemp()
         # Write the default sample deck
-        with open(os.path.join(cls._tmpdir, "sample.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(cls._tmpdir, "sample.vela"), "w", encoding="utf-8") as f:
             json.dump(SAMPLE_DECK, f)
         # Write any extra files the subclass declared
         for name, content in cls._extra_files.items():
@@ -123,8 +122,6 @@ class FolderServerTestBase(unittest.TestCase):
         cls._server._load_vendor_files()
 
         VelaHTTPHandler.server_ref = cls._server
-        VelaHTTPHandler.html_content = b""
-        VelaHTTPHandler.version_tracker = None
         VelaHTTPHandler.static_files = {}
 
         cls._httpd = ThreadedHTTPServer(("127.0.0.1", 0), VelaHTTPHandler)
@@ -334,37 +331,37 @@ class TestFolderModeRouting(FolderServerTestBase):
     def test_api_decks_metadata_fields(self):
         _, _, body = fetch(self._port, "GET", "/api/decks")
         data = json.loads(body)
-        deck = next(d for d in data["decks"] if d["name"] == "sample.json")
+        deck = next(d for d in data["decks"] if d["name"] == "sample.vela")
         self.assertEqual(deck["title"], "Test Deck")
         self.assertEqual(deck["slides"], 1)
         self.assertIn("size", deck)
         self.assertIn("modified", deck)
         self.assertFalse(deck["compact"])
 
-    def test_api_decks_ignores_non_json(self):
+    def test_api_decks_ignores_non_vela(self):
         _, _, body = fetch(self._port, "GET", "/api/decks")
         names = [d["name"] for d in json.loads(body)["decks"]]
         self.assertNotIn("readme.txt", names)
 
     @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
     def test_serve_deck_returns_html(self):
-        status, hdrs, body = fetch(self._port, "GET", "/deck/sample.json")
+        status, hdrs, body = fetch(self._port, "GET", "/deck/sample.vela")
         self.assertEqual(status, 200)
         self.assertIn("text/html", hdrs["content-type"])
         self.assertIn(b"Test Deck", body)
 
     def test_serve_deck_not_found_404(self):
-        status, _, _ = fetch(self._port, "GET", "/deck/nonexistent.json")
+        status, _, _ = fetch(self._port, "GET", "/deck/nonexistent.vela")
         self.assertEqual(status, 404)
 
     @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
     def test_serve_deck_url_encoded_name(self):
-        self._write_temp_deck("my deck.json")
-        status, _, _ = fetch(self._port, "GET", "/deck/my%20deck.json")
+        self._write_temp_deck("my deck.vela")
+        status, _, _ = fetch(self._port, "GET", "/deck/my%20deck.vela")
         self.assertEqual(status, 200)
 
     def test_poll_returns_json(self):
-        status, hdrs, body = fetch(self._port, "GET", "/poll/sample.json?v=0")
+        status, hdrs, body = fetch(self._port, "GET", "/poll/sample.vela?v=0")
         self.assertEqual(status, 200)
         self.assertIn("application/json", hdrs["content-type"])
         data = json.loads(body)
@@ -372,104 +369,51 @@ class TestFolderModeRouting(FolderServerTestBase):
         self.assertIn("version", data)
 
     def test_poll_immediate_when_behind(self):
-        tracker = self._server.get_tracker("sample.json")
+        tracker = self._server.get_tracker("sample.vela")
         tracker.bump()
         start = time.time()
-        status, _, _ = fetch(self._port, "GET", "/poll/sample.json?v=0")
+        status, _, _ = fetch(self._port, "GET", "/poll/sample.vela?v=0")
         elapsed = time.time() - start
         self.assertEqual(status, 200)
         self.assertLess(elapsed, 2.0, "Should return immediately when behind")
 
     def test_poll_returns_deck_update_on_change(self):
         """When version changes with new deck data, poll returns deck_update."""
-        tracker = self._server.get_tracker("sample.json")
-        self._server.set_deck_data("sample.json", SAMPLE_DECK)
+        tracker = self._server.get_tracker("sample.vela")
+        self._server.set_deck_data("sample.vela", SAMPLE_DECK)
         tracker.bump()
-        _, _, body = fetch(self._port, "GET", "/poll/sample.json?v=1")
+        _, _, body = fetch(self._port, "GET", "/poll/sample.vela?v=1")
         data = json.loads(body)
         self.assertEqual(data["type"], "deck_update")
         self.assertIn("deck", data)
 
     def test_poll_returns_reload_on_reload_bump(self):
         """When bumped with reload=True, poll returns reload type."""
-        tracker = self._server.get_tracker("sample.json")
+        tracker = self._server.get_tracker("sample.vela")
         tracker.bump(reload=True)
-        _, _, body = fetch(self._port, "GET", "/poll/sample.json?v=1")
+        _, _, body = fetch(self._port, "GET", "/poll/sample.vela?v=1")
         data = json.loads(body)
         self.assertEqual(data["type"], "reload")
 
     def test_save_valid_deck_ok(self):
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
-        status, _, body = fetch(self._port, "POST", "/save/sample.json", body=payload)
+        status, _, body = fetch(self._port, "POST", "/save/sample.vela", body=payload)
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body).get("ok"))
 
     def test_save_writes_to_disk(self):
-        self._write_temp_deck("save-target.json")
+        self._write_temp_deck("save-target.vela")
         modified = json.loads(json.dumps(SAMPLE_DECK))
         modified["deckTitle"] = "Saved to Disk"
         payload = json.dumps({"type": "deck_save", "deck": modified})
-        fetch(self._port, "POST", "/save/save-target.json", body=payload)
-        with open(os.path.join(self._tmpdir, "save-target.json"), "r", encoding="utf-8") as f:
+        fetch(self._port, "POST", "/save/save-target.vela", body=payload)
+        with open(os.path.join(self._tmpdir, "save-target.vela"), "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data["deckTitle"], "Saved to Disk")
 
     def test_save_invalid_json_400(self):
-        status, _, _ = fetch(self._port, "POST", "/save/sample.json",
+        status, _, _ = fetch(self._port, "POST", "/save/sample.vela",
                              body=b"not json at all{{{")
-        self.assertEqual(status, 400)
-
-    def test_upload_valid_deck(self):
-        payload = json.dumps({
-            "filename": "uploaded.json",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        status, _, body = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.addCleanup(lambda: os.unlink(os.path.join(self._tmpdir, "uploaded.json"))
-                        if os.path.exists(os.path.join(self._tmpdir, "uploaded.json")) else None)
-        self.assertEqual(status, 200)
-        self.assertTrue(json.loads(body).get("ok"))
-
-    def test_upload_creates_file(self):
-        payload = json.dumps({
-            "filename": "created.json",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        path = os.path.join(self._tmpdir, "created.json")
-        self.addCleanup(lambda: os.unlink(path) if os.path.exists(path) else None)
-        fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertTrue(os.path.exists(path))
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertEqual(data["deckTitle"], "Test Deck")
-
-    def test_upload_adds_json_extension(self):
-        """Filename without .json should get it appended."""
-        payload = json.dumps({
-            "filename": "no-ext",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        path = os.path.join(self._tmpdir, "no-ext.json")
-        self.addCleanup(lambda: os.unlink(path) if os.path.exists(path) else None)
-        status, _, body = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body).get("name"), "no-ext.json")
-        self.assertTrue(os.path.exists(path))
-
-    def test_upload_invalid_json_400(self):
-        payload = json.dumps({
-            "filename": "bad.json",
-            "content": "not valid json {{{"
-        })
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 400)
-
-    def test_upload_non_dict_400(self):
-        payload = json.dumps({
-            "filename": "array.json",
-            "content": json.dumps([1, 2, 3])
-        })
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
         self.assertEqual(status, 400)
 
     def test_unknown_get_404(self):
@@ -490,85 +434,6 @@ class TestFolderModeRouting(FolderServerTestBase):
         # BaseHTTPRequestHandler returns 501 for unimplemented methods
         self.assertIn(resp.status, (200, 405, 501))
 
-
-# ── 4. Single Mode Routing ────────────────────────────────────────────
-@unittest.skipUnless(TEMPLATES_EXIST, "template files required")
-class TestSingleModeRouting(unittest.TestCase):
-    """Test all HTTP endpoints when running in single-deck mode (legacy)."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls._tmpdir = tempfile.mkdtemp()
-        deck_path = os.path.join(cls._tmpdir, "single.json")
-        with open(deck_path, "w", encoding="utf-8") as f:
-            json.dump(SAMPLE_DECK, f)
-
-        cls._server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=0, no_auth=True)
-        cls._server._deck_data = SAMPLE_DECK
-        cls._server.file_watcher = FileWatcher(deck_path, lambda: None)
-
-        html_content = cls._server._build_html()
-        VelaHTTPHandler.html_content = html_content
-        VelaHTTPHandler.version_tracker = cls._server.version_tracker
-        VelaHTTPHandler.server_ref = cls._server
-        VelaHTTPHandler.static_files = {}
-
-        cls._httpd = ThreadedHTTPServer(("127.0.0.1", 0), VelaHTTPHandler)
-        cls._port = cls._httpd.server_address[1]
-        cls._thread = threading.Thread(target=cls._httpd.serve_forever, daemon=True)
-        cls._thread.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls._httpd:
-            cls._httpd.shutdown()
-        if cls._tmpdir:
-            shutil.rmtree(cls._tmpdir, ignore_errors=True)
-
-    def test_root_returns_html(self):
-        status, hdrs, body = fetch(self._port, "GET", "/")
-        self.assertEqual(status, 200)
-        self.assertIn(b"<!DOCTYPE html>", body)
-
-    def test_deck_json_endpoint(self):
-        status, hdrs, body = fetch(self._port, "GET", "/deck.json")
-        self.assertEqual(status, 200)
-        self.assertIn("application/json", hdrs["content-type"])
-        data = json.loads(body)
-        self.assertEqual(data["deckTitle"], "Test Deck")
-
-    def test_poll_returns_json(self):
-        status, _, body = fetch(self._port, "GET", "/poll?v=0")
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        self.assertIn("type", data)
-        self.assertIn("version", data)
-
-    def test_save_valid_deck(self):
-        modified = json.loads(json.dumps(SAMPLE_DECK))
-        modified["deckTitle"] = "Single Save Test"
-        payload = json.dumps({"type": "deck_save", "deck": modified})
-        status, _, body = fetch(self._port, "POST", "/save", body=payload)
-        self.assertEqual(status, 200)
-        self.assertTrue(json.loads(body).get("ok"))
-        # Restore
-        self._server._deck_data = SAMPLE_DECK
-
-    def test_save_oversized_413(self):
-        huge = "x" * 6_000_000
-        status, _, _ = fetch(self._port, "POST", "/save",
-                             body=huge.encode(),
-                             headers={"Content-Type": "application/json",
-                                      "Content-Length": str(len(huge))})
-        self.assertEqual(status, 413)
-
-    def test_unknown_path_404(self):
-        status, _, _ = fetch(self._port, "GET", "/nonexistent")
-        self.assertEqual(status, 404)
-
-    def test_post_to_wrong_path_404(self):
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=b"{}")
-        self.assertEqual(status, 404)
 
 
 # ── 5. Security ───────────────────────────────────────────────────────
@@ -611,7 +476,7 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 400)
 
     def test_deck_slash_400(self):
-        status, _, _ = fetch(self._port, "GET", "/deck/sub/deck.json")
+        status, _, _ = fetch(self._port, "GET", "/deck/sub/deck.vela")
         self.assertEqual(status, 400)
 
     def test_deck_backslash_400(self):
@@ -640,7 +505,7 @@ class TestSecurity(FolderServerTestBase):
 
     def test_save_slash_400(self):
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
-        status, _, _ = fetch(self._port, "POST", "/save/sub/deck.json", body=payload)
+        status, _, _ = fetch(self._port, "POST", "/save/sub/deck.vela", body=payload)
         self.assertEqual(status, 400)
 
     # -- Path traversal on /poll/ (DOCUMENTS MISSING VALIDATION) --
@@ -652,7 +517,7 @@ class TestSecurity(FolderServerTestBase):
 
     def test_poll_slash_rejected(self):
         """Slashes in /poll/ deck name must be rejected."""
-        status, _, _ = fetch(self._port, "GET", "/poll/sub/deck.json?v=0")
+        status, _, _ = fetch(self._port, "GET", "/poll/sub/deck.vela?v=0")
         self.assertEqual(status, 400)
 
     # -- Symlink escape --
@@ -665,14 +530,14 @@ class TestSecurity(FolderServerTestBase):
             f.write("SECRET DATA")
         self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
 
-        link_path = os.path.join(self._tmpdir, "escape.json")
+        link_path = os.path.join(self._tmpdir, "escape.vela")
         try:
             os.symlink(outside_file, link_path)
         except OSError:
             self.skipTest("Cannot create symlinks on this filesystem")
         self.addCleanup(lambda: os.unlink(link_path) if os.path.exists(link_path) else None)
 
-        status, _, body = fetch(self._port, "GET", "/deck/escape.json")
+        status, _, body = fetch(self._port, "GET", "/deck/escape.vela")
         # The target isn't valid JSON, so _build_html_for_deck errors (500)
         self.assertIn(status, (403, 404, 500),
                       "Symlink to outside file should not return 200")
@@ -682,7 +547,7 @@ class TestSecurity(FolderServerTestBase):
     def test_symlink_to_valid_json_outside_folder_blocked(self):
         """A symlink to a valid JSON deck outside the folder must be blocked."""
         outside_dir = tempfile.mkdtemp()
-        outside_deck = os.path.join(outside_dir, "outside.json")
+        outside_deck = os.path.join(outside_dir, "outside.vela")
         with open(outside_deck, "w", encoding="utf-8") as f:
             json.dump({"deckTitle": "Escaped!", "lanes": [{"title": "X", "items": [
                 {"title": "M", "status": "todo", "importance": "must",
@@ -690,14 +555,14 @@ class TestSecurity(FolderServerTestBase):
             ]}]}, f)
         self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
 
-        link_path = os.path.join(self._tmpdir, "symlinked.json")
+        link_path = os.path.join(self._tmpdir, "symlinked.vela")
         try:
             os.symlink(outside_deck, link_path)
         except OSError:
             self.skipTest("Cannot create symlinks on this filesystem")
         self.addCleanup(lambda: os.unlink(link_path) if os.path.exists(link_path) else None)
 
-        status, _, body = fetch(self._port, "GET", "/deck/symlinked.json")
+        status, _, body = fetch(self._port, "GET", "/deck/symlinked.vela")
         self.assertEqual(status, 403, "Symlink escaping folder must return 403")
         self.assertNotIn(b"Escaped!", body)
 
@@ -705,15 +570,7 @@ class TestSecurity(FolderServerTestBase):
 
     def test_save_oversized_413(self):
         huge = "x" * 6_000_000
-        status, _, _ = fetch(self._port, "POST", "/save/sample.json",
-                             body=huge.encode(),
-                             headers={"Content-Type": "application/json",
-                                      "Content-Length": str(len(huge))})
-        self.assertEqual(status, 413)
-
-    def test_upload_oversized_413(self):
-        huge = "x" * 11_000_000
-        status, _, _ = fetch(self._port, "POST", "/api/upload",
+        status, _, _ = fetch(self._port, "POST", "/save/sample.vela",
                              body=huge.encode(),
                              headers={"Content-Type": "application/json",
                                       "Content-Length": str(len(huge))})
@@ -725,7 +582,7 @@ class TestSecurity(FolderServerTestBase):
         """Non-numeric Content-Length is handled gracefully via _safe_content_length."""
         conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=5)
         try:
-            conn.request("POST", "/save/sample.json", body=b"{}",
+            conn.request("POST", "/save/sample.vela", body=b"{}",
                          headers={"Content-Type": "application/json",
                                   "Content-Length": "abc"})
             resp = conn.getresponse()
@@ -743,7 +600,7 @@ class TestSecurity(FolderServerTestBase):
         """Negative Content-Length should not crash the server."""
         try:
             conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=5)
-            conn.request("POST", "/save/sample.json", body=b"{}",
+            conn.request("POST", "/save/sample.vela", body=b"{}",
                          headers={"Content-Type": "application/json",
                                   "Content-Length": "-1"})
             resp = conn.getresponse()
@@ -754,70 +611,6 @@ class TestSecurity(FolderServerTestBase):
 
         status, _, _ = fetch(self._port, "GET", "/")
         self.assertEqual(status, 200, "Server should survive negative Content-Length")
-
-    # -- Upload filename sanitization --
-
-    def test_upload_dotfile_rejected(self):
-        payload = json.dumps({
-            "filename": ".hidden.json",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        status, _, body = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 400)
-        self.assertFalse(json.loads(body).get("ok"))
-
-    def test_upload_traversal_stripped(self):
-        """Filename '../../evil.json' is sanitized to 'evil.json' via basename."""
-        payload = json.dumps({
-            "filename": "../../evil.json",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        path = os.path.join(self._tmpdir, "evil.json")
-        self.addCleanup(lambda: os.unlink(path) if os.path.exists(path) else None)
-        status, _, body = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body).get("name"), "evil.json")
-
-    def test_upload_empty_filename_rejected(self):
-        payload = json.dumps({
-            "filename": "",
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 400)
-
-    def test_upload_overwrite_existing(self):
-        """DOCUMENTS CURRENT BEHAVIOR: uploading with the same name silently
-        overwrites.  No conflict check is performed."""
-        original_path = self._write_temp_deck("overwrite-test.json",
-                                               {"deckTitle": "Original", "lanes": []})
-        payload = json.dumps({
-            "filename": "overwrite-test.json",
-            "content": json.dumps({"deckTitle": "Overwritten", "lanes": []})
-        })
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 200)
-        with open(original_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertEqual(data["deckTitle"], "Overwritten",
-                         "Upload silently overwrites (documented behavior)")
-
-    # -- Error info leakage --
-
-    def test_upload_error_no_stacktrace(self):
-        """Error responses must not contain Python tracebacks or internal details."""
-        payload = json.dumps({
-            "filename": "test.json",
-            "content": "not json at all"
-        })
-        status, _, body = fetch(self._port, "POST", "/api/upload", body=payload)
-        self.assertEqual(status, 400)
-        body_str = body.decode("utf-8", errors="replace")
-        self.assertNotIn("Traceback", body_str)
-        self.assertNotIn("File \"/", body_str)
-        # Error message should be generic
-        data = json.loads(body_str)
-        self.assertEqual(data.get("error"), "Invalid JSON content")
 
     # -- XSS --
 
@@ -860,7 +653,7 @@ class TestContentTypes(FolderServerTestBase):
 
     def test_save_response_json_content_type(self):
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
-        _, hdrs, _ = fetch(self._port, "POST", "/save/sample.json", body=payload)
+        _, hdrs, _ = fetch(self._port, "POST", "/save/sample.vela", body=payload)
         self.assertIn("application/json", hdrs["content-type"])
 
 
@@ -880,65 +673,64 @@ class TestHTMLGeneration(unittest.TestCase):
         if cls._tmpdir:
             shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
-    def _make_server(self, deck_data):
-        """Helper to create a single-mode server with given deck data."""
-        deck_path = os.path.join(self._tmpdir, "gen.json")
+    def _make_server(self, deck_data, channel_port=0):
+        """Helper to create a folder-mode server and write a deck file."""
+        deck_path = os.path.join(self._tmpdir, "gen.vela")
         with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(deck_data, f)
-        server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=0, no_auth=True)
-        server._deck_data = deck_data
+        server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=channel_port, no_auth=True)
         return server
 
-    def test_build_html_contains_deck(self):
-        html = self._make_server(SAMPLE_DECK)._build_html().decode("utf-8")
+    def test_prepare_html_contains_deck(self):
+        server = self._make_server(SAMPLE_DECK)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertIn("Test Deck", html)
         self.assertIn("Hello World", html)
 
-    def test_build_html_local_mode_enabled(self):
-        html = self._make_server(SAMPLE_DECK)._build_html().decode("utf-8")
+    def test_prepare_html_local_mode_enabled(self):
+        server = self._make_server(SAMPLE_DECK)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertIn("VELA_LOCAL_MODE = true", html)
         self.assertNotIn("VELA_LOCAL_MODE = false", html)
 
-    def test_build_html_no_remaining_placeholders(self):
-        html = self._make_server(SAMPLE_DECK)._build_html().decode("utf-8")
+    def test_prepare_html_no_remaining_placeholders(self):
+        server = self._make_server(SAMPLE_DECK)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertNotIn("__VELA_JSX_PLACEHOLDER__", html)
         self.assertNotIn("__VELA_CHANNEL_PORT__", html)
         self.assertNotIn("__VELA_DECK_PATH__", html)
 
-    def test_build_html_xss_escape_script_close(self):
+    def test_prepare_html_xss_escape_script_close(self):
         """Deck with '</script>' in title must be escaped to prevent XSS."""
         malicious_deck = json.loads(json.dumps(SAMPLE_DECK))
         malicious_deck["deckTitle"] = 'Test</script><script>alert(1)</script>'
-        html = self._make_server(malicious_deck)._build_html().decode("utf-8")
+        server = self._make_server(malicious_deck)
+        html = server._prepare_html(malicious_deck, "gen.vela")
         self.assertNotIn('</script><script>alert(1)', html,
                          "Raw </script> must be escaped in injected deck JSON")
 
-    def test_build_html_bare_slides_normalized(self):
+    def test_build_html_for_deck_bare_slides_normalized(self):
         """Deck with only 'slides' (no 'lanes') should be auto-wrapped."""
-        deck_path = os.path.join(self._tmpdir, "bare.json")
+        deck_path = os.path.join(self._tmpdir, "bare.vela")
         with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(BARE_SLIDES_DECK, f)
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
-        html = server._build_html_for_deck(deck_path, "bare.json").decode("utf-8")
+        html = server._build_html_for_deck(deck_path, "bare.vela").decode("utf-8")
         self.assertIn("lanes", html)
         self.assertIn("Bare", html)
 
-    def test_build_html_vela_export_unwrapped(self):
+    def test_build_html_for_deck_vela_export_unwrapped(self):
         """Deck in _vela export format should be unwrapped automatically."""
-        deck_path = os.path.join(self._tmpdir, "export.json")
+        deck_path = os.path.join(self._tmpdir, "export.vela")
         with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(VELA_EXPORT_DECK, f)
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
-        html = server._build_html_for_deck(deck_path, "export.json").decode("utf-8")
+        html = server._build_html_for_deck(deck_path, "export.vela").decode("utf-8")
         self.assertIn("Test Deck", html)
 
-    def test_build_html_channel_port_injected(self):
-        deck_path = os.path.join(self._tmpdir, "gen.json")
-        with open(deck_path, "w", encoding="utf-8") as f:
-            json.dump(SAMPLE_DECK, f)
-        server = VelaLocalServer(deck_path, port=0, no_open=True, channel_port=9999, no_auth=True)
-        server._deck_data = SAMPLE_DECK
-        html = server._build_html().decode("utf-8")
+    def test_prepare_html_channel_port_injected(self):
+        server = self._make_server(SAMPLE_DECK, channel_port=9999)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertIn("VELA_CHANNEL_PORT = 9999", html)
 
 
@@ -948,7 +740,7 @@ class TestEdgeCases(FolderServerTestBase):
 
     def test_concurrent_saves(self):
         """Multiple threads saving simultaneously should not corrupt data."""
-        self._write_temp_deck("concurrent.json")
+        self._write_temp_deck("concurrent.vela")
         errors = []
 
         def save_worker(i):
@@ -956,7 +748,7 @@ class TestEdgeCases(FolderServerTestBase):
                 deck = json.loads(json.dumps(SAMPLE_DECK))
                 deck["deckTitle"] = f"Concurrent {i}"
                 payload = json.dumps({"type": "deck_save", "deck": deck})
-                status, _, _ = fetch(self._port, "POST", "/save/concurrent.json", body=payload)
+                status, _, _ = fetch(self._port, "POST", "/save/concurrent.vela", body=payload)
                 if status != 200:
                     errors.append(f"Thread {i}: status {status}")
             except Exception as e:
@@ -971,20 +763,20 @@ class TestEdgeCases(FolderServerTestBase):
         self.assertEqual(len(errors), 0, f"Concurrent save errors: {errors}")
 
         # File must be valid JSON afterward
-        with open(os.path.join(self._tmpdir, "concurrent.json"), "r", encoding="utf-8") as f:
+        with open(os.path.join(self._tmpdir, "concurrent.vela"), "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertIn("deckTitle", data)
 
     def test_poll_multiple_clients(self):
         """Multiple poll requests waiting, then one bump -- all should return."""
-        tracker = self._server.get_tracker("sample.json")
+        tracker = self._server.get_tracker("sample.vela")
         current_version = tracker.version
         results = []
 
         def poll_worker():
             try:
                 status, _, _ = fetch(self._port, "GET",
-                                     f"/poll/sample.json?v={current_version}")
+                                     f"/poll/sample.vela?v={current_version}")
                 results.append(status)
             except Exception:
                 results.append(-1)
@@ -1005,13 +797,13 @@ class TestEdgeCases(FolderServerTestBase):
 
     def test_save_without_lanes_not_written(self):
         """POST with deck missing 'lanes' should be silently ignored."""
-        self._write_temp_deck("no-lanes.json")
-        deck_path = os.path.join(self._tmpdir, "no-lanes.json")
+        self._write_temp_deck("no-lanes.vela")
+        deck_path = os.path.join(self._tmpdir, "no-lanes.vela")
         mtime_before = os.path.getmtime(deck_path)
         time.sleep(0.05)
 
         payload = json.dumps({"type": "deck_save", "deck": {"deckTitle": "No Lanes"}})
-        status, _, _ = fetch(self._port, "POST", "/save/no-lanes.json", body=payload)
+        status, _, _ = fetch(self._port, "POST", "/save/no-lanes.vela", body=payload)
         self.assertEqual(status, 200)
 
         mtime_after = os.path.getmtime(deck_path)
@@ -1020,13 +812,13 @@ class TestEdgeCases(FolderServerTestBase):
 
     def test_save_non_dict_deck_not_written(self):
         """POST with deck as a list should be silently ignored."""
-        self._write_temp_deck("non-dict.json")
-        deck_path = os.path.join(self._tmpdir, "non-dict.json")
+        self._write_temp_deck("non-dict.vela")
+        deck_path = os.path.join(self._tmpdir, "non-dict.vela")
         mtime_before = os.path.getmtime(deck_path)
         time.sleep(0.05)
 
         payload = json.dumps({"type": "deck_save", "deck": [1, 2, 3]})
-        status, _, _ = fetch(self._port, "POST", "/save/non-dict.json", body=payload)
+        status, _, _ = fetch(self._port, "POST", "/save/non-dict.vela", body=payload)
         self.assertEqual(status, 200)
 
         mtime_after = os.path.getmtime(deck_path)
@@ -1034,33 +826,17 @@ class TestEdgeCases(FolderServerTestBase):
 
     def test_save_wrong_type_field_ignored(self):
         """POST with type != 'deck_save' should be silently ignored."""
-        self._write_temp_deck("wrong-type.json")
-        deck_path = os.path.join(self._tmpdir, "wrong-type.json")
+        self._write_temp_deck("wrong-type.vela")
+        deck_path = os.path.join(self._tmpdir, "wrong-type.vela")
         mtime_before = os.path.getmtime(deck_path)
         time.sleep(0.05)
 
         payload = json.dumps({"type": "other", "deck": SAMPLE_DECK})
-        status, _, _ = fetch(self._port, "POST", "/save/wrong-type.json", body=payload)
+        status, _, _ = fetch(self._port, "POST", "/save/wrong-type.vela", body=payload)
         self.assertEqual(status, 200)
 
         mtime_after = os.path.getmtime(deck_path)
         self.assertEqual(mtime_before, mtime_after)
-
-    def test_upload_very_long_filename(self):
-        """OS-level filename length limit should produce a clean error, not crash."""
-        long_name = "a" * 300 + ".json"
-        payload = json.dumps({
-            "filename": long_name,
-            "content": json.dumps(SAMPLE_DECK)
-        })
-        status, _, _ = fetch(self._port, "POST", "/api/upload", body=payload)
-        # OS returns ENAMETOOLONG -- server should catch it and return 500
-        self.assertIn(status, (200, 500),
-                      "Very long filename: should succeed or return 500 (not crash)")
-        # Clean up if somehow created
-        path = os.path.join(self._tmpdir, long_name)
-        if os.path.exists(path):
-            os.unlink(path)
 
     def test_empty_folder_api_decks(self):
         """An empty folder should return an empty decks list."""
@@ -1081,15 +857,15 @@ class TestEdgeCases(FolderServerTestBase):
 
     def test_concurrent_poll_and_save(self):
         """Real-world race: polls waiting while saves come in."""
-        self._write_temp_deck("race.json")
-        tracker = self._server.get_tracker("race.json")
+        self._write_temp_deck("race.vela")
+        tracker = self._server.get_tracker("race.vela")
         current_v = tracker.version
         poll_results = []
         save_results = []
 
         def poller():
             status, _, body = fetch(self._port, "GET",
-                                    f"/poll/race.json?v={current_v}")
+                                    f"/poll/race.vela?v={current_v}")
             poll_results.append(status)
 
         def saver():
@@ -1097,7 +873,7 @@ class TestEdgeCases(FolderServerTestBase):
             deck = json.loads(json.dumps(SAMPLE_DECK))
             deck["deckTitle"] = "Race Save"
             payload = json.dumps({"type": "deck_save", "deck": deck})
-            status, _, _ = fetch(self._port, "POST", "/save/race.json", body=payload)
+            status, _, _ = fetch(self._port, "POST", "/save/race.vela", body=payload)
             save_results.append(status)
 
         poll_threads = [threading.Thread(target=poller) for _ in range(3)]

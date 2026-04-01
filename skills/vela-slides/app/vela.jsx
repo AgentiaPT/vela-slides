@@ -4615,35 +4615,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       const mods = flatModules();
       const curIdx = mods.findIndex((m) => m.id === concept.id);
 
-      // Up/Down: prev/next module across lanes
-      if (e.key === "ArrowDown" && curIdx >= 0) {
-        e.preventDefault();
-        stopAll();
-        const nextIdx = curIdx + 1;
-        if (nextIdx < mods.length) {
-          const next = mods[nextIdx];
-          dispatch({ type: "SELECT", id: next.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
-          const changedLane = next.laneId !== mods[curIdx].laneId;
-          showNavToast(next.title, changedLane ? next.laneTitle : null);
-        }
-      }
-      if (e.key === "ArrowUp" && curIdx >= 0) {
-        e.preventDefault();
-        stopAll();
-        const prevIdx = curIdx - 1;
-        if (prevIdx >= 0) {
-          const prev = mods[prevIdx];
-          dispatch({ type: "SELECT", id: prev.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
-          const changedLane = prev.laneId !== mods[curIdx].laneId;
-          showNavToast(prev.title, changedLane ? prev.laneTitle : null);
-        }
-      }
-
-      // Left/Right/Space: move through slides, crossing to next/prev module at boundaries
+      // Arrow keys + Space: move through slides, crossing to next/prev module at boundaries
+      // Up/Down behave the same as Left/Right (like PowerPoint)
       const navSlides = fullscreen ? presSlides : slides;
-      if (e.key === "ArrowRight" || e.key === " ") {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
         stopAll();
         if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -4656,7 +4631,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           showNavToast(next.title, changedLane ? next.laneTitle : null);
         }
       }
-      if (e.key === "ArrowLeft") {
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
         stopAll();
         if (navSlides.length > 0 && slideIndex > 0) {

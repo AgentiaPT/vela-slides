@@ -1,5 +1,6 @@
 # Runtime
 .vela.pid
+.vela.env
 .channel-cache/
 
 # OS

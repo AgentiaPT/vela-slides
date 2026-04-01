@@ -5,9 +5,9 @@ Vela Deck Assembler
 Injects deck JSON into Vela template → ready-to-use .jsx artifact.
 
 Usage:
-  python3 assemble.py <deck.json> [output.jsx]
-  python3 assemble.py <deck.json> --from-parts [output.jsx]
-  python3 assemble.py <deck.json> --output <output.jsx>
+  python3 assemble.py <deck.vela> [output.jsx]
+  python3 assemble.py <deck.vela> --from-parts [output.jsx]
+  python3 assemble.py <deck.vela> --output <output.jsx>
 
 --from-parts: rebuild template from parts/ before injecting (use after app edits)
 Without flag: uses pre-built vela.jsx (fast path for deck-only generation)
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         i += 1
 
     if not filtered:
-        print("Usage: python3 assemble.py <deck.json> [--from-parts] [--output <path>] [output.jsx]", file=sys.stderr)
+        print("Usage: python3 assemble.py <deck.vela> [--from-parts] [--output <path>] [output.jsx]", file=sys.stderr)
         sys.exit(1)
 
     deck_path = filtered[0]

@@ -78,7 +78,7 @@ Claude (via the skill prompt) generates structured JSON matching the deck schema
 ### Step 2: Validate
 
 ```bash
-python3 scripts/validate.py deck.json
+python3 scripts/validate.py deck.vela
 ```
 
 Checks: required fields, valid block types, size token usage, duration presence, icon names, theme consistency.
@@ -86,7 +86,7 @@ Checks: required fields, valid block types, size token usage, duration presence,
 ### Step 3: Assemble
 
 ```bash
-python3 scripts/assemble.py deck.json
+python3 scripts/assemble.py deck.vela
 ```
 
 Replaces the `STARTUP_PATCH = null` marker in `vela.jsx` with the deck data, producing a self-contained `.jsx` file that Claude outputs as an artifact.

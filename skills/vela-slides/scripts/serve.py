@@ -11,7 +11,7 @@ File changes push to browser via long-polling. Browser edits save back via POST.
 
 Usage:
   python3 serve.py <folder>     [--port 3030] [--no-open]
-  python3 serve.py <deck.json>  [--port 3030] [--no-open]
+  python3 serve.py <deck.vela>  [--port 3030] [--no-open]
 """
 
 import hashlib
@@ -22,6 +22,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -33,11 +34,14 @@ from urllib.parse import unquote, quote
 
 # ── Security ──────────────────────────────────────────────────────────
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "0.0.0.0"}
+DECK_EXT = ".vela"  # Only files with this extension are listed/served/accepted
 MAX_THREADS = 20
 
 
-# ── Paths ──────────────────────────────────────────────────────────────
+# ── Paths & imports ───────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+from vela import expand_deck as _expand_compact_deck
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")
 LOCAL_HTML_PATH = os.path.join(SKILL_DIR, "app", "local.html")
@@ -139,11 +143,6 @@ def build_browser_html():
     .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
     .empty-state .msg { font-size: 15px; }
 
-    .drop-overlay { position: fixed; inset: 0; background: rgba(59, 130, 246, 0.1); border: 3px dashed #3b82f6; z-index: 9999; display: none; align-items: center; justify-content: center; }
-    .drop-overlay.active { display: flex; }
-    .drop-overlay .label { font-size: 20px; font-weight: 600; color: #3b82f6; background: #0f172a; padding: 20px 40px; border-radius: 12px; }
-
-    #upload-input { display: none; }
     .loading { text-align: center; padding: 60px; color: #64748b; font-size: 14px; }
   </style>
 </head>
@@ -160,15 +159,9 @@ def build_browser_html():
   <div class="toolbar">
     <input type="text" class="search-box" id="search-input" placeholder="Search decks…" oninput="filterList()" />
     <span class="deck-count" id="deck-count"></span>
-    <button class="btn" onclick="refreshList()">↻ Refresh</button>
-    <button class="btn btn-primary" onclick="document.getElementById('upload-input').click()">+ Import deck</button>
-    <input type="file" id="upload-input" accept=".json" multiple onchange="handleUpload(this.files)" />
   </div>
   <div id="deck-list" class="deck-list">
     <div class="loading">Loading decks…</div>
-  </div>
-  <div class="drop-overlay" id="drop-overlay">
-    <div class="label">Drop deck JSON files here</div>
   </div>
 
   <script>
@@ -239,7 +232,7 @@ def build_browser_html():
       countEl.textContent = (q ? sorted.length + '/' : '') + allDecks.length + ' deck' + (allDecks.length !== 1 ? 's' : '');
 
       if (sorted.length === 0) {
-        listEl.innerHTML = '<div class="empty-state"><div class="icon">' + (q ? '🔍' : '📂') + '</div><div class="msg">' + (q ? 'No decks match "' + q.replace(/</g,'&lt;') + '"' : 'No deck files found. Import a .json deck to get started.') + '</div></div>';
+        listEl.innerHTML = '<div class="empty-state"><div class="icon">' + (q ? '🔍' : '📂') + '</div><div class="msg">' + (q ? 'No decks match "' + q.replace(/</g,'&lt;') + '"' : 'No .vela deck files found in this folder.') + '</div></div>';
         return;
       }
 
@@ -267,7 +260,14 @@ def build_browser_html():
       listEl.innerHTML = html;
     }
 
-    function refreshList() {
+    // Focus search on Ctrl+F / Cmd+F
+    document.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); searchEl.focus(); searchEl.select(); }
+      if (e.key === 'Escape' && document.activeElement === searchEl) { searchEl.value = ''; filterList(); searchEl.blur(); }
+    });
+
+    // Load decks on startup + auto-refresh every 3s
+    function fetchDecks() {
       fetch('/api/decks')
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -279,59 +279,8 @@ def build_browser_html():
           listEl.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="msg">Error loading decks: ' + e.message + '</div></div>';
         });
     }
-
-    function uploadFiles(files) {
-      var promises = [];
-      for (var i = 0; i < files.length; i++) {
-        (function(file) {
-          promises.push(
-            file.text().then(function(text) {
-              return fetch('/api/upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: file.name, content: text })
-              }).then(function(r) { return r.json(); });
-            })
-          );
-        })(files[i]);
-      }
-      Promise.all(promises).then(function(results) {
-        var errors = results.filter(function(r) { return !r.ok; });
-        if (errors.length) alert('Some files failed to import: ' + errors.map(function(r) { return r.error; }).join(', '));
-        refreshList();
-      });
-    }
-
-    function handleUpload(fileList) {
-      if (!fileList.length) return;
-      uploadFiles(fileList);
-      document.getElementById('upload-input').value = '';
-    }
-
-    // Drag & drop
-    var dropOverlay = document.getElementById('drop-overlay');
-    var dragCounter = 0;
-    document.addEventListener('dragenter', function(e) { e.preventDefault(); dragCounter++; dropOverlay.classList.add('active'); });
-    document.addEventListener('dragleave', function(e) { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('active'); } });
-    document.addEventListener('dragover', function(e) { e.preventDefault(); });
-    document.addEventListener('drop', function(e) {
-      e.preventDefault();
-      dragCounter = 0;
-      dropOverlay.classList.remove('active');
-      var files = [];
-      for (var i = 0; i < e.dataTransfer.files.length; i++) {
-        if (e.dataTransfer.files[i].name.endsWith('.json')) files.push(e.dataTransfer.files[i]);
-      }
-      if (files.length) uploadFiles(files);
-    });
-
-    // Focus search on Ctrl+F / Cmd+F
-    document.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); searchEl.focus(); searchEl.select(); }
-      if (e.key === 'Escape' && document.activeElement === searchEl) { searchEl.value = ''; filterList(); searchEl.blur(); }
-    });
-
-    refreshList();
+    fetchDecks();
+    setInterval(fetchDecks, 3000);
   </script>
 </body>
 </html>"""
@@ -339,10 +288,7 @@ def build_browser_html():
 
 # ── HTTP handler ──────────────────────────────────────────────────────
 class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
-    # Single-deck mode (legacy)
-    html_content = b""
     static_files = {}
-    version_tracker = None
     server_ref = None
 
     # ── Security helpers ───────────────────────────────────────────
@@ -439,7 +385,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                             return True
 
         # 4. Not authenticated
-        self.send_error(401, "Authentication required. Open the URL with ?token= printed at server startup.")
+        self.send_error(401, "Authentication required. Read token from .vela.env or open the auto-launched browser.")
         return False
 
     def _check_origin(self):
@@ -475,11 +421,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
         if not self._check_auth():
             return
-        srv = self.server_ref
-        if srv and srv.folder_mode:
-            self._route_folder_get()
-        else:
-            self._route_single_get()
+        self._route_folder_get()
 
     def do_POST(self):
         if not self._check_host():
@@ -488,11 +430,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
         if not self._check_origin():
             return
-        srv = self.server_ref
-        if srv and srv.folder_mode:
-            self._route_folder_post()
-        else:
-            self._route_single_post()
+        self._route_folder_post()
 
     # ── Folder mode routing ───────────────────────────────────────────
 
@@ -515,8 +453,6 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _route_folder_post(self):
         if self.path.startswith("/save/"):
             self._handle_deck_save()
-        elif self.path == "/api/upload":
-            self._handle_upload()
         else:
             self.send_error(404)
 
@@ -524,7 +460,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         srv = self.server_ref
         decks = []
         for name in sorted(os.listdir(srv.folder_path)):
-            if not name.endswith(".json"):
+            if not name.endswith(DECK_EXT):
                 continue
             fpath = os.path.join(srv.folder_path, name)
             if not os.path.isfile(fpath):
@@ -539,19 +475,20 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
-                title = data.get("deckTitle") or data.get("T") or name
-                is_compact = "_" in data or "S" in data
+                title = data.get("deckTitle") or data.get("n") or name
+                is_compact = "n" in data and ("G" in data or "S" in data)
                 if "lanes" in data:
                     for lane in data["lanes"]:
                         for item in lane.get("items", []):
                             slide_count += len(item.get("slides", []))
+                elif "G" in data:
+                    # Compact grouped format — G is sections, each with S slides
+                    for group in data["G"]:
+                        if isinstance(group, dict):
+                            slide_count += len(group.get("S", []))
                 elif "S" in data:
-                    # Compact format — S is slides or lanes
-                    slide_count = sum(
-                        len(item.get("slides", item.get("s", [])))
-                        for lane in (data["S"] if isinstance(data["S"], list) else [])
-                        for item in (lane.get("items", lane.get("I", [])) if isinstance(lane, dict) else [])
-                    )
+                    # Compact flat format — S is slides list
+                    slide_count = len(data["S"]) if isinstance(data["S"], list) else 0
                 elif "slides" in data:
                     slide_count = len(data["slides"])
             except Exception:
@@ -577,9 +514,12 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         if "?" in deck_name:
             deck_name = deck_name.split("?", 1)[0]
 
-        # Security: no path traversal
+        # Security: no path traversal, enforce .vela extension
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
+            return
+        if not deck_name.endswith(DECK_EXT):
+            self.send_error(403, "Only .vela files can be served")
             return
 
         try:
@@ -611,6 +551,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
             return
+        if not deck_name.endswith(DECK_EXT):
+            self.send_error(403, "Only .vela files can be polled")
+            return
 
         tracker = srv.get_tracker(deck_name)
         if not tracker:
@@ -626,6 +569,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
+            return
+        if not deck_name.endswith(DECK_EXT):
+            self.send_error(403, "Only .vela files can be saved")
             return
 
         try:
@@ -653,56 +599,6 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(e, BrokenPipeError):
                 print(f"[save] Error: {e}")
                 self.send_error(400, "Invalid request")
-
-    def _handle_upload(self):
-        """POST /api/upload — import a deck JSON file into the folder."""
-        content_length = self._safe_content_length()
-        if content_length > 10_000_000:
-            self.send_error(413, "Payload too large")
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            parsed = json.loads(body)
-            filename = parsed.get("filename", "")
-            content_str = parsed.get("content", "")
-
-            if not filename.endswith(".json"):
-                filename = filename + ".json"
-
-            # Security: sanitize filename
-            filename = os.path.basename(filename)
-            if not filename or filename.startswith("."):
-                self._json_response(400, {"ok": False, "error": "Invalid filename"})
-                return
-            if not self._validate_deck_name(filename):
-                self._json_response(400, {"ok": False, "error": "Invalid filename characters"})
-                return
-
-            # Validate it's valid JSON with deck-like structure
-            deck_data = json.loads(content_str)
-            if not isinstance(deck_data, dict):
-                self._json_response(400, {"ok": False, "error": "Not a valid deck (must be JSON object)"})
-                return
-
-            srv = self.server_ref
-            try:
-                dest = self._safe_deck_path(srv.folder_path, filename)
-            except ValueError:
-                self._json_response(403, {"ok": False, "error": "Access denied"})
-                return
-
-            # Write formatted
-            with open(dest, "w", encoding="utf-8") as f:
-                json.dump(deck_data, f, ensure_ascii=False, indent=2)
-
-            print(f"[import] Saved {filename} ({os.path.getsize(dest)} bytes)")
-            self._json_response(200, {"ok": True, "name": filename})
-        except json.JSONDecodeError:
-            self._json_response(400, {"ok": False, "error": "Invalid JSON content"})
-        except Exception as e:
-            print(f"[upload] Error: {e}")
-            self._json_response(500, {"ok": False, "error": "Upload failed"})
 
     def _json_response(self, code, obj):
         data = json.dumps(obj).encode("utf-8")
@@ -733,28 +629,6 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return deck, False
         return None, False
 
-    # ── Single-deck mode routing (legacy) ─────────────────────────────
-
-    def _route_single_get(self):
-        if self.path.startswith("/poll"):
-            self._handle_poll()
-        elif self.path == "/" or self.path == "/index.html":
-            self._serve(self.html_content, "text/html; charset=utf-8")
-        elif self.path == "/deck.json":
-            data = json.dumps(self.server_ref._deck_data, ensure_ascii=False, indent=2).encode("utf-8")
-            self._serve(data, "application/json; charset=utf-8")
-        elif self.path in self.static_files:
-            content, ctype = self.static_files[self.path]
-            self._serve(content, ctype, cache="max-age=86400")
-        else:
-            self.send_error(404)
-
-    def _route_single_post(self):
-        if self.path == "/save":
-            self._handle_save()
-        else:
-            self.send_error(404)
-
     # ── Shared helpers ────────────────────────────────────────────────
 
     def _serve(self, content, content_type, cache="no-cache"):
@@ -765,10 +639,6 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
         # BrokenPipeError propagates to process_request_thread which handles it.
-
-    def _handle_poll(self):
-        """Long-poll: block until deck changes, then return new deck (single mode)."""
-        self._poll_response(self.version_tracker, lambda: self.server_ref._deck_data)
 
     def _poll_response(self, tracker, get_deck_data):
         """Shared long-poll response builder for both modes."""
@@ -791,24 +661,6 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             response = {"type": "current", "version": tracker.version}
 
         self._serve(json.dumps(response).encode("utf-8"), "application/json; charset=utf-8")
-
-    def _handle_save(self):
-        """Handle POST /save — browser sends deck updates."""
-        try:
-            deck, error_sent = self._read_save_payload()
-            if error_sent:
-                return
-            if deck:
-                self.server_ref._deck_data = deck
-                self.server_ref.file_watcher.ignore_next(2.0)
-                self.server_ref._write_deck(deck)
-                self.version_tracker.bump()
-                print(f"[sync] Browser edit → saved to file")
-            self._json_response(200, {"ok": True})
-        except Exception as e:
-            if not isinstance(e, BrokenPipeError):
-                print(f"[save] Error: {e}")
-                self.send_error(400, "Invalid request")
 
     def log_message(self, fmt, *args):
         pass  # quiet
@@ -894,12 +746,13 @@ class FileWatcher:
 # ── Main server ────────────────────────────────────────────────────────
 class VelaLocalServer:
     def __init__(self, path, port=3030, host="127.0.0.1", channel_port=0, no_open=False,
-                 no_auth=False, token=None):
+                 no_auth=False, token=None, replace=False):
         self.port = port
         self.host = host
         self.channel_port = channel_port
         self.no_open = no_open
         self._vendor_available = False
+        self._force_kill = replace
 
         # Auth state
         self._no_auth = no_auth
@@ -907,27 +760,17 @@ class VelaLocalServer:
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
-        # Detect mode: folder vs single file
+        # Always folder mode — if a file is passed, use its parent directory
         abs_path = os.path.abspath(path)
-        if os.path.isdir(abs_path):
-            self.folder_mode = True
-            self.folder_path = abs_path
-            self.deck_path = None
-            self._deck_data = None
-            self.file_watcher = None
-            self.version_tracker = None
-            # Per-deck state for folder mode
-            self._deck_trackers = {}    # name → DeckVersionTracker
-            self._deck_watchers = {}    # name → FileWatcher
-            self._deck_cache = {}       # name → dict (deck data)
-            self._lock = threading.Lock()
+        if os.path.isfile(abs_path):
+            self.folder_path = os.path.dirname(abs_path)
         else:
-            self.folder_mode = False
-            self.folder_path = None
-            self.deck_path = abs_path
-            self._deck_data = None
-            self.version_tracker = DeckVersionTracker()
-            self.file_watcher = None
+            self.folder_path = abs_path
+        # Per-deck state
+        self._deck_trackers = {}    # name → DeckVersionTracker
+        self._deck_watchers = {}    # name → FileWatcher
+        self._deck_cache = {}       # name → dict (deck data)
+        self._lock = threading.Lock()
 
     # ── Per-deck state management (folder mode) ──────────────────────
 
@@ -977,10 +820,14 @@ class VelaLocalServer:
 
     @staticmethod
     def _normalize_deck(data):
-        """Unwrap Vela export format and normalize bare slides → lanes."""
+        """Unwrap Vela export format, expand compact → full lanes format."""
         if isinstance(data, dict) and data.get("_vela") and "data" in data:
             data = data["data"]
-        if isinstance(data, dict) and "slides" in data and "lanes" not in data:
+        # Compact format (has "n" + "G"/"S") → expand to full lanes
+        if isinstance(data, dict) and "n" in data and ("G" in data or "S" in data):
+            import copy
+            data = _expand_compact_deck(copy.deepcopy(data))
+        elif isinstance(data, dict) and "slides" in data and "lanes" not in data:
             title = data.get("deckTitle", "Presentation")
             data = {
                 "deckTitle": title,
@@ -1064,17 +911,12 @@ class VelaLocalServer:
 
         return html.encode("utf-8")
 
-    def _build_html(self):
-        """Build HTML for single-deck mode."""
-        html = self._prepare_html(self._deck_data, os.path.basename(self.deck_path))
-        return html.encode("utf-8")
-
     # ── Vendor files ─────────────────────────────────────────────────
 
     def _load_vendor_files(self):
         self._vendor_available = False
         search_dirs = [
-            self.folder_path or os.path.dirname(self.deck_path),
+            self.folder_path,
             os.getcwd(),
             os.path.dirname(os.path.dirname(SKILL_DIR)),
         ]
@@ -1103,23 +945,6 @@ class VelaLocalServer:
 
     # ── Helpers ──────────────────────────────────────────────────────
 
-    def _read_deck(self):
-        with open(self.deck_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    def _write_deck(self, data):
-        with open(self.deck_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    def _on_file_change(self):
-        try:
-            new_data = self._read_deck()
-            self._deck_data = new_data
-            self.version_tracker.bump()
-            print(f"[sync] File changed → pushed to browser")
-        except Exception as e:
-            print(f"[sync] Error reading file: {e}")
-
     def _open_browser(self, url):
         webbrowser.open(url)
 
@@ -1127,8 +952,8 @@ class VelaLocalServer:
         """Kill the stale process on our port and retry binding."""
         import subprocess
         print(f"  [port]   Port {self.port} in use — killing stale process...")
-        # Try reading PID from .vela.json first (most reliable)
-        runtime_path = os.path.join(os.getcwd(), ".vela.json")
+        # Try reading PID from .vela.env first (most reliable)
+        runtime_path = self._runtime_path()
         killed = False
         try:
             with open(runtime_path, encoding="utf-8") as f:
@@ -1140,18 +965,35 @@ class VelaLocalServer:
                 print(f"  [port]   Killed stale PID {stale_pid}")
         except (OSError, json.JSONDecodeError, ProcessLookupError):
             pass
-        # Fallback: use lsof to find the process
+        # Fallback: find PID by port (platform-aware)
         if not killed:
             try:
-                result = subprocess.run(["lsof", "-ti", f":{self.port}"], capture_output=True, text=True, timeout=3)
-                for pid_str in result.stdout.strip().split("\n"):
-                    if pid_str.strip():
-                        try:
-                            os.kill(int(pid_str.strip()), 9)
-                            killed = True
-                            print(f"  [port]   Killed stale PID {pid_str.strip()}")
-                        except (ProcessLookupError, ValueError):
-                            pass
+                if sys.platform == "win32":
+                    result = subprocess.run(
+                        ["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+                    for line in result.stdout.splitlines():
+                        if f":{self.port}" in line and "LISTENING" in line:
+                            parts = line.split()
+                            pid_str = parts[-1]
+                            try:
+                                subprocess.run(["taskkill", "/PID", pid_str, "/F"],
+                                               capture_output=True, timeout=5)
+                                killed = True
+                                print(f"  [port]   Killed stale PID {pid_str}")
+                            except (subprocess.TimeoutExpired, ValueError):
+                                pass
+                            break
+                else:
+                    result = subprocess.run(["lsof", "-ti", f":{self.port}"],
+                                            capture_output=True, text=True, timeout=3)
+                    for pid_str in result.stdout.strip().split("\n"):
+                        if pid_str.strip():
+                            try:
+                                os.kill(int(pid_str.strip()), 9)
+                                killed = True
+                                print(f"  [port]   Killed stale PID {pid_str.strip()}")
+                            except (ProcessLookupError, ValueError):
+                                pass
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
         if not killed:
@@ -1167,44 +1009,169 @@ class VelaLocalServer:
 
     # ── Run ──────────────────────────────────────────────────────────
 
+    RUNTIME_FILE = ".vela.env"
+
+    def _runtime_path(self):
+        return os.path.join(os.getcwd(), self.RUNTIME_FILE)
+
+    @staticmethod
+    def _is_pid_alive(pid):
+        """Check if a process with the given PID is still running."""
+        try:
+            if sys.platform == "win32":
+                import subprocess as _sp
+                r = _sp.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                            capture_output=True, text=True, timeout=3)
+                return str(pid) in r.stdout
+            else:
+                os.kill(pid, 0)
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    def _kill_pid(self, pid):
+        """Kill a process by PID (platform-aware)."""
+        try:
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _sp.run(["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True, timeout=5)
+            else:
+                os.kill(pid, 9)
+            return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    @staticmethod
+    def _is_python_process(pid):
+        """Verify a PID belongs to a Python process (guards against PID recycling)."""
+        try:
+            if sys.platform == "win32":
+                import subprocess as _sp
+                r = _sp.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                            capture_output=True, text=True, timeout=3)
+                return "python" in r.stdout.lower()
+            else:
+                with open(f"/proc/{pid}/comm", "r") as f:
+                    return "python" in f.read().lower()
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    @staticmethod
+    def _pid_holds_port(pid, port):
+        """Verify a PID is actually listening on the given port (netstat/lsof cross-check)."""
+        try:
+            import subprocess as _sp
+            if sys.platform == "win32":
+                r = _sp.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+                for line in r.stdout.splitlines():
+                    if f":{port}" in line and "LISTENING" in line and line.strip().endswith(str(pid)):
+                        return True
+            else:
+                r = _sp.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=3)
+                return str(pid) in r.stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return False
+
+    def _cleanup_stale_server(self):
+        """Read existing .vela.env — if the PID is dead, clean up. If alive and
+        confirmed to be a Vela server on our port, kill it.
+        Must run BEFORE _write_runtime_info."""
+        rpath = self._runtime_path()
+        try:
+            with open(rpath, encoding="utf-8") as f:
+                info = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return  # no file or corrupt — nothing to clean
+
+        stale_pid = info.get("pid")
+        stale_port = info.get("port")
+        if not stale_pid:
+            return
+
+        if not self._is_pid_alive(stale_pid):
+            print(f"  [port]   Cleaned up stale runtime (PID {stale_pid} dead)")
+            self._remove_runtime_files()
+            return
+
+        if stale_port == self.port:
+            # PID alive + port matches .vela.env — but verify both:
+            # 1. It's actually a Python process (guards PID recycling)
+            # 2. It's actually bound to the port (guards stale .vela.env)
+            if not self._is_python_process(stale_pid):
+                print(f"  [port]   PID {stale_pid} is alive but not Python — PID was recycled, cleaning up")
+                self._remove_runtime_files()
+                return
+            if not self._pid_holds_port(stale_pid, stale_port):
+                print(f"  [port]   PID {stale_pid} is Python but not on port {stale_port} — stale runtime, cleaning up")
+                self._remove_runtime_files()
+                return
+            # Confirmed: Python process holding our port
+            if self._force_kill:
+                print(f"  [port]   Killing previous Vela server (PID {stale_pid}, port {stale_port})...")
+                self._kill_pid(stale_pid)
+                time.sleep(0.5)
+                self._remove_runtime_files()
+            else:
+                print(f"\n  ⚠️  Vela server already running (PID {stale_pid}, port {stale_port})")
+                print(f"  To replace it:  vela server start . --port {stale_port} --replace")
+                print(f"  To use another: vela server start . --port {stale_port + 1}")
+                sys.exit(1)
+
     def _write_runtime_info(self):
-        """Write runtime info file (.vela.json) with auth token, port, pid.
-        Mode 0o600 ensures only the current user can read the token.
-        Also writes legacy .vela.pid for backward compat."""
+        """Write .vela.env with auth token, port, pid.
+        Mode 0o600 ensures only the current user can read the token."""
         info = {
             "pid": os.getpid(),
             "port": self.port,
             "host": self.host,
-            "mode": "folder" if self.folder_mode else "single",
+            "mode": "folder",
         }
         if not self._no_auth:
             info["token"] = self._auth_token
-        runtime_path = os.path.join(os.getcwd(), ".vela.json")
+        rpath = self._runtime_path()
         try:
-            fd = os.open(runtime_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump(info, f, indent=2)
-            # Verify permissions were actually applied (drvfs/9p mounts ignore them)
-            actual = os.stat(runtime_path).st_mode & 0o777
+            actual = os.stat(rpath).st_mode & 0o777
             if actual != 0o600 and not self._no_auth:
                 print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
-                print(f"           .vela.json token is readable by other users ({oct(actual)}).")
+                print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
         except OSError as e:
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
-        # Legacy pidfile
-        pidfile = os.path.join(os.getcwd(), ".vela.pid")
-        with open(pidfile, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+
+    def _remove_runtime_files(self):
+        """Remove runtime files (.vela.env, .vela.pid)."""
+        for name in (self.RUNTIME_FILE, ".vela.pid"):
+            try:
+                os.unlink(os.path.join(os.getcwd(), name))
+            except OSError:
+                pass
+
+    def _register_cleanup(self):
+        """Register atexit + signal handlers to clean up runtime files on exit."""
+        import atexit
+        atexit.register(self._remove_runtime_files)
+
+        def _signal_handler(signum, frame):
+            self._remove_runtime_files()
+            sys.exit(0)
+
+        import signal
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, _signal_handler)
+            except (OSError, ValueError):
+                pass  # some signals unavailable on Windows
 
     def _on_template_change(self):
         """Template rebuilt (concat.py ran) — signal all open decks to reload."""
         print(f"[hot] Template changed → reloading browsers")
-        if self.folder_mode:
-            with self._lock:
-                for tracker in self._deck_trackers.values():
-                    tracker.bump(reload=True)
-        else:
-            self.version_tracker.bump(reload=True)
+        with self._lock:
+            for tracker in self._deck_trackers.values():
+                tracker.bump(reload=True)
 
     def _start_template_watcher(self):
         """Watch vela.jsx for changes (triggered by concat.py)."""
@@ -1213,11 +1180,8 @@ class VelaLocalServer:
         print(f"  [hot]    Watching template for hot reload")
 
     def run(self):
-        self._write_runtime_info()
-        if self.folder_mode:
-            self._run_folder()
-        else:
-            self._run_single()
+        self._cleanup_stale_server()
+        self._run_folder()
 
     def _run_folder(self):
         if not os.path.isdir(self.folder_path):
@@ -1231,32 +1195,36 @@ class VelaLocalServer:
         try:
             httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
         except OSError as e:
-            if e.errno == 98:  # Address already in use
+            if e.errno in (98, 10048, 10013):  # EADDRINUSE (Linux 98, Windows 10048) or EACCES (Windows 10013)
                 httpd = self._retry_after_stale_kill(VelaHTTPHandler)
             else:
                 raise
+
+        # Port bound successfully — write runtime info and register cleanup
+        self._write_runtime_info()
+        self._register_cleanup()
 
         # Template hot reload
         self._start_template_watcher()
 
         # Count decks
-        deck_count = len([f for f in os.listdir(self.folder_path) if f.endswith(".json") and os.path.isfile(os.path.join(self.folder_path, f))])
+        deck_count = len([f for f in os.listdir(self.folder_path) if f.endswith(DECK_EXT) and os.path.isfile(os.path.join(self.folder_path, f))])
 
         base_url = f"http://localhost:{self.port}"
         auth_url = base_url if self._no_auth else f"{base_url}/?token={self._auth_token}"
+
         print(f"\n  ⛵ Vela Local Server")
         print(f"  ────────────────────────────────────")
         print(f"  Folder:  {self.folder_path}")
-        print(f"  Decks:   {deck_count} JSON files")
-        print(f"  URL:     {auth_url}")
+        print(f"  Decks:   {deck_count} .vela files")
+        print(f"  Port:    {self.port}")
         print(f"  Mode:    Folder browser (Jupyter-style)")
-        print(f"  Sync:    Long-poll + POST (per-deck)")
         if self._no_auth:
             print(f"  Auth:    DISABLED (--no-auth)")
         else:
-            print(f"  Auth:    Token (copy URL above to authenticate)")
+            print(f"  Auth:    Token (see {self.RUNTIME_FILE}, or check browser)")
         if self.channel_port:
-            print(f"  Channel: http://localhost:{self.channel_port} (Claude Code bridge)")
+            print(f"  Channel: http://localhost:{self.channel_port}")
         if self.host == "0.0.0.0" and self._no_auth:
             print(f"  ⚠️  WARNING: Listening on all interfaces WITHOUT authentication!")
             print(f"     Anyone on your network can read/write decks.")
@@ -1276,92 +1244,27 @@ class VelaLocalServer:
                 for w in self._deck_watchers.values():
                     w.stop()
             httpd.shutdown()
+            self._remove_runtime_files()
 
-    def _run_single(self):
-        if not os.path.exists(self.deck_path):
-            print(f"ERROR: File not found: {self.deck_path}", file=sys.stderr)
-            sys.exit(1)
 
-        try:
-            self._deck_data = self._normalize_deck(self._read_deck())
-        except json.JSONDecodeError as e:
-            print(f"ERROR: Invalid JSON in {self.deck_path}: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        self._load_vendor_files()
-
-        html_content = self._build_html()
-        VelaHTTPHandler.html_content = html_content
-        VelaHTTPHandler.version_tracker = self.version_tracker
-        VelaHTTPHandler.server_ref = self
-
-        try:
-            httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
-        except OSError as e:
-            if e.errno == 98:  # Address already in use
-                httpd = self._retry_after_stale_kill(VelaHTTPHandler)
-            else:
-                raise
-
-        self.file_watcher = FileWatcher(self.deck_path, self._on_file_change)
-        self.file_watcher.start()
-
-        # Template hot reload
-        self._start_template_watcher()
-
-        total_slides = sum(
-            len(item.get("slides", []))
-            for lane in self._deck_data.get("lanes", [])
-            for item in lane.get("items", [])
-        )
-
-        base_url = f"http://localhost:{self.port}"
-        auth_url = base_url if self._no_auth else f"{base_url}/?token={self._auth_token}"
-        print(f"\n  ⛵ Vela Local Server")
-        print(f"  ────────────────────────────────────")
-        print(f"  Deck:    {os.path.basename(self.deck_path)} ({total_slides} slides)")
-        print(f"  URL:     {auth_url}")
-        print(f"  Mode:    Local (AI features disabled)")
-        print(f"  Sync:    Long-poll + POST (single port)")
-        if self._no_auth:
-            print(f"  Auth:    DISABLED (--no-auth)")
-        else:
-            print(f"  Auth:    Token (copy URL above to authenticate)")
-        if self.channel_port:
-            print(f"  Channel: http://localhost:{self.channel_port} (Claude Code bridge)")
-        if self.host == "0.0.0.0" and self._no_auth:
-            print(f"  ⚠️  WARNING: Listening on all interfaces WITHOUT authentication!")
-            print(f"     Anyone on your network can read/write decks.")
-        print(f"  ────────────────────────────────────")
-        print(f"  Press Ctrl+C to stop\n")
-
-        if not self.no_open:
-            self._open_browser(auth_url)
-
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\n  Stopping server...")
-        finally:
-            self.file_watcher.stop()
-            self._template_watcher.stop()
-            httpd.shutdown()
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Vela Local Server — live two-way editing")
-    parser.add_argument("path", help="Path to deck JSON file or folder of decks")
+    parser = argparse.ArgumentParser(description="Vela Local Server — Jupyter-style deck browser with live two-way editing")
+    parser.add_argument("path", help="Folder of decks, or a deck JSON file (uses its parent folder)")
     parser.add_argument("--port", type=int, default=3030, help="HTTP port (default: 3030)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, use 0.0.0.0 for LAN access)")
     parser.add_argument("--channel-port", type=int, default=8787, help="Channel server port (default: 8787, 0 to disable)")
     parser.add_argument("--no-open", action="store_true", help="Don't open browser automatically")
     parser.add_argument("--no-auth", action="store_true", help="Disable token authentication (NOT RECOMMENDED)")
     parser.add_argument("--token", default=None, help="Use a specific auth token (default: auto-generated, or VELA_TOKEN env var)")
+    parser.add_argument("--replace", action="store_true", help="Replace existing server on the same port (kills it)")
     args = parser.parse_args()
 
     server = VelaLocalServer(args.path, port=args.port, host=args.host, channel_port=args.channel_port,
-                             no_open=args.no_open, no_auth=args.no_auth, token=args.token)
+                             no_open=args.no_open, no_auth=args.no_auth, token=args.token,
+                             replace=args.replace)
     server.run()
 
 

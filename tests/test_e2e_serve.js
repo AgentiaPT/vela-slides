@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
-const DECK_PATH = path.join(__dirname, '..', 'examples', 'starter-deck.json');
+const DECK_PATH = path.join(__dirname, '..', 'examples', 'starter-deck.vela');
 const SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
 const PORT = 13030;
 const SERVE_SCRIPT = path.join(__dirname, '..', 'skills', 'vela-slides', 'scripts', 'serve.py');
