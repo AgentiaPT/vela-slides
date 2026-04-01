@@ -212,9 +212,9 @@ async function domToCanvas(element, w, h, scale = 2, slideBg = null) {
   // 5. Draw SVG text layer (includes branding logo as CSS background-image)
   ctx.drawImage(svgImg, 0, 0, w, h);
 
-  // 6. Draw <img> elements on top at their exact DOM positions
+  // 6. Draw <img> and logo elements on top at their exact DOM positions
   for (const pos of imagePositions) {
-    if (pos.type !== "img") continue;
+    if (pos.type !== "img" && pos.type !== "logo") continue;
     try {
       const img = await loadImage(pos.src);
       drawImageWithFit(ctx, img, pos.x, pos.y, pos.w, pos.h, pos.fit, pos.radius);
@@ -1271,6 +1271,39 @@ async function extractEmojiImages(container, containerRect, textRuns) {
   return emojiImages;
 }
 
+// Extract branding logo images for vector PDF embedding
+async function extractLogoImages(element, containerRect) {
+  const logos = [];
+  const imgs = element.querySelectorAll('img[data-branding-logo="true"]');
+  for (const img of imgs) {
+    if (!img.complete || !img.naturalWidth || !img.src) continue;
+    const r = img.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    try {
+      const loaded = await loadImage(img.src);
+      // Render to canvas to get raw RGB bytes
+      const cw = Math.round(r.width * 2), ch = Math.round(r.height * 2);
+      const c = document.createElement("canvas");
+      c.width = cw; c.height = ch;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(loaded, 0, 0, cw, ch);
+      const data = ctx.getImageData(0, 0, cw, ch).data;
+      // Convert RGBA to RGB
+      const rgb = new Uint8Array(cw * ch * 3);
+      for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+        rgb[j] = data[i]; rgb[j+1] = data[i+1]; rgb[j+2] = data[i+2];
+      }
+      logos.push({
+        x: r.left - containerRect.left,
+        y: r.top - containerRect.top,
+        w: r.width, h: r.height,
+        imageData: rgb, imgW: cw, imgH: ch,
+      });
+    } catch (e) {}
+  }
+  return logos;
+}
+
 // ━━━ Font metrics for standard PDF fonts ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Approximate character widths as fraction of font size
 // These are close enough for Helvetica / standard sans-serif
@@ -2133,7 +2166,7 @@ const FONT_FILES = [
 ];
 
 // ━━━ Build vector PDF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function buildVectorPdf(pages, pageW, pageH, fonts) {
+function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
   const enc = new TextEncoder();
   const parts = [];
   let offset = 0;
@@ -2163,7 +2196,7 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
   const pageObjs = [];
   let nextObj = pageObjStart;
   for (let i = 0; i < pages.length; i++) {
-    const p = { pageObj: nextObj, contentObj: nextObj + 1, emojiObjs: [] };
+    const p = { pageObj: nextObj, contentObj: nextObj + 1, emojiObjs: [], logoObjs: [] };
     nextObj += 2;
     if (pages[i].imageData) {
       p.imageObj = nextObj;
@@ -2172,6 +2205,11 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
     const emojis = pages[i].emojiImages || [];
     for (let j = 0; j < emojis.length; j++) {
       p.emojiObjs.push(nextObj);
+      nextObj += 1;
+    }
+    const logos = pages[i].logoImages || [];
+    for (let j = 0; j < logos.length; j++) {
+      p.logoObjs.push(nextObj);
       nextObj += 1;
     }
     pageObjs.push(p);
@@ -2465,16 +2503,18 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
       content += "ET\n";
     }
 
-    // Watermark
-    content += "BT\n";
-    const wmSize = pageW / 1080 * 13;
-    const wmX = pageW / 1080 * 28;
-    const wmY = pageW / 1080 * 28;
-    content += `/F2 ${wmSize.toFixed(1)} Tf\n`;
-    content += `0.878 0.906 1.0 rg\n`; // #e0e7ff
-    content += `${wmX.toFixed(1)} ${wmY.toFixed(1)} Td\n`;
-    content += `${pdfStringEncode("agentIA \u00A9 2026 \u00B7 www.agentia.pt")} Tj\n`;
-    content += "ET\n";
+    // Watermark (only when branding toggle is on)
+    if (showBranding) {
+      content += "BT\n";
+      const wmSize = pageW / 1080 * 13;
+      const wmX = pageW / 1080 * 28;
+      const wmY = pageW / 1080 * 28;
+      content += `/F2 ${wmSize.toFixed(1)} Tf\n`;
+      content += `0.878 0.906 1.0 rg\n`; // #e0e7ff
+      content += `${wmX.toFixed(1)} ${wmY.toFixed(1)} Td\n`;
+      content += `${pdfStringEncode("agentIA \u00A9 2026 \u00B7 www.agentia.pt")} Tj\n`;
+      content += "ET\n";
+    }
 
     // Draw emoji images
     const emojis = page.emojiImages || [];
@@ -2482,6 +2522,14 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
       const e = emojis[j];
       const ex = e.x, ey = pageH - e.y - e.h;
       content += `q ${e.w.toFixed(1)} 0 0 ${e.h.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)} cm /Emoji${j} Do Q\n`;
+    }
+
+    // Draw logo images
+    const logos = page.logoImages || [];
+    for (let j = 0; j < logos.length; j++) {
+      const l = logos[j];
+      const lx = l.x, ly = pageH - l.y - l.h;
+      content += `q ${l.w.toFixed(1)} 0 0 ${l.h.toFixed(1)} ${lx.toFixed(1)} ${ly.toFixed(1)} cm /Logo${j} Do Q\n`;
     }
 
     const contentBytes = enc.encode(content);
@@ -2507,6 +2555,16 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
       endObj();
     }
 
+    // Write logo XObjects (raw RGB, no compression filter)
+    for (let j = 0; j < logos.length; j++) {
+      const l = logos[j];
+      startObj(po.logoObjs[j]);
+      write(`<< /Type /XObject /Subtype /Image /Width ${l.imgW} /Height ${l.imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ${l.imageData.length} >>\nstream\n`);
+      writeBin(l.imageData);
+      write("\nendstream\n");
+      endObj();
+    }
+
     // Content stream
     startObj(po.contentObj);
     write(`<< /Length ${contentBytes.length} >>\nstream\n`);
@@ -2521,11 +2579,14 @@ function buildVectorPdf(pages, pageW, pageH, fonts) {
     // Resources
     const fontResources = FONT_FILES.map((f, fi) => `/${f.tag} ${fontObjStart + fi * objsPerFont} 0 R`).join(" ");
     let xobjResources = "";
-    if (page.imageData || emojis.length > 0) {
+    if (page.imageData || emojis.length > 0 || logos.length > 0) {
       let xobjs = [];
       if (page.imageData) xobjs.push(`/Img0 ${po.imageObj} 0 R`);
       for (let j = 0; j < emojis.length; j++) {
         xobjs.push(`/Emoji${j} ${po.emojiObjs[j]} 0 R`);
+      }
+      for (let j = 0; j < logos.length; j++) {
+        xobjs.push(`/Logo${j} ${po.logoObjs[j]} 0 R`);
       }
       xobjResources = ` /XObject << ${xobjs.join(" ")} >>`;
     }
@@ -2866,6 +2927,9 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
   const pagesRef = useRef([]);
   const ratioRef = useRef(ratio);
   ratioRef.current = ratio;
+  const [showBranding, setShowBranding] = useState(false);
+  const showBrandingRef = useRef(showBranding);
+  showBrandingRef.current = showBranding;
 
   const renderDims = useCallback(() => {
     const r = VECTOR_RATIOS.find(r => r.id === ratioRef.current) || VECTOR_RATIOS[0];
@@ -2910,7 +2974,7 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
           pageCanvas.height = ph;
           const ctx = pageCanvas.getContext("2d");
           ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, pw, ph);
-          drawVelaWatermark(ctx, pw, ph);
+          if (showBrandingRef.current) drawVelaWatermark(ctx, pw, ph);
           const jpegData = await canvasToJpegBytes(pageCanvas, 0.95);
           const links = extractLinks(el, containerRect);
           pageData = {
@@ -2969,6 +3033,17 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
           } catch (emojiErr) {
             console.warn("[VectorPDF] Emoji extraction failed:", emojiErr);
           }
+          let logoImages = [];
+          try {
+            logoImages = await extractLogoImages(el, containerRect);
+          } catch (logoErr) {
+            console.warn("[VectorPDF] Logo extraction failed:", logoErr);
+          }
+          const scaledLogos = logoImages.map(l => ({
+            ...l,
+            x: l.x * scaleX, y: l.y * scaleY,
+            w: l.w * scaleX, h: l.h * scaleY,
+          }));
           const scaledEmojis = emojiImages.map(e => ({
             ...e,
             x: e.x * scaleX, y: e.y * scaleY,
@@ -3073,7 +3148,7 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
               }
             }
           }
-          pageData = { boxes, textRuns, circles, svgIcons, emojiImages: scaledEmojis, links };
+          pageData = { boxes, textRuns, circles, svgIcons, emojiImages: scaledEmojis, logoImages: scaledLogos, links };
         }
 
         pagesRef.current.push(pageData);
@@ -3096,7 +3171,7 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
           // Finalize PDF — load embedded fonts, then build
           const { pw: fpw, ph: fph } = renderDims();
           const fonts = await loadFonts();
-          const pdfBytes = buildVectorPdf(pagesRef.current, fpw, fph, fonts);
+          const pdfBytes = buildVectorPdf(pagesRef.current, fpw, fph, fonts, showBrandingRef.current);
           // Convert to base64 data URI (blob: URLs blocked in sandbox)
           let binary = "";
           for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
@@ -3162,6 +3237,24 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
                   <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{r.desc}</span>
                 </button>
               ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Show branding</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Created by Vela Slides · watermark</span>
+              </div>
+              <button onClick={() => setShowBranding(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: showBranding ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: showBranding ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
             </div>
             <button onClick={startExport} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
