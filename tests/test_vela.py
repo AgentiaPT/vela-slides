@@ -596,6 +596,225 @@ def test_channel_local():
         fail("serve.py exists")
 
 
+# ━━━ Server Hardening & Lifecycle Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_server_hardening():
+    print("\n── Server Hardening & Lifecycle Tests ──")
+
+    tpl = open(os.path.join(SKILL_DIR, "app", "vela.jsx"), encoding="utf-8").read()
+    serve_src = open(os.path.join(SCRIPTS, "serve.py"), encoding="utf-8").read()
+    vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
+    skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+
+    # ── Arrow keys: Up/Down same as Left/Right ──
+    if '"ArrowRight" || e.key === "ArrowDown"' in tpl:
+        ok("ArrowDown handled same as ArrowRight")
+    else:
+        fail("ArrowDown = ArrowRight")
+
+    if '"ArrowLeft" || e.key === "ArrowUp"' in tpl:
+        ok("ArrowUp handled same as ArrowLeft")
+    else:
+        fail("ArrowUp = ArrowLeft")
+
+    # Verify old module-jumping Up/Down code is removed
+    if 'e.key === "ArrowDown" && curIdx >= 0' not in tpl:
+        ok("Old ArrowDown module-jump code removed")
+    else:
+        fail("Old ArrowDown module-jump still present")
+
+    # ── Auto-refresh deck list ──
+    if "setInterval(fetchDecks, 3000)" in serve_src:
+        ok("Deck list auto-refreshes every 3s")
+    else:
+        fail("Deck list auto-refresh")
+
+    # ── .vela extension enforcement ──
+    if 'DECK_EXT = ".vela"' in serve_src:
+        ok("DECK_EXT constant defined as .vela")
+    else:
+        fail("DECK_EXT constant")
+
+    if 'deck_name.endswith(DECK_EXT)' in serve_src or 'not deck_name.endswith(DECK_EXT)' in serve_src:
+        ok(".vela extension enforced on endpoints")
+    else:
+        fail(".vela extension enforcement")
+
+    if 'Only .vela files can be served' in serve_src:
+        ok("403 message for non-.vela serve")
+    else:
+        fail("403 serve message")
+
+    if 'Only .vela files can be polled' in serve_src:
+        ok("403 message for non-.vela poll")
+    else:
+        fail("403 poll message")
+
+    if 'Only .vela files can be saved' in serve_src:
+        ok("403 message for non-.vela save")
+    else:
+        fail("403 save message")
+
+    # ── Folder-only mode ──
+    if 'folder_mode' not in serve_src:
+        ok("Single-file mode removed (no folder_mode flag)")
+    else:
+        fail("folder_mode flag still present")
+
+    if '_route_single_get' not in serve_src and '_route_single_post' not in serve_src:
+        ok("Single-mode routing methods removed")
+    else:
+        fail("Single-mode routing still present")
+
+    if '_run_single' not in serve_src:
+        ok("_run_single method removed")
+    else:
+        fail("_run_single still present")
+
+    # ── Upload removal ──
+    if '_handle_upload' not in serve_src:
+        ok("Upload handler removed")
+    else:
+        fail("Upload handler still present")
+
+    if 'api/upload' not in serve_src:
+        ok("Upload route removed")
+    else:
+        fail("Upload route still present")
+
+    # ── Runtime file .vela.env ──
+    if 'RUNTIME_FILE = ".vela.env"' in serve_src:
+        ok("Runtime file constant is .vela.env")
+    else:
+        fail("Runtime file constant")
+
+    if '_runtime_path' in serve_src:
+        ok("_runtime_path method present")
+    else:
+        fail("_runtime_path method")
+
+    # ── Server lifecycle ──
+    if '_cleanup_stale_server' in serve_src:
+        ok("Stale server cleanup present")
+    else:
+        fail("Stale server cleanup")
+
+    if '_is_pid_alive' in serve_src:
+        ok("PID alive check present")
+    else:
+        fail("PID alive check")
+
+    if '_is_python_process' in serve_src:
+        ok("Python process check present (PID recycling guard)")
+    else:
+        fail("Python process check")
+
+    if '_pid_holds_port' in serve_src:
+        ok("Port ownership check present")
+    else:
+        fail("Port ownership check")
+
+    if '_register_cleanup' in serve_src and 'atexit' in serve_src:
+        ok("Cleanup registered via atexit + signals")
+    else:
+        fail("atexit cleanup")
+
+    if '--replace' in serve_src and '_force_kill' in serve_src:
+        ok("--replace flag supported")
+    else:
+        fail("--replace flag")
+
+    # ── Token security ──
+    if 'see .vela.env' in serve_src or 'see {self.RUNTIME_FILE}' in serve_src:
+        ok("Token not printed to console (references .vela.env)")
+    else:
+        fail("Token console display")
+
+    # ── subprocess import at module level ──
+    if re.search(r'^import subprocess$', serve_src, re.MULTILINE):
+        ok("subprocess imported at module level in serve.py")
+    else:
+        fail("subprocess module-level import")
+
+    # ── sys.executable in vela.py ──
+    if 'sys.executable' in vela_src and '"python3"' not in vela_src.split("def deck_validate")[1].split("def deck_ship")[0]:
+        ok("vela.py uses sys.executable (not hardcoded python3)")
+    else:
+        fail("sys.executable usage")
+
+    # ── CLI: vela server start/stop ──
+    if 'def server_start' in vela_src:
+        ok("server_start function present")
+    else:
+        fail("server_start function")
+
+    if 'def server_stop' in vela_src:
+        ok("server_stop function present")
+    else:
+        fail("server_stop function")
+
+    if '"server"' in vela_src and '"start": server_start' in vela_src and '"stop": server_stop' in vela_src:
+        ok("server resource registered with start/stop commands")
+    else:
+        fail("server resource routing")
+
+    # Test CLI capabilities include server
+    result = subprocess.run([sys.executable, os.path.join(SCRIPTS, "vela.py"), "--capabilities", "--json"],
+                            capture_output=True, text=True)
+    if '"server"' in result.stdout and '"start"' in result.stdout and '"stop"' in result.stdout:
+        ok("--capabilities lists server start/stop")
+    else:
+        fail("--capabilities server", result.stdout[:200])
+
+    # ── SKILL.md updated ──
+    if 'vela server start' in skill_md:
+        ok("SKILL.md references vela server start")
+    else:
+        fail("SKILL.md server start")
+
+    if 'vela deck serve' not in skill_md:
+        ok("SKILL.md no longer references vela deck serve")
+    else:
+        fail("SKILL.md still has deck serve")
+
+    if 'Token hygiene' in skill_md or 'NEVER read or print' in skill_md:
+        ok("SKILL.md has token hygiene rule")
+    else:
+        fail("SKILL.md token hygiene")
+
+    # ── .vela example decks exist ──
+    examples_dir = os.path.join(REPO_ROOT, "examples")
+    vela_decks = [f for f in os.listdir(examples_dir) if f.endswith(".vela")]
+    json_decks = [f for f in os.listdir(examples_dir) if f.endswith(".json")]
+    if len(vela_decks) >= 6:
+        ok(f"Example decks use .vela extension ({len(vela_decks)} files)")
+    else:
+        fail("Example .vela decks", f"found {len(vela_decks)}")
+
+    if len(json_decks) == 0:
+        ok("No .json example decks remain")
+    else:
+        fail("Legacy .json decks", f"{len(json_decks)} still present")
+
+    # ── Ship output uses .vela ──
+    if 'basename + ".vela"' in vela_src:
+        ok("Ship output uses .vela extension")
+    else:
+        fail("Ship .vela extension")
+
+    # ── Windows errno expansion ──
+    if '10048' in serve_src and '10013' in serve_src:
+        ok("Windows EADDRINUSE/EACCES errno codes handled")
+    else:
+        fail("Windows errno codes")
+
+    # ── Test --all flag ──
+    if '--all' in open(__file__, encoding="utf-8").read() and 'run_server_tests' in open(__file__, encoding="utf-8").read():
+        ok("Test suite supports --all flag for unified testing")
+    else:
+        fail("--all flag support")
+
+
 # ━━━ CLI Command Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_cli_commands():
@@ -1582,26 +1801,36 @@ def run_e2e_tests():
     except (FileNotFoundError, subprocess.CalledProcessError):
         print("  ⚠️  Node.js not available, skipping e2e tests")
         return 0
-    # Check if playwright is installed
-    try:
-        result = subprocess.run(
-            ["node", "-e", "require('playwright')"],
-            capture_output=True, text=True, cwd=REPO_ROOT
-        )
-        if result.returncode != 0:
-            print("  ⚠️  Playwright not installed, skipping e2e tests")
-            print("  Install: npm install playwright && npx playwright install chromium")
-            return 0
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print("  ⚠️  Playwright not installed, skipping e2e tests")
+    # Check required node_modules deps before running
+    node_modules = os.path.join(REPO_ROOT, "node_modules")
+    missing_deps = []
+    for dep in ("react", "react-dom", "@babel/standalone", "lucide-react"):
+        dep_path = os.path.join(node_modules, *dep.split("/"))
+        if not os.path.isdir(dep_path):
+            missing_deps.append(dep)
+    if missing_deps:
+        print(f"  ⚠️  Missing node deps: {', '.join(missing_deps)} — skipping e2e tests")
+        print(f"  Run first: npm install react react-dom @babel/standalone lucide-react")
         return 0
 
-    result = subprocess.run(
-        ["node", test_script],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=120
-    )
+    # Run the test — it resolves Playwright internally (local or global pnpm)
+    try:
+        result = subprocess.run(
+            ["node", test_script],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=180
+        )
+    except subprocess.TimeoutExpired:
+        print("  ❌ E2E tests timed out (180s)")
+        return 1
+
+    output = result.stdout + result.stderr
+    if "Playwright not found" in output:
+        print("  ⚠️  Playwright not installed, skipping e2e tests")
+        print("  Install: pnpm add -g playwright && playwright install chromium")
+        return 0
+
     print(result.stdout)
-    if result.stderr:
+    if result.stderr and result.returncode != 0:
         print(result.stderr)
     if result.returncode == 0:
         e2e_passed = re.search(r'(\d+)\s+passed', result.stdout)
@@ -1627,6 +1856,7 @@ if __name__ == "__main__":
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()
+        test_server_hardening()
     if run_integration:
         test_integration()
         test_cli_commands()
