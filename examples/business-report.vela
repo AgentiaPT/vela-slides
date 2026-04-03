@@ -79,6 +79,32 @@
                   ]
                 },
                 {
+                  "type": "comparison",
+                  "items": [
+                    {
+                      "title": "Planned",
+                      "icon": "Calendar",
+                      "color": "#6366f1",
+                      "items": [
+                        "v3.0 Platform — Jan 15",
+                        "Data Pipeline v2 — Feb 28",
+                        "Mobile SDK — Mar 15"
+                      ]
+                    },
+                    {
+                      "title": "Actual",
+                      "icon": "CheckCircle",
+                      "color": "#818cf8",
+                      "items": [
+                        "v3.0 Platform — Jan 15 ✓",
+                        "Data Pipeline v2 — Mar 20 (3wk slip)",
+                        "Mobile SDK — On track"
+                      ]
+                    }
+                  ],
+                  "dividerLabel": "VS"
+                },
+                {
                   "type": "callout",
                   "icon": "alert-triangle",
                   "text": "Data Pipeline v2 delivery slipped 3 weeks due to upstream Kafka migration. GA now targeted for April 10."
@@ -123,6 +149,35 @@
                       }
                     ]}
                   ]
+                },
+                {
+                  "type": "matrix",
+                  "quadrants": [
+                    {
+                      "title": "On Track + Full Staff",
+                      "color": "#818cf8",
+                      "items": ["Platform (14 HC, 68 pts)", "Growth (8 HC, 42 pts)"]
+                    },
+                    {
+                      "title": "At Risk + Full Staff",
+                      "color": "#f87171",
+                      "items": ["Mobile (6 HC, 31 pts)"]
+                    },
+                    {
+                      "title": "On Track + Understaffed",
+                      "color": "#fbbf24",
+                      "items": []
+                    },
+                    {
+                      "title": "Behind + Understaffed",
+                      "color": "#f87171",
+                      "items": ["Data/ML (5 HC, 24 pts)"]
+                    }
+                  ],
+                  "xLeft": "ON TRACK",
+                  "xRight": "BEHIND",
+                  "yTop": "FULL STAFF",
+                  "yBottom": "UNDERSTAFFED"
                 },
                 {
                   "type": "text",

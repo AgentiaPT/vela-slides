@@ -1157,7 +1157,7 @@ def deck_ship(args):
     # Handle --sample flag
     if "--sample" in filtered:
         filtered = [a for a in filtered if a != "--sample"]
-        sample_path = os.path.join(SKILL_ROOT, "..", "..", "examples", "starter-deck.vela")
+        sample_path = os.path.join(SKILL_ROOT, "..", "..", "examples", "vela-demo.vela")
         sample_path = os.path.normpath(sample_path)
         if not os.path.isfile(sample_path):
             _err(EXIT_NOT_FOUND, "Sample deck not found",

@@ -131,6 +131,15 @@
                     { "value": "99.98%", "label": "Availability", "icon": "Shield", "color": "#06b6d4" },
                     { "value": "280+", "label": "Edge Locations", "icon": "Globe", "color": "#22d3ee" }
                   ]
+                },
+                { "type": "spacer", "h": 12 },
+                {
+                  "type": "comparison",
+                  "items": [
+                    { "title": "Origin-Only", "icon": "Server", "color": "#94a3b8", "items": ["P99: 820ms", "1.2K rps", "0.8% errors"] },
+                    { "title": "Edge-First", "icon": "Zap", "color": "#22d3ee", "items": ["P99: 47ms", "18K rps", "0.02% errors"] }
+                  ],
+                  "dividerLabel": "VS"
                 }
               ]
             }
@@ -167,6 +176,16 @@
                   { "title": "Deploy Edge Functions", "text": "Start with read-heavy routes — cache invalidation is simpler there" },
                   { "title": "Measure and Iterate", "text": "Track cache hit rates, tail latencies, and error budgets per region" }
                 ]},
+                { "type": "spacer", "h": 10 },
+                {
+                  "type": "matrix",
+                  "quadrants": [
+                    { "title": "Design", "color": "#22d3ee", "items": ["Cache-first architecture", "Edge eliminates latency"] },
+                    { "title": "Implementation", "color": "#06b6d4", "items": ["Isolated V8 runtimes", "Graceful fallback patterns"] },
+                    { "title": "Operations", "color": "#22d3ee", "items": ["Multi-region deploy", "Real-time monitoring"] },
+                    { "title": "Trade-offs", "color": "#94a3b8", "items": ["Consistency challenges", "Debug complexity"] }
+                  ]
+                },
                 { "type": "spacer", "h": 10 },
                 { "type": "badge", "text": "github.com/example/edge-api", "icon": "Github", "color": "#22d3ee", "bg": "#22d3ee15", "border": "#22d3ee40" }
               ]

@@ -151,8 +151,8 @@ The server writes runtime info to `.vela.env` (gitignored). On exit, cleanup han
 python3 skills/vela-slides/scripts/concat.py
 
 # Assemble with a deck
-python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.vela --from-parts
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts
 
 # Validate deck JSON
-python3 skills/vela-slides/scripts/validate.py examples/starter-deck.vela
+python3 skills/vela-slides/scripts/validate.py examples/vela-demo.vela
 ```

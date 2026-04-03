@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.27";
+const VELA_VERSION = "12.29";
 const VELA_CHANGELOG = [
+  { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
+  { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
   { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
   { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
   { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
@@ -1816,17 +1818,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             const col = item.color || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
-            const midAngle = angle + (Math.PI / n);
-            const arcMidX = cx + (radius + 10) * Math.cos(midAngle);
-            const arcMidY = cy + (radius + 10) * Math.sin(midAngle);
             const nextNx = cx + radius * Math.cos(nextAngle);
             const nextNy = cy + radius * Math.sin(nextAngle);
-            const startX = nx + (nodeR + 6) * Math.cos(midAngle);
-            const startY = ny + (nodeR + 6) * Math.sin(midAngle);
-            const endX = nextNx - (nodeR + 12) * Math.cos(midAngle);
-            const endY = nextNy - (nodeR + 12) * Math.sin(midAngle);
+            const arcR = radius + 18;
+            const gap = Math.asin(nodeR / radius) + 0.08;
+            const startA = angle + gap;
+            const endA = nextAngle - gap - 0.06;
+            const startX = cx + arcR * Math.cos(startA);
+            const startY = cy + arcR * Math.sin(startA);
+            const endX = cx + arcR * Math.cos(endA);
+            const endY = cy + arcR * Math.sin(endA);
             return <g key={i} className={stg(staggerIdx, i)}>
-              <path d={`M ${startX} ${startY} Q ${arcMidX} ${arcMidY} ${endX} ${endY}`}
+              <path d={`M ${startX} ${startY} A ${arcR} ${arcR} 0 0 1 ${endX} ${endY}`}
                 fill="none" stroke={col} strokeWidth="2.5" strokeOpacity="0.6"
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
@@ -1867,38 +1870,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const yTop = block.yTop || "";
       const yBottom = block.yBottom || "";
       const defaultQColors = ["#22c55e", "#3b82f6", "#f97316", "#ef4444"];
-      return <div className={cls} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", position: "relative", ...block.style }}>
-        {(yTop || yBottom) && <div style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", display: "flex", flexDirection: "column", gap: 100, alignItems: "center" }}>
-          {yTop && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yTop}</span>}
-          {yBottom && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yBottom}</span>}
-        </div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 0, marginLeft: (yTop || yBottom) ? 32 : 0, width: "90%" }}>
-          {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+      const hasY = yTop || yBottom;
+      const yLabelStyle = { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", transform: "rotate(-90deg)", whiteSpace: "nowrap" };
+      const renderRow = (indices, radii, yLabel) => (
+        <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+          {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
+            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
           </div>}
-          <div style={{ display: "flex", gap: 6 }}>
-            {[0, 1].map((qi) => {
+          <div style={{ display: "flex", gap: 6, flex: 1 }}>
+            {indices.map((qi) => {
               const qd = q(qi);
               const qc = qd.color || defaultQColors[qi];
-              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 0 ? "10px 4px 4px 4px" : "4px 10px 4px 4px", padding: "14px 16px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
-                </div>
-                {(qd.items || []).map((pt, pi) => (
-                  <div key={pi} style={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
-                  </div>
-                ))}
-              </div>;
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-            {[2, 3].map((qi) => {
-              const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
-              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 2 ? "4px 4px 4px 10px" : "4px 4px 10px 4px", padding: "14px 16px" }}>
+              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
                   <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
@@ -1912,6 +1895,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             })}
           </div>
         </div>
+      );
+      return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
+          {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+          </div>}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          <div style={{ height: 6 }} />
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
       </div>;
     }
 

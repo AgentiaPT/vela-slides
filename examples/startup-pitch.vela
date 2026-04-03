@@ -56,6 +56,20 @@
                     { "title": "NovaPay", "icon": "Zap", "color": "#22c55e", "items": ["0.5% flat fee", "< 30 second settlement", "Zero failed transfers"] }
                   ],
                   "dividerLabel": "VS"
+                },
+                { "type": "spacer", "h": 12 },
+                {
+                  "type": "matrix",
+                  "quadrants": [
+                    { "title": "Fast + Cheap", "color": "#22c55e", "items": ["NovaPay"] },
+                    { "title": "Fast + Expensive", "color": "#f59e0b", "items": ["Wise", "Payoneer"] },
+                    { "title": "Slow + Cheap", "color": "#f59e0b", "items": ["Wire transfer", "ACH"] },
+                    { "title": "Slow + Expensive", "color": "#ef4444", "items": ["Traditional banks", "PayPal cross-border"] }
+                  ],
+                  "xLeft": "CHEAP",
+                  "xRight": "EXPENSIVE",
+                  "yTop": "FAST",
+                  "yBottom": "SLOW"
                 }
               ]
             }
@@ -152,6 +166,16 @@
                   { "title": "Q4 2026", "text": "Enterprise API for marketplace platforms" },
                   { "title": "Q1 2027", "text": "Path to profitability at $2.5M MRR" }
                 ]},
+                {
+                  "type": "checklist",
+                  "items": [
+                    { "text": "LATAM market launch (Brazil, Mexico, Colombia)", "status": "done" },
+                    { "text": "Southeast Asia expansion (Philippines, Vietnam)", "status": "partial" },
+                    { "text": "Enterprise API for marketplace platforms", "status": "pending" },
+                    { "text": "EU regulatory compliance & licensing", "status": "pending" }
+                  ]
+                },
+                { "type": "spacer", "h": 8 },
                 { "type": "callout", "text": "Contact: alex@novapay.io  |  novapay.io/investors", "icon": "Mail", "bg": "#fbbf2415", "border": "#fbbf2440" }
               ]
             }

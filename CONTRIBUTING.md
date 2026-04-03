@@ -47,10 +47,10 @@ python3 tests/test_vela.py
 python3 -m unittest tests.test_serve
 
 # Validate a deck
-python3 skills/vela-slides/scripts/validate.py examples/starter-deck.vela
+python3 skills/vela-slides/scripts/validate.py examples/vela-demo.vela
 
 # Assemble a test artifact
-python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.vela --template skills/vela-slides/app/vela.jsx
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --template skills/vela-slides/app/vela.jsx
 ```
 
 Then paste the output `.jsx` into a Claude.ai artifact to verify.

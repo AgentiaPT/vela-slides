@@ -198,7 +198,7 @@ vela-slides/
 │   ├── ARCHITECTURE.md        ← Technical deep dive
 │   └── SECURITY.md            ← Security model + audit
 ├── examples/
-│   ├── starter-deck.vela      ← Sample deck
+│   ├── vela-demo.vela         ← Demo deck
 │   └── *.vela                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/
