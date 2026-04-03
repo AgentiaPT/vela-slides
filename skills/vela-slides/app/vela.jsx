@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.27";
+const VELA_VERSION = "12.28";
 const VELA_CHANGELOG = [
+  { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
   { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
   { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
   { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
@@ -1816,17 +1817,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             const col = item.color || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
-            const midAngle = angle + (Math.PI / n);
-            const arcMidX = cx + (radius + 10) * Math.cos(midAngle);
-            const arcMidY = cy + (radius + 10) * Math.sin(midAngle);
             const nextNx = cx + radius * Math.cos(nextAngle);
             const nextNy = cy + radius * Math.sin(nextAngle);
-            const startX = nx + (nodeR + 6) * Math.cos(midAngle);
-            const startY = ny + (nodeR + 6) * Math.sin(midAngle);
-            const endX = nextNx - (nodeR + 12) * Math.cos(midAngle);
-            const endY = nextNy - (nodeR + 12) * Math.sin(midAngle);
+            const arcR = radius + 18;
+            const gap = Math.asin(nodeR / radius) + 0.08;
+            const startA = angle + gap;
+            const endA = nextAngle - gap - 0.06;
+            const startX = cx + arcR * Math.cos(startA);
+            const startY = cy + arcR * Math.sin(startA);
+            const endX = cx + arcR * Math.cos(endA);
+            const endY = cy + arcR * Math.sin(endA);
             return <g key={i} className={stg(staggerIdx, i)}>
-              <path d={`M ${startX} ${startY} Q ${arcMidX} ${arcMidY} ${endX} ${endY}`}
+              <path d={`M ${startX} ${startY} A ${arcR} ${arcR} 0 0 1 ${endX} ${endY}`}
                 fill="none" stroke={col} strokeWidth="2.5" strokeOpacity="0.6"
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />

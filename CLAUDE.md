@@ -121,7 +121,7 @@ skills/vela-slides/
   SKILL.md             ← skill prompt v12.24
 examples/              ← starter-deck.vela, themed example decks
 decks/                 ← working deck files (gitignored)
-docs/                  ← ARCHITECTURE.md, SECURITY.md
+docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
 evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
 tests/                 ← test_vela.py (198 tests), test_serve.py (72 tests)
 ```

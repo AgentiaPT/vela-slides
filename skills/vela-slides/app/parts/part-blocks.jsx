@@ -825,17 +825,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             const col = item.color || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
-            const midAngle = angle + (Math.PI / n);
-            const arcMidX = cx + (radius + 10) * Math.cos(midAngle);
-            const arcMidY = cy + (radius + 10) * Math.sin(midAngle);
             const nextNx = cx + radius * Math.cos(nextAngle);
             const nextNy = cy + radius * Math.sin(nextAngle);
-            const startX = nx + (nodeR + 6) * Math.cos(midAngle);
-            const startY = ny + (nodeR + 6) * Math.sin(midAngle);
-            const endX = nextNx - (nodeR + 12) * Math.cos(midAngle);
-            const endY = nextNy - (nodeR + 12) * Math.sin(midAngle);
+            const arcR = radius + 18;
+            const gap = Math.asin(nodeR / radius) + 0.08;
+            const startA = angle + gap;
+            const endA = nextAngle - gap - 0.06;
+            const startX = cx + arcR * Math.cos(startA);
+            const startY = cy + arcR * Math.sin(startA);
+            const endX = cx + arcR * Math.cos(endA);
+            const endY = cy + arcR * Math.sin(endA);
             return <g key={i} className={stg(staggerIdx, i)}>
-              <path d={`M ${startX} ${startY} Q ${arcMidX} ${arcMidY} ${endX} ${endY}`}
+              <path d={`M ${startX} ${startY} A ${arcR} ${arcR} 0 0 1 ${endX} ${endY}`}
                 fill="none" stroke={col} strokeWidth="2.5" strokeOpacity="0.6"
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
