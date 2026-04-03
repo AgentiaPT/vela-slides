@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks have identical 5-slide architecture (Cover → Problem → Solution → Metrics → CTA) with proper section grouping, badges on every content slide, heading on every slide, and logical closing CTA. Deck 1 includes two progress bars in Metrics vs. Deck 2's one, giving marginally more completeness there, but Deck 2 adds a descriptive text block before its flow in the Solution slide that aids narrative flow. Net result is structural parity."
+    },
+    "visual_hierarchy": {
+      "winner": "1",
+      "reasoning": "Deck 1's cover gradient runs from #0F172A → #134E4A → #10B981, landing on a vivid green that creates a bold focal punch. Its CTA gradient also terminates in #10B981, giving strong visual bookends. Spacing values vary intentionally (6, 8, 10, 12) creating rhythm and weight differentiation. Deck 2's gradients are symmetric and muted (#064E3B → #0F172A → #064E3B, #064E3B → #0F172A → #064E3B), losing punch on both cover and CTA. Deck 2's uniform spacing (all 12) flattens the visual hierarchy by treating every gap as equal weight."
+    },
+    "content_quality": {
+      "winner": "1",
+      "reasoning": "Deck 1's CTA headline — 'The Future of Healthcare Starts With One Conversation' — is a genuinely memorable assertion that beats Deck 2's clichéd 'Join the Healthcare AI Revolution Today'. Deck 1's problem stats are more specific and credible ('1 in 18 diagnoses contains a critical error' vs. the vaguer '1 in 3 adults receives a misdiagnosis'). Deck 1's tag-group on the cover adds thematic tags (2026 Vision, Clinical AI, Patient First) that help frame the deck. Deck 2's Solution bullets do add strong specificity (50M+ records, 200 conditions, 6–48 hour lead time), and the 'Limited Offer' callout on the CTA is a clever sales hook — but the overall headline and stat quality edge to Deck 1."
+    },
+    "block_variety": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses 12 distinct block types: badge, heading, text, divider, icon-row, callout, flow, bullets, grid, metric, progress, tag-group. Deck 1 uses 10: badge, heading, text, tag-group, icon-row, callout, flow, grid, metric, progress. Deck 2 adds a divider (semantically appropriate as a cover accent) and bullets (semantically superior to a grid of plain text cells for listing pipeline details). Both use types contextually well, but Deck 2 demonstrates broader vocabulary with appropriate placement."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Deck 2's CTA tag-group uses $A (green) uniformly for all four contact items, maintaining a consistent accent application. Deck 1's CTA tag-group mixes $A and $C across items without clear semantic reason, creating minor inconsistency. Deck 2's metric cards use borderTop: '3px solid #10B981' — a clean, modern treatment that's consistent across all three. Deck 1's metric cards use a full border: '1px solid #10B981' alongside a darker background (#0F172A vs. $D), diverging more from the base theme palette. Both maintain two theme variants and consistent badge styling, but Deck 2 is slightly tighter."
+    }
+  },
+  "overall_winner": "1",
+  "overall_reasoning": "Deck 1 wins on the two highest-impact dimensions — visual hierarchy and content quality. Its gradient-driven cover and CTA create unmistakable visual bookends that Deck 2's muted symmetric gradients cannot match, and its headline writing ('The Future of Healthcare Starts With One Conversation') outclasses Deck 2's generic 'Join the Healthcare AI Revolution Today'. Deck 2 uses two additional block types and has marginally tighter brand consistency in isolated spots, but these are incremental gains that don't outweigh Deck 1's superior visual drama and sharper copy. The decks are closely matched, but Deck 1 delivers a more compelling, memorable presentation experience overall."
+}
+```
