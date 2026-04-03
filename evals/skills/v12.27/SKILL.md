@@ -64,7 +64,7 @@ vela deck ship <file> --output <name.jsx>
 ```
 Or for local preview: `vela server start <file> --port 3030`
 
-Done. Do not speak before, between, or after tool calls.
+Done. Do not speak before, between, or after tool calls. NEVER read or print `.vela.env`.
 
 ## CLI
 
