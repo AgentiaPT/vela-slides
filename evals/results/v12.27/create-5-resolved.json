@@ -1,0 +1,27 @@
+{
+  "scenario": "create-5",
+  "swapped": false,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Both decks have 5 slides with proper cover/content/closing flow and all content slides have headings. Deck 1's group labels (Opening, Problem, Solution, Traction, Close) are more semantically precise \u2014 'Traction' is a standard pitch deck section name that signals investor context clearly. Deck 2 uses 'Metrics' and 'CTA' which are fine but slightly more generic. Deck 1's cover slide title 'AI is Rewriting the Rules of Patient Care' is a stronger assertion than the deck name repeated. Minor edge to Deck 1."
+    },
+    "visual_hierarchy": {
+      "winner": "v12.27",
+      "reasoning": "Deck 2's cover slide uses a stacked two-heading approach (4xl + 3xl) that creates a clear typographic hierarchy, which is more visually sophisticated than Deck 1's single large heading. Deck 2's problem slide uses distinct icon colors (red, amber, purple) per problem type, creating visual differentiation and hierarchy within the icon-row. Deck 1 uses uniform $A green for all icons. Deck 2's metric cards also use border highlights (`border: '1px solid #10B981'`) for added visual structure. Overall Deck 2 demonstrates more intentional visual layering."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 1's headlines are stronger assertion-style copy: 'Today's Healthcare System Is Failing Patients \u2014 and Providers' and 'Our AI Pipeline Turns Raw Data Into Life-Saving Decisions' are more punchy than Deck 2's equivalents. Deck 1's solution description ('in under 2 seconds', 'HIPAA-compliant', 'explainable AI') is more specific and credible. Deck 1's callout cites a concrete stat ('$935B lost annually') while Deck 2's callout is vaguer. Deck 2's problem stats are also slightly inconsistent with real-world data ('1 in 20' vs the more-cited '1 in 3'). Deck 1 wins on specificity and assertion quality."
+    },
+    "block_variety": {
+      "winner": "v12.27",
+      "reasoning": "Both decks use a similar set of block types: badge, heading, text, icon-row, callout, flow, grid, metric, progress, tag-group, divider, bullets. Deck 1 uniquely includes a 'bullets' block and uses it appropriately in the solution slide. Deck 2 uniquely adds a second heading block in the cover for hierarchy. The counts are very close (both around 10-11 distinct types), but Deck 2's use of grid blocks in the solution slide to annotate each flow step is a more creative and semantically appropriate application. Slight edge to Deck 2 for the flow+grid pairing."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Deck 1 maintains strict palette discipline \u2014 all accent colors reference $A (emerald green) and $E/$F (dark teal) throughout every slide. The icon backgrounds consistently use $E, badges use $E/$A, and the cover/close gradients both use the same color stops. Deck 2 breaks brand consistency in the problem slide by introducing off-palette colors (#EF4444 red, #F59E0B amber, #8B5CF6 purple, #450A0A, #451A03, #2E1065) that don't appear anywhere else in the deck and conflict with the established emerald/dark teal palette. While visually interesting, this is a brand consistency failure."
+    }
+  }
+}

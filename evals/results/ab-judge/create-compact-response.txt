@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "2",
+      "reasoning": "Both decks have 6 slides across 5 groups with a proper cover/content/closing arc. However, Deck 2 adds explicit `heading` blocks inside every content slide (not just relying on the `n` field and badge), creating a richer structural layer. Deck 2 also names its closing group 'Closing' (vs Deck 1's 'Close') and uses a gradient on the closing slide. The closing slide in Deck 1 uses `t:'d'` with a gradient overlay, which is valid; Deck 2's closing uses `t:'a'` with gradient, which is slightly unconventional but functional. Minor edge to Deck 2 for the explicit heading blocks on content slides."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses a two-tone split heading technique on the cover ('Quarterly Business Review' in white + 'Q1 2026' in accent blue `$A`) and repeats it on the closing slide ('The Best Quarter Yet —' in white + 'And We're Just Getting Started' in `$A`). This creates a striking visual anchor Deck 1 lacks. Deck 2 also places a `2xl` heading block on every content slide, establishing a clear badge → 2xl heading → body hierarchy. Deck 1 content slides jump straight from badge to data blocks, missing that intermediate heading tier. The `tag-group` on Deck 2's cover adds a metadata row that fills dead vertical space elegantly."
+    },
+    "content_quality": {
+      "winner": "2",
+      "reasoning": "Deck 2's slide titles are consistently assertive, declarative, and information-dense: 'Revenue Hits Record High — $4.2M in Q1 Alone', '2025 Built the Foundation — Q1 2026 Proves the Model', 'Every Department Exceeds Targets — Engineering Leads the Pack', 'Four Bets Will Define Our Q2 — Focus Sharpens Execution'. The em-dash construction is a strong rhetorical technique. Deck 1's titles are solid ('Revenue Surpassed Targets Across All Three Pillars') but more generic. Deck 2's cover tagline ('Stronger pipelines. Faster growth. A team firing on all cylinders.') is punchier than Deck 1's ('Momentum. Metrics. What's Next.'). Both decks use specific numbers; Deck 2's attainment percentages in the table (121%, 120%, 103%, 131%) are more vivid than Deck 1's plain 'Exceeded'."
+    },
+    "block_variety": {
+      "winner": "tie",
+      "reasoning": "Both decks use exactly 12 distinct block types. Deck 1 uses: badge, heading, text, divider, metric, progress, grid, timeline, table, icon-row, checklist, callout. Deck 2 uses: badge, heading, text, tag-group, metric, grid, progress, timeline, table, callout, icon-row, steps. The unique types trade off: Deck 1's `checklist` is semantically fine for action items; Deck 2's `steps` is arguably more semantically precise for the dated action sequence (April 7/14/21/30). Deck 2's `tag-group` on the cover is a nice semantic addition. Deck 1's `divider` is a minor filler type. Net result is a tie — both show strong variety and good semantic matching."
+    },
+    "brand_consistency": {
+      "winner": "1",
+      "reasoning": "Both decks share the identical color palette and theme definitions. However, Deck 1 uses the defined token `$C` for badge text colors throughout, staying within the design token system. Deck 2 hardcodes `#FFFFFF` for badge text on every slide instead of `$C` (which is `#E2E8F0`, near-white). While visually similar, bypassing the token system is a consistency weakness. Deck 1 also uses `hb:'$E'` (darker blue) for the table header, which matches the badge color and feels more cohesive; Deck 2 switches to `hb:'$A'` (lighter blue). Both decks apply `$F` for card/callout backgrounds consistently and use `$E` for badge fills. Slight edge to Deck 1 for stricter token discipline."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins three dimensions outright (structural, visual hierarchy, content quality) and ties on a fourth (block variety), losing only on brand consistency by a narrow margin (hardcoded #FFFFFF vs the $C token). The visual hierarchy gap is substantial — Deck 2's two-color split headings and explicit 2xl heading blocks on every content slide are materially more polished. Its assertion headlines are uniformly stronger, and the `steps` block in the closing is the most semantically precise choice in either deck. Deck 1 is a solid presentation but reads as more utilitarian; Deck 2 feels more purposefully designed and narratively compelling throughout."
+}
+```

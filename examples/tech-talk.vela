@@ -48,14 +48,32 @@
               "duration": 90,
               "blocks": [
                 { "type": "heading", "text": "Edge-First Request Architecture", "size": "2xl", "icon": "Network" },
-                { "type": "spacer", "h": 12 },
-                { "type": "flow", "items": [
-                  { "icon": "Smartphone", "text": "Client" },
-                  { "icon": "Server", "text": "Edge Node" },
-                  { "icon": "Database", "text": "Cache / Origin" },
-                  { "icon": "ArrowLeft", "text": "Response" }
-                ], "connector": "arrow" },
-                { "type": "spacer", "h": 16 },
+                { "type": "spacer", "h": 8 },
+                {
+                  "type": "grid", "columns": 2, "gap": 16, "items": [
+                    { "blocks": [
+                      { "type": "flow", "items": [
+                        { "icon": "Smartphone", "text": "Client" },
+                        { "icon": "Server", "text": "Edge Node" },
+                        { "icon": "Database", "text": "Cache / Origin" },
+                        { "icon": "ArrowLeft", "text": "Response" }
+                      ], "connector": "arrow" }
+                    ]},
+                    { "blocks": [
+                      {
+                        "type": "cycle",
+                        "items": [
+                          { "label": "Request", "icon": "📡" },
+                          { "label": "Cache", "icon": "💾" },
+                          { "label": "Validate", "icon": "✅" },
+                          { "label": "Replicate", "icon": "🔄" }
+                        ],
+                        "centerLabel": "Edge"
+                      }
+                    ]}
+                  ]
+                },
+                { "type": "spacer", "h": 8 },
                 { "type": "callout", "text": "Edge nodes intercept requests within 50ms of the user. Cache hits bypass origin entirely — reducing P99 latency from 820ms to 47ms in production.", "icon": "Zap", "bg": "#06b6d415", "border": "#06b6d440" }
               ]
             }
@@ -106,11 +124,14 @@
                   ]
                 },
                 { "type": "spacer", "h": 12 },
-                { "type": "grid", "columns": 3, "gap": 16, "items": [
-                  { "blocks": [{ "type": "metric", "value": "47ms", "label": "P99 Latency", "icon": "Timer", "trend": "up" }] },
-                  { "blocks": [{ "type": "metric", "value": "99.98%", "label": "Availability", "icon": "Shield", "trend": "up" }] },
-                  { "blocks": [{ "type": "metric", "value": "280+", "label": "Edge Locations", "icon": "Globe" }] }
-                ]}
+                {
+                  "type": "number-row",
+                  "items": [
+                    { "value": "47ms", "label": "P99 Latency", "icon": "Timer", "color": "#22d3ee" },
+                    { "value": "99.98%", "label": "Availability", "icon": "Shield", "color": "#06b6d4" },
+                    { "value": "280+", "label": "Edge Locations", "icon": "Globe", "color": "#22d3ee" }
+                  ]
+                }
               ]
             }
           ]
@@ -130,12 +151,16 @@
               "blocks": [
                 { "type": "heading", "text": "Key Takeaways", "size": "2xl", "icon": "Lightbulb" },
                 { "type": "spacer", "h": 8 },
-                { "type": "bullets", "items": [
-                  "Edge computing eliminates the latency tax — serve from where your users are",
-                  "Cache-first architecture reduces origin load by 90%+ and improves resilience",
-                  "Isolated V8 runtimes give you full programmability without cold start penalties",
-                  "Graceful fallback patterns ensure availability even when origin is unreachable"
-                ], "icon": "ChevronRight" },
+                {
+                  "type": "checklist",
+                  "items": [
+                    { "text": "Edge computing eliminates the latency tax — serve from where your users are", "status": "done" },
+                    { "text": "Cache-first architecture reduces origin load by 90%+ and improves resilience", "status": "done" },
+                    { "text": "Isolated V8 runtimes give you full programmability without cold start penalties", "status": "done" },
+                    { "text": "Graceful fallback patterns ensure availability even when origin is unreachable", "status": "partial" }
+                  ],
+                  "showLabels": true
+                },
                 { "type": "spacer", "h": 12 },
                 { "type": "steps", "items": [
                   { "title": "Identify Hot Paths", "text": "Profile your API to find cacheable, latency-sensitive endpoints" },

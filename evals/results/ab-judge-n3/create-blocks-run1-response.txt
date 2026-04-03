@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "1",
+      "reasoning": "Deck 1 has a dedicated 'Closing' group, giving it a clean cover → content → closing arc across 6 named groups. Deck 2 buries its closing slide inside the 'Media & Code' group rather than giving it its own section, which weakens the structural separation. Both have badges on every content slide and gradients on cover/closing, but Deck 1's group hierarchy is more intentional."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses explicit numeric spacers between block sections within slides (16, 20, 24 px) rather than a uniform '12' everywhere, creating more deliberate vertical rhythm. It also defines a dedicated muted color token ($G: #64748B) used consistently for all supporting body text, sharpening the contrast between assertion headlines and explanatory copy. Badge blocks in Deck 2 include icons (i: 'Type', 'List', 'BarChart2', etc.), adding a second visual dimension. Deck 1's spacer usage is flat and its supporting text color ($C: #94A3B8) is applied less systematically."
+    },
+    "content_quality": {
+      "winner": "2",
+      "reasoning": "Deck 2's slide headlines are tighter assertion statements ('Tables Structure the Data Readers Need to Compare', 'Metrics and Progress Communicate Status Without Words') and its body copy explains each block type's purpose and use cases in substantive detail. The table slide enumerates actual block schema keys (Icon Support, Required Keys columns), which is genuinely informative. Deck 2 also shows three real-world badge variants (NEW FEATURE / DEPRECATED / STABLE) and two callout variants (info vs destructive), illustrating semantic range. Deck 1's content is solid but shallower per slide."
+    },
+    "block_variety": {
+      "winner": "2",
+      "reasoning": "Both decks cover all 20 standard block types. Deck 2 edges ahead by using the explicit {'_':'spacer','h':20} object block alongside numeric spacers, by adding captions to both the image and svg blocks (fields absent in Deck 1), and by consistently attaching icons to badge blocks — demonstrating more of the available field surface area within each type. Deck 2 also uses the callout block twice in a single slide with contrasting themes, and the icon-row with three distinct color pairs. Deck 1 covers the same types but exercises fewer optional fields."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Deck 2 defines 10 semantic color tokens vs Deck 1's 6, and uses them with discipline: $G for all muted body text, $H (green) for positive/stable signals, $I (amber) for warnings, $J (red) for destructive states. This semantic color grammar is applied consistently across badges, callouts, metrics, and progress bars. Deck 1 uses a mostly monochromatic accent approach — the closing tag-group stamps all 20 block-type tags identically in $A blue, which feels flat. Deck 2's closing tag-group mixes accent and muted tones more naturally."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins on four of five dimensions. Its richer color token system applied with semantic consistency, more deliberate spacing rhythm, substantive per-block explanatory content, and broader exercise of optional block fields (captions, badge icons, callout variants) make it a demonstrably higher-quality reference deck. Deck 1's only advantage is a cleaner group structure with a dedicated Closing section — a meaningful but single point in its favor that does not outweigh Deck 2's breadth of advantages elsewhere."
+}
+```

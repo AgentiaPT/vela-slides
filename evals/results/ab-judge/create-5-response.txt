@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks have identical structural completeness: a cover slide, three content slides (problem, solution, metrics/traction), and a closing CTA slide. Both use proper section grouping ('d' for dark/cover, 'a' for alternate/content), every content slide has a heading with a badge, and logical block ordering. Deck 2 renames 'Metrics' to 'Traction' which is slightly more pitch-appropriate, but neither deck has a structural advantage."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 shows slightly more refined visual hierarchy choices. Its cover heading uses a line break for better typographic control ('AI in Healthcare —\\nTransforming Patient Outcomes'), and the subtitle text gets the accent color ($A) for emphasis — creating a clearer two-level title hierarchy. It also adds a closing divider block before the footer text, giving the CTA slide better visual closure. Deck 1's metric cards use three different accent colors (#10B981, #FBBF24, #60A5FA) for the metric values, which creates visual noise rather than hierarchy. Deck 2 uses the consistent $A accent for all three metrics, making the section feel more cohesive and purposeful."
+    },
+    "content_quality": {
+      "winner": "1",
+      "reasoning": "Deck 1 provides more specific, substantive supporting text throughout. The problem slide includes precise figures ('Average 23-day wait to see a specialist') and the compounding-effect callout adds analytical depth. The solution slide lists concrete integration specifics ('Epic, Cerner, and HL7 FHIR') and a precise latency claim ('Sub-200ms'). The metrics slide explains each number with detailed context ('across 14 disease categories,' 'per 500-bed hospital'). Deck 2's content is more generic — the solution bullets are vaguer ('Integrates with EHR, imaging, labs, and wearables') and metric explanations less precise. Deck 2's callout stat ('$935B lost annually') is a strong specific claim, but overall Deck 1's content is more consistently sharp and specific."
+    },
+    "block_variety": {
+      "winner": "1",
+      "reasoning": "Deck 1 uses a broader set of block types: badge, heading, text, icon-row, callout, flow, checklist, grid, metric, progress, tag-group — approximately 11 distinct types. Deck 2 uses: badge, heading, text, tag-group, icon-row, callout, flow, bullets, grid, metric, progress, divider — also ~12 types. However, Deck 1's use of 'checklist' (with status:'done') is more semantically rich than Deck 2's plain 'bullets', demonstrating better block-to-content matching. Both decks are close, but Deck 1's checklist and multi-color metric grid cards show slightly more intentional variety in block selection."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Deck 2 maintains tighter brand consistency throughout. It uses the $A accent color consistently for all icon colors in the icon-row, all three metric values, and contact tag items — creating a unified visual identity. Deck 1 breaks brand consistency in the metrics slide by using three different colors (#10B981, #FBBF24, #60A5FA) for metric values and colored top borders on the cards, which feels ad hoc rather than intentional. Deck 2 also uses $F (#134E4A) more purposefully as a teal-adjacent mid-tone for card backgrounds on the metrics slide, staying within the green family. The overall palette in Deck 2 feels more disciplined."
+    }
+  },
+  "overall_winner": "1",
+  "overall_reasoning": "Deck 1 wins on content quality and block variety — the two dimensions most critical to a persuasive pitch deck. Its supporting text is consistently more specific and credible (named EHR integrations, precise latency, per-hospital cost savings broken down clearly), and its use of a checklist block adds semantic richness. While Deck 2 has better brand consistency and slightly cleaner visual hierarchy (avoiding the multi-color metric values), those are polish-level advantages that don't outweigh the depth advantage Deck 1 holds in content. Both decks are structurally equivalent. Overall, Deck 1 would be more convincing to a healthcare investor or clinical buyer."
+}
+```

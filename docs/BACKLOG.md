@@ -109,6 +109,28 @@ Both issues caused invisible content in the S4 deck (2026-03-31) — slides appe
 - **Skill prompt:** Add explicit grid format example showing the `blocks` array structure. Call out that shorthand card format is NOT supported.
 - **Validation:** `deck validate` should flag: (a) grid blocks with `cells` key, (b) grid items without a `blocks` array.
 
+### Incremental deck building for large decks (30+ slides)
+
+Creating large decks (30+ slides) in a single Write call is unreliable. The create-30 eval scenario (2,144-char prompt specifying 30 slides with prescribed block types) consistently times out at 300s or produces no output. The root cause is generating ~8,000-12,000 output tokens of compact JSON in one shot.
+
+**The tension:** Multiple smaller tool calls add LLM call overhead (cost + latency per turn), but a single massive call risks timeout or truncation. The skill currently says "minimal tool calls" which pushes toward the timeout-prone single-call approach.
+
+**Eval data (n=1, sonnet, 300s timeout):**
+- create-5 (5 slides): ~50s, $0.06-0.09 — reliable
+- create-blocks (21 slides): ~120-236s, $0.20-0.35 — borderline
+- create-30 (30 slides): timeout on live (301s), no deck on v12.25 (197s) — broken
+
+**Possible approaches:**
+1. **Chunked generation** — Skill instructs: write sections (G groups) incrementally, 5-10 slides per Write call, then validate. Adds 2-4 turns but each stays under output limits.
+2. **Two-pass** — First call writes a skeleton deck (headings + structure only), second call fills in content blocks. Each pass is half the output tokens.
+3. **Adaptive threshold** — If prompt requests >15 slides, auto-switch to chunked mode. Under 15, keep single-call for speed.
+4. **Raise timeout** — Simple but doesn't fix the output token pressure. 600s might work for 30 slides but not 50.
+5. **Template-based** — Pre-built 30-slide skeleton in fixtures, model just fills/customizes. Fast but inflexible.
+
+**Key constraint:** The deck JSON must be valid after each write — partial JSON breaks the file. Chunked approaches need to either append to sections or rewrite the full file each time.
+
+**Related:** The `effort: low` flag in SKILL.md may cause the model to rush large decks, producing incomplete output. Consider removing effort hint for prompts requesting 20+ slides.
+
 ## Tooling
 
 ### JSON patch verification

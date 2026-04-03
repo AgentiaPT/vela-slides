@@ -1,0 +1,116 @@
+{
+  "session_id": "3de34c1c-6073-47b3-9537-49d6fa31f724",
+  "model": "sonnet",
+  "version": "live",
+  "scenario": "create-multi-module",
+  "rep": 1,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 11,
+    "output_tokens": 12246,
+    "cache_read_tokens": 69540,
+    "cache_write_tokens": 9435,
+    "total_tokens": 91232,
+    "cost_usd": 0.23996625000000002,
+    "tool_calls": 5,
+    "duration_s": 181.1
+  },
+  "assertions": {
+    "passed": 8,
+    "total": 8,
+    "slides": 12,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "divider",
+      "flow",
+      "grid",
+      "heading",
+      "icon-row",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 12
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Strategy"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Execution"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Results"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 12,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "divider",
+        "flow",
+        "grid",
+        "heading",
+        "icon-row",
+        "progress",
+        "quote",
+        "steps",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.75,
+      "block_type_entropy": 3.386,
+      "monotony_ratio": 0.232,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 1,
+      "heading_rate": 1.0,
+      "badge_rate": 0.917,
+      "words_per_slide": 24.1,
+      "blocks_per_slide": 4.7
+    }
+  }
+}

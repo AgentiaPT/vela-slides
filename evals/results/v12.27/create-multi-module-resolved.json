@@ -1,0 +1,27 @@
+{
+  "scenario": "create-multi-module",
+  "swapped": true,
+  "overall_winner": "v12.27",
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks share identical architecture: 3 groups (Strategy, Execution, Results) \u00d7 4 slides each = 12 slides, alternating 'd'/'a' themes, badges on every content slide, and a gradient-backed closing CTA. Neither has a standalone cover slide, but both open cleanly into content. Section grouping, heading presence, and closing structure are equally well-executed."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 2 uses slightly more deliberate spacing rhythm \u2014 12px after badges (vs 8px in Deck 1) before headings, which gives each slide a cleaner visual breath. Its closing gradient runs all the way to #8B5CF6 (100%), making the brand accent visually dominant at the climax, whereas Deck 1's gradient fades back to dark at the end. Deck 2 also includes a divider block for visual segmentation. Both use 4xl/2xl heading sizes correctly, but Deck 2's closing slide bumps font weight to 800 vs 700 for slightly stronger punch."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 2 is more specific, actionable, and authentic throughout. Its market slide zeroes in on the mid-market tier with a table showing segment sizing ($1.6B opportunity) rather than broad TAM. The customer quote ('We don't need another point tool\u2026') from a named persona (VP Operations, manufacturing) is far more credible than Deck 1's internal brand-strategy attribution. Deck 2's closing slide ('Every owner knows their number') is a stronger assertion than Deck 1's vague 'The Window Is Now.' The 30-60-90 roadmap has concrete trigger conditions (e.g., 'Double paid acquisition if CAC payback < 6 months') vs. Deck 1's softer milestone language. Quality gate metrics (95% test coverage, <200ms P95 latency) are specific and verifiable."
+    },
+    "block_variety": {
+      "winner": "v12.27",
+      "reasoning": "Deck 1 uses 20 distinct block types vs. Deck 2's 16. Critically, Deck 1's additional types are semantically perfect: 'funnel' for the GTM acquisition pipeline (exactly right), 'matrix' for the SWOT analysis, 'comparison' for the head-to-head competitive breakdown, 'cycle' for the growth loop, 'number-row' for key stats, and 'checklist' for content-strategy status tracking. Deck 2 substitutes 'bullets' where a 'checklist' would be better, lacks a funnel visualization for its wave-launch narrative, and skips matrix/comparison/cycle entirely. The semantic matching in Deck 1 is a clear win."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Both decks maintain a cohesive dark-purple palette with consistent $A accent usage. Deck 2 edges ahead because its $F=#1A0A3E creates a richer, deeper background for metric grids that contrasts more crisply with the purple accent, and its closing gradient makes the brand color the dominant visual note (ending at full #8B5CF6 instead of returning to dark). Badge background colors are applied more uniformly in Deck 2 (always $E=#2D1B69), whereas Deck 1 mixes $F for callouts and $E for grids in a way that is slightly less unified."
+    }
+  }
+}

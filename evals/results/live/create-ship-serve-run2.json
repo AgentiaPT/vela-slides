@@ -1,0 +1,104 @@
+{
+  "session_id": "54548c22-01f2-4fcc-8b1b-ef0525f44015",
+  "model": "sonnet",
+  "version": "live",
+  "scenario": "create-ship-serve",
+  "rep": 2,
+  "turns": 12,
+  "totals": {
+    "input_tokens": 15,
+    "output_tokens": 4108,
+    "cache_read_tokens": 183888,
+    "cache_write_tokens": 8898,
+    "total_tokens": 196909,
+    "cost_usd": 0.1501989,
+    "tool_calls": 12,
+    "duration_s": 92.4
+  },
+  "assertions": {
+    "passed": 5,
+    "total": 6,
+    "slides": 9,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "flow",
+      "grid",
+      "heading",
+      "icon-row",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": false,
+        "detail": 10
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 9,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "flow",
+        "grid",
+        "heading",
+        "icon-row",
+        "progress",
+        "quote",
+        "steps",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.7,
+      "block_type_entropy": 3.339,
+      "monotony_ratio": 0.275,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 20.9,
+      "blocks_per_slide": 4.4
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "scenario": "create-blocks",
+  "swapped": true,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Both decks have proper cover/content/closing flow with 5 groups, assertion headings on every content slide, and badges throughout. However, Deck 2 actively uses both 't':'d' and 't':'a' theme variants across its slides, while Deck 1 defines both variants in T but only ever uses 'd'. Deck 2's group names ('Typography & Annotation', 'Process & Flow', 'Media & Code') are also more descriptive and precise than Deck 1's ('Text & Content', 'Process & Visuals'). Minor point against both: Deck 1 claims '20 BLOCK TYPES' but never renders an actual image block (only a callout about it); Deck 2 claims '21' but its tag-group and closing callout list exactly 20 types \u2014 both have a small count discrepancy, but Deck 2 actually demonstrates the image block where Deck 1 does not."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 2 applies more deliberate sizing variation within individual slides \u2014 e.g., using 3xl for the primary block title followed by 2xl for sub-topics on the same slide, creating a two-level heading hierarchy. Its body text uses xl and lg sizes rather than Deck 1's consistent md/lg. Spacing is more intentional: Deck 2 uses 12, 16, 18, 20, 24-unit gaps to create breathing room between logical groups, whereas Deck 1 mostly alternates between 4 and 8. Deck 2 badge blocks include icons (e.g., 'i':'Type', 'i':'BarChart2', 'i':'Terminal'), adding weight and visual anchoring that Deck 1 badges lack. Both decks have gradients on cover and closing slides."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Both decks have assertion-style headlines rather than descriptive labels. Deck 2 edges ahead with more specific, credible data: its metric grid shows '99.97% Uptime SLA', '4.2ms Avg Latency', and '2.4M Decks Generated' \u2014 concrete numbers that feel real rather than illustrative. Its timeline gives specific quarters (Q1/Q2/Q3 2024, Q1 2025) with plausible milestones and adoption numbers. Progress bars reflect realistic partial completion (97%, 74%, 43%) rather than the round 100/80/60 values in Deck 1. Deck 2's per-block description paragraphs are also tighter and more instructional. Deck 1's content is solid but relies more heavily on generic examples and round numbers."
+    },
+    "block_variety": {
+      "winner": "live",
+      "reasoning": "Deck 2 demonstrates 20 distinct block types including an actual {'_':'image',...} block with src, alt, and caption. It also uses an explicit {'_':'spacer','h':20} block rather than relying solely on integer shorthand. Deck 1 showcases ~19 types \u2014 it references the image block in a callout but never renders one as a first-class block, missing an opportunity. Both decks use types semantically (flow for process, timeline for roadmaps, metric for stats), but Deck 2's icon-row uses per-item ic/ib color overrides (blue, amber, green) showing richer block configurability. Deck 1's grid is used well, and its SVG is slightly more complex visually, but overall Deck 2 covers more ground."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Deck 1 uses a 6-color palette applied uniformly \u2014 $A blue as the sole accent on nearly every badge, icon, and highlight. Deck 2 defines a 10-color palette and uses it with semantic intent: green ($H) for stable/success states, amber ($I) for in-progress, red ($J) for deprecated/destructive, slate ($G) for supporting text. This semantic palette is applied consistently across badges ('STABLE' in green, 'DEPRECATED' in red), icon-row item backgrounds, and progress bars, creating a coherent visual language rather than monotone accent reuse. Both decks use gradients on cover and closing. Deck 2's use of both 'a' and 'd' theme variants adds visual rhythm without breaking cohesion."
+    }
+  },
+  "overall_reasoning": "Deck 2 wins on four of five dimensions. It demonstrates a more complete block catalog (including an actual image block), applies stronger visual hierarchy through varied heading sizes and deliberate spacing, backs its claims with specific and credible data, and uses a semantically meaningful multi-color palette rather than uniform single-accent styling. Deck 1 is well-constructed and its SVG and code examples are comparable in quality, but it falls short on block completeness (missing image), uses only one theme variant despite defining two, and relies on round/illustrative numbers where Deck 2 provides specific, realistic figures."
+}

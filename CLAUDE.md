@@ -122,7 +122,7 @@ skills/vela-slides/
 examples/              ← starter-deck.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md
-evals/                 ← skill version benchmarking
+evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
 tests/                 ← test_vela.py (198 tests), test_serve.py (72 tests)
 ```
 
@@ -173,6 +173,22 @@ If you forget, CI will fail with:
 - Before every commit and PR, review all content for accidental leaks of sensitive or personal information.
 
 Violations of this policy cannot be undone — git history is permanent and public.
+
+## Eval / Benchmarking
+
+Full eval runbook: **`docs/EVAL-RUNBOOK.md`** — covers running A/B comparisons, blind LLM judging, analysis scripts, and the complete scenario list. Read that doc instead of re-exploring `evals/` each time.
+
+Quick reference:
+```bash
+# Copy current skill to eval versioned dir
+mkdir -p evals/skills/v<VER> && cp skills/vela-slides/SKILL.md evals/skills/v<VER>/
+
+# Run eval (n=1 quick, n=3+ for stats)
+REPS=1 MODEL=sonnet TIMEOUT=300 bash evals/run-isolated.sh <version>
+
+# Compare results
+python3 evals/scripts/report.py evals/results/
+```
 
 ## License
 

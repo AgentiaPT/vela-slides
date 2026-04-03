@@ -69,7 +69,7 @@
                     },
                     {
                       "icon": "Layers",
-                      "text": "22+ Block Types"
+                      "text": "27 Block Types"
                     },
                     {
                       "icon": "Palette",
@@ -348,6 +348,191 @@
             }
           ],
           "createdAt": "2026-03-29T22:32:12.964Z"
+        }
+      ]
+    },
+    {
+      "id": "b1c2d3e4",
+      "title": "New Block Primitives",
+      "collapsed": false,
+      "items": [
+        {
+          "id": "np01ab01",
+          "title": "Comparison & Funnel",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 0,
+          "slides": [
+            {
+              "title": "Comparison Block",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "NEW BLOCK", "icon": "Columns", "bg": "#3b82f612", "color": "#60a5fa" },
+                { "type": "heading", "text": "Before / After Comparison", "size": "2xl" },
+                { "type": "spacer", "h": 8 },
+                {
+                  "type": "comparison",
+                  "items": [
+                    { "title": "Before", "icon": "X", "color": "#ef4444", "items": ["Manual SSH deploys", "2-hour release cycles", "No rollback capability"] },
+                    { "title": "After", "icon": "Check", "color": "#22c55e", "items": ["CI/CD with GitHub Actions", "5-minute zero-downtime deploys", "One-click rollback"] }
+                  ],
+                  "dividerLabel": "VS"
+                }
+              ]
+            },
+            {
+              "title": "Funnel Block",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1a2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "PIPELINE", "icon": "Filter", "bg": "#8b5cf612", "color": "#a78bfa" },
+                { "type": "heading", "text": "Conversion Drops 40% at Activation", "size": "2xl" },
+                { "type": "spacer", "h": 8 },
+                {
+                  "type": "funnel",
+                  "items": [
+                    { "label": "Visitors", "value": "124,000", "color": "#3b82f6" },
+                    { "label": "Signups", "value": "31,200", "color": "#6366f1", "drop": "−74.8%" },
+                    { "label": "Activated", "value": "4,800", "color": "#ef4444", "drop": "−84.6%", "highlight": true },
+                    { "label": "Paying", "value": "1,920", "color": "#a855f7", "drop": "−60.0%" }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "np02ab02",
+          "title": "Cycle & Number Row",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 1,
+          "slides": [
+            {
+              "title": "Cycle Block",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#10b981",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "AGENT PATTERN", "icon": "RefreshCw", "bg": "#10b98112", "color": "#34d399" },
+                { "type": "heading", "text": "ReAct Agent Loop", "size": "2xl" },
+                {
+                  "type": "cycle",
+                  "centerLabel": "ReAct",
+                  "centerSub": "Agent Loop",
+                  "items": [
+                    { "label": "Think", "icon": "🧠", "color": "#3b82f6" },
+                    { "label": "Act", "icon": "⚡", "color": "#22c55e" },
+                    { "label": "Observe", "icon": "👁", "color": "#f97316" },
+                    { "label": "Reflect", "icon": "🔄", "color": "#8b5cf6" },
+                    { "label": "Decide", "icon": "🎯", "color": "#ec4899" }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Number Row Block",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "Q1 2026 · PERFORMANCE", "icon": "Activity", "bg": "#3b82f612", "color": "#60a5fa" },
+                { "type": "heading", "text": "Platform Health at a Glance", "size": "2xl" },
+                { "type": "spacer", "h": 12 },
+                {
+                  "type": "number-row",
+                  "items": [
+                    { "value": "99.97%", "label": "Uptime", "icon": "Activity", "color": "#22c55e" },
+                    { "value": "38ms", "label": "P95 Latency", "icon": "Clock", "color": "#3b82f6" },
+                    { "value": "2.4M", "label": "Active Users", "icon": "Users", "color": "#8b5cf6" },
+                    { "value": "$4.2M", "label": "ARR", "icon": "DollarSign", "color": "#f97316" }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "np03ab03",
+          "title": "Matrix & Checklist",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 2,
+          "slides": [
+            {
+              "title": "Matrix Block",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "STRATEGIC ANALYSIS", "icon": "LayoutGrid", "bg": "#3b82f612", "color": "#60a5fa" },
+                { "type": "heading", "text": "Market Position — SWOT", "size": "xl" },
+                { "type": "spacer", "h": 4 },
+                {
+                  "type": "matrix",
+                  "xLeft": "INTERNAL",
+                  "xRight": "EXTERNAL",
+                  "yTop": "POSITIVE",
+                  "yBottom": "NEGATIVE",
+                  "quadrants": [
+                    { "title": "Strengths", "icon": "TrendingUp", "color": "#22c55e", "items": ["Strong engineering team", "First-mover in AI slides", "Loyal community"] },
+                    { "title": "Opportunities", "icon": "Lightbulb", "color": "#3b82f6", "items": ["Enterprise market", "API ecosystem", "Education vertical"] },
+                    { "title": "Weaknesses", "icon": "TrendingDown", "color": "#f97316", "items": ["Small team", "Limited blocks", "No mobile app"] },
+                    { "title": "Threats", "icon": "AlertTriangle", "color": "#ef4444", "items": ["Big tech competitors", "Gamma.app growth", "Model cost increases"] }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Checklist Block",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#22c55e",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                { "type": "badge", "text": "LAUNCH READINESS", "icon": "CheckCircle", "bg": "#22c55e12", "color": "#34d399" },
+                { "type": "heading", "text": "Enterprise Tier — Go/No-Go", "size": "2xl" },
+                { "type": "text", "text": "6 of 9 requirements complete. Target: Q2 2026.", "size": "md", "color": "#94a3b8" },
+                { "type": "spacer", "h": 8 },
+                {
+                  "type": "checklist",
+                  "items": [
+                    { "text": "SSO / SAML integration", "status": "done" },
+                    { "text": "Audit logging with 90-day retention", "status": "done" },
+                    { "text": "Role-based access control (RBAC)", "status": "done" },
+                    { "text": "99.95% SLA with monitoring", "status": "done" },
+                    { "text": "Data encryption at rest and in transit", "status": "done" },
+                    { "text": "Dedicated support channel", "status": "done" },
+                    { "text": "SOC 2 Type II certification", "status": "partial" },
+                    { "text": "HIPAA BAA template", "status": "pending" },
+                    { "text": "EU data residency (blocked on infra)", "status": "blocked" }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }

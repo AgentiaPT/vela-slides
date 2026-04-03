@@ -1,0 +1,108 @@
+{
+  "session_id": "unknown",
+  "model": "sonnet",
+  "version": "v12.25",
+  "scenario": "create-ship-serve",
+  "rep": 1,
+  "turns": 0,
+  "totals": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": 0.0,
+    "tool_calls": 0,
+    "duration_s": 301.0
+  },
+  "error": "timeout",
+  "assertions": {
+    "passed": 6,
+    "total": 6,
+    "slides": 10,
+    "types_found": [
+      "badge",
+      "callout",
+      "checklist",
+      "comparison",
+      "flow",
+      "funnel",
+      "heading",
+      "icon-row",
+      "matrix",
+      "number-row",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 10
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 10,
+      "block_types_used": [
+        "badge",
+        "callout",
+        "checklist",
+        "comparison",
+        "flow",
+        "funnel",
+        "heading",
+        "icon-row",
+        "matrix",
+        "number-row",
+        "progress",
+        "quote",
+        "steps",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.8,
+      "block_type_entropy": 3.371,
+      "monotony_ratio": 0.222,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 30.4,
+      "blocks_per_slide": 4.5
+    }
+  }
+}

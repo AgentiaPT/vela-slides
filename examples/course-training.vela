@@ -43,12 +43,16 @@
               "blocks": [
                 { "type": "heading", "text": "Learning Objectives", "size": "2xl", "icon": "Target" },
                 { "type": "spacer", "h": 10 },
-                { "type": "bullets", "items": [
-                  "Distinguish between zero-shot, few-shot, and chain-of-thought prompting strategies",
-                  "Construct structured prompts using the Context-Instruction-Examples-Constraints framework",
-                  "Evaluate prompt quality by analyzing output relevance, accuracy, and consistency",
-                  "Refactor underperforming prompts through systematic iteration and testing"
-                ], "icon": "CheckCircle", "size": "md" },
+                {
+                  "type": "checklist",
+                  "items": [
+                    { "text": "Distinguish between zero-shot, few-shot, and chain-of-thought prompting strategies", "status": "pending" },
+                    { "text": "Construct structured prompts using the CIEC framework", "status": "pending" },
+                    { "text": "Evaluate prompt quality by analyzing output relevance, accuracy, and consistency", "status": "pending" },
+                    { "text": "Refactor underperforming prompts through systematic iteration and testing", "status": "pending" }
+                  ],
+                  "showLabels": false
+                },
                 { "type": "spacer", "h": 12 },
                 { "type": "callout", "text": "Prerequisites: Completion of Module 1 (AI Overview) and Module 2 (Language Models). Familiarity with at least one LLM interface (Claude, ChatGPT, etc.).", "icon": "Info", "bg": "#10b98115", "border": "#10b98140" }
               ]
@@ -64,18 +68,19 @@
               "blocks": [
                 { "type": "heading", "text": "Core Prompting Strategies", "size": "2xl", "icon": "Lightbulb" },
                 { "type": "spacer", "h": 8 },
-                { "type": "grid", "columns": 2, "gap": 16, "items": [
-                  { "blocks": [
-                    { "type": "heading", "text": "Zero-Shot", "size": "lg", "icon": "Zap", "color": "#34d399" },
-                    { "type": "text", "text": "No examples provided. The model relies entirely on its training to interpret the task.", "size": "sm", "color": "#a7f3d0" },
-                    { "type": "code", "text": "Classify this review as positive\nor negative:\n\"The battery lasts all day.\"", "size": "sm" }
-                  ]},
-                  { "blocks": [
-                    { "type": "heading", "text": "Few-Shot", "size": "lg", "icon": "Layers", "color": "#34d399" },
-                    { "type": "text", "text": "Provide 2-5 input/output examples so the model learns the pattern before answering.", "size": "sm", "color": "#a7f3d0" },
-                    { "type": "code", "text": "\"Great product!\" → Positive\n\"Broke after a week\" → Negative\n\"Battery lasts all day\" → ?", "size": "sm" }
-                  ]}
-                ]},
+                {
+                  "type": "matrix",
+                  "xLeft": "Simple Tasks",
+                  "xRight": "Complex Tasks",
+                  "yTop": "High Accuracy",
+                  "yBottom": "Low Cost",
+                  "quadrants": [
+                    { "title": "Few-Shot", "icon": "Layers", "color": "#34d399", "items": ["2-5 examples", "+15-30% accuracy"] },
+                    { "title": "Chain-of-Thought", "icon": "Link", "color": "#3b82f6", "items": ["Step-by-step reasoning", "Best for multi-step"] },
+                    { "title": "Zero-Shot", "icon": "Zap", "color": "#f59e0b", "items": ["No examples needed", "Lowest token cost"] },
+                    { "title": "Direct Instruction", "icon": "MessageSquare", "color": "#a78bfa", "items": ["Clear task statement", "Good baseline"] }
+                  ]
+                },
                 { "type": "text", "text": "Key insight: Few-shot prompting improves accuracy by 15-30% on classification tasks, but adds token cost. Choose based on your accuracy-cost tradeoff.", "size": "sm", "color": "#6ee7b7" }
               ]
             },
@@ -97,12 +102,17 @@
                   { "title": "Constraints", "text": "Set boundaries: length limits, tone, forbidden topics, output schema" }
                 ]},
                 { "type": "spacer", "h": 10 },
-                { "type": "flow", "items": [
-                  { "icon": "PenTool", "text": "Draft" },
-                  { "icon": "Play", "text": "Test" },
-                  { "icon": "BarChart", "text": "Evaluate" },
-                  { "icon": "RefreshCw", "text": "Refine" }
-                ], "connector": "arrow" }
+                {
+                  "type": "cycle",
+                  "items": [
+                    { "label": "Draft", "icon": "✏️" },
+                    { "label": "Test", "icon": "▶️" },
+                    { "label": "Evaluate", "icon": "📊" },
+                    { "label": "Refine", "icon": "🔄" }
+                  ],
+                  "centerLabel": "CIEC",
+                  "centerSub": "iterate"
+                }
               ]
             },
             {
@@ -118,11 +128,14 @@
                 { "type": "spacer", "h": 6 },
                 { "type": "callout", "text": "Write a prompt that asks an LLM to summarize a research paper into a 3-bullet executive brief for a non-technical CEO. Apply all four CIEC steps. Test with at least two different papers and compare outputs.", "icon": "FileQuestion", "bg": "#34d39915", "border": "#34d39940" },
                 { "type": "spacer", "h": 8 },
-                { "type": "table", "headers": ["Criteria", "Weak Prompt", "Strong Prompt"], "rows": [
-                  ["Context", "\"Summarize this paper\"", "\"You are a research analyst writing for a non-technical executive audience\""],
-                  ["Specificity", "\"Make it short\"", "\"Produce exactly 3 bullet points, each under 20 words\""],
-                  ["Output format", "No format specified", "\"Return as a markdown list with bold key findings\""]
-                ], "size": "sm" },
+                {
+                  "type": "comparison",
+                  "items": [
+                    { "title": "Weak Prompt", "icon": "AlertTriangle", "color": "#ef4444", "items": ["\"Summarize this paper\"", "\"Make it short\"", "No format specified"] },
+                    { "title": "Strong Prompt", "icon": "CheckCircle", "color": "#22c55e", "items": ["\"You are a research analyst for a non-technical exec\"", "\"Exactly 3 bullet points, each under 20 words\"", "\"Markdown list with bold key findings\""] }
+                  ],
+                  "dividerLabel": "VS"
+                },
                 { "type": "spacer", "h": 8 },
                 { "type": "badge", "text": "Due: Next Session", "icon": "Calendar", "color": "#fbbf24", "bg": "#fbbf2415", "border": "#fbbf2440" }
               ]

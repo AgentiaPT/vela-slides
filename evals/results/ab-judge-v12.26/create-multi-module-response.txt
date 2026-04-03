@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "2",
+      "reasoning": "Deck 2 organizes 12 slides into 3 balanced groups (Strategy 4, Execution 4, Results 4), which mirrors a natural narrative arc and gives each section real substance. Deck 1 splits the same 12 slides into 6 groups of only 2 slides each, making every group feel thin and underdeveloped. Both have a proper gradient closing slide and consistent badge/heading on every content slide, but Deck 2's macro grouping is cleaner and more presentation-ready."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses varied spacing tokens (8, 12, 16, 20) that create clear visual rhythm and breathing room between elements. Deck 1 relies almost exclusively on spacing value 12 throughout, producing a monotonous cadence. Deck 2's closing gradient (135deg, #0F172A → #2D1B69 → #8B5CF6) ends on the primary accent purple, making it more visually punchy. Both use 2xl headings on content slides and 4xl on the closing slide, so heading hierarchy is comparable, but Deck 2's finer spacing control gives it the edge."
+    },
+    "content_quality": {
+      "winner": "2",
+      "reasoning": "Both decks have strong assertion-style headlines. Deck 2 edges ahead on two specifics: (1) the customer quote is attributed to 'VP Operations, mid-market manufacturing firm' rather than the generic 'Product Vision' in Deck 1, making it feel real; (2) the weekly pulse metrics table includes Owner and Cadence columns, and the 30-60-90 day roadmap slide is more operationally detailed (CAC payback trigger, Series A mention). Deck 1's funnel and ad-channel breakdown are excellent, but Deck 2 delivers slightly more actionable, specific content overall."
+    },
+    "block_variety": {
+      "winner": "1",
+      "reasoning": "Deck 1 uses approximately 20 distinct block types: badge, heading, text, matrix, number-row, table, callout, comparison, tag-group, quote, icon-row, progress, timeline, grid/metric, checklist, flow, bullets, funnel, steps, and divider. Deck 2 uses roughly 16, omitting matrix, number-row, comparison, checklist, and funnel. The funnel block in Deck 1 is particularly well-placed for a conversion pipeline visualization, the comparison block is ideal for competitive positioning, and the checklist for QA status — each semantically appropriate. Deck 1 wins this dimension decisively."
+    },
+    "brand_consistency": {
+      "winner": "tie",
+      "reasoning": "Both decks use the same core palette (accent #8B5CF6, dark backgrounds #0F172A/#1E293B/#2D1B69) with consistent badge styling, metric card backgrounds, and theme variant alternation (d/a). Deck 1 assigns $B to the light color and $C to dark (non-standard), while Deck 2 uses the more intuitive $B=dark, $C=light mapping. Deck 1 uses $F for callout backgrounds; Deck 2 uses $E — both internally consistent. No clashing colors in either deck. The difference is minor enough to call a tie."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins on three of the five dimensions (structural completeness, visual hierarchy, content quality) and ties on a fourth. Its 3-group narrative architecture (Strategy / Execution / Results) is more persuasive, its varied spacing tokens create a more polished visual rhythm, and its content includes more operationally specific details like attributed customer quotes, owner-tagged metric tables, and a phased 30-60-90 plan. Deck 1's decisive advantage in block variety (20 vs ~16 types, including funnel, comparison, matrix, and checklist) is real and noteworthy, but it doesn't overcome the structural and content gaps. For a product launch presentation, Deck 2 reads as the more compelling, professional-grade artifact."
+}
+```

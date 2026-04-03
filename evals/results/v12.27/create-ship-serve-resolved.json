@@ -1,0 +1,27 @@
+{
+  "scenario": "create-ship-serve",
+  "swapped": true,
+  "overall_winner": "v12.27",
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks have 9 slides across 5 well-named groups, with proper gradient covers, gradient closing slides, and headings on every content slide. Deck 2 includes a 'Challenges & Solutions' section that adds thematic completeness, while Deck 1 has a dedicated 'People & Culture' section that Deck 2 folds into its async content. Both are structurally sound and well-organized \u2014 essentially equivalent."
+    },
+    "visual_hierarchy": {
+      "winner": "v12.27",
+      "reasoning": "Deck 1's cover is stronger \u2014 a number-row beneath the tagline communicates scale immediately and provides visual anchoring that Deck 2's tag-group cannot match. Deck 1 also uses the funnel block (a visually distinct element) for the hybrid model breakdown, while Deck 2 uses a flat grid for its equivalent slide. Both use badges, gradients, and correct size hierarchies (4xl/3xl/2xl/lg), but Deck 1 leverages more visually differentiated block types to create better rhythm across slides."
+    },
+    "content_quality": {
+      "winner": "v12.27",
+      "reasoning": "Deck 1 consistently leads with strong declarative assertion headlines: 'Remote Work Adoption Surged 400% \u2014 and Never Snapped Back', 'Top Talent Now Treats Remote Flexibility as Non-Negotiable Compensation', 'Async-First Culture Is the Biggest Predictor of Remote Team Performance'. Deck 2 has some weaker titles ('Remote Work Crossed the Point of No Return' is more evocative than assertive; 'Five Pillars of the Modern Remote Stack' is descriptive). Deck 1's metrics are more credible and specific ($18K, 54%, 3\u00d7 attrition); Deck 2's '4.7x Productivity Gain' feels inflated without qualification. The checklist with done/pending status in Deck 1 is particularly effective at conveying actionable insight."
+    },
+    "block_variety": {
+      "winner": "v12.27",
+      "reasoning": "Deck 1 uses 16 distinct block types: badge, heading, text, number-row, comparison, callout, funnel, icon-row, progress, steps, grid, metric, quote, checklist, timeline, tag-group. Deck 2 uses 15: badge, heading, text, tag-group, grid, metric, flow, bullets, callout, icon-row, progress, steps, table, quote, timeline. Deck 1's unique additions \u2014 number-row on the cover, comparison (before/after), funnel, and checklist \u2014 are semantically well-matched to their content. Deck 2's table block is a nice addition, but it doesn't close the gap. Deck 1 wins on both count and semantic appropriateness."
+    },
+    "brand_consistency": {
+      "winner": "v12.27",
+      "reasoning": "Deck 1 applies a disciplined three-tone accent system ($A/#3B82F6, $B/#60A5FA, $C/#93C5FD) with $D/#1E3A5F as the consistent badge background \u2014 every badge follows this pattern throughout. Deck 2 uses $F/#172554 for badge backgrounds consistently, but both of its themes share the same accent ($A), making them less visually differentiated than Deck 1's d vs. a themes. Critically, Deck 2 introduces a hardcoded '#1C0A0A' (dark red) as a callout background on the Challenges slide \u2014 a color not present anywhere in its palette \u2014 which breaks brand consistency. Deck 1 has no such violations."
+    }
+  }
+}

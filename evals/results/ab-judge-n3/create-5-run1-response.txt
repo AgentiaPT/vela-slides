@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "2",
+      "reasoning": "Both decks have the correct 5-slide arc (cover → problem → solution → metrics → close) with proper headings and section grouping. Deck 2 earns a slight edge because it renames the metrics section 'Traction' — the semantically correct pitch-deck label — and its cover heading diverges from the deck title ('AI is Rewriting the Rules of Patient Care') rather than merely repeating it, which is a structural best-practice for openings."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses green ($A) for the cover subtitle text, creating a deliberate two-color accent hierarchy on the hero slide. It also attaches icons (Mail, Globe, Linkedin, Phone) to each contact tag in the closing slide and adds a divider + copyright line, giving the footer clear visual weight. The closing gradient in Deck 2 (3-stop: #0F172A → #064E3B → #10B981) mirrors the cover gradient, creating a stronger bookend effect. Deck 1's cover subtitle is plain $C (light gray) with no differentiation, and the close slide lacks the icon-enriched tags and structural footer."
+    },
+    "content_quality": {
+      "winner": "2",
+      "reasoning": "Deck 2's traction headline is an exemplary assertion slide title — '98.5% Accuracy, 40% Faster Diagnoses, $2.3M Saved Per Year' — embedding the proof points directly in the heading rather than the vague 'Proven Outcomes Across 50+ Health Systems' in Deck 1. Deck 2's callout figure ($935B US-specific) is more credible and sourced-sounding than Deck 1's round '$100B globally.' The time reduction '8.3 hours → 5.0 hours' in Deck 2 is more believable and precise than Deck 1's '5 days → 3 days' (a 40% reduction of days strains credulity for an ER workflow). Deck 2 also adds a bullets block on the solution slide with three substantive differentiators, and its progress bar at 85% is more realistic than Deck 1's 98%."
+    },
+    "block_variety": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses 12 distinct block types (badge, heading, text, tag-group, icon-row, callout, flow, bullets, grid, metric, progress, divider) versus Deck 1's 10 (missing bullets and divider). The bullets block is placed exactly where it belongs — elaborating three concise technical differentiators on the solution slide — and the divider cleanly separates the footer copyright from the CTA content. Both uses are semantically appropriate, not decorative."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Both decks share identical palettes and theme definitions. Deck 2 uses #134E4A ($F) for metric card backgrounds, which is a dark green tint that stays cohesive with the overall teal-green brand, whereas Deck 1 uses #1E293B (slate) cards with a green border-top — a slight jarring split between green and slate. Deck 2's three-stop closing gradient (echoing the cover exactly) creates palette bookending. Deck 1's close uses a two-stop gradient that doesn't fully match its cover, weakening the consistency."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins across all five dimensions. Its most decisive advantages are in content quality — the traction headline embeds the key metrics directly as a declarative assertion, which is the gold standard for pitch decks — and in block variety, where the added bullets and divider blocks are each semantically appropriate. The visual and brand improvements (icon-enriched contact tags, matching gradients, green-tinted metric cards) are smaller but reinforce the lead. Deck 1 is solid but doesn't outperform Deck 2 in any area."
+}
+```

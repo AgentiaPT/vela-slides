@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "2",
+      "reasoning": "Both decks have proper cover/content/closing flow with badge + heading on every content slide. Deck 2 edges ahead by spreading content across more purposefully scoped slides (e.g., dedicating separate slides to quote/callout vs. bullets/tag-group/icon-row), and by using numeric spacer shorthands (16, 8, 12, 20, 24) between every block group to make vertical rhythm an explicit structural decision rather than an afterthought. Deck 1's closing slide is solid, but Deck 2's closing callout enumerates all 21 types inline, reinforcing the structural narrative."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 demonstrates far more deliberate vertical rhythm by inserting numeric spacers (8, 12, 14, 16, 18, 20, 24) between nearly every block, preventing the visual cramming that appears in several of Deck 1's slides. Deck 2 also varies heading sizes within content slides (3xl intro heading → 2xl subsection headings) to create sub-hierarchy, while Deck 1 mostly stays at 2xl for all content headings. Both use gradients on cover and closing, but Deck 2's three-stop gradient on the closing is richer. Deck 1's cover lacks explicit spacers between the heading and supporting text, which flattens the hierarchy."
+    },
+    "content_quality": {
+      "winner": "1",
+      "reasoning": "Deck 1's slide names are stronger assertion headlines — 'Labels & Alerts Capture Attention Instantly', 'Metrics & Progress Tell the Performance Story', 'Timeline Maps Every Milestone to Its Moment' — these are declarative claims, not mere descriptions. Deck 2's titles lean more descriptive: 'Timelines and Flows Show How Work Actually Moves' is reasonable, but 'Tables Structure the Data Readers Need to Compare' and 'Code, SVG, and Spacer Round Out the Full Toolkit' are catalog descriptions rather than assertions. Deck 1 also packs more specific, credible numbers (ARR, NRR, churn, Series A valuation) across multiple slides vs. Deck 2's narrower set. Both avoid placeholder text and have plausible content."
+    },
+    "block_variety": {
+      "winner": "tie",
+      "reasoning": "Both decks demonstrate all 20 core block types (heading, text, quote, badge, callout, bullets, icon-row, tag-group, grid, table, metric, progress, timeline, flow, steps, image, code, svg, spacer, divider). Deck 2 claims 21 but its closing callout still only enumerates 20 named types — likely counting numeric shorthand spacers as a distinct variant. Semantic matching is strong in both: flow for pipelines, timeline for roadmaps, steps for CLI instructions, grid wrapping metrics. Neither deck has a meaningful edge in variety or semantic appropriateness."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Deck 2 defines a 10-color semantic palette ($A blue, $H green, $I amber, $J red, $G muted gray) and applies it purposefully: green for STABLE/success states, red/dark-red backgrounds for destructive-action callouts, amber for in-progress progress bars. This creates a coherent semantic color language across slides. Deck 1 uses only 6 palette colors and applies them less systematically — for instance, hardcoding #22C55E and #EF4444 inline rather than through palette references, which breaks single-source-of-truth consistency. Note: Deck 2's palette keys use a '$' prefix (e.g., '$A' instead of 'A'), which is an unusual convention and could cause reference resolution issues, but the intent and design coherence are clearly superior. Both use consistent dark backgrounds and gradient covers."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins on visual hierarchy (deliberate spacer-driven rhythm throughout), brand consistency (10-color semantic palette applied meaningfully), and structural polish (more granular slide scoping). Deck 1 wins on content quality through stronger assertion headlines and richer numerical specificity. Block variety is a tie. The margin on visual hierarchy and color system is larger than the margin on headline assertion style, making Deck 2 the stronger overall presentation — it would render more professionally with cleaner breathing room and more purposeful color signaling."
+}
+```

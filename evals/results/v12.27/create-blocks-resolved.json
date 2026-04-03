@@ -1,0 +1,27 @@
+{
+  "scenario": "create-blocks",
+  "swapped": false,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "v12.27",
+      "reasoning": "Deck 2 accurately claims '20 Block Types' and delivers exactly that, with a dedicated 'Closing' group making the cover/content/closing arc explicit. Deck 1 has a significant inconsistency: the cover badge says 'ALL 21 BLOCK TYPES', the final heading says '21 Block Types', but the closing callout and cover tag-group both enumerate only 20 types. Deck 2 also splits groups more cleanly (6 groups vs 5) and each group name aligns tightly with its content. Both decks have proper badges on content slides and logical section progression, but Deck 1's mislabeled count is a notable structural error."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 1 uses more varied heading sizes across slides \u2014 3xl on several content slides versus Deck 2's uniform 2xl on every content slide. Deck 1's cover includes a badge above the 4xl title, establishing a proper three-level visual entry (badge \u2192 heading \u2192 body), while Deck 2's cover skips the badge. Deck 1 also uses sm-sized explanatory text as a third tier within slides (e.g., the spacer annotation), reinforcing the size hierarchy throughout. Both decks correctly use gradients on cover and closing slides."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 1's assertion headlines are more muscular and declarative ('Metrics and Progress Communicate Status Without Words', 'Tables Structure the Data Readers Need to Compare', 'Steps Turn Complex Processes into Clear Instructions'). Its metrics are specific and plausible \u2014 99.97% uptime SLA, 4.2ms latency, 2.4M decks \u2014 lending credibility. Deck 2's metrics are vague or trivially round (20 block types, 960px, \u221e). Deck 1's block descriptions are richer and more instructional. Deck 2's headlines are good assertions but slightly more formulaic ('X & Y Do Z'). Both avoid placeholder text."
+    },
+    "block_variety": {
+      "winner": "tie",
+      "reasoning": "Both decks demonstrate all 20 block types with strong semantic placement. Deck 1 scores extra points for the destructive callout with a custom dark-red background ($J), showing callout color flexibility, and for the more richly populated icon-row items. Deck 2 earns credit for splitting progress/timeline/flow onto their own dedicated slide (better semantic grouping) and for the SVG slide that demonstrates two colored dividers side-by-side as a live example of the divider block itself. Usage quality is essentially equivalent across both."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Deck 1 maintains a tighter, more cohesive dark-blue palette \u2014 all badge backgrounds use $E (#1D3A6E), all accent highlights use $A (#3B82F6), and supporting text uses $G (#64748B) uniformly. Deck 2 introduces orange ($D) as a third accent alongside blue and green, which adds visual variety but reduces cohesion: the icon-row uses three different accent pairs, the closing tag-group cycles through four colors, and the palette has 11 named colors vs Deck 1's 10. Deck 2's closing gradient (3-stop with blue end) is visually richer, but Deck 1's overall color discipline is stronger."
+    }
+  }
+}

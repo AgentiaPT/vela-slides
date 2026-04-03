@@ -1,0 +1,2429 @@
+{
+  "deckTitle": "Vela Slides \u2014 Eval Fixture Deck",
+  "lanes": [
+    {
+      "title": "Introduction",
+      "items": [
+        {
+          "title": "Intro",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Vela Slides",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "40px 60px",
+              "duration": 20,
+              "layout": "center",
+              "blocks": [
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "badge",
+                  "text": "OPEN SOURCE",
+                  "icon": "Github",
+                  "color": "#60a5fa",
+                  "bg": "#60a5fa15",
+                  "border": "#60a5fa40"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "svg",
+                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "align": "center",
+                  "maxWidth": "48px"
+                },
+                {
+                  "type": "heading",
+                  "text": "Vela Slides",
+                  "size": "4xl",
+                  "align": "center"
+                },
+                {
+                  "type": "heading",
+                  "text": "AI-native presentations for Claude.ai",
+                  "size": "xl",
+                  "align": "center",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 30
+                },
+                {
+                  "type": "text",
+                  "text": "This deck is built with Vela. Every slide demonstrates the feature it describes.\nClick **\ud83e\udd16 Vera** to start editing \u2014 this is your playground.",
+                  "size": "lg",
+                  "color": "#64748b",
+                  "align": "center"
+                }
+              ]
+            },
+            {
+              "title": "What is Vela?",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(160deg, #0f172a 0%, #172032 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "A Presentation Engine Inside Claude",
+                  "size": "3xl",
+                  "icon": "Zap"
+                },
+                {
+                  "type": "text",
+                  "text": "Vela is a 6,600-line React app that runs as a Claude.ai artifact. You describe your deck \u2014 Vera builds it.",
+                  "size": "lg",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "MessageSquare",
+                      "text": "Describe"
+                    },
+                    {
+                      "icon": "Cpu",
+                      "text": "Generate"
+                    },
+                    {
+                      "icon": "Eye",
+                      "text": "Review"
+                    },
+                    {
+                      "icon": "Sparkles",
+                      "text": "Iterate"
+                    },
+                    {
+                      "icon": "Presentation",
+                      "text": "Present"
+                    }
+                  ],
+                  "connector": "arrow"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "callout",
+                  "text": "This flow block you just saw? One of 22+ semantic block types. No text boxes \u2014 structured content.",
+                  "icon": "Info",
+                  "bg": "#3b82f612",
+                  "border": "#3b82f630"
+                }
+              ]
+            },
+            {
+              "title": "Why Not PowerPoint?",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 75,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Traditional vs. AI-Native",
+                  "size": "3xl",
+                  "icon": "GitCompare"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Traditional Slides",
+                          "size": "xl",
+                          "icon": "X",
+                          "color": "#f87171"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Manual formatting for every element",
+                            "One primitive: the text box",
+                            "Design is a separate, manual step",
+                            "Static once created"
+                          ],
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Vela",
+                          "size": "xl",
+                          "icon": "Check",
+                          "color": "#4ade80"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Semantic blocks with built-in design",
+                            "22+ types: flows, grids, metrics, timelines",
+                            "Design patterns baked into generation",
+                            "Live AI editing inside the deck"
+                          ],
+                          "size": "md"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 4
+                },
+                {
+                  "type": "text",
+                  "text": "\u2191 This comparison uses a grid block \u2014 2 columns, each with its own heading + bullets.",
+                  "size": "sm",
+                  "color": "#64748b"
+                }
+              ]
+            },
+            {
+              "title": "Key Numbers",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a0f2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 30,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Vela by the Numbers",
+                  "size": "3xl",
+                  "icon": "BarChart3"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "22+",
+                          "label": "Block Types",
+                          "icon": "Layers",
+                          "trend": "up"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "6.6K",
+                          "label": "Lines of Code",
+                          "icon": "Code"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "0",
+                          "label": "Dependencies",
+                          "icon": "Package",
+                          "trend": "up"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "18",
+                          "label": "Vera Tools",
+                          "icon": "Wrench"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "text",
+                  "text": "\u2191 Four metric blocks in a grid. Each has value, label, icon, and optional trend indicator.",
+                  "size": "sm",
+                  "color": "#64748b"
+                }
+              ]
+            },
+            {
+              "title": "Text Blocks",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #162032 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Headings, Text & Bullets",
+                  "size": "2xl",
+                  "icon": "Type"
+                },
+                {
+                  "type": "text",
+                  "text": "Every text element supports **bold** and *italic* markdown. Sizes range from xs to 4xl.",
+                  "size": "md"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Bullet Lists",
+                          "size": "lg",
+                          "icon": "List"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Supports any number of items",
+                            "With **inline markdown** formatting",
+                            "And custom icon/color per list"
+                          ],
+                          "size": "md"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Callouts",
+                          "size": "lg",
+                          "icon": "AlertCircle"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Callouts draw attention to key insights. Icon, border, and background are customizable.",
+                          "icon": "Lightbulb",
+                          "bg": "#3b82f612",
+                          "border": "#3b82f630"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Flow Blocks",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Flows, Timelines & Steps",
+                  "size": "3xl",
+                  "icon": "ArrowRight"
+                },
+                {
+                  "type": "text",
+                  "text": "Process visualization with semantic connectors, roadmaps, and sequences.",
+                  "size": "lg",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "FileInput",
+                      "text": "Input"
+                    },
+                    {
+                      "icon": "Brain",
+                      "text": "Process"
+                    },
+                    {
+                      "icon": "CheckCircle",
+                      "text": "Validate"
+                    },
+                    {
+                      "icon": "Rocket",
+                      "text": "Deploy"
+                    }
+                  ],
+                  "connector": "arrow"
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "timeline",
+                  "items": [
+                    {
+                      "date": "v1.0",
+                      "title": "Core Engine",
+                      "text": "Block renderer, themes, storage"
+                    },
+                    {
+                      "date": "v5.0",
+                      "title": "Vera AI",
+                      "text": "Agentic chat, 18 tools"
+                    },
+                    {
+                      "date": "v8.0",
+                      "title": "Open Source",
+                      "text": "GitHub, PDF export, skill"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Data Blocks",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1a2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Tables, Progress & Tags",
+                  "size": "3xl",
+                  "icon": "Table"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "table",
+                  "headers": [
+                    "Block Type",
+                    "Use For",
+                    "Key Props"
+                  ],
+                  "rows": [
+                    [
+                      "metric",
+                      "KPIs, stats",
+                      "value, label, icon, trend"
+                    ],
+                    [
+                      "progress",
+                      "Bars, spectrums",
+                      "items[], max, showValue"
+                    ],
+                    [
+                      "table",
+                      "Structured data",
+                      "headers[], rows[][]"
+                    ],
+                    [
+                      "tag-group",
+                      "Labels, categories",
+                      "items[], color"
+                    ]
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "tag-group",
+                  "items": [
+                    {
+                      "text": "metric",
+                      "color": "#f59e0b"
+                    },
+                    {
+                      "text": "progress",
+                      "color": "#3b82f6"
+                    },
+                    {
+                      "text": "table",
+                      "color": "#a78bfa"
+                    },
+                    {
+                      "text": "tag-group",
+                      "color": "#34d399"
+                    },
+                    {
+                      "text": "icon-row",
+                      "color": "#f472b6"
+                    },
+                    {
+                      "text": "code",
+                      "color": "#64748b"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Icon Rows & Grids",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(160deg, #0f172a 0%, #162038 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Visual Organization",
+                  "size": "3xl",
+                  "icon": "LayoutGrid"
+                },
+                {
+                  "type": "text",
+                  "text": "Icon rows replace bullet lists with visual impact. Grids structure any content into columns.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    {
+                      "icon": "Sparkles",
+                      "text": "AI-Powered"
+                    },
+                    {
+                      "icon": "Palette",
+                      "text": "Themeable"
+                    },
+                    {
+                      "icon": "Smartphone",
+                      "text": "Mobile-Ready"
+                    },
+                    {
+                      "icon": "FileDown",
+                      "text": "PDF Export"
+                    },
+                    {
+                      "icon": "Moon",
+                      "text": "Dark Mode"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "grid",
+                  "columns": 3,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "badge",
+                          "text": "280+ ICONS",
+                          "icon": "Smile",
+                          "color": "#3b82f6",
+                          "bg": "#3b82f615"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Lucide icon set with PascalCase names",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "badge",
+                          "text": "7 THEMES",
+                          "icon": "Palette",
+                          "color": "#a78bfa",
+                          "bg": "#a78bfa15"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Dark, midnight, light, warm, vibrant, editorial, minimal",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "badge",
+                          "text": "SVG DIAGRAMS",
+                          "icon": "PenTool",
+                          "color": "#34d399",
+                          "bg": "#34d39915"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Custom vector graphics with theme tokens",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "SVG Diagrams",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Custom SVG with Theme Tokens",
+                  "size": "3xl",
+                  "icon": "PenTool"
+                },
+                {
+                  "type": "text",
+                  "text": "For diagrams that structured blocks can't express \u2014 meshes, fan-outs, custom layouts.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "svg",
+                  "markup": "<svg viewBox='0 0 500 140' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='60' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Skill</text><rect x='150' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='200' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Claude</text><rect x='290' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='340' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Artifact</text><rect x='430' y='40' width='60' height='60' rx='8' fill='{{accent}}' fill-opacity='0.15' stroke='{{accent}}' stroke-width='2'/><text x='460' y='75' text-anchor='middle' fill='{{accent}}' font-size='13' font-family='monospace'>You</text><line x1='110' y1='70' x2='150' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='250' y1='70' x2='290' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='390' y1='70' x2='430' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='6' markerHeight='6' orient='auto'><path d='M 0 0 L 10 5 L 0 10 z' fill='{{muted}}'/></marker></defs></svg>",
+                  "align": "center",
+                  "caption": "Vela pipeline: Skill \u2192 Claude \u2192 Artifact \u2192 You",
+                  "captionSize": "sm"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "callout",
+                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens \u2014 they adapt to any theme automatically.",
+                  "icon": "Palette",
+                  "bg": "#60a5fa12",
+                  "border": "#60a5fa30"
+                }
+              ]
+            },
+            {
+              "title": "Meet Vera",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #064e3b 100%)",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 75,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "\ud83e\udd16 Vera \u2014 Your Slide Co-Pilot",
+                  "size": "2xl"
+                },
+                {
+                  "type": "text",
+                  "text": "An agentic AI assistant *inside* the artifact. Vera has 18 tools for deck manipulation \u2014 she builds, edits, searches, and restyles without leaving the canvas.",
+                  "size": "md"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 3,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Build",
+                          "size": "md",
+                          "icon": "Hammer",
+                          "color": "#34d399"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "add_lane",
+                            "add_item",
+                            "set_slides",
+                            "add_slide",
+                            "batch_add_items"
+                          ],
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Edit",
+                          "size": "md",
+                          "icon": "Pencil",
+                          "color": "#60a5fa"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "find_replace",
+                            "batch_restyle",
+                            "rename_item",
+                            "move_item",
+                            "set_branding"
+                          ],
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Inspect",
+                          "size": "md",
+                          "icon": "Search",
+                          "color": "#f59e0b"
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "find_slides",
+                            "deck_stats",
+                            "update_status",
+                            "set_importance"
+                          ],
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Features",
+      "items": [
+        {
+          "title": "Block Types",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Try It Yourself",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #1e3a5f 0%, #0f172a 50%, #3b0764 100%)",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "padding": "48px 60px",
+              "duration": 15,
+              "layout": "center",
+              "blocks": [
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "heading",
+                  "text": "\ud83c\udfaf Practice Time",
+                  "size": "4xl",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "text",
+                  "text": "Click the **\ud83e\udd16 Vera** button on the right to open the chat panel.\nTry the exercises on the next slides \u2014 all of them work on *this* deck.",
+                  "size": "xl",
+                  "color": "#94a3b8",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "badge",
+                  "text": "LIVE PLAYGROUND",
+                  "icon": "Zap",
+                  "color": "#f59e0b",
+                  "bg": "#f59e0b15",
+                  "border": "#f59e0b40"
+                }
+              ]
+            },
+            {
+              "title": "Exercise 1 \u2014 Restyle",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1a2e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "EXERCISE 1",
+                  "icon": "Palette",
+                  "color": "#a78bfa",
+                  "bg": "#a78bfa15",
+                  "border": "#a78bfa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Restyle the Deck",
+                  "size": "3xl"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Open Vera",
+                      "text": "Click the \ud83e\udd16 Vera button in the top bar"
+                    },
+                    {
+                      "title": "Restyle command",
+                      "text": "Type: \"Restyle all slides to a warm editorial theme with amber accents\""
+                    },
+                    {
+                      "title": "Watch it work",
+                      "text": "Vera will use batch_restyle to update every slide in the deck"
+                    },
+                    {
+                      "title": "Compare",
+                      "text": "Ctrl+Z to undo and compare before/after"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "callout",
+                  "text": "Try other themes: midnight violet, vibrant startup, minimal corporate, warm light.",
+                  "icon": "Lightbulb",
+                  "bg": "#a78bfa12",
+                  "border": "#a78bfa30"
+                }
+              ]
+            },
+            {
+              "title": "Exercise 2 \u2014 Add Content",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 90,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "EXERCISE 2",
+                  "icon": "Plus",
+                  "color": "#34d399",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "heading",
+                  "text": "Add a New Section",
+                  "size": "3xl"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Choose a topic",
+                      "text": "Something you know well \u2014 your product, a hobby, a concept"
+                    },
+                    {
+                      "title": "Ask Vera",
+                      "text": "Type: \"Add a 3-slide section on [your topic] with a flow diagram and metrics\""
+                    },
+                    {
+                      "title": "Navigate",
+                      "text": "New slides appear in the left panel \u2014 click to view"
+                    },
+                    {
+                      "title": "Edit inline",
+                      "text": "Click any text on the slide to edit it directly"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "callout",
+                  "text": "Vera uses add_lane + add_item + add_slide tools. Each tool call is visible as a trace card in the chat.",
+                  "icon": "Wrench",
+                  "bg": "#34d39912",
+                  "border": "#34d39930"
+                }
+              ]
+            },
+            {
+              "title": "Exercise 3 \u2014 Search & Replace",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "EXERCISE 3",
+                  "icon": "Search",
+                  "color": "#3b82f6",
+                  "bg": "#3b82f615",
+                  "border": "#3b82f640"
+                },
+                {
+                  "type": "heading",
+                  "text": "Deck-Wide Operations",
+                  "size": "3xl"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "text",
+                  "text": "Try these commands with Vera \u2014 each demonstrates a different tool:",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Search",
+                          "size": "md",
+                          "icon": "Search"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Find all slides with flow blocks",
+                          "icon": "MessageSquare",
+                          "bg": "#3b82f612",
+                          "border": "#3b82f630"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Uses find_slides with block_type filter \u2014 returns clickable jump links.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Replace",
+                          "size": "md",
+                          "icon": "Replace"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Replace Vela with VELA across the whole deck",
+                          "icon": "MessageSquare",
+                          "bg": "#3b82f612",
+                          "border": "#3b82f630"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Uses find_replace \u2014 modifies all matching text in-place.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Audit",
+                          "size": "md",
+                          "icon": "ClipboardCheck"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Run deck_stats and show me quality issues",
+                          "icon": "MessageSquare",
+                          "bg": "#3b82f612",
+                          "border": "#3b82f630"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Returns slide count, total time, block distribution, and issues.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Branding",
+                          "size": "md",
+                          "icon": "Brush"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Set branding with a red accent bar and My Company footer",
+                          "icon": "MessageSquare",
+                          "bg": "#3b82f612",
+                          "border": "#3b82f630"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Uses set_branding \u2014 overlays on every slide.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Navigate & Search",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a2744 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Finding Your Way Around",
+                  "size": "3xl",
+                  "icon": "Compass"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Navigator Panel",
+                          "size": "lg",
+                          "icon": "List",
+                          "color": "#60a5fa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "The left panel organizes your deck into **lanes** and **modules**. Each module holds its slides. Drag to reorder, click to jump.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Press [ to toggle the navigator panel",
+                          "icon": "Keyboard",
+                          "bg": "#60a5fa10",
+                          "border": "#60a5fa30"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Presenter TOC",
+                          "size": "lg",
+                          "icon": "Search",
+                          "color": "#60a5fa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "In fullscreen mode, hover the left edge to reveal a **searchable table of contents**. Type to filter, click to jump across modules.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        },
+                        {
+                          "type": "callout",
+                          "text": "Works across lanes \u2014 navigate the whole deck from one panel",
+                          "icon": "Layers",
+                          "bg": "#60a5fa10",
+                          "border": "#60a5fa30"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Security Overview",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a2744 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "SECURITY & COMPLIANCE",
+                  "icon": "Shield",
+                  "color": "#60a5fa",
+                  "bg": "#60a5fa15",
+                  "border": "#60a5fa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Four Pillars Protect Every Layer",
+                  "size": "3xl",
+                  "icon": "Shield"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    {
+                      "icon": "Lock",
+                      "title": "Encryption",
+                      "text": "AES-256 at rest and TLS 1.3 in transit for all data",
+                      "iconColor": "#60a5fa",
+                      "iconBg": "#60a5fa15"
+                    },
+                    {
+                      "icon": "Eye",
+                      "title": "Zero Trust",
+                      "text": "Every request verified \u2014 no implicit internal trust",
+                      "iconColor": "#34d399",
+                      "iconBg": "#34d39915"
+                    },
+                    {
+                      "icon": "AlertTriangle",
+                      "title": "Threat Detection",
+                      "text": "Real-time anomaly detection with automated response",
+                      "iconColor": "#f59e0b",
+                      "iconBg": "#f59e0b15"
+                    },
+                    {
+                      "icon": "Key",
+                      "title": "Access Control",
+                      "text": "Role-based permissions with MFA enforced org-wide",
+                      "iconColor": "#a78bfa",
+                      "iconBg": "#a78bfa15"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Compliance Matrix",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(160deg, #0f172a 0%, #172032 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "CERTIFICATIONS",
+                  "icon": "CheckCircle",
+                  "color": "#34d399",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "heading",
+                  "text": "Fully Certified Across All Major Frameworks",
+                  "size": "3xl",
+                  "icon": "Award"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "table",
+                  "headers": [
+                    "Framework",
+                    "Status",
+                    "Scope",
+                    "Last Audit",
+                    "Next Review"
+                  ],
+                  "rows": [
+                    [
+                      "SOC 2 Type II",
+                      "\u2705 Certified",
+                      "Full Platform",
+                      "Jan 2026",
+                      "Jan 2027"
+                    ],
+                    [
+                      "GDPR",
+                      "\u2705 Compliant",
+                      "EU Data Subjects",
+                      "Mar 2026",
+                      "Mar 2027"
+                    ],
+                    [
+                      "HIPAA",
+                      "\u2705 Certified",
+                      "Health Data Module",
+                      "Nov 2025",
+                      "Nov 2026"
+                    ],
+                    [
+                      "ISO 27001",
+                      "\u2705 Certified",
+                      "Information Security",
+                      "Feb 2026",
+                      "Feb 2027"
+                    ]
+                  ],
+                  "headerBg": "#60a5fa"
+                }
+              ]
+            },
+            {
+              "title": "Security Architecture",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a2744 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "ARCHITECTURE",
+                  "icon": "Layers",
+                  "color": "#60a5fa",
+                  "bg": "#60a5fa15",
+                  "border": "#60a5fa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Defense in Depth Across Every Layer",
+                  "size": "3xl",
+                  "icon": "Layers"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "Globe",
+                      "label": "Edge WAF"
+                    },
+                    {
+                      "icon": "Shield",
+                      "label": "DDoS Guard"
+                    },
+                    {
+                      "icon": "Lock",
+                      "label": "TLS Termination"
+                    },
+                    {
+                      "icon": "UserCheck",
+                      "label": "Auth & MFA"
+                    },
+                    {
+                      "icon": "Server",
+                      "label": "Encrypted Storage"
+                    }
+                  ],
+                  "accentColor": "#60a5fa"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "callout",
+                  "title": "Zero-Trust Perimeter",
+                  "text": "No lateral movement possible \u2014 every service-to-service call requires a signed JWT with least-privilege scopes.",
+                  "icon": "ShieldCheck",
+                  "bg": "#60a5fa10",
+                  "border": "#60a5fa30"
+                }
+              ]
+            },
+            {
+              "title": "Audit Results",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(160deg, #0f172a 0%, #172032 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "AUDIT RESULTS 2026",
+                  "icon": "BarChart2",
+                  "color": "#34d399",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "heading",
+                  "text": "99.8% Score \u2014 Zero Critical Findings",
+                  "size": "3xl",
+                  "icon": "TrendingUp"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "99.8%",
+                          "label": "Overall Score",
+                          "size": "2xl",
+                          "color": "#34d399"
+                        }
+                      ],
+                      "style": {
+                        "padding": "20px",
+                        "background": "#34d39910",
+                        "borderRadius": "8px",
+                        "border": "1px solid #34d39930"
+                      }
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "0",
+                          "label": "Critical Findings",
+                          "size": "2xl",
+                          "color": "#60a5fa"
+                        }
+                      ],
+                      "style": {
+                        "padding": "20px",
+                        "background": "#60a5fa10",
+                        "borderRadius": "8px",
+                        "border": "1px solid #60a5fa30"
+                      }
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "3",
+                          "label": "Low Findings",
+                          "size": "2xl",
+                          "color": "#f59e0b"
+                        }
+                      ],
+                      "style": {
+                        "padding": "20px",
+                        "background": "#f59e0b10",
+                        "borderRadius": "8px",
+                        "border": "1px solid #f59e0b30"
+                      }
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "14d",
+                          "label": "Remediation SLA",
+                          "size": "2xl",
+                          "color": "#a78bfa"
+                        }
+                      ],
+                      "style": {
+                        "padding": "20px",
+                        "background": "#a78bfa10",
+                        "borderRadius": "8px",
+                        "border": "1px solid #a78bfa30"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "progress",
+                  "value": 99.8,
+                  "label": "Audit Score",
+                  "color": "#34d399"
+                }
+              ]
+            },
+            {
+              "title": "Security Roadmap",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a2744 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "ROADMAP",
+                  "icon": "Map",
+                  "color": "#60a5fa",
+                  "bg": "#60a5fa15",
+                  "border": "#60a5fa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Continuous Hardening Through 2026",
+                  "size": "3xl",
+                  "icon": "Flag"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "timeline",
+                  "items": [
+                    {
+                      "title": "Q2 2026",
+                      "text": "Hardware Security Keys (FIDO2) mandatory for all admin accounts",
+                      "dotColor": "#60a5fa"
+                    },
+                    {
+                      "title": "Q3 2026",
+                      "text": "PCI DSS Level 1 certification for payment data processing",
+                      "dotColor": "#34d399"
+                    },
+                    {
+                      "title": "Q4 2026",
+                      "text": "AI-powered threat hunting integrated into SIEM pipeline",
+                      "dotColor": "#a78bfa"
+                    },
+                    {
+                      "title": "Q1 2027",
+                      "text": "FedRAMP Moderate authorization for US public sector customers",
+                      "dotColor": "#f59e0b"
+                    }
+                  ],
+                  "dotColor": "#60a5fa"
+                }
+              ]
+            },
+            {
+              "title": "AI Editing",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "padding": "36px 48px",
+              "duration": 75,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "AI-Powered Editing",
+                  "size": "3xl",
+                  "icon": "Sparkles"
+                },
+                {
+                  "type": "text",
+                  "text": "Three levels of AI editing \u2014 from single blocks to the entire deck.",
+                  "size": "lg",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "gap": 10,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Quick Edit",
+                          "size": "md",
+                          "icon": "Pencil",
+                          "color": "#a78bfa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Press **E** on any slide. Describe a change, paste an image as reference.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Auto-Improve",
+                          "size": "md",
+                          "icon": "Wand2",
+                          "color": "#a78bfa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Press **Shift+I** to let Vera analyze and improve the slide with visual context.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Variants",
+                          "size": "md",
+                          "icon": "Dices",
+                          "color": "#a78bfa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Click **\ud83c\udfb2 Variants** for 4 different design directions. Preview with **1-4**, accept with **Enter**.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Batch Edit",
+                          "size": "md",
+                          "icon": "Layers",
+                          "color": "#a78bfa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Use the **Batch** button to restyle or improve across module, section, or full deck.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "callout",
+                  "text": "Every AI edit supports undo (Ctrl+Z). Preview alternatives with 1-4 keys, accept with Enter, dismiss with Esc.",
+                  "icon": "RotateCcw",
+                  "bg": "#a78bfa10",
+                  "border": "#a78bfa30"
+                }
+              ]
+            },
+            {
+              "title": "Export & Share",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #0a2540 100%)",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Take It Anywhere",
+                  "size": "3xl",
+                  "icon": "Share2"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 3,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "PDF Export",
+                          "size": "md",
+                          "icon": "FileDown",
+                          "color": "#34d399"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Vector-quality canvas rendering. Clickable links preserved. Branding watermark. Supports 16:9, 1:1, and 4:5 ratios.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Markdown",
+                          "size": "md",
+                          "icon": "FileText",
+                          "color": "#34d399"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Full deck exported as structured markdown with headings, bullets, and optional speaker notes. Great for docs or READMEs.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "JSON",
+                          "size": "md",
+                          "icon": "Braces",
+                          "color": "#34d399"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Import/export the raw deck JSON. Copy-paste between decks, version in Git, or re-import into another Vela artifact.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    {
+                      "icon": "Monitor",
+                      "text": "Present Mode"
+                    },
+                    {
+                      "icon": "Moon",
+                      "text": "Dark / Light"
+                    },
+                    {
+                      "icon": "Smartphone",
+                      "text": "Mobile-Ready"
+                    },
+                    {
+                      "icon": "Save",
+                      "text": "Auto-Save"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "WYSIWYG & More",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "padding": "36px 48px",
+              "duration": 60,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "The Little Things",
+                  "size": "3xl",
+                  "icon": "Gem"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Inline Editing",
+                          "size": "lg",
+                          "icon": "MousePointerClick",
+                          "color": "#f59e0b"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Click any text on a slide to edit it directly. Supports **bold** and *italic* markdown. No modal, no sidebar \u2014 just click and type.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Auto Reflow",
+                          "size": "lg",
+                          "icon": "LayoutTemplate",
+                          "color": "#f59e0b"
+                        },
+                        {
+                          "type": "text",
+                          "text": "The Fit view mode automatically scales slides to fill the available panel width. Switch to 16:9, 1:1, or 4:5 from the view dropdown for fixed ratios.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Drag & Drop",
+                          "size": "lg",
+                          "icon": "GripVertical",
+                          "color": "#f59e0b"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Reorder slides by dragging thumbnails in the navigator. Move modules between lanes. Reorganize your deck without Vera.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Branding",
+                          "size": "lg",
+                          "icon": "Brush",
+                          "color": "#f59e0b"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Set a custom accent bar, logo position, and footer text via the Brand panel. Overlays every slide consistently \u2014 edit once, apply everywhere.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Tips & Tricks",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
+              "color": "#e2e8f0",
+              "accent": "#f472b6",
+              "padding": "36px 48px",
+              "duration": 75,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Pro Tips",
+                  "size": "3xl",
+                  "icon": "Flame"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Edit While Presenting",
+                          "size": "lg",
+                          "icon": "Pencil",
+                          "color": "#f472b6"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Inline editing works in fullscreen too \u2014 click any text on a slide to fix a typo or tweak wording mid-presentation. No need to exit.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Add Links to Any Text",
+                          "size": "lg",
+                          "icon": "Link",
+                          "color": "#f472b6"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Any text block, bullet, or icon-row item supports a **link** property. Clickable in both edit and present mode \u2014 opens in a new tab.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Paste Images Anywhere",
+                          "size": "lg",
+                          "icon": "Image",
+                          "color": "#f472b6"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Ctrl+V an image into the Vera chat, the quick edit prompt, or even the new slide dialog. Vera uses it as visual reference for design.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Cinema Mode",
+                          "size": "lg",
+                          "icon": "Monitor",
+                          "color": "#f472b6"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Claude.ai runs artifacts in a sandboxed iframe \u2014 **browser fullscreen is blocked by default**. In presenter mode, click the **\u26f5 icon** (top right) to copy a bookmarklet. Add it to your bookmarks bar once \u2014 then click it anytime you present for true fullscreen.",
+                          "size": "md",
+                          "color": "#94a3b8"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Go Build Something",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #3b0764 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "48px 60px",
+              "duration": 20,
+              "layout": "center",
+              "blocks": [
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "svg",
+                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "align": "center",
+                  "maxWidth": "48px"
+                },
+                {
+                  "type": "heading",
+                  "text": "Your Turn",
+                  "size": "4xl",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 14
+                },
+                {
+                  "type": "text",
+                  "text": "This deck is your playground. Try the **+ New** button for a fresh canvas,\nor keep building on what's here. Vera is ready.",
+                  "size": "xl",
+                  "color": "#94a3b8",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 18
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Advanced",
+      "items": [
+        {
+          "title": "Deep Dive",
+          "status": "done",
+          "slides": [
+            {
+              "title": "Credits",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "padding": "48px 60px",
+              "duration": 15,
+              "layout": "center",
+              "blocks": [
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "svg",
+                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "align": "center",
+                  "maxWidth": "48px"
+                },
+                {
+                  "type": "heading",
+                  "text": "Vela Slides",
+                  "size": "4xl",
+                  "align": "center"
+                },
+                {
+                  "type": "heading",
+                  "text": "AI-native presentation engine for Claude.ai",
+                  "size": "xl",
+                  "color": "#94a3b8",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "text",
+                  "text": "Created by **Rui Quintino**",
+                  "size": "lg",
+                  "align": "center"
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    {
+                      "icon": "Linkedin",
+                      "text": "linkedin.com/in/rquintino",
+                      "link": "https://www.linkedin.com/in/rquintino/"
+                    },
+                    {
+                      "icon": "Github",
+                      "text": "agentiapt/vela-slides",
+                      "link": "https://github.com/agentiapt/vela-slides"
+                    },
+                    {
+                      "icon": "Rocket",
+                      "text": "agentia.pt",
+                      "link": "https://agentia.pt"
+                    }
+                  ],
+                  "style": {
+                    "alignItems": "center"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "ELv2 \u2014 \u00a9 2025-present Rui Quintino \u00b7 Vera AI powered by your Claude.ai subscription",
+                  "size": "md",
+                  "color": "#64748b",
+                  "align": "center"
+                }
+              ]
+            },
+            {
+              "title": "Code Examples",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 45,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "DEVELOPER",
+                  "icon": "Code2",
+                  "color": "#3b82f6",
+                  "bg": "#3b82f615",
+                  "border": "#3b82f640"
+                },
+                {
+                  "type": "heading",
+                  "text": "Quick Start in 3 Lines",
+                  "size": "2xl"
+                },
+                {
+                  "type": "code",
+                  "language": "bash",
+                  "text": "pip install vela-slides\nvela deck create my-deck.json\nvela deck ship my-deck.json"
+                },
+                {
+                  "type": "text",
+                  "text": "From install to presentation in under a minute.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                }
+              ]
+            },
+            {
+              "title": "Progress Bars",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#10b981",
+              "padding": "36px 48px",
+              "duration": 40,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "METRICS",
+                  "icon": "BarChart3",
+                  "color": "#10b981",
+                  "bg": "#10b98115",
+                  "border": "#10b98140"
+                },
+                {
+                  "type": "heading",
+                  "text": "Project Completion Tracker",
+                  "size": "2xl"
+                },
+                {
+                  "type": "progress",
+                  "items": [
+                    {
+                      "label": "Design",
+                      "value": 95,
+                      "color": "#10b981"
+                    },
+                    {
+                      "label": "Development",
+                      "value": 72,
+                      "color": "#3b82f6"
+                    },
+                    {
+                      "label": "Testing",
+                      "value": 45,
+                      "color": "#f59e0b"
+                    },
+                    {
+                      "label": "Documentation",
+                      "value": 30,
+                      "color": "#ef4444"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Quote Block",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1a3e 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a855f7",
+              "padding": "40px 60px",
+              "duration": 30,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "TESTIMONIAL",
+                  "icon": "Quote",
+                  "color": "#a855f7",
+                  "bg": "#a855f715",
+                  "border": "#a855f740"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "quote",
+                  "text": "Vela transformed how our team creates presentations. What used to take hours now takes minutes.",
+                  "attribution": "Sarah Chen, VP of Product at TechCorp"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                }
+              ]
+            },
+            {
+              "title": "Divider Demo",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "padding": "36px 48px",
+              "duration": 35,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "LAYOUT",
+                  "icon": "Layout",
+                  "color": "#f59e0b",
+                  "bg": "#f59e0b15",
+                  "border": "#f59e0b40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Section Separators",
+                  "size": "2xl"
+                },
+                {
+                  "type": "text",
+                  "text": "Dividers create visual breathing room between content sections.",
+                  "size": "lg"
+                },
+                {
+                  "type": "divider"
+                },
+                {
+                  "type": "text",
+                  "text": "Use them sparingly to group related ideas and improve readability.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                }
+              ]
+            },
+            {
+              "title": "Image Block",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "padding": "36px 48px",
+              "duration": 30,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "MEDIA",
+                  "icon": "Image",
+                  "color": "#3b82f6",
+                  "bg": "#3b82f615",
+                  "border": "#3b82f640"
+                },
+                {
+                  "type": "heading",
+                  "text": "Rich Media Support",
+                  "size": "2xl"
+                },
+                {
+                  "type": "image",
+                  "url": "https://placehold.co/800x300/1e293b/e2e8f0?text=Vela+Slides",
+                  "alt": "Vela Slides banner",
+                  "maxWidth": "100%"
+                },
+                {
+                  "type": "text",
+                  "text": "Embed images from any URL with automatic scaling.",
+                  "size": "sm",
+                  "color": "#94a3b8"
+                }
+              ]
+            },
+            {
+              "title": "Callout Patterns",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#ef4444",
+              "padding": "36px 48px",
+              "duration": 40,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "TIPS",
+                  "icon": "AlertTriangle",
+                  "color": "#ef4444",
+                  "bg": "#ef444415",
+                  "border": "#ef444440"
+                },
+                {
+                  "type": "heading",
+                  "text": "Important Callouts",
+                  "size": "2xl"
+                },
+                {
+                  "type": "callout",
+                  "text": "Always validate your deck before shipping. Run `vela deck validate` to catch issues early.",
+                  "icon": "AlertCircle",
+                  "variant": "warning"
+                },
+                {
+                  "type": "callout",
+                  "text": "Use compact format to reduce token usage by 32% when generating decks with AI.",
+                  "icon": "Zap",
+                  "variant": "info"
+                }
+              ]
+            },
+            {
+              "title": "Bullet Lists",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#10b981",
+              "padding": "36px 48px",
+              "duration": 35,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "FEATURES",
+                  "icon": "List",
+                  "color": "#10b981",
+                  "bg": "#10b98115",
+                  "border": "#10b98140"
+                },
+                {
+                  "type": "heading",
+                  "text": "Why Teams Choose Vela",
+                  "size": "2xl"
+                },
+                {
+                  "type": "bullets",
+                  "items": [
+                    "AI-native design \u2014 built for Claude.ai artifacts",
+                    "21 semantic block types for any content",
+                    "3 format tiers: Full, Compact (-32%), Turbo (-47%)",
+                    "Zero dependencies \u2014 pure React, inline styles",
+                    "CLI tooling for validation, editing, and export"
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Tag Groups",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#a855f7",
+              "padding": "36px 48px",
+              "duration": 30,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "ECOSYSTEM",
+                  "icon": "Tags",
+                  "color": "#a855f7",
+                  "bg": "#a855f715",
+                  "border": "#a855f740"
+                },
+                {
+                  "type": "heading",
+                  "text": "Technology Stack",
+                  "size": "2xl"
+                },
+                {
+                  "type": "tag-group",
+                  "tags": [
+                    {
+                      "label": "React 18",
+                      "variant": "default"
+                    },
+                    {
+                      "label": "Claude API",
+                      "variant": "primary"
+                    },
+                    {
+                      "label": "Python CLI",
+                      "variant": "secondary"
+                    },
+                    {
+                      "label": "ELv2 License",
+                      "variant": "outline"
+                    },
+                    {
+                      "label": "960x540 Canvas",
+                      "variant": "default"
+                    },
+                    {
+                      "label": "Inline Styles",
+                      "variant": "secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Closing CTA",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "align": "center",
+              "verticalAlign": "center",
+              "padding": "40px 60px",
+              "duration": 20,
+              "blocks": [
+                {
+                  "type": "spacer",
+                  "h": 40
+                },
+                {
+                  "type": "heading",
+                  "text": "Start Building Today",
+                  "size": "3xl",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "text",
+                  "text": "Create stunning presentations with AI in minutes.",
+                  "size": "lg",
+                  "align": "center",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "tag-group",
+                  "tags": [
+                    {
+                      "label": "GitHub",
+                      "variant": "primary"
+                    },
+                    {
+                      "label": "Docs",
+                      "variant": "outline"
+                    },
+                    {
+                      "label": "Discord",
+                      "variant": "outline"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

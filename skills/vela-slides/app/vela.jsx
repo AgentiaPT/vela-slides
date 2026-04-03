@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.24";
+const VELA_VERSION = "12.27";
 const VELA_CHANGELOG = [
+  { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
+  { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
   { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
   { v: "12.23", d: "Fix PDF export: branding logo now renders in both canvas and vector PDF exports; agentIA watermark respects showBranding toggle instead of being hardcoded; vector PDF modal gets branding toggle UI." },
   { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize — no longer hardcoded." },
@@ -260,7 +262,7 @@ const now = () => new Date().toISOString();
 const MAX_IMPORT_SIZE = 10 * 1024 * 1024;
 const VALID_STATUSES = new Set(["todo", "done", "signed-off"]);
 const VALID_IMPORTANCES = new Set(["must", "should", "nice"]);
-const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg"]);
+const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg", "comparison", "funnel", "cycle", "number-row", "matrix", "checklist"]);
 
 const defaultBranding = {
   enabled: false,
@@ -358,7 +360,7 @@ function sanitizeBlock(block) {
         blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
       }));
     }
-    if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group") {
+    if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
@@ -375,6 +377,15 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        return c;
+      }).filter(Boolean);
+    }
+    if (clean.type === "comparison" || clean.type === "matrix") {
+      clean.items = clean.items.slice(0, 4).map((it) => {
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.title) c.title = sanitizeString(c.title, 200);
+        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => typeof pt === "string" ? sanitizeString(pt, 500) : typeof pt === "object" && pt.text ? { ...pt, text: sanitizeString(pt.text, 500) } : "");
         return c;
       }).filter(Boolean);
     }
@@ -1707,6 +1718,225 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             </div>
           ))}
         </div>
+      </div>;
+    }
+
+    case "comparison": {
+      const items = block.items || [];
+      const left = items[0] || {};
+      const right = items[1] || {};
+      const leftColor = left.color || "#ef4444";
+      const rightColor = right.color || "#22c55e";
+      const dividerLabel = block.dividerLabel || "VS";
+      return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
+        <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            {left.icon && <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} />}
+            <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
+          </div>
+          {(left.items || []).map((pt, pi) => (
+            <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
+              <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+            </div>
+          ))}
+        </div>
+        {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
+        </div>}
+        <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            {right.icon && <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} />}
+            <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
+          </div>
+          {(right.items || []).map((pt, pi) => (
+            <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
+              <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>;
+    }
+
+    case "funnel": {
+      const items = block.items || [];
+      const count = items.length || 1;
+      const stageH = Math.floor(280 / count);
+      const gap = 4;
+      return <ZoomWrap enabled={items.length > 0}><div className={cls} style={{ width: "100%", ...block.style }}>
+        <svg viewBox={`0 0 700 ${count * (stageH + gap)}`} style={{ width: "100%", maxWidth: 700 }} xmlns="http://www.w3.org/2000/svg">
+          {items.map((item, i) => {
+            const col = item.color || st.accent;
+            const inset = (i / count) * 250;
+            const nextInset = ((i + 1) / count) * 250;
+            const y = i * (stageH + gap);
+            const x1 = 30 + inset, x2 = 670 - inset;
+            const x3 = 30 + nextInset, x4 = 670 - nextInset;
+            const isHighlight = item.highlight;
+            return <g key={i} className={stg(staggerIdx, i)}>
+              <polygon points={`${x1},${y} ${x2},${y} ${x4},${y + stageH} ${x3},${y + stageH}`}
+                fill={`${col}${isHighlight ? "22" : "18"}`} stroke={`${col}80`} strokeWidth={isHighlight ? 2 : 1.5}
+                strokeDasharray={isHighlight ? "8,4" : "none"} />
+              <text x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
+                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif">{item.label || ""}{isHighlight ? " \u26A0" : ""}</text>
+              {item.value && <text x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif">{item.value}</text>}
+              {item.drop && <text x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif">{item.drop}</text>}
+            </g>;
+          })}
+        </svg>
+      </div></ZoomWrap>;
+    }
+
+    case "cycle": {
+      const items = block.items || [];
+      const n = items.length || 1;
+      const cx = 260, cy = 200, radius = 130;
+      const nodeR = 40;
+      const defaultColors = ["#3b82f6", "#22c55e", "#f97316", "#8b5cf6", "#ec4899", "#06b6d4", "#f59e0b"];
+      return <ZoomWrap enabled={items.length > 0}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", ...block.style }}>
+        <svg viewBox={`0 0 520 ${cy * 2 + 40}`} style={{ width: "100%", maxWidth: 520 }} xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            {items.map((_, i) => {
+              const col = items[i]?.color || defaultColors[i % defaultColors.length];
+              return <marker key={`m${i}`} id={`cyc-arr-${staggerIdx}-${i}`} markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill={col} />
+              </marker>;
+            })}
+          </defs>
+          {block.centerLabel && <>
+            <text x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3">{block.centerLabel}</text>
+            {block.centerSub && <text x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif">{block.centerSub}</text>}
+          </>}
+          {items.map((item, i) => {
+            const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+            const nextAngle = (2 * Math.PI * ((i + 1) % n) / n) - Math.PI / 2;
+            const col = item.color || defaultColors[i % defaultColors.length];
+            const nx = cx + radius * Math.cos(angle);
+            const ny = cy + radius * Math.sin(angle);
+            const midAngle = angle + (Math.PI / n);
+            const arcMidX = cx + (radius + 10) * Math.cos(midAngle);
+            const arcMidY = cy + (radius + 10) * Math.sin(midAngle);
+            const nextNx = cx + radius * Math.cos(nextAngle);
+            const nextNy = cy + radius * Math.sin(nextAngle);
+            const startX = nx + (nodeR + 6) * Math.cos(midAngle);
+            const startY = ny + (nodeR + 6) * Math.sin(midAngle);
+            const endX = nextNx - (nodeR + 12) * Math.cos(midAngle);
+            const endY = nextNy - (nodeR + 12) * Math.sin(midAngle);
+            return <g key={i} className={stg(staggerIdx, i)}>
+              <path d={`M ${startX} ${startY} Q ${arcMidX} ${arcMidY} ${endX} ${endY}`}
+                fill="none" stroke={col} strokeWidth="2.5" strokeOpacity="0.6"
+                markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
+              <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
+              {item.icon && <text x={nx} y={ny - 6} textAnchor="middle" fontSize="18" fontFamily="Inter, sans-serif">{item.icon}</text>}
+              <text x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
+                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif">{item.label || ""}</text>
+            </g>;
+          })}
+        </svg>
+      </div></ZoomWrap>;
+    }
+
+    case "number-row": {
+      const items = block.items || [];
+      const showIcons = block.showIcons !== false;
+      return <div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
+        {items.map((item, i) => {
+          const col = item.color || st.accent;
+          return <React.Fragment key={i}>
+            {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
+            <div className={stg(staggerIdx, i)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}>
+              {showIcons && item.icon && <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${col}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
+              </div>}
+              <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
+              {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
+            </div>
+          </React.Fragment>;
+        })}
+      </div>;
+    }
+
+    case "matrix": {
+      const quadrants = block.quadrants || block.items || [];
+      const q = (i) => quadrants[i] || {};
+      const xLeft = block.xLeft || "";
+      const xRight = block.xRight || "";
+      const yTop = block.yTop || "";
+      const yBottom = block.yBottom || "";
+      const defaultQColors = ["#22c55e", "#3b82f6", "#f97316", "#ef4444"];
+      return <div className={cls} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", position: "relative", ...block.style }}>
+        {(yTop || yBottom) && <div style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", display: "flex", flexDirection: "column", gap: 100, alignItems: "center" }}>
+          {yTop && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yTop}</span>}
+          {yBottom && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yBottom}</span>}
+        </div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, marginLeft: (yTop || yBottom) ? 32 : 0, width: "90%" }}>
+          {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, padding: "0 20px" }}>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+          </div>}
+          <div style={{ display: "flex", gap: 6 }}>
+            {[0, 1].map((qi) => {
+              const qd = q(qi);
+              const qc = qd.color || defaultQColors[qi];
+              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 0 ? "10px 4px 4px 4px" : "4px 10px 4px 4px", padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
+                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                </div>
+                {(qd.items || []).map((pt, pi) => (
+                  <div key={pi} style={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}>
+                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                  </div>
+                ))}
+              </div>;
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            {[2, 3].map((qi) => {
+              const qd = q(qi);
+              const qc = qd.color || defaultQColors[qi];
+              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 2 ? "4px 4px 4px 10px" : "4px 4px 10px 4px", padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
+                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                </div>
+                {(qd.items || []).map((pt, pi) => (
+                  <div key={pi} style={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}>
+                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                  </div>
+                ))}
+              </div>;
+            })}
+          </div>
+        </div>
+      </div>;
+    }
+
+    case "checklist": {
+      const items = block.items || [];
+      const statusConfig = {
+        done: { bg: "#22c55e", icon: "Check", label: "DONE", textColor: st.text },
+        partial: { bg: "#f59e0b", icon: null, label: "IN PROGRESS", textColor: st.text },
+        pending: { bg: "transparent", icon: null, label: "PENDING", textColor: st.muted },
+        blocked: { bg: `#ef444425`, icon: "X", label: "BLOCKED", textColor: "#fca5a5" },
+      };
+      return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", ...block.style }}>
+        {items.map((item, i) => {
+          const status = item.status || "pending";
+          const cfg = statusConfig[status] || statusConfig.pending;
+          const labelColor = status === "done" ? "#22c55e" : status === "partial" ? "#f59e0b" : status === "blocked" ? "#ef4444" : st.muted;
+          return <div key={i} className={stg(staggerIdx, i)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}>
+            <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
+              {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
+              {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
+            </div>
+            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
+            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+          </div>;
+        })}
       </div>;
     }
 

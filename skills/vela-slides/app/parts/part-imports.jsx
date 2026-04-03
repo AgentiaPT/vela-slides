@@ -57,8 +57,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.24";
+const VELA_VERSION = "12.27";
 const VELA_CHANGELOG = [
+  { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
+  { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
   { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
   { v: "12.23", d: "Fix PDF export: branding logo now renders in both canvas and vector PDF exports; agentIA watermark respects showBranding toggle instead of being hardcoded; vector PDF modal gets branding toggle UI." },
   { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize — no longer hardcoded." },
@@ -260,7 +262,7 @@ const now = () => new Date().toISOString();
 const MAX_IMPORT_SIZE = 10 * 1024 * 1024;
 const VALID_STATUSES = new Set(["todo", "done", "signed-off"]);
 const VALID_IMPORTANCES = new Set(["must", "should", "nice"]);
-const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg"]);
+const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg", "comparison", "funnel", "cycle", "number-row", "matrix", "checklist"]);
 
 const defaultBranding = {
   enabled: false,
@@ -358,7 +360,7 @@ function sanitizeBlock(block) {
         blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
       }));
     }
-    if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group") {
+    if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
@@ -375,6 +377,15 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        return c;
+      }).filter(Boolean);
+    }
+    if (clean.type === "comparison" || clean.type === "matrix") {
+      clean.items = clean.items.slice(0, 4).map((it) => {
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.title) c.title = sanitizeString(c.title, 200);
+        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => typeof pt === "string" ? sanitizeString(pt, 500) : typeof pt === "object" && pt.text ? { ...pt, text: sanitizeString(pt.text, 500) } : "");
         return c;
       }).filter(Boolean);
     }
