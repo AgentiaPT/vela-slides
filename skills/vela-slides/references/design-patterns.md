@@ -1,6 +1,6 @@
 # Vela Design Patterns & Slide Archetypes
 
-> **v12.5** · 2026-03-23
+> **v12.25** · 2026-04-03
 
 ## Slide Archetypes
 
@@ -251,6 +251,221 @@ Iterative process diagram — flow block with return arrow.
 }
 ```
 
+### 15. Comparison *(v12.25)*
+Side-by-side A vs B layout with semantic coloring and optional VS divider.
+
+**When to use:** Before/after, pros/cons, plan A vs B, old vs new, build vs buy, any binary comparison.
+
+**Design rules:**
+- Exactly 2 sides with contrasting colors (red/green for before/after, blue/purple for alternatives)
+- Keep bullet lists to 3-5 items per side — balance both sides visually
+- `dividerLabel` defaults to "VS" — customize for context ("→", "OR", "TO")
+- Use `hideDivider: true` for softer juxtapositions (e.g. side-by-side feature lists)
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 60,
+  "blocks": [
+    { "type": "badge", "text": "TRANSFORMATION", "icon": "ArrowRight", "bg": "#3b82f620", "color": "#60a5fa" },
+    { "type": "spacer", "h": 8 },
+    { "type": "heading", "text": "From Manual to Automated", "size": "2xl" },
+    { "type": "spacer", "h": 12 },
+    {
+      "type": "comparison",
+      "items": [
+        { "title": "Before", "icon": "X", "color": "#ef4444", "items": ["Manual SSH deploys", "2-hour release cycles", "No rollback capability"] },
+        { "title": "After", "icon": "Check", "color": "#22c55e", "items": ["CI/CD pipeline", "5-min deploys", "One-click rollback"] }
+      ],
+      "dividerLabel": "→"
+    }
+  ]
+}
+```
+
+### 16. Funnel *(v12.25)*
+Top-to-bottom tapered stages showing progressive narrowing — SVG trapezoids with values and drop annotations.
+
+**When to use:** Sales pipelines, conversion funnels, hiring processes, user journeys with drop-off, any progressive filtering.
+
+**Design rules:**
+- 3-5 stages (fewer is better — each stage adds vertical height)
+- Include `value` for quantitative funnels, omit for qualitative ones
+- Use `drop` annotations on stages where the drop matters (not every stage)
+- Set `highlight: true` on the problem stage (dashed border + warning icon)
+- Vary colors to create visual gradient (blue → purple → red for drop-off)
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 60,
+  "blocks": [
+    { "type": "heading", "text": "Where Users Drop Off", "size": "2xl", "icon": "TrendingDown" },
+    { "type": "spacer", "h": 12 },
+    {
+      "type": "funnel",
+      "items": [
+        { "label": "Visitors", "value": "124,000", "color": "#3b82f6" },
+        { "label": "Signups", "value": "31,200", "color": "#6366f1", "drop": "−74.8%" },
+        { "label": "Activated", "value": "4,800", "color": "#ef4444", "drop": "−84.6%", "highlight": true },
+        { "label": "Paying", "value": "1,920", "color": "#a855f7", "drop": "−60.0%" }
+      ]
+    }
+  ]
+}
+```
+
+### 17. Cycle Diagram *(v12.25)*
+Circular process with nodes connected by curved arrows — center label anchors the concept.
+
+**When to use:** Iterative processes, feedback loops, continuous improvement cycles, any circular workflow. Prefer over `flow` with `loop: true` when the circular shape itself is the message.
+
+**Design rules:**
+- 3-6 nodes (more than 6 becomes cramped)
+- Use emoji `icon` inside nodes for visual impact
+- `centerLabel` + `centerSub` anchor the diagram concept
+- Vary node colors for visual distinction
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 90,
+  "blocks": [
+    { "type": "badge", "text": "AGENT PATTERN", "icon": "Bot", "bg": "#3b82f620", "color": "#60a5fa" },
+    { "type": "spacer", "h": 8 },
+    { "type": "heading", "text": "Continuous Feedback Loop", "size": "2xl" },
+    { "type": "spacer", "h": 8 },
+    {
+      "type": "cycle",
+      "centerLabel": "ITERATE",
+      "centerSub": "Never stop",
+      "items": [
+        { "label": "Plan", "icon": "📋", "color": "#3b82f6" },
+        { "label": "Build", "icon": "🔨", "color": "#22c55e" },
+        { "label": "Measure", "icon": "📊", "color": "#f97316" },
+        { "label": "Learn", "icon": "💡", "color": "#8b5cf6" }
+      ]
+    }
+  ]
+}
+```
+
+### 18. Number Row *(v12.25)*
+Inline row of 2-5 big metrics separated by dividers — replaces grid+metric boilerplate for simple stat displays.
+
+**When to use:** KPI dashboards, SLA metrics, performance stats, quick numeric summaries. Prefer over grid+metric when all values are equally important and layout is horizontal.
+
+**Design rules:**
+- 2-5 items (3 is ideal for 960px canvas)
+- Use `size: "3xl"` for hero numbers, `compact: true` for secondary stats
+- `bordered: true` adds a container frame — use when the number row is the only content block
+- Each item gets its own `color` for semantic distinction
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 30,
+  "blocks": [
+    { "type": "heading", "text": "Platform Health", "size": "2xl", "icon": "Activity" },
+    { "type": "spacer", "h": 16 },
+    {
+      "type": "number-row",
+      "items": [
+        { "value": "99.97%", "label": "Uptime", "icon": "Activity", "color": "#22c55e" },
+        { "value": "38ms", "label": "P95 Latency", "icon": "Clock", "color": "#3b82f6" },
+        { "value": "2.4M", "label": "Active Users", "icon": "Users", "color": "#8b5cf6" }
+      ],
+      "bordered": true
+    }
+  ]
+}
+```
+
+### 19. Matrix / Quadrant *(v12.25)*
+2×2 quadrant grid with axis labels — each quadrant has its own color, icon, title, and bullet items.
+
+**When to use:** SWOT analysis, Eisenhower matrix, effort/impact grids, risk assessment, any 2-axis categorization framework.
+
+**Design rules:**
+- Always provide all 4 quadrants — empty quadrants break the visual
+- Axis labels (`xLeft`/`xRight`/`yTop`/`yBottom`) frame the dimensions
+- Use semantic colors: green=positive, red=negative, blue=opportunity, orange=caution
+- Keep bullet items to 2-3 per quadrant (space is tight)
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 90,
+  "blocks": [
+    { "type": "heading", "text": "SWOT Analysis", "size": "2xl", "icon": "LayoutGrid" },
+    { "type": "spacer", "h": 12 },
+    {
+      "type": "matrix",
+      "xLeft": "INTERNAL",
+      "xRight": "EXTERNAL",
+      "yTop": "POSITIVE",
+      "yBottom": "NEGATIVE",
+      "quadrants": [
+        { "title": "Strengths", "icon": "TrendingUp", "color": "#22c55e", "items": ["Strong team", "First mover"] },
+        { "title": "Opportunities", "icon": "Lightbulb", "color": "#3b82f6", "items": ["Enterprise market", "API ecosystem"] },
+        { "title": "Weaknesses", "icon": "TrendingDown", "color": "#f97316", "items": ["Small team", "Limited blocks"] },
+        { "title": "Threats", "icon": "AlertTriangle", "color": "#ef4444", "items": ["Big tech competitors", "Cost increases"] }
+      ]
+    }
+  ]
+}
+```
+
+### 20. Checklist *(v12.25)*
+Status-aware item list with semantic icons and colors — done (green check), partial (amber half-fill), pending (empty circle), blocked (red X).
+
+**When to use:** Project status, compliance readiness, feature rollout tracking, onboarding steps, audit checklists.
+
+**Design rules:**
+- Mix statuses for visual interest (all-done is boring — show progress)
+- `showLabels: true` (default) adds status text on the right for clarity
+- Order items logically: done → partial → pending → blocked
+- 4-7 items is ideal (fewer is too simple, more overflows)
+
+```json
+{
+  "bg": "#0f172a",
+  "color": "#e2e8f0",
+  "accent": "#3b82f6",
+  "padding": "36px 48px",
+  "duration": 60,
+  "blocks": [
+    { "type": "heading", "text": "Enterprise Readiness", "size": "2xl", "icon": "Shield" },
+    { "type": "spacer", "h": 12 },
+    {
+      "type": "checklist",
+      "items": [
+        { "text": "SSO integration", "status": "done" },
+        { "text": "Audit logging", "status": "done" },
+        { "text": "SOC 2 certification", "status": "partial" },
+        { "text": "HIPAA BAA template", "status": "pending" },
+        { "text": "EU data residency", "status": "blocked" }
+      ]
+    }
+  ]
+}
+```
+
 ---
 
 ### Spacing & Rhythm
@@ -266,7 +481,9 @@ For a 10-slide deck, aim for at least:
 - 2-3 content slides with different block types
 - 1 metrics slide (archetype 5)
 - 1 flow, loop flow, gated pipeline, or timeline (archetype 6, 14, 11, or 8)
-- 1 grid, layer diagram, or comparison (archetype 4, 10, or 7)
+- 1 grid, layer diagram, or comparison table (archetype 4, 10, or 7)
+- 1 comparison, matrix, or checklist (archetype 15, 19, or 20)
+- 1 funnel, cycle, or number-row if data permits (archetype 16, 17, or 18)
 - 1 spectrum if positioning is relevant (archetype 12)
 - 1 diagram if non-linear visuals needed (archetype 13)
 - 1 closing slide (archetype 9)
@@ -305,6 +522,12 @@ For a 10-slide deck, aim for at least:
 | Gated Pipeline | 4-5 | 5-7 | 90-120s |
 | Spectrum | 4-6 | 4-6 | 45-90s |
 | Diagram (svg) | 3-5 | 3-4 + SVG labels | 60-90s |
+| Comparison | 3-4 | 3-5 per side | 60-90s |
+| Funnel | 3-4 | 3-5 stages | 45-60s |
+| Cycle | 3-4 | 3-6 nodes | 60-90s |
+| Number Row | 3-4 | 2-5 metrics | 20-40s |
+| Matrix | 3-4 | 2-3 per quadrant | 60-90s |
+| Checklist | 3-4 | 4-7 items | 45-60s |
 | Table | 3-4 | varies | 60-120s |
 | Code | 3-4 | 15 lines max | 90-180s |
 | Closing | 4-5 | 3 | 20-30s |

@@ -63,11 +63,12 @@ Virtual canvas: **960×540px** (16:9).
 }
 ```
 
-### Block Types (21)
+### Block Types (27)
 Text: heading, text, quote, badge, callout
 Lists: bullets, icon-row, tag-group
 Data: grid, table, metric, progress, timeline
 Flow: flow (gates & loops), steps
+Analytical: comparison, funnel, cycle, number-row, matrix, checklist
 Media: image, code, svg
 Layout: spacer, divider
 

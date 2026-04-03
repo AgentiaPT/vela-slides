@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.25";
+const VELA_VERSION = "12.26";
 const VELA_CHANGELOG = [
+  { v: "12.26", d: "Design patterns: add 6 new slide archetypes (15-20) for comparison, funnel, cycle, number-row, matrix, checklist blocks. Updated visual variety checklist and content density guidelines." },
   { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
   { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
   { v: "12.23", d: "Fix PDF export: branding logo now renders in both canvas and vector PDF exports; agentIA watermark respects showBranding toggle instead of being hardcoded; vector PDF modal gets branding toggle UI." },
