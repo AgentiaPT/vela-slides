@@ -1,0 +1,27 @@
+{
+  "scenario": "create-multi-module-run1",
+  "swapped": false,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Both decks have 12 slides across 3 named groups (Strategy, Execution, Results) with a gradient closing CTA slide, which is solid structure. However, Deck 1 maintains more consistent spacing between blocks throughout \u2014 for example, its closing slide includes a spacing value (12) between the heading and body text, whereas Deck 2's closing slide goes directly heading \u2192 text with no spacer. Deck 1 also uses a divider block in one slide for visual separation, showing more deliberate structural craft. Marginal edge to Deck 1."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Both decks use 2xl for content headings, 4xl for the closing headline, and 3xl for key metrics \u2014 good scale discipline. Deck 1 is more consistent in inserting numeric spacers (8, 12, 16) between every block pair, which translates to more intentional rhythm. Deck 2 occasionally drops the spacer between a heading and the next text block (e.g., the first Strategy slide: heading flows straight into text with no spacing token), creating tighter, less breathable layouts. Both use badges correctly on every content slide and gradients on the closing slide. Deck 1 edges out on spacing consistency."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 1 produces more consistently declarative, assertion-forward headlines across all 12 slides: 'Success Is Binary: 500 Paid Seats by Day 90', 'Content and Community Drive 60% of Pipeline at Zero CAC', and ''The OS for Ops Teams' Defines Atlas in One Phrase' are strong, opinionated statements. Deck 2 has several descriptive rather than assertive headlines: 'TAM Reaches $4.2B by 2027' and 'Content Strategy Targets Every Funnel Stage' merely label topics rather than make claims. Deck 1 also includes a verbatim customer quote block (VP Operations) and a specific 'Accountability Rule' callout that add personality and specificity. Deck 1 wins clearly on headline strength."
+    },
+    "block_variety": {
+      "winner": "v12.26",
+      "reasoning": "Deck 2 uses approximately 19 distinct block types vs. Deck 1's 16. Deck 2 introduces blocks absent from Deck 1: 'matrix' (SWOT analysis \u2014 semantically perfect for competitive strategy), 'funnel' (TAM \u2192 SAM \u2192 SOM \u2014 ideal for market sizing), 'comparison' (Legacy vs. Atlas side-by-side \u2014 great for positioning), 'code' (API snippet \u2014 strong for technical credibility), 'checklist' (pre-launch action items \u2014 appropriate for accountability), and 'number-row' (Month-1 KPIs at a glance). Each is used in the semantically correct context. Deck 1's missing these types is a real gap given how naturally they fit a product launch deck."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Deck 1 defines its color palette with $ prefixes on the keys (\"$A\", \"$B\", etc.) and references them with $ prefixes in blocks \u2014 fully self-consistent. Deck 2 defines palette keys without $ prefixes (\"A\", \"B\", etc.) but references them WITH $ prefixes in blocks (\"$A\", \"$F\") \u2014 a structural mismatch that would likely cause unresolved color tokens in a real renderer. Additionally, Deck 1 uses a darker, more layered purple gradient family (#0F172A \u2192 #2D1B69 \u2192 #8B5CF6) and applies it more cohesively across card backgrounds ($F/#1A0A3E) and the closing gradient. Deck 2 introduces red (#EF4444) as $D which, while used semantically for threats/weaknesses, adds a third accent hue that slightly fragments the palette."
+    }
+  }
+}

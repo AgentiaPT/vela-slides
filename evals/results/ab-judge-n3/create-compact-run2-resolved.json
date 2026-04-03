@@ -1,0 +1,27 @@
+{
+  "scenario": "create-compact-run2",
+  "swapped": true,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks have a well-formed structure with five logical groups: Opening, Performance (2 slides), Team, Priorities, and Closing. Each has a cover with gradient, content slides with headings and badges, and a closing CTA slide. Both are complete and properly sectioned. Deck 1 uses 'Close' vs Deck 2 'Closing' \u2014 trivial difference. No meaningful structural advantage either way."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 2 uses explicit numeric spacing values (8, 10) between blocks consistently, creating a more deliberate rhythm. It also includes a divider block on both the cover and closing slides, adding visual punctuation. The cover gradient in Deck 2 has three color stops (including $E/#1D4ED8) vs Deck 1's two, producing a richer visual. Deck 2's closing also includes a quote block and divider, giving it a stronger visual landing. Deck 1's cover heading ('Q1 2026: Momentum...') is a slide title rather than the deck name, while Deck 2 sensibly uses the deck name as the heading and a subtitle line below \u2014 better hierarchy on the cover."
+    },
+    "content_quality": {
+      "winner": "v12.26",
+      "reasoning": "Deck 1's assertion headlines are sharper and more specific: 'Revenue Surpasses Forecast by 14% This Quarter' names the percentage; 'Every Department Exceeds KPI Targets for the First Time in Company History' is a strong factual claim; 'Four Strategic Priorities Will Define Q2 Success' is declarative. Deck 2's equivalents are slightly softer ('Revenue Surpasses Forecast Across All Segments', 'Four Focus Areas Will Define Q2 Outcomes'). Deck 1 also has a richer callout on the revenue slide ('Enterprise deals closed 11 days faster') and a checklist in the closing with specific dates and owners, making the next-steps slide more actionable. Deck 2's quote block is a nice touch but the content is generic. Both avoid placeholder text."
+    },
+    "block_variety": {
+      "winner": "live",
+      "reasoning": "Deck 1 uses: badge, heading, text, grid, metric, callout, timeline, progress, table, tag-group, icon-row, checklist \u2014 approximately 12 distinct block types. Deck 2 uses: badge, heading, text, grid, metric, progress, timeline, callout, table, icon-row, tag-group, quote, divider \u2014 approximately 13 distinct block types. Deck 2 edges ahead by introducing the quote and divider blocks, which are absent from Deck 1. Both use block types semantically well (timeline for roadmap, metric for KPIs, table for team performance), but Deck 2's extra variety tips the balance."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Both decks use the same core palette ($A blue, $B dark navy, $C light text, $D mid-dark, $E dark blue). The key difference is in $F: Deck 1 uses #172033 (very dark, almost black) for $F, while Deck 2 uses #1E3A5F (a rich navy-blue). Deck 2's $F is used consistently on badges, icon backgrounds, callout backgrounds, and gradient midpoints \u2014 creating a cohesive mid-tone layer between $B and $E. Deck 1's badge backgrounds use $E while card backgrounds use $F (#172033), creating a slightly less harmonious contrast. Deck 2's three-stop gradients on cover and closing also feel more intentional and consistent with the overall blue-navy palette."
+    }
+  }
+}

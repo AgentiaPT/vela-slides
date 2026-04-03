@@ -1,0 +1,27 @@
+{
+  "scenario": "create-compact-run1",
+  "swapped": true,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "tie",
+      "reasoning": "Both decks follow the identical five-group structure (Opening \u2192 Performance \u2192 Team \u2192 Priorities \u2192 Closing), each with 7 total slides. Both include gradient covers, properly badged content slides, and a gradient closing. Deck 2 uses 'steps' in the closing (semantically better for a sequential action list) while Deck 1 uses 'checklist' \u2014 a minor semantic difference that doesn't tip the scales. Structure is equally complete in both."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 2 employs a more sophisticated two-tone heading technique on both the cover ('Quarterly Business Review' in white + 'Q1 2026' in accent blue) and the closing slide ('The Best Quarter Yet \u2014' in white + 'And We're Just Getting Started' in accent blue). This creates genuine visual contrast and directs the eye. Deck 2 also uses more varied spacing values (8, 12, 16) versus Deck 1's more uniform 12-unit gaps, producing a livelier rhythm. Deck 1's cover and closing headings are single-color, which feels flatter by comparison."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Both decks write declarative assertion headlines, but Deck 2's are marginally sharper. 'Every Department Exceeds Targets \u2014 Engineering Leads the Pack' is more specific than Deck 1's generic 'All Four Departments Exceed Their Q1 Targets.' Deck 2's closing headline 'The Best Quarter Yet \u2014 And We're Just Getting Started' is more emotionally resonant than Deck 1's 'Q1 Proves the Model \u2014 Now We Scale It.' Deck 2's timeline narrative is richer (e.g., 'NPS reached 68. First enterprise deal signed.') compared to Deck 1's briefer entries. Deck 2's closing also pairs 'steps' with specific dated milestones plus a 'callout' for engagement, providing more actionable texture."
+    },
+    "block_variety": {
+      "winner": "tie",
+      "reasoning": "Both decks use exactly 12 distinct block types: badge, heading, text, tag-group, metric, grid, progress, timeline, table, callout, icon-row, and either checklist (Deck 1) or steps (Deck 2). The swap of checklist for steps is a one-for-one substitution \u2014 steps is arguably more semantically appropriate for ordered next-steps, but the total count and breadth of variety is identical across both decks."
+    },
+    "brand_consistency": {
+      "winner": "v12.26",
+      "reasoning": "Deck 1 uses color palette variables consistently throughout \u2014 badge text references '$B', icon backgrounds reference '$F', accent color references '$A' \u2014 maintaining the token system end-to-end. Deck 2 breaks from its own token system in several places by hardcoding '#FFFFFF' directly for badge text color instead of using its declared '$C' (#E2E8F0) variable. While a subtle issue, it represents a deviation from the defined palette abstraction. Both decks have coherent dark themes and consistent gradient placement on cover/closing slides."
+    }
+  }
+}

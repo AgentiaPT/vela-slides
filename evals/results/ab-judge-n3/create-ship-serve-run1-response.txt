@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "1",
+      "reasoning": "Deck 1 has 10 slides across 5 groups (Opening, Workforce Shifts, Technology Enablers, Challenges & Solutions, The Road Ahead) with a proper cover gradient slide, full content body, and a dedicated closing CTA gradient slide. Deck 2 has 9 slides across 5 groups and is equally well-structured, but Deck 1 earns the edge by having one more substantive content slide (the infrastructure/checklist slide) that deepens the narrative. Both have correct cover/content/closing flow, badges on every slide, and logical section progression."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses a more refined 3-stop gradient on cover and closing (135deg, #0A0F1C → #172554 → #1E40AF) versus Deck 1's 2-stop gradient, creating richer depth. Deck 2 also varies its spacing more deliberately (6, 8, 10 gaps depending on context) compared to Deck 1's near-uniform 12-gap spacing throughout, which shows more intentional rhythm. Both use 4xl cover titles, 2xl content headings, and 3xl closing headings correctly. Deck 2's subtler palette variation (no jarring $H red except in a warning callout background) keeps visual weight more cohesive."
+    },
+    "content_quality": {
+      "winner": "1",
+      "reasoning": "Both decks have strong declarative assertion headlines and no placeholder text. Deck 1 edges ahead with a more credible, named attribution quote ('Claire Hughes Johnson, Former COO Stripe') versus Deck 2's generic 'Future of Work Research Institute, 2025' citation. Deck 1 also has more varied content structures that reinforce the narrative (funnel showing the isolation cascade from 100% → 52% → 29% → 18%, a head-to-head comparison table of old vs. new leadership models). Deck 2's '4.7x productivity gain' metric feels implausibly high compared to Deck 1's more grounded '42% productivity gain.' Both have specific numbers throughout."
+    },
+    "block_variety": {
+      "winner": "1",
+      "reasoning": "Deck 1 uses 18 distinct block types: badge, heading, text, tag-group, number-row, progress, comparison, callout, icon-row, flow, grid, metric, checklist, funnel, steps, table, quote, timeline. Deck 2 uses 15 types: badge, heading, text, tag-group, grid, metric, flow, bullets, callout, icon-row, progress, table, steps, timeline, quote. Deck 1 uses four types Deck 2 lacks — number-row (KPI showcase), comparison (VS layout for sync vs async), funnel (data cascade for isolation statistics), and checklist (status-tracked infrastructure readiness) — all semantically appropriate to their content. This is a clear win for Deck 1."
+    },
+    "brand_consistency": {
+      "winner": "2",
+      "reasoning": "Deck 2 maintains a tighter, more cohesive palette ($A blue primary, $C sky accent, $F deep navy for badge backgrounds) used consistently across all 9 slides. Deck 1 introduces $H (#EF4444 red) for the comparison block's negative items and the burnout funnel, which while semantically appropriate, slightly disrupts the monochromatic blue brand feel. Deck 2's badge backgrounds all use $F consistently; Deck 1 mixes $E and $D for badge backgrounds across slides. Both use their two theme variants (d/a) correctly and apply gradients only on cover/closing slides."
+    }
+  },
+  "overall_winner": "1",
+  "overall_reasoning": "Deck 1 wins overall on the strength of its significantly superior block variety (18 vs 15 types, including semantically apt use of funnel, comparison, checklist, and number-row) and content quality (named quote source, more believable stats, richer narrative structures). It also has one more substantive slide and cleaner heading assertion writing. Deck 2 holds a genuine edge in visual hierarchy (3-stop gradients, varied spacing) and brand consistency (tighter palette), but these advantages are incremental, while Deck 1's block diversity is a decisive structural differentiator that demonstrates deeper mastery of the format."
+}
+```
