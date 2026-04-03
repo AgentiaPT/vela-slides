@@ -1,0 +1,112 @@
+{
+  "session_id": "441ad73b-ae14-4b20-b43d-6f4ff6bdd3ec",
+  "model": "sonnet",
+  "version": "v12.26",
+  "scenario": "create-ship-serve",
+  "rep": 1,
+  "turns": 9,
+  "totals": {
+    "input_tokens": 11,
+    "output_tokens": 4347,
+    "cache_read_tokens": 131795,
+    "cache_write_tokens": 8748,
+    "total_tokens": 144901,
+    "cost_usd": 0.13758150000000002,
+    "tool_calls": 9,
+    "duration_s": 111.3
+  },
+  "assertions": {
+    "passed": 6,
+    "total": 6,
+    "slides": 10,
+    "types_found": [
+      "badge",
+      "callout",
+      "checklist",
+      "comparison",
+      "flow",
+      "funnel",
+      "grid",
+      "heading",
+      "icon-row",
+      "matrix",
+      "metric",
+      "number-row",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 10
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 10,
+      "block_types_used": [
+        "badge",
+        "callout",
+        "checklist",
+        "comparison",
+        "flow",
+        "funnel",
+        "grid",
+        "heading",
+        "icon-row",
+        "matrix",
+        "number-row",
+        "progress",
+        "quote",
+        "steps",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.9,
+      "block_type_entropy": 3.507,
+      "monotony_ratio": 0.238,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 19.1,
+      "blocks_per_slide": 4.2
+    }
+  }
+}
