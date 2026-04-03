@@ -76,6 +76,61 @@ for (let attempt = 0; attempt < 30; attempt++) {
 
 **Deck URL pattern:** `http://127.0.0.1:{port}/deck/{filename.vela}`
 
+## Before/After Comparison Pattern
+
+For visual fixes (alignment, spacing, arrows, centering), create a single HTML file that renders **BEFORE** and **AFTER** side by side. This is the fastest way to confirm a fix without serving a full deck.
+
+### Structure
+
+```html
+<!-- decks/test-<block>.html -->
+<div class="row">
+  <div class="test">
+    <h3>BEFORE</h3>
+    <div id="before-0"></div>
+  </div>
+  <div class="test">
+    <h3>AFTER</h3>
+    <div id="after-0"></div>
+  </div>
+</div>
+```
+
+Render the original (broken) code in the BEFORE column, the fix in the AFTER column. Use multiple test cases with varying content sizes (e.g., 2-6 items, even/uneven content) to catch edge cases.
+
+### Cropped Screenshots
+
+Use `clip` to zoom into specific areas — full-page screenshots are too small to see alignment issues:
+
+```javascript
+await page.screenshot({
+  path: 'decks/test-block-row1.png',
+  clip: { x: 0, y: 30, width: 1400, height: 350 }
+});
+```
+
+### Debug Overlays
+
+When centering is ambiguous, add visual markers:
+- Red semi-transparent background on the container to show its bounds
+- Absolute-positioned 1px red line at 50% to mark the true center
+- Blue background on the text element to show its box model
+
+```html
+<div style="...flex centering...; background: rgba(255,0,0,0.1); position: relative;">
+  <span style="...label...; background: rgba(0,100,255,0.2);">LABEL</span>
+  <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:red;"></div>
+</div>
+```
+
+### Technique Comparison
+
+When the fix approach is unclear, render 3+ techniques side by side in one HTML file to compare visually before committing to one. Example: testing `writing-mode: vertical-rl` vs `rotate(-90deg)` vs `margin: auto` for vertical label centering.
+
+### CSS Vertical Text
+
+`writing-mode: vertical-rl` + `transform: rotate(180deg)` has a known centering issue — flex `align-items: center` doesn't visually center the text because the layout box doesn't match the visual center after transform. Use `transform: rotate(-90deg)` + `white-space: nowrap` instead — it preserves the original horizontal layout box so flex centering works correctly.
+
 ## Gotchas
 
 | Issue | Solution |

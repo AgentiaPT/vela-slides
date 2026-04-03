@@ -877,38 +877,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const yTop = block.yTop || "";
       const yBottom = block.yBottom || "";
       const defaultQColors = ["#22c55e", "#3b82f6", "#f97316", "#ef4444"];
-      return <div className={cls} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", position: "relative", ...block.style }}>
-        {(yTop || yBottom) && <div style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", display: "flex", flexDirection: "column", gap: 100, alignItems: "center" }}>
-          {yTop && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yTop}</span>}
-          {yBottom && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>{yBottom}</span>}
-        </div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 0, marginLeft: (yTop || yBottom) ? 32 : 0, width: "90%" }}>
-          {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+      const hasY = yTop || yBottom;
+      const yLabelStyle = { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", transform: "rotate(-90deg)", whiteSpace: "nowrap" };
+      const renderRow = (indices, radii, yLabel) => (
+        <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+          {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
+            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
           </div>}
-          <div style={{ display: "flex", gap: 6 }}>
-            {[0, 1].map((qi) => {
+          <div style={{ display: "flex", gap: 6, flex: 1 }}>
+            {indices.map((qi) => {
               const qd = q(qi);
               const qc = qd.color || defaultQColors[qi];
-              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 0 ? "10px 4px 4px 4px" : "4px 10px 4px 4px", padding: "14px 16px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
-                </div>
-                {(qd.items || []).map((pt, pi) => (
-                  <div key={pi} style={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
-                  </div>
-                ))}
-              </div>;
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-            {[2, 3].map((qi) => {
-              const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
-              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: qi === 2 ? "4px 4px 4px 10px" : "4px 4px 10px 4px", padding: "14px 16px" }}>
+              return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
                   <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
@@ -922,6 +902,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             })}
           </div>
         </div>
+      );
+      return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
+          {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+          </div>}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          <div style={{ height: 6 }} />
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
       </div>;
     }
 
