@@ -1,0 +1,27 @@
+{
+  "scenario": "create-5",
+  "swapped": false,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Deck 1 is more structurally complete. It includes a tag-group on the cover, a bullets block in the solution slide, a progress bar in the traction slide, and a divider + copyright line in the closing slide. Every slide \u2014 including the close \u2014 has a badge. Deck 2 is missing a badge on the closing slide, has no bullets in the solution, no progress indicator, and no copyright/divider in the close."
+    },
+    "visual_hierarchy": {
+      "winner": "v12.26",
+      "reasoning": "Deck 2 applies explicit 'align:center' to cover elements, giving a more intentional layout. The metric cards use a refined borderTop accent (#10B981) rather than a flat dark-green fill, which creates cleaner visual contrast. Deck 1's metric cards use a heavier solid #134E4A background which can feel less refined. However, Deck 2 loses a point for the missing badge on the close. Narrow win for Deck 2 on cover and card polish."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 1's cover headline \u2014 'AI is Rewriting the Rules of Patient Care' \u2014 is a strong declarative assertion, whereas Deck 2 reuses the deck title as the slide name (no distinct assertion). Deck 1's traction headline leads with three concrete numbers ('98.5% Accuracy, 40% Faster Diagnoses, $2.3M Saved Per Year'), which is highly effective. Deck 2 has strong metric sub-texts ('blinded multi-center trials', '12 hospital sites') and a compelling CTA callout, but Deck 1's headline strategy is more consistently assertive across all slides."
+    },
+    "block_variety": {
+      "winner": "live",
+      "reasoning": "Deck 1 uses 12 distinct block types: badge, heading, text, tag-group, icon-row, callout, flow, bullets, grid, metric, progress, and divider. Deck 2 uses 9 (missing bullets, progress, and divider). Both use blocks semantically appropriately, but Deck 1's broader palette \u2014 especially the progress bar for pilot completion and bullets for integration points \u2014 adds meaningful informational variety."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Both decks share an identical color palette and theme definitions. Deck 1 applies badges consistently across all five slides (including the close), mirrors the cover's tag-group structure on the CTA slide, and uses a consistent $E/$A badge treatment throughout. Deck 2's close slide omits the badge, breaking the visual rhythm established on every other slide. Deck 1 is more disciplined in its application of brand elements end-to-end."
+    }
+  }
+}

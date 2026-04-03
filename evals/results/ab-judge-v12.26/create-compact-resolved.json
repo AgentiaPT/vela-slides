@@ -1,0 +1,27 @@
+{
+  "scenario": "create-compact",
+  "swapped": true,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Both decks have proper cover/content/closing flow with 5 sections and appropriate grouping. Deck 2 has a slight edge: its closing slide uses a 'steps' block instead of a checklist, which is more semantically appropriate for next-steps sequencing. Deck 2's section groups are also named more semantically ('Priorities', 'Closing') vs Deck 1's ('Strategy', 'Close'). Both have heading on every content slide and logical lane/items structure."
+    },
+    "visual_hierarchy": {
+      "winner": "live",
+      "reasoning": "Deck 2 uses more sophisticated visual hierarchy techniques: the cover slide stacks two heading blocks (4xl white + 4xl accent blue) creating a two-tone title effect, adds a tag-group for metadata, and uses tighter spacing (8px vs 12px). The closing slide similarly splits the heading across two lines with a color change on the second line ('And We're Just Getting Started' in $A). Deck 2 also uses a tag-group block on the cover for date/confidentiality metadata. Deck 1's hierarchy is competent but more straightforward."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Both decks use strong assertion headlines. Deck 2's headlines are slightly more punchy and specific: 'Revenue Hits Record High \u2014 $4.2M in Q1 Alone' vs 'Revenue Surpasses $4.2 M \u2014 Best Quarter on Record'. Deck 2's callout on the team slide ('All four departments exceeded quarterly targets for the first time in company history') adds a memorable milestone claim. Deck 2's timeline content is also richer and more narrative-driven. The cover tagline 'Stronger pipelines. Faster growth. A team firing on all cylinders.' is more energetic than Deck 1's subtitle."
+    },
+    "block_variety": {
+      "winner": "live",
+      "reasoning": "Deck 1 uses: badge, heading, text, divider, metric, progress, grid, timeline, table, icon-row, checklist, callout = 12 distinct block types. Deck 2 uses: badge, heading, text, tag-group, metric, progress, grid, timeline, table, callout, icon-row, steps = 12 distinct block types. Both hit 12, but Deck 2 swaps 'divider' and 'checklist' for 'tag-group' and 'steps', which are more semantically appropriate (tag-group for metadata on cover, steps for ordered next-steps in closing). Deck 2 also places a 'progress' block outside the grid (standalone after the grid) on the revenue slide, showing better compositional variety. Slight edge to Deck 2."
+    },
+    "brand_consistency": {
+      "winner": "live",
+      "reasoning": "Both decks use the same color palette and theme definitions. Deck 2 consistently uses '#FFFFFF' for badge text on colored backgrounds (better contrast) while Deck 1 uses '$C' (#E2E8F0) \u2014 a minor but real legibility improvement. Deck 2's closing slide gradient matches the opening ('135deg,#0F172A 0%,#1E3A5F 100%'), creating bookend consistency. Deck 1's closing gradient shifts to '#1D4ED8', which breaks the visual bookend. Both are generally consistent, but Deck 2 shows more intentional symmetry."
+    }
+  }
+}
