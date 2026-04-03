@@ -1,7 +1,7 @@
 ---
 name: vela-slides
-version: 12.30
-updated: 2026-04-03
+version: 12.31
+updated: 2026-04-04
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2
 compatibility: Requires Python 3 and Bash. Designed for Claude Code.

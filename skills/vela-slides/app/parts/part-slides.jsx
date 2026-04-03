@@ -1738,7 +1738,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 124, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>

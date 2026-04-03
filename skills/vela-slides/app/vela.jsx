@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.30";
+const VELA_VERSION = "12.31";
 const VELA_CHANGELOG = [
+  { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
   { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
@@ -5264,7 +5265,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 52, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 124, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>

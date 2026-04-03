@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.30";
+const VELA_VERSION = "12.31";
 const VELA_CHANGELOG = [
+  { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
   { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
