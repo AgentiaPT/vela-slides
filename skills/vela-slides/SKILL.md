@@ -1,7 +1,7 @@
 ---
 name: vela-slides
-version: 12.24
-updated: 2026-04-01
+version: 12.25
+updated: 2026-04-03
 
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2
@@ -40,11 +40,11 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 **`G`** — Sections (USE FOR ALL DECKS): `[{"g":"Name","S":[slides]}]`. 3-5 narrative sections.
 **Slide** — `{"t":"d","n":"Assertion Headline","d":60,"B":[blocks]}`. Cover/CTA: `bgGradient`,`align:"center"`,`verticalAlign:"center"`. Duration: cover 20, content 60-90, CTA 25. Spacers: bare int.
 
-**Keys**: `_`(type) `x`(text) `s`(size) `c`(color) `i`(icon) `b`(bg) `w`(weight) `ic`(iconColor) `ib`(iconBg) `I`(items) `g`(gap) `lb`(label) `v`(variant) `H`(headers) `R`(rows)
+**Keys**: `_`(type) `x`(text) `s`(size) `c`(color) `i`(icon) `b`(bg) `w`(weight) `ic`(iconColor) `ib`(iconBg) `I`(items) `g`(gap) `lb`(label) `v`(variant) `H`(headers) `R`(rows) `Q`(quadrants) `val`(value) `dl`(dividerLabel) `cl`(centerLabel) `dr`(drop) `hl`(highlight) `brd`(bordered) `cpt`(compact) `sL`(showLabels) `xL`(xLeft) `xR`(xRight) `yT`(yTop) `yB`(yBottom)
 
 ## Blocks (use 10+ per deck)
 
-`{"_":"heading","x":"Title","s":"2xl","w":700}` `{"_":"text","x":"Body","s":"lg","c":"$C"}` `{"_":"badge","x":"LABEL","i":"Zap","b":"$E","c":"$A"}` `{"_":"code","x":"const x=1","lb":"JS"}` `{"_":"quote","x":"Text","author":"Name"}` `{"_":"callout","x":"Note","title":"Warn","b":"$F","i":"AlertTriangle"}` `{"_":"metric","value":"98%","lb":"Acc","s":"3xl","c":"$A"}` `{"_":"progress","value":75,"lb":"Done","c":"$A"}` `{"_":"icon-row","I":[{"i":"Brain","title":"AI","x":"Desc","ic":"$A","ib":"$E"}]}` `{"_":"tag-group","I":[{"x":"Tag","c":"$A"}],"v":"outline"}` `{"_":"bullets","I":["A","B"]}` `{"_":"table","H":["X","Y"],"R":[["1","2"]],"hb":"$A"}` `{"_":"grid","I":[{"blocks":[{"_":"metric","value":"5","lb":"X"}],"style":{"padding":"20px","background":"$F"}}]}` `{"_":"flow","I":[{"i":"Upload","lb":"In"},{"i":"Cpu","lb":"Process"}],"ac":"$A"}` `{"_":"steps","I":[{"title":"1","x":"Do"}],"lnc":"$A"}` `{"_":"timeline","I":[{"title":"Q1","x":"Launch"}],"dc":"$A"}` `12`=spacer `{"_":"divider","c":"$C"}`
+`{"_":"heading","x":"Title","s":"2xl","w":700}` `{"_":"text","x":"Body","s":"lg","c":"$C"}` `{"_":"badge","x":"LABEL","i":"Zap","b":"$E","c":"$A"}` `{"_":"code","x":"const x=1","lb":"JS"}` `{"_":"quote","x":"Text","author":"Name"}` `{"_":"callout","x":"Note","title":"Warn","b":"$F","i":"AlertTriangle"}` `{"_":"metric","value":"98%","lb":"Acc","s":"3xl","c":"$A"}` `{"_":"progress","value":75,"lb":"Done","c":"$A"}` `{"_":"icon-row","I":[{"i":"Brain","title":"AI","x":"Desc","ic":"$A","ib":"$E"}]}` `{"_":"tag-group","I":[{"x":"Tag","c":"$A"}],"v":"outline"}` `{"_":"bullets","I":["A","B"]}` `{"_":"table","H":["X","Y"],"R":[["1","2"]],"hb":"$A"}` `{"_":"grid","I":[{"blocks":[{"_":"metric","value":"5","lb":"X"}],"style":{"padding":"20px","background":"$F"}}]}` `{"_":"flow","I":[{"i":"Upload","lb":"In"},{"i":"Cpu","lb":"Process"}],"ac":"$A"}` `{"_":"steps","I":[{"title":"1","x":"Do"}],"lnc":"$A"}` `{"_":"timeline","I":[{"title":"Q1","x":"Launch"}],"dc":"$A"}` `{"_":"comparison","I":[{"title":"Before","i":"X","c":"$D","I":["Old way"]},{"title":"After","i":"Check","c":"$B","I":["New way"]}],"dl":"VS"}` `{"_":"funnel","I":[{"lb":"Visitors","val":"10K","c":"$A"},{"lb":"Signups","val":"2K","c":"$B","dr":"−80%"}]}` `{"_":"cycle","cl":"Loop","I":[{"lb":"Plan","c":"$A"},{"lb":"Do","c":"$B"},{"lb":"Check","c":"$C"}]}` `{"_":"number-row","I":[{"val":"99%","lb":"Uptime","i":"Activity","c":"$A"},{"val":"38ms","lb":"Latency","c":"$B"}]}` `{"_":"matrix","Q":[{"title":"Strengths","c":"$B","I":["Team"]},{"title":"Opportunities","c":"$A","I":["Market"]},{"title":"Weaknesses","c":"$D","I":["Scale"]},{"title":"Threats","c":"$D","I":["Competition"]}],"xL":"INTERNAL","xR":"EXTERNAL"}` `{"_":"checklist","I":[{"x":"Auth done","status":"done"},{"x":"SOC 2","status":"partial"},{"x":"HIPAA","status":"pending"}]}` `12`=spacer `{"_":"divider","c":"$C"}`
 
 ## Quality
 

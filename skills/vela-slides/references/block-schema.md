@@ -1,6 +1,6 @@
 # Vela Block Schema Reference
 
-Complete reference for all Vela v14 slide block types.
+Complete reference for all Vela v13 slide block types (27 total).
 
 ## Slide Object
 
@@ -449,6 +449,170 @@ Inline SVG diagram — escape hatch for visuals that structured blocks can't exp
 - Prefer stroke-based outlines (`fill="none" stroke="{{accent}}"`) over filled shapes
 - Max `viewBox` height ~200-300px to avoid dominating the slide
 - Text sizes: 11-16px for labels, 8-10px for annotations
+
+### comparison
+Side-by-side A vs B layout with semantic coloring, icon headers, and optional central divider. Use for before/after, pros/cons, plan A vs B.
+```json
+{
+  "type": "comparison",
+  "items": [
+    {
+      "title": "Before",
+      "icon": "X",
+      "color": "#ef4444",
+      "items": ["Manual deploys", "2-hour releases", "No rollback"]
+    },
+    {
+      "title": "After",
+      "icon": "Check",
+      "color": "#22c55e",
+      "items": ["CI/CD pipeline", "5-min deploys", "One-click rollback"]
+    }
+  ],
+  "dividerLabel": "VS",
+  "titleSize": "md",
+  "size": "sm"
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| items | array(2) | `[]` | Exactly 2 side objects: `{title, icon?, color?, items[]}` |
+| items[].title | string | | Side heading (e.g. "Before", "Pros") |
+| items[].icon | string | | Lucide icon for side header |
+| items[].color | string | left:`#ef4444` right:`#22c55e` | Side accent color |
+| items[].items | string[] | `[]` | Bullet points for that side |
+| dividerLabel | string | `"VS"` | Text in center divider circle |
+| hideDivider | boolean | `false` | Hide the VS divider circle |
+| titleSize | size | `"md"` | Size of side titles |
+| size | size | `"sm"` | Size of bullet text |
+
+### funnel
+Tapered stages from wide to narrow. SVG-rendered trapezoids with labels, values, and drop annotations.
+```json
+{
+  "type": "funnel",
+  "items": [
+    { "label": "Visitors", "value": "124,000", "color": "#3b82f6" },
+    { "label": "Signups", "value": "31,200", "color": "#6366f1", "drop": "−74.8%" },
+    { "label": "Activated", "value": "4,800", "color": "#ef4444", "drop": "−84.6%", "highlight": true },
+    { "label": "Paying", "value": "1,920", "color": "#a855f7", "drop": "−60.0%" }
+  ]
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| items | array | `[]` | Funnel stages top-to-bottom |
+| items[].label | string | | Stage name |
+| items[].value | string | | Display value (e.g. "124,000") |
+| items[].color | string | accent | Stage color |
+| items[].drop | string | | Drop annotation (e.g. "−74.8%") |
+| items[].highlight | boolean | `false` | Dashed border to highlight problem stage |
+
+### cycle
+Circular process diagram with nodes around a circle, connected by curved arrows. Optional center label.
+```json
+{
+  "type": "cycle",
+  "centerLabel": "ReAct",
+  "centerSub": "Agent Loop",
+  "items": [
+    { "label": "Think", "icon": "🧠", "color": "#3b82f6" },
+    { "label": "Act", "icon": "⚡", "color": "#22c55e" },
+    { "label": "Observe", "icon": "👁", "color": "#f97316" },
+    { "label": "Reflect", "icon": "🔄", "color": "#8b5cf6" }
+  ]
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| items | array | `[]` | Nodes arranged in a circle (3-7 recommended) |
+| items[].label | string | | Node label |
+| items[].icon | string | | Emoji or text shown inside node |
+| items[].color | string | auto-cycle | Node and arrow color |
+| centerLabel | string | | Large text in center of circle |
+| centerSub | string | | Smaller text below centerLabel |
+
+### number-row
+Inline row of 2-5 big metrics with labels, optional icons, separated by thin dividers. Replaces grid+metric boilerplate.
+```json
+{
+  "type": "number-row",
+  "items": [
+    { "value": "99.97%", "label": "Uptime", "icon": "Activity", "color": "#22c55e" },
+    { "value": "38ms", "label": "P95 Latency", "icon": "Clock", "color": "#3b82f6" },
+    { "value": "2.4M", "label": "Active Users", "icon": "Users", "color": "#8b5cf6" }
+  ],
+  "size": "3xl",
+  "compact": false,
+  "bordered": false
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| items | array | `[]` | 2-5 metric items |
+| items[].value | string | | Big display value |
+| items[].label | string | | Uppercase label below value |
+| items[].icon | string | | Lucide icon above value |
+| items[].color | string | accent | Value and icon color |
+| size | size | `"3xl"` | Value font size |
+| compact | boolean | `false` | Smaller padding, "2xl" default size |
+| bordered | boolean | `false` | Add background border container |
+| showIcons | boolean | `true` | Show/hide icon circles |
+
+### matrix
+2×2 quadrant grid with axis labels and per-quadrant coloring. Use for SWOT, Eisenhower, effort/impact.
+```json
+{
+  "type": "matrix",
+  "xLeft": "INTERNAL",
+  "xRight": "EXTERNAL",
+  "yTop": "POSITIVE",
+  "yBottom": "NEGATIVE",
+  "quadrants": [
+    { "title": "Strengths", "icon": "TrendingUp", "color": "#22c55e", "items": ["Strong team", "First mover"] },
+    { "title": "Opportunities", "icon": "Lightbulb", "color": "#3b82f6", "items": ["Enterprise market", "API ecosystem"] },
+    { "title": "Weaknesses", "icon": "TrendingDown", "color": "#f97316", "items": ["Small team", "Limited blocks"] },
+    { "title": "Threats", "icon": "AlertTriangle", "color": "#ef4444", "items": ["Big tech competitors", "Cost increases"] }
+  ]
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| quadrants | array(4) | `[]` | Four quadrant objects: top-left, top-right, bottom-left, bottom-right |
+| quadrants[].title | string | | Quadrant heading |
+| quadrants[].icon | string | | Lucide icon for heading |
+| quadrants[].color | string | auto | Quadrant accent color |
+| quadrants[].items | string[] | `[]` | Bullet points in quadrant |
+| xLeft | string | | Top-left x-axis label |
+| xRight | string | | Top-right x-axis label |
+| yTop | string | | Left y-axis top label |
+| yBottom | string | | Left y-axis bottom label |
+
+Note: `items` can be used as an alias for `quadrants`.
+
+### checklist
+Status-aware item list with semantic icons and colors for each state: done, partial, pending, blocked.
+```json
+{
+  "type": "checklist",
+  "items": [
+    { "text": "SSO integration", "status": "done" },
+    { "text": "Audit logging", "status": "done" },
+    { "text": "SOC 2 certification", "status": "partial" },
+    { "text": "HIPAA BAA template", "status": "pending" },
+    { "text": "EU data residency", "status": "blocked" }
+  ],
+  "size": "sm",
+  "showLabels": true
+}
+```
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| items | array | `[]` | Checklist items |
+| items[].text | string | | Item text |
+| items[].status | enum | `"pending"` | `"done"`, `"partial"`, `"pending"`, `"blocked"` |
+| size | size | `"sm"` | Text font size |
+| showLabels | boolean | `true` | Show status label on right side |
 
 ### spacer
 Vertical whitespace.

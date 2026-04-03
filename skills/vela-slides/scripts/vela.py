@@ -169,7 +169,13 @@ _BK = {
     "bc": "borderColor", "str": "striped", "lo": "loop",
     "lnc": "lineColor", "nc": "numberColor", "tc": "titleColor",
     "xc": "textColor", "dc": "dotColor",
-    "cir": "circle", "dir": "direction"
+    "cir": "circle", "dir": "direction",
+    "dl": "dividerLabel", "cl": "centerLabel", "csub": "centerSub",
+    "Q": "quadrants", "xL": "xLeft", "xR": "xRight",
+    "yT": "yTop", "yB": "yBottom", "sL": "showLabels",
+    "brd": "bordered", "cpt": "compact", "hl": "highlight",
+    "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
+    "val": "value"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 
@@ -468,12 +474,16 @@ def compact_deck(full):
 #
 # Type IDs: 0=badge, 1=spacer, 2=heading, 3=text, 4=grid, 5=icon,
 #           6=callout, 7=icon-row, 8=code, 9=table, 10=flow,
-#           11=steps, 12=tag-group, 13=divider, 99=passthrough
+#           11=steps, 12=tag-group, 13=divider, 14=comparison,
+#           15=funnel, 16=cycle, 17=number-row, 18=matrix,
+#           19=checklist, 99=passthrough
 
 _BLOCK_TYPE_IDS = {
     "badge": 0, "spacer": 1, "heading": 2, "text": 3, "grid": 4,
     "icon": 5, "callout": 6, "icon-row": 7, "code": 8, "table": 9,
-    "flow": 10, "steps": 11, "tag-group": 12, "divider": 13
+    "flow": 10, "steps": 11, "tag-group": 12, "divider": 13,
+    "comparison": 14, "funnel": 15, "cycle": 16, "number-row": 17,
+    "matrix": 18, "checklist": 19
 }
 _BLOCK_ID_TYPES = {v: k for k, v in _BLOCK_TYPE_IDS.items()}
 
@@ -585,6 +595,46 @@ def _turbo_encode_block(block, palette):
         return [4, block.get("cols", 0), block.get("gap", 0), grid_items]
     if t == "divider":
         return [13, _ci(palette, block.get("color", ""))]
+    if t == "comparison":
+        sides = []
+        for side in block.get("items", []):
+            side_items = [si if isinstance(si, str) else si.get("text", "") for si in side.get("items", [])]
+            sides.append([side.get("title", ""), side.get("icon", ""),
+                          _ci(palette, side.get("color", "")), side_items])
+        return [14, sides, block.get("dividerLabel", ""),
+                block.get("titleSize", ""), block.get("size", "")]
+    if t == "funnel":
+        items = [[i.get("label", ""), i.get("value", ""),
+                  _ci(palette, i.get("color", "")),
+                  i.get("drop", ""), 1 if i.get("highlight") else 0]
+                 for i in block.get("items", [])]
+        return [15, items]
+    if t == "cycle":
+        items = [[i.get("label", ""), i.get("icon", ""),
+                  _ci(palette, i.get("color", ""))]
+                 for i in block.get("items", [])]
+        return [16, items, block.get("centerLabel", ""),
+                block.get("centerSub", "")]
+    if t == "number-row":
+        items = [[i.get("value", ""), i.get("label", ""),
+                  i.get("icon", ""), _ci(palette, i.get("color", ""))]
+                 for i in block.get("items", [])]
+        return [17, items, block.get("size", ""),
+                1 if block.get("compact") else 0,
+                1 if block.get("bordered") else 0]
+    if t == "matrix":
+        quads = []
+        for q in block.get("quadrants", block.get("items", [])):
+            q_items = [qi if isinstance(qi, str) else qi.get("text", "") for qi in q.get("items", [])]
+            quads.append([q.get("title", ""), q.get("icon", ""),
+                          _ci(palette, q.get("color", "")), q_items])
+        return [18, quads, block.get("xLeft", ""), block.get("xRight", ""),
+                block.get("yTop", ""), block.get("yBottom", "")]
+    if t == "checklist":
+        items = [[i.get("text", ""), i.get("status", "pending")]
+                 for i in block.get("items", [])]
+        return [19, items, block.get("size", ""),
+                1 if block.get("showLabels", True) else 0]
     # Passthrough for unknown types
     return [99, block]
 
@@ -723,6 +773,76 @@ def _turbo_decode_block(arr, palette):
         r = {"type": "divider"}
         c = _cv(arr[1]) if len(arr) > 1 else ""
         if c: r["color"] = c
+        return r
+    if tid == 14:  # comparison
+        sides = []
+        for s in arr[1]:
+            side = {"title": s[0]}
+            if s[1]: side["icon"] = s[1]
+            c = _cv(s[2])
+            if c: side["color"] = c
+            side["items"] = s[3]
+            sides.append(side)
+        r = {"type": "comparison", "items": sides}
+        if len(arr) > 2 and arr[2]: r["dividerLabel"] = arr[2]
+        if len(arr) > 3 and arr[3]: r["titleSize"] = arr[3]
+        if len(arr) > 4 and arr[4]: r["size"] = arr[4]
+        return r
+    if tid == 15:  # funnel
+        items = []
+        for i in arr[1]:
+            item = {"label": i[0], "value": i[1]}
+            c = _cv(i[2])
+            if c: item["color"] = c
+            if i[3]: item["drop"] = i[3]
+            if i[4]: item["highlight"] = True
+            items.append(item)
+        return {"type": "funnel", "items": items}
+    if tid == 16:  # cycle
+        items = []
+        for i in arr[1]:
+            item = {"label": i[0]}
+            if i[1]: item["icon"] = i[1]
+            c = _cv(i[2])
+            if c: item["color"] = c
+            items.append(item)
+        r = {"type": "cycle", "items": items}
+        if len(arr) > 2 and arr[2]: r["centerLabel"] = arr[2]
+        if len(arr) > 3 and arr[3]: r["centerSub"] = arr[3]
+        return r
+    if tid == 17:  # number-row
+        items = []
+        for i in arr[1]:
+            item = {"value": i[0], "label": i[1]}
+            if i[2]: item["icon"] = i[2]
+            c = _cv(i[3])
+            if c: item["color"] = c
+            items.append(item)
+        r = {"type": "number-row", "items": items}
+        if len(arr) > 2 and arr[2]: r["size"] = arr[2]
+        if len(arr) > 3 and arr[3]: r["compact"] = True
+        if len(arr) > 4 and arr[4]: r["bordered"] = True
+        return r
+    if tid == 18:  # matrix
+        quads = []
+        for q in arr[1]:
+            quad = {"title": q[0]}
+            if q[1]: quad["icon"] = q[1]
+            c = _cv(q[2])
+            if c: quad["color"] = c
+            quad["items"] = q[3]
+            quads.append(quad)
+        r = {"type": "matrix", "quadrants": quads}
+        if len(arr) > 2 and arr[2]: r["xLeft"] = arr[2]
+        if len(arr) > 3 and arr[3]: r["xRight"] = arr[3]
+        if len(arr) > 4 and arr[4]: r["yTop"] = arr[4]
+        if len(arr) > 5 and arr[5]: r["yBottom"] = arr[5]
+        return r
+    if tid == 19:  # checklist
+        items = [{"text": i[0], "status": i[1]} for i in arr[1]]
+        r = {"type": "checklist", "items": items}
+        if len(arr) > 2 and arr[2]: r["size"] = arr[2]
+        if len(arr) > 3 and not arr[3]: r["showLabels"] = False
         return r
     if tid == 99:  # passthrough
         return arr[1]

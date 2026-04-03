@@ -1841,6 +1841,236 @@ def run_e2e_tests():
     return result.returncode
 
 
+# ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_block_primitives():
+    print("\n── Block Primitives Tests ──")
+
+    NEW_BLOCKS = ["comparison", "funnel", "cycle", "number-row", "matrix", "checklist"]
+
+    # 1. All new types in SAFE_BLOCK_TYPES (part-imports.jsx)
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if f'"{bt}"' in imports_src and "SAFE_BLOCK_TYPES" in imports_src:
+            ok(f'"{bt}" in SAFE_BLOCK_TYPES')
+        else:
+            fail(f'"{bt}" in SAFE_BLOCK_TYPES')
+
+    # 2. All new types in VALID_BLOCK_TYPES (validate.py)
+    validate_src = open(os.path.join(SCRIPTS, "validate.py"), encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if f'"{bt}"' in validate_src:
+            ok(f'"{bt}" in VALID_BLOCK_TYPES')
+        else:
+            fail(f'"{bt}" in VALID_BLOCK_TYPES')
+
+    # 3. All new types have renderers in part-blocks.jsx
+    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if f'case "{bt}"' in blocks_src:
+            ok(f'Renderer for "{bt}" in part-blocks.jsx')
+        else:
+            fail(f'Renderer for "{bt}" in part-blocks.jsx')
+
+    # 4. Block schema reference documents all new types
+    schema_path = os.path.join(SKILL_DIR, "references", "block-schema.md")
+    schema_src = open(schema_path, encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if f"### {bt}" in schema_src:
+            ok(f'block-schema.md documents "{bt}"')
+        else:
+            fail(f'block-schema.md documents "{bt}"')
+
+    # 5. SKILL.md mentions all new types
+    skill_src = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if bt in skill_src:
+            ok(f'SKILL.md mentions "{bt}"')
+        else:
+            fail(f'SKILL.md mentions "{bt}"')
+
+    # 6. Turbo format has type IDs for all new types
+    vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
+    for bt in NEW_BLOCKS:
+        if f'"{bt}":' in vela_src and "_BLOCK_TYPE_IDS" in vela_src:
+            ok(f'Turbo type ID for "{bt}"')
+        else:
+            fail(f'Turbo type ID for "{bt}"')
+
+    # 7. Compact format key mappings for new block properties
+    new_keys = ["dividerLabel", "centerLabel", "centerSub", "quadrants", "xLeft", "xRight", "yTop", "yBottom"]
+    for key in new_keys:
+        if f'"{key}"' in vela_src:
+            ok(f'Compact key mapping for "{key}"')
+        else:
+            fail(f'Compact key mapping for "{key}"')
+
+    # 8. Sanitization handles new types (comparison/matrix have nested items)
+    if "comparison" in imports_src and "matrix" in imports_src:
+        if 'clean.type === "comparison"' in imports_src and 'clean.type === "matrix"' in imports_src:
+            ok("Sanitization handles comparison/matrix nested items")
+        else:
+            fail("Sanitization for comparison/matrix")
+
+    if 'clean.type === "funnel"' in imports_src or '"funnel"' in imports_src.split("SAFE_BLOCK_TYPES")[1].split("sanitizeBlock")[0] if "sanitizeBlock" in imports_src else True:
+        # funnel/cycle/number-row/checklist use same sanitization as flow/steps/timeline
+        sanitize_line = imports_src[imports_src.index("sanitizeBlock"):] if "sanitizeBlock" in imports_src else ""
+        if "funnel" in sanitize_line and "cycle" in sanitize_line and "number-row" in sanitize_line and "checklist" in sanitize_line:
+            ok("Sanitization includes funnel/cycle/number-row/checklist")
+        else:
+            fail("Sanitization for funnel/cycle/number-row/checklist")
+
+    # 9. Validate starter deck with new blocks passes
+    starter = os.path.join(EXAMPLES, "starter-deck.vela")
+    result = subprocess.run(
+        [sys.executable, os.path.join(SCRIPTS, "validate.py"), starter],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        ok("starter-deck.vela validates with new block types")
+    else:
+        fail("starter-deck.vela validation", result.stdout + result.stderr)
+
+    # 10. Starter deck contains all 6 new block types
+    deck = json.load(open(starter, encoding="utf-8"))
+    all_types = set()
+    for lane in deck.get("lanes", []):
+        for item in lane.get("items", []):
+            for slide in item.get("slides", []):
+                for block in slide.get("blocks", []):
+                    all_types.add(block.get("type"))
+    for bt in NEW_BLOCKS:
+        if bt in all_types:
+            ok(f'starter-deck.vela has "{bt}" block')
+        else:
+            fail(f'starter-deck.vela has "{bt}" block')
+
+    # 11. Compact round-trip: compact and expand a deck with new blocks
+    vela_py = os.path.join(SCRIPTS, "vela.py")
+    tmpdir = tempfile.mkdtemp(prefix="vela-block-test-")
+    try:
+        test_deck = {
+            "deckTitle": "Block Primitives Test",
+            "lanes": [{"title": "Test", "items": [{
+                "title": "New Blocks",
+                "status": "done",
+                "slides": [
+                    {"bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6", "duration": 60,
+                     "blocks": [
+                        {"type": "comparison", "items": [
+                            {"title": "A", "color": "#ef4444", "items": ["Point 1"]},
+                            {"title": "B", "color": "#22c55e", "items": ["Point 2"]}
+                        ], "dividerLabel": "VS"},
+                        {"type": "funnel", "items": [
+                            {"label": "Top", "value": "100", "color": "#3b82f6"},
+                            {"label": "Bottom", "value": "10", "color": "#ef4444", "drop": "-90%", "highlight": True}
+                        ]},
+                        {"type": "cycle", "centerLabel": "Loop", "items": [
+                            {"label": "A", "color": "#3b82f6"},
+                            {"label": "B", "color": "#22c55e"},
+                            {"label": "C", "color": "#f97316"}
+                        ]},
+                        {"type": "number-row", "items": [
+                            {"value": "99%", "label": "Uptime", "icon": "Activity", "color": "#22c55e"},
+                            {"value": "42ms", "label": "Latency", "color": "#3b82f6"}
+                        ]},
+                        {"type": "matrix", "xLeft": "X", "xRight": "Y", "quadrants": [
+                            {"title": "Q1", "color": "#22c55e", "items": ["A"]},
+                            {"title": "Q2", "color": "#3b82f6", "items": ["B"]},
+                            {"title": "Q3", "color": "#f97316", "items": ["C"]},
+                            {"title": "Q4", "color": "#ef4444", "items": ["D"]}
+                        ]},
+                        {"type": "checklist", "items": [
+                            {"text": "Done item", "status": "done"},
+                            {"text": "Partial item", "status": "partial"},
+                            {"text": "Pending item", "status": "pending"},
+                            {"text": "Blocked item", "status": "blocked"}
+                        ]}
+                    ]},
+                ]
+            }]}]
+        }
+
+        deck_path = os.path.join(tmpdir, "test.vela")
+        compact_path = os.path.join(tmpdir, "compact.vela")
+        expanded_path = os.path.join(tmpdir, "expanded.vela")
+        turbo_path = os.path.join(tmpdir, "turbo.vela")
+
+        with open(deck_path, "w", encoding="utf-8") as f:
+            json.dump(test_deck, f, ensure_ascii=False)
+
+        # Compact round-trip
+        r = subprocess.run([sys.executable, vela_py, "deck", "compact", deck_path, compact_path],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and os.path.exists(compact_path):
+            ok("deck compact succeeds with new block types")
+            compact = json.load(open(compact_path, encoding="utf-8"))
+            if "S" in compact or "G" in compact:
+                ok("Compact output uses short keys")
+            else:
+                fail("Compact format structure")
+
+            # Expand back
+            r2 = subprocess.run([sys.executable, vela_py, "deck", "expand", compact_path, expanded_path],
+                                capture_output=True, text=True)
+            if r2.returncode == 0 and os.path.exists(expanded_path):
+                expanded = json.load(open(expanded_path, encoding="utf-8"))
+                # Check all block types survive round-trip
+                rt_types = set()
+                for lane in expanded.get("lanes", []):
+                    for item in lane.get("items", []):
+                        for slide in item.get("slides", []):
+                            for block in slide.get("blocks", []):
+                                rt_types.add(block.get("type"))
+                missing = [bt for bt in NEW_BLOCKS if bt not in rt_types]
+                if not missing:
+                    ok("Compact round-trip preserves all 6 new block types")
+                else:
+                    fail("Compact round-trip", f"missing: {missing}")
+            else:
+                fail("deck expand", r2.stdout + r2.stderr)
+        else:
+            fail("deck compact", r.stdout + r.stderr)
+
+        # Turbo round-trip
+        r = subprocess.run([sys.executable, vela_py, "deck", "turbo", deck_path, turbo_path],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and os.path.exists(turbo_path):
+            ok("deck turbo succeeds with new block types")
+
+            # Expand turbo back
+            r2 = subprocess.run([sys.executable, vela_py, "deck", "expand", turbo_path, expanded_path],
+                                capture_output=True, text=True)
+            if r2.returncode == 0 and os.path.exists(expanded_path):
+                expanded = json.load(open(expanded_path, encoding="utf-8"))
+                rt_types = set()
+                for lane in expanded.get("lanes", []):
+                    for item in lane.get("items", []):
+                        for slide in item.get("slides", []):
+                            for block in slide.get("blocks", []):
+                                rt_types.add(block.get("type"))
+                missing = [bt for bt in NEW_BLOCKS if bt not in rt_types]
+                if not missing:
+                    ok("Turbo round-trip preserves all 6 new block types")
+                else:
+                    fail("Turbo round-trip", f"missing: {missing}")
+            else:
+                fail("turbo expand", r2.stdout + r2.stderr)
+        else:
+            fail("deck turbo", r.stdout + r.stderr)
+
+        # Validate the test deck
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), deck_path],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("Test deck with all new blocks validates")
+        else:
+            fail("Test deck validation", r.stdout + r.stderr)
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -1857,6 +2087,7 @@ if __name__ == "__main__":
         test_v10_features()
         test_channel_local()
         test_server_hardening()
+        test_block_primitives()
     if run_integration:
         test_integration()
         test_cli_commands()
