@@ -1126,8 +1126,22 @@
                         {
                           "type": "comparison",
                           "items": [
-                            { "title": "Before", "color": "#ef4444", "items": ["Manual layout", "Pixel pushing"] },
-                            { "title": "After", "color": "#22c55e", "items": ["Semantic blocks", "AI-generated"] }
+                            {
+                              "title": "Before",
+                              "color": "#ef4444",
+                              "items": [
+                                "Manual layout",
+                                "Pixel pushing"
+                              ]
+                            },
+                            {
+                              "title": "After",
+                              "color": "#22c55e",
+                              "items": [
+                                "Semantic blocks",
+                                "AI-generated"
+                              ]
+                            }
                           ],
                           "dividerLabel": "VS"
                         }
@@ -1138,10 +1152,22 @@
                         {
                           "type": "funnel",
                           "items": [
-                            { "label": "Visitors", "value": "10K" },
-                            { "label": "Signups", "value": "2.4K" },
-                            { "label": "Active", "value": "800" },
-                            { "label": "Paid", "value": "120" }
+                            {
+                              "label": "Visitors",
+                              "value": "10K"
+                            },
+                            {
+                              "label": "Signups",
+                              "value": "2.4K"
+                            },
+                            {
+                              "label": "Active",
+                              "value": "800"
+                            },
+                            {
+                              "label": "Paid",
+                              "value": "120"
+                            }
                           ]
                         }
                       ]
@@ -1151,10 +1177,22 @@
                         {
                           "type": "cycle",
                           "items": [
-                            { "label": "Describe", "icon": "💬" },
-                            { "label": "Build", "icon": "🔧" },
-                            { "label": "Review", "icon": "👁" },
-                            { "label": "Refine", "icon": "✨" }
+                            {
+                              "label": "Describe",
+                              "icon": "💬"
+                            },
+                            {
+                              "label": "Build",
+                              "icon": "🔧"
+                            },
+                            {
+                              "label": "Review",
+                              "icon": "👁"
+                            },
+                            {
+                              "label": "Refine",
+                              "icon": "✨"
+                            }
                           ],
                           "centerLabel": "Vela"
                         }
@@ -1193,9 +1231,24 @@
                 {
                   "type": "number-row",
                   "items": [
-                    { "value": "27", "label": "Block Types", "icon": "Layers", "color": "#3b82f6" },
-                    { "value": "20", "label": "AI Tools", "icon": "Wrench", "color": "#a78bfa" },
-                    { "value": "3", "label": "Formats", "icon": "FileJson", "color": "#f59e0b" }
+                    {
+                      "value": "27",
+                      "label": "Block Types",
+                      "icon": "Layers",
+                      "color": "#3b82f6"
+                    },
+                    {
+                      "value": "20",
+                      "label": "AI Tools",
+                      "icon": "Wrench",
+                      "color": "#a78bfa"
+                    },
+                    {
+                      "value": "3",
+                      "label": "Formats",
+                      "icon": "FileJson",
+                      "color": "#f59e0b"
+                    }
                   ]
                 },
                 {
@@ -1216,10 +1269,42 @@
                           "yTop": "High Impact",
                           "yBottom": "Low Impact",
                           "quadrants": [
-                            { "title": "Quick Wins", "icon": "Zap", "color": "#22c55e", "items": ["Badge block", "Spacer tweaks"] },
-                            { "title": "Big Bets", "icon": "Rocket", "color": "#3b82f6", "items": ["Vera AI engine", "PDF export"] },
-                            { "title": "Fill-ins", "icon": "Clock", "color": "#f59e0b", "items": ["Docs updates", "Changelog"] },
-                            { "title": "Avoid", "icon": "X", "color": "#ef4444", "items": ["Pixel editors", "Custom fonts"] }
+                            {
+                              "title": "Quick Wins",
+                              "icon": "Zap",
+                              "color": "#22c55e",
+                              "items": [
+                                "Badge block",
+                                "Spacer tweaks"
+                              ]
+                            },
+                            {
+                              "title": "Big Bets",
+                              "icon": "Rocket",
+                              "color": "#3b82f6",
+                              "items": [
+                                "Vera AI engine",
+                                "PDF export"
+                              ]
+                            },
+                            {
+                              "title": "Fill-ins",
+                              "icon": "Clock",
+                              "color": "#f59e0b",
+                              "items": [
+                                "Docs updates",
+                                "Changelog"
+                              ]
+                            },
+                            {
+                              "title": "Avoid",
+                              "icon": "X",
+                              "color": "#ef4444",
+                              "items": [
+                                "Pixel editors",
+                                "Custom fonts"
+                              ]
+                            }
                           ]
                         }
                       ]
@@ -1229,16 +1314,148 @@
                         {
                           "type": "checklist",
                           "items": [
-                            { "text": "Comparison block", "status": "done" },
-                            { "text": "Funnel block", "status": "done" },
-                            { "text": "Cycle block", "status": "done" },
-                            { "text": "Number-row block", "status": "done" },
-                            { "text": "Matrix block", "status": "done" },
-                            { "text": "Checklist block", "status": "done" }
+                            {
+                              "text": "Comparison block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Funnel block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Cycle block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Number-row block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Matrix block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Checklist block",
+                              "status": "done"
+                            }
                           ],
                           "showLabels": true
                         }
                       ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "All New Primitives",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "gap": 12,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "New Block Primitives",
+                  "size": "xl",
+                  "icon": "Layers",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "comparison",
+                  "items": [
+                    {
+                      "title": "Option A",
+                      "color": "#3b82f6",
+                      "items": [
+                        "Fast",
+                        "Simple"
+                      ]
+                    },
+                    {
+                      "title": "Option B",
+                      "color": "#f59e0b",
+                      "items": [
+                        "Flexible",
+                        "Powerful"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "funnel",
+                  "items": [
+                    {
+                      "label": "Awareness",
+                      "value": "10K"
+                    },
+                    {
+                      "label": "Interest",
+                      "value": "3K"
+                    },
+                    {
+                      "label": "Action",
+                      "value": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "cycle",
+                  "items": [
+                    "Plan",
+                    "Build",
+                    "Test",
+                    "Deploy"
+                  ]
+                },
+                {
+                  "type": "number-row",
+                  "items": [
+                    {
+                      "label": "Users",
+                      "value": "1.2M"
+                    },
+                    {
+                      "label": "Revenue",
+                      "value": "$4.8M"
+                    }
+                  ]
+                },
+                {
+                  "type": "matrix",
+                  "axes": {
+                    "x": "Effort",
+                    "y": "Impact"
+                  },
+                  "items": [
+                    {
+                      "label": "Quick Win",
+                      "x": 0.2,
+                      "y": 0.8
+                    },
+                    {
+                      "label": "Big Bet",
+                      "x": 0.8,
+                      "y": 0.9
+                    }
+                  ]
+                },
+                {
+                  "type": "checklist",
+                  "items": [
+                    {
+                      "text": "Design review",
+                      "checked": true
+                    },
+                    {
+                      "text": "Implementation",
+                      "checked": true
+                    },
+                    {
+                      "text": "Testing",
+                      "checked": false
                     }
                   ]
                 }

@@ -29,6 +29,13 @@
                   { "icon": "Clock", "text": "90 Minutes" },
                   { "icon": "Wrench", "text": "Hands-on" },
                   { "icon": "Award", "text": "Certificate" }
+                ]},
+                { "type": "spacer", "h": 16 },
+                { "type": "number-row", "items": [
+                  { "value": "90", "label": "Minutes", "icon": "Clock", "color": "#34d399" },
+                  { "value": "4", "label": "Objectives", "icon": "Target", "color": "#6ee7b7" },
+                  { "value": "5", "label": "Slides", "icon": "Layers", "color": "#34d399" },
+                  { "value": "1", "label": "Certificate", "icon": "Award", "color": "#6ee7b7" }
                 ]}
               ]
             },

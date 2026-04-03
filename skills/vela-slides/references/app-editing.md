@@ -118,7 +118,7 @@ This rebuilds `app/vela.jsx` from all 13 parts in fixed order.
 ### Step 4: Test with a deck (optional)
 
 ```bash
-python3 skills/vela-slides/scripts/assemble.py examples/starter-deck.vela --from-parts
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts
 ```
 
 The `--from-parts` flag runs concat + assemble in one step.

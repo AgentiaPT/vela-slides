@@ -74,17 +74,17 @@ def test_unit():
         fail("vela.jsx exists")
 
     # 4. Validate example deck JSON
-    starter = os.path.join(EXAMPLES, "starter-deck.vela")
+    starter = os.path.join(EXAMPLES, "vela-demo.vela")
     if os.path.exists(starter):
         try:
             deck = json.load(open(starter, encoding="utf-8"))
             assert "lanes" in deck or "slides" in deck, "no lanes or slides key"
             assert "deckTitle" in deck, "no deckTitle"
-            ok("starter-deck.vela is valid JSON with expected structure")
+            ok("vela-demo.vela is valid JSON with expected structure")
         except Exception as e:
-            fail("starter-deck.vela valid", str(e))
+            fail("vela-demo.vela valid", str(e))
     else:
-        fail("starter-deck.vela exists")
+        fail("vela-demo.vela exists")
 
     # 5. Scripts exist and are valid Python
     for script in ["concat.py", "assemble.py", "validate.py"]:
@@ -356,16 +356,16 @@ def test_integration():
         else:
             fail("Built template STARTUP_PATCH marker")
 
-        # 3. Validate starter deck
-        starter = os.path.join(EXAMPLES, "starter-deck.vela")
+        # 3. Validate demo deck
+        starter = os.path.join(EXAMPLES, "vela-demo.vela")
         result = subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "validate.py"), starter],
             capture_output=True, text=True
         )
         if result.returncode == 0:
-            ok("validate.py passes on starter-deck.vela")
+            ok("validate.py passes on vela-demo.vela")
         else:
-            fail("validate.py on starter-deck", result.stdout + result.stderr)
+            fail("validate.py on vela-demo.vela", result.stdout + result.stderr)
 
         # 4. Assemble produces a valid artifact
         out_artifact = os.path.join(tmpdir, "assembled.jsx")
@@ -786,7 +786,7 @@ def test_server_hardening():
     examples_dir = os.path.join(REPO_ROOT, "examples")
     vela_decks = [f for f in os.listdir(examples_dir) if f.endswith(".vela")]
     json_decks = [f for f in os.listdir(examples_dir) if f.endswith(".json")]
-    if len(vela_decks) >= 6:
+    if len(vela_decks) >= 5:
         ok(f"Example decks use .vela extension ({len(vela_decks)} files)")
     else:
         fail("Example .vela decks", f"found {len(vela_decks)}")
@@ -1327,7 +1327,7 @@ def test_serve_auth():
     TOKEN = "test-auth-token-xyz789"
     PORT = 3099  # unlikely to conflict
     SERVE_PY = os.path.join(SCRIPTS, "serve.py")
-    STARTER = os.path.join(EXAMPLES, "starter-deck.vela")
+    STARTER = os.path.join(EXAMPLES, "vela-demo.vela")
 
     # Create a temp .vela file for folder-mode tests (server only lists .vela files)
     import shutil
@@ -1920,18 +1920,18 @@ def test_block_primitives():
         else:
             fail("Sanitization for funnel/cycle/number-row/checklist")
 
-    # 9. Validate starter deck with new blocks passes
-    starter = os.path.join(EXAMPLES, "starter-deck.vela")
+    # 9. Validate demo deck with new blocks passes
+    starter = os.path.join(EXAMPLES, "vela-demo.vela")
     result = subprocess.run(
         [sys.executable, os.path.join(SCRIPTS, "validate.py"), starter],
         capture_output=True, text=True
     )
     if result.returncode == 0:
-        ok("starter-deck.vela validates with new block types")
+        ok("vela-demo.vela validates with new block types")
     else:
-        fail("starter-deck.vela validation", result.stdout + result.stderr)
+        fail("vela-demo.vela validation", result.stdout + result.stderr)
 
-    # 10. Starter deck contains all 6 new block types
+    # 10. Demo deck contains all 6 new block types
     deck = json.load(open(starter, encoding="utf-8"))
     all_types = set()
     for lane in deck.get("lanes", []):
@@ -1941,9 +1941,9 @@ def test_block_primitives():
                     all_types.add(block.get("type"))
     for bt in NEW_BLOCKS:
         if bt in all_types:
-            ok(f'starter-deck.vela has "{bt}" block')
+            ok(f'vela-demo.vela has "{bt}" block')
         else:
-            fail(f'starter-deck.vela has "{bt}" block')
+            fail(f'vela-demo.vela has "{bt}" block')
 
     # 11. Compact round-trip: compact and expand a deck with new blocks
     vela_py = os.path.join(SCRIPTS, "vela.py")
