@@ -1,0 +1,125 @@
+{
+  "session_id": "25469fcd-5d4f-4a25-80f6-08235cff3e35",
+  "model": "sonnet",
+  "version": "v12.27",
+  "scenario": "create-multi-module",
+  "rep": 1,
+  "turns": 6,
+  "totals": {
+    "input_tokens": 8,
+    "output_tokens": 4555,
+    "cache_read_tokens": 74993,
+    "cache_write_tokens": 10236,
+    "total_tokens": 89792,
+    "cost_usd": 0.12923189999999998,
+    "tool_calls": 6,
+    "duration_s": 79.1
+  },
+  "assertions": {
+    "passed": 8,
+    "total": 8,
+    "slides": 12,
+    "types_found": [
+      "badge",
+      "callout",
+      "checklist",
+      "comparison",
+      "cycle",
+      "flow",
+      "funnel",
+      "grid",
+      "heading",
+      "icon-row",
+      "matrix",
+      "metric",
+      "number-row",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 12
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Strategy"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Execution"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Results"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 12,
+      "block_types_used": [
+        "badge",
+        "callout",
+        "checklist",
+        "comparison",
+        "cycle",
+        "flow",
+        "funnel",
+        "grid",
+        "heading",
+        "icon-row",
+        "matrix",
+        "metric",
+        "number-row",
+        "progress",
+        "quote",
+        "steps",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 1.0,
+      "block_type_entropy": 3.623,
+      "monotony_ratio": 0.218,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 1,
+      "heading_rate": 1.0,
+      "badge_rate": 0.917,
+      "words_per_slide": 22.1,
+      "blocks_per_slide": 4.6
+    }
+  }
+}

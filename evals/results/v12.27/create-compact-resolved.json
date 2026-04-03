@@ -1,0 +1,27 @@
+{
+  "scenario": "create-compact",
+  "swapped": false,
+  "overall_winner": "live",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Deck 1 has 7 slides across 5 groups (Opening, Performance, Team, Priorities, Closing) with a rich historical timeline slide (Q1\u2013Q4 2025) that properly contextualizes a Q1 2026 review. The closing slide is substantive \u2014 a steps block + callout vs Deck 2's thinner close (a bullet-list callout + 'Thank you' text). Deck 2's timeline slide is conceptually misaligned: it shows forward-looking Q1\u2013Q4 2026 milestones in a slide titled 'Consistent Growth Defines Our Q1-Q4 Trajectory' \u2014 odd for a retrospective review deck. Both have proper cover/content/closing arcs and headed slides, but Deck 1's narrative logic is tighter."
+    },
+    "visual_hierarchy": {
+      "winner": "v12.27",
+      "reasoning": "Deck 2 consistently uses larger spacing values (16, 20, 24) compared to Deck 1's tighter spacing (8, 12, 16), giving slides more breathing room. Deck 2 also adds a divider block on the cover for compositional structure. Both use 4xl cover titles, 2xl/3xl content headings, badges on every slide, and gradients on cover/closing. Deck 1's cover scores a small bonus for splitting 'Q1 2026' onto its own line in the accent color ($A) for pop. Net edge to Deck 2 for spacing discipline."
+    },
+    "content_quality": {
+      "winner": "live",
+      "reasoning": "Deck 1's slide names are consistently strong declarative assertion headlines: 'Revenue Hits Record High \u2014 $4.2M in Q1 Alone', '2025 Built the Foundation \u2014 Q1 2026 Proves the Model', 'Every Department Exceeds Targets \u2014 Engineering Leads the Pack', 'The Best Quarter Yet \u2014 And We're Just Getting Started'. Deck 2's cover headline 'Q1 2026: Momentum Builds' is descriptive, not an assertion. Deck 1 includes a 34% YoY growth figure, specific historical trajectory, and 1,240 new customers with 'best quarter on record' framing \u2014 richer and more credible. Deck 2's forward-looking timeline on a retrospective slide and a closing that ends with a plain 'Thank you \u2014 questions welcome.' text lack the punchy finish Deck 1 delivers."
+    },
+    "block_variety": {
+      "winner": "v12.27",
+      "reasoning": "Deck 2 uses 13 distinct block types (badge, heading, text, divider, metric, grid, progress, timeline, callout, table, number-row, icon-row, tag-group) vs Deck 1's 12 (same minus divider and number-row, plus steps). The number-row block on the Team slide in Deck 2 ('4/4 Depts On Target', '97% Avg Attainment', '12 New Hires') is semantically well-placed as a summary bar. Both decks use types appropriately; Deck 2 edges ahead by count and the well-chosen number-row addition."
+    },
+    "brand_consistency": {
+      "winner": "tie",
+      "reasoning": "Both decks use identical color palettes ($A\u2013$F). Both apply $E for badge backgrounds, $A for accent text/progress bars/icons, gradients on cover and closing slides, and dark card backgrounds on metric grids. Deck 2 correctly references '$F' as a variable inside grid styles (better practice) while Deck 1 hardcodes the hex '#172033', but this is a minor technical distinction with no visual impact. Consistency is equally strong across both."
+    }
+  }
+}
