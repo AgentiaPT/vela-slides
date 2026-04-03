@@ -45,12 +45,11 @@
               "blocks": [
                 { "type": "heading", "text": "Key Metrics", "size": "lg" },
                 {
-                  "type": "grid",
-                  "cols": 3,
-                  "blocks": [
-                    { "type": "metric", "label": "Annual Recurring Revenue", "value": "$4.2M", "delta": "+18% YoY" },
-                    { "type": "metric", "label": "Monthly Active Users", "value": "52K", "delta": "+24% QoQ" },
-                    { "type": "metric", "label": "Net Promoter Score", "value": "72", "delta": "+8 pts" }
+                  "type": "number-row",
+                  "items": [
+                    { "value": "$4.2M", "label": "Annual Recurring Revenue", "icon": "DollarSign", "color": "#a78bfa" },
+                    { "value": "52K", "label": "Monthly Active Users", "icon": "Users", "color": "#818cf8" },
+                    { "value": "72", "label": "Net Promoter Score", "icon": "ThumbsUp", "color": "#34d399" }
                   ]
                 },
                 {
@@ -96,13 +95,33 @@
               "blocks": [
                 { "type": "heading", "text": "Team & Resources", "size": "lg" },
                 {
-                  "type": "table",
-                  "headers": ["Team", "Headcount", "Velocity (pts/sprint)", "Status"],
-                  "rows": [
-                    ["Platform", "14", "68", "On Track"],
-                    ["Growth", "8", "42", "On Track"],
-                    ["Mobile", "6", "31", "At Risk"],
-                    ["Data / ML", "5", "24", "Behind"]
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    { "blocks": [
+                      {
+                        "type": "table",
+                        "headers": ["Team", "HC", "Velocity", "Status"],
+                        "rows": [
+                          ["Platform", "14", "68 pts", "On Track"],
+                          ["Growth", "8", "42 pts", "On Track"],
+                          ["Mobile", "6", "31 pts", "At Risk"],
+                          ["Data / ML", "5", "24 pts", "Behind"]
+                        ]
+                      }
+                    ]},
+                    { "blocks": [
+                      {
+                        "type": "funnel",
+                        "items": [
+                          { "label": "Leads", "value": "3,200" },
+                          { "label": "Qualified", "value": "1,100" },
+                          { "label": "Trial", "value": "420", "drop": "−62%" },
+                          { "label": "Paid", "value": "86", "highlight": true }
+                        ]
+                      }
+                    ]}
                   ]
                 },
                 {
@@ -130,12 +149,15 @@
                   ]
                 },
                 {
-                  "type": "bullets",
+                  "type": "checklist",
                   "items": [
-                    "Risk: Kafka vendor contract renewal due May 1 — pricing TBD",
-                    "Risk: Mobile team capacity if Lead hire continues to slip",
-                    "Risk: SOC 2 audit timeline depends on infra remediation"
-                  ]
+                    { "text": "Ship Data Pipeline v2 to GA", "status": "partial" },
+                    { "text": "Launch Self-Serve Enterprise Tier", "status": "pending" },
+                    { "text": "Expand Mobile to Android GA", "status": "pending" },
+                    { "text": "Kafka vendor contract renewal (May 1)", "status": "blocked" },
+                    { "text": "SOC 2 audit — depends on infra remediation", "status": "pending" }
+                  ],
+                  "showLabels": true
                 },
                 {
                   "type": "callout",

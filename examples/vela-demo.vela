@@ -187,7 +187,7 @@
                       "blocks": [
                         {
                           "type": "metric",
-                          "value": "21",
+                          "value": "27",
                           "label": "BLOCK TYPES",
                           "icon": "Layers",
                           "iconColor": "#3b82f6",
@@ -803,6 +803,36 @@
                       "tag-group",
                       "Labels, categories",
                       "items[], variant"
+                    ],
+                    [
+                      "comparison",
+                      "A vs B layouts",
+                      "items[2], dividerLabel"
+                    ],
+                    [
+                      "funnel",
+                      "Conversion pipelines",
+                      "items[], drop, highlight"
+                    ],
+                    [
+                      "cycle",
+                      "Circular processes",
+                      "items[], centerLabel"
+                    ],
+                    [
+                      "number-row",
+                      "Inline big metrics",
+                      "items[], compact, bordered"
+                    ],
+                    [
+                      "matrix",
+                      "2×2 quadrant grids",
+                      "quadrants[], xLeft/yTop"
+                    ],
+                    [
+                      "checklist",
+                      "Status-aware tasks",
+                      "items[], showLabels"
                     ]
                   ],
                   "striped": true,
@@ -899,6 +929,30 @@
                             {
                               "text": "svg",
                               "color": "#f472b6"
+                            },
+                            {
+                              "text": "comparison",
+                              "color": "#ef4444"
+                            },
+                            {
+                              "text": "funnel",
+                              "color": "#f97316"
+                            },
+                            {
+                              "text": "cycle",
+                              "color": "#06b6d4"
+                            },
+                            {
+                              "text": "number-row",
+                              "color": "#8b5cf6"
+                            },
+                            {
+                              "text": "matrix",
+                              "color": "#ec4899"
+                            },
+                            {
+                              "text": "checklist",
+                              "color": "#14b8a6"
                             }
                           ],
                           "variant": "filled",
@@ -1021,6 +1075,172 @@
                   "icon": "Palette",
                   "bg": "#60a5fa12",
                   "border": "#60a5fa30"
+                }
+              ]
+            }
+          ],
+          "createdAt": "2026-03-23T23:14:42.516Z"
+        },
+        {
+          "id": "b1d93a7f",
+          "title": "New Primitives",
+          "notes": "Showcases the 6 new block types added in v12.25",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 4,
+          "slides": [
+            {
+              "title": "Comparison, Funnel & Cycle",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "gap": 16,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Comparison · Funnel · Cycle",
+                  "size": "2xl",
+                  "icon": "GitCompare",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "text",
+                  "text": "Structural analysis blocks — compare options, visualize pipelines, and map circular processes.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "cols": 3,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "comparison",
+                          "items": [
+                            { "title": "Before", "color": "#ef4444", "items": ["Manual layout", "Pixel pushing"] },
+                            { "title": "After", "color": "#22c55e", "items": ["Semantic blocks", "AI-generated"] }
+                          ],
+                          "dividerLabel": "VS"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "funnel",
+                          "items": [
+                            { "label": "Visitors", "value": "10K" },
+                            { "label": "Signups", "value": "2.4K" },
+                            { "label": "Active", "value": "800" },
+                            { "label": "Paid", "value": "120" }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "cycle",
+                          "items": [
+                            { "label": "Describe", "icon": "💬" },
+                            { "label": "Build", "icon": "🔧" },
+                            { "label": "Review", "icon": "👁" },
+                            { "label": "Refine", "icon": "✨" }
+                          ],
+                          "centerLabel": "Vela"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Number Row, Matrix & Checklist",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "gap": 16,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Number Row · Matrix · Checklist",
+                  "size": "2xl",
+                  "icon": "LayoutGrid",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "Metric displays, quadrant analysis, and status-aware task tracking.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "number-row",
+                  "items": [
+                    { "value": "27", "label": "Block Types", "icon": "Layers", "color": "#3b82f6" },
+                    { "value": "20", "label": "AI Tools", "icon": "Wrench", "color": "#a78bfa" },
+                    { "value": "3", "label": "Formats", "icon": "FileJson", "color": "#f59e0b" }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "matrix",
+                          "xLeft": "Low Effort",
+                          "xRight": "High Effort",
+                          "yTop": "High Impact",
+                          "yBottom": "Low Impact",
+                          "quadrants": [
+                            { "title": "Quick Wins", "icon": "Zap", "color": "#22c55e", "items": ["Badge block", "Spacer tweaks"] },
+                            { "title": "Big Bets", "icon": "Rocket", "color": "#3b82f6", "items": ["Vera AI engine", "PDF export"] },
+                            { "title": "Fill-ins", "icon": "Clock", "color": "#f59e0b", "items": ["Docs updates", "Changelog"] },
+                            { "title": "Avoid", "icon": "X", "color": "#ef4444", "items": ["Pixel editors", "Custom fonts"] }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "checklist",
+                          "items": [
+                            { "text": "Comparison block", "status": "done" },
+                            { "text": "Funnel block", "status": "done" },
+                            { "text": "Cycle block", "status": "done" },
+                            { "text": "Number-row block", "status": "done" },
+                            { "text": "Matrix block", "status": "done" },
+                            { "text": "Checklist block", "status": "done" }
+                          ],
+                          "showLabels": true
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             }

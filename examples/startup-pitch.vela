@@ -49,16 +49,14 @@
                 { "type": "heading", "text": "The Problem", "size": "2xl", "icon": "AlertTriangle" },
                 { "type": "text", "text": "Freelancers lose billions annually to broken cross-border payment infrastructure.", "size": "md", "color": "#fde68a" },
                 { "type": "spacer", "h": 12 },
-                { "type": "grid", "columns": 2, "gap": 16, "items": [
-                  { "blocks": [
-                    { "type": "metric", "value": "$12B", "label": "Lost to fees & failed transfers annually", "icon": "DollarSign", "trend": "down" },
-                    { "type": "text", "text": "Traditional wire transfers charge 5-8% on small payments, eating into freelancer margins.", "size": "sm", "color": "#d4a574" }
-                  ]},
-                  { "blocks": [
-                    { "type": "metric", "value": "5 Days", "label": "Average settlement time", "icon": "Clock", "trend": "down" },
-                    { "type": "text", "text": "Gig workers wait nearly a week to access earned income, creating cash flow crises.", "size": "sm", "color": "#d4a574" }
-                  ]}
-                ]}
+                {
+                  "type": "comparison",
+                  "items": [
+                    { "title": "Traditional Rails", "icon": "Building", "color": "#ef4444", "items": ["5-8% fees on small payments", "5-day average settlement", "$12B lost annually to failures"] },
+                    { "title": "NovaPay", "icon": "Zap", "color": "#22c55e", "items": ["0.5% flat fee", "< 30 second settlement", "Zero failed transfers"] }
+                  ],
+                  "dividerLabel": "VS"
+                }
               ]
             }
           ]
@@ -105,11 +103,14 @@
               "blocks": [
                 { "type": "heading", "text": "Traction", "size": "2xl", "icon": "BarChart" },
                 { "type": "spacer", "h": 8 },
-                { "type": "grid", "columns": 3, "gap": 16, "items": [
-                  { "blocks": [{ "type": "metric", "value": "$480K", "label": "Monthly Recurring Revenue", "icon": "DollarSign", "trend": "up" }] },
-                  { "blocks": [{ "type": "metric", "value": "185K", "label": "Active Users", "icon": "Users", "trend": "up" }] },
-                  { "blocks": [{ "type": "metric", "value": "22%", "label": "Month-over-Month Growth", "icon": "TrendingUp", "trend": "up" }] }
-                ]},
+                {
+                  "type": "number-row",
+                  "items": [
+                    { "value": "$480K", "label": "Monthly Recurring Revenue", "icon": "DollarSign", "color": "#f59e0b" },
+                    { "value": "185K", "label": "Active Users", "icon": "Users", "color": "#fbbf24" },
+                    { "value": "22%", "label": "Month-over-Month Growth", "icon": "TrendingUp", "color": "#f59e0b" }
+                  ]
+                },
                 { "type": "spacer", "h": 12 },
                 { "type": "timeline", "items": [
                   { "date": "Q1 2025", "text": "Beta launch in 3 markets" },
@@ -136,11 +137,15 @@
               "blocks": [
                 { "type": "heading", "text": "Raising $8M Series A", "size": "2xl", "icon": "Target" },
                 { "type": "spacer", "h": 8 },
-                { "type": "grid", "columns": 3, "gap": 16, "items": [
-                  { "blocks": [{ "type": "metric", "value": "40%", "label": "Engineering & Product", "icon": "Code" }] },
-                  { "blocks": [{ "type": "metric", "value": "35%", "label": "Market Expansion", "icon": "Globe" }] },
-                  { "blocks": [{ "type": "metric", "value": "25%", "label": "Compliance & Licensing", "icon": "Shield" }] }
-                ]},
+                {
+                  "type": "number-row",
+                  "items": [
+                    { "value": "40%", "label": "Engineering & Product", "icon": "Code", "color": "#fbbf24" },
+                    { "value": "35%", "label": "Market Expansion", "icon": "Globe", "color": "#f59e0b" },
+                    { "value": "25%", "label": "Compliance & Licensing", "icon": "Shield", "color": "#d97706" }
+                  ],
+                  "compact": true
+                },
                 { "type": "spacer", "h": 8 },
                 { "type": "steps", "items": [
                   { "title": "Q3 2026", "text": "Launch in 15 new markets across LATAM and Southeast Asia" },
