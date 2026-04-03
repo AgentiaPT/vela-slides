@@ -1,0 +1,106 @@
+{
+  "session_id": "73df739b-30c6-47dc-a47c-a360eb192212",
+  "model": "sonnet",
+  "version": "v12.25",
+  "scenario": "create-30",
+  "rep": 1,
+  "turns": 3,
+  "totals": {
+    "input_tokens": 3,
+    "output_tokens": 85,
+    "cache_read_tokens": 11190,
+    "cache_write_tokens": 2249,
+    "total_tokens": 13527,
+    "cost_usd": 0.13779585,
+    "tool_calls": 3,
+    "duration_s": 197.4
+  },
+  "assertions": {
+    "passed": 0,
+    "total": 16,
+    "slides": 0,
+    "types_found": [],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": false,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": false,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": false,
+        "detail": 30
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "icon-row"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "table"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "flow"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "steps"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "timeline"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "metric"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "callout"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "quote"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "tag-group"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "code"
+      },
+      {
+        "type": "block_type_present",
+        "passed": false,
+        "detail": "progress"
+      },
+      {
+        "type": "ships_ok",
+        "passed": false,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": false,
+        "detail": ""
+      }
+    ]
+  }
+}

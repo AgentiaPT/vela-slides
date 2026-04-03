@@ -65,8 +65,6 @@ decks/
 # Eval outputs (generated at runtime)
 eval/
 evals/output/
-evals/results/*
-!evals/results/.gitignore
 evals/reports/
 evals/archive/
 evals/workdirs/

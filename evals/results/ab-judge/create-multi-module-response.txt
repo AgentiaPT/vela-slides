@@ -1,0 +1,28 @@
+```json
+{
+  "dimensions": {
+    "structural": {
+      "winner": "2",
+      "reasoning": "Deck 2 has a proper cover slide (first slide in Strategy group with bgGradient, centered layout, 4xl heading, badge, and tag-group) plus a closing CTA slide — giving it a complete cover → content → closing arc. Deck 1 jumps straight into a content slide ('Market Forces Create a $4.2B Window for Atlas') with no cover, which breaks the expected structural contract. Both have the same 3-group organization (Strategy / Execution / Results) and 13 slides, and every content slide in both decks has a heading and badge. The missing cover in Deck 1 is a meaningful structural gap."
+    },
+    "visual_hierarchy": {
+      "winner": "2",
+      "reasoning": "Deck 2 applies heading sizes more intentionally across the full deck: 4xl on the cover, 3xl on the closing, 2xl on all content slides. Deck 1 only uses 4xl on the closing slide, never establishing a top-of-hierarchy cover. Deck 2 also pairs metric blocks with inline progress bars inside grid cells (e.g., the Engineering Velocity slide), creating a secondary hierarchy layer within panels. Both use badges consistently, and both have gradient slides bookending the presentation. Deck 2's use of semantic accent colors (green for exceeded, amber for at-risk, blue for secondary) adds informational hierarchy on top of the visual weight hierarchy, whereas Deck 1 uses a single accent color throughout."
+    },
+    "content_quality": {
+      "winner": "tie",
+      "reasoning": "Both decks have strong assertion headlines with no placeholder text and plausible specifics. Deck 1 excels with precise operational details: sprint dates (Feb 28, Mar 21, Apr 11, Apr 25), named metric owners, specific pipeline dollar figures ($300K/mo), and a tight 30-60-90 roadmap. Deck 2 counters with more sophisticated content constructs: a full SWOT matrix with labeled axes, a current-vs-target metrics table with an 'Action Required' callout for the lagging pipeline coverage metric (3.2× vs 4× target), a code snippet showing a real ML inference call, and a sales funnel with explicit drop-off percentages. The cover headline in Deck 2 is just the deck name (descriptive, not an assertion), which is a minor weakness, but otherwise both decks demonstrate substantive, specific, assertion-driven copy."
+    },
+    "block_variety": {
+      "winner": "2",
+      "reasoning": "Deck 2 uses all 21 available block types: badge, heading, text, matrix, callout, table, number-row, comparison, quote, steps, tag-group, timeline, checklist, grid, metric, progress, code, flow, icon-row, bullets, and funnel. Every type is semantically well-placed — matrix for SWOT analysis, funnel for pipeline conversion, comparison for competitive positioning, checklist for status tracking, code for a technical credibility moment, number-row for headline KPIs. Deck 1 uses approximately 16 block types (notably missing matrix, number-row, comparison, checklist, code, and funnel), which are all types that would have been situationally appropriate given its content. Deck 2's block selection meaningfully enriches comprehension, not just variety for its own sake."
+    },
+    "brand_consistency": {
+      "winner": "1",
+      "reasoning": "Deck 1 applies a single accent color ($A = #8B5CF6) with absolute discipline: every badge icon color, every metric value, every progress bar, every tag-group, every callout accent uses $A. Badge backgrounds uniformly use $E. This creates a coherent, high-polish purple-on-dark brand identity throughout all 13 slides. Deck 2 introduces three additional colors (#10B981 green, #F59E0B amber, #60A5FA blue) for semantic coding, which is defensible for data communication but makes the brand feel multi-palette rather than single-identity — badge backgrounds also flip between $A and $D inconsistently depending on theme variant. Deck 1 is the clear winner on cohesion and consistency."
+    }
+  },
+  "overall_winner": "2",
+  "overall_reasoning": "Deck 2 wins on three of five dimensions (structural completeness, visual hierarchy, block variety) and ties on content quality, losing only on brand consistency. The structural advantage is significant — a deck without a cover slide has a fundamental presentation-readiness gap. The block variety advantage is decisive: Deck 2 uses all 21 available types with strong semantic justification, including high-value blocks like matrix (SWOT), funnel (pipeline), comparison (competitive), and code (technical credibility) that Deck 1 simply doesn't deploy. The visual hierarchy advantage, while narrower, reflects more intentional heading-level planning across the full slide arc. Deck 1 is a strong deck — especially in brand consistency and operational specificity — but Deck 2 is the better-rounded, more complete presentation."
+}
+```

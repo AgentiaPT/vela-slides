@@ -1,0 +1,28 @@
+{
+  "scenario": "create-ship-serve",
+  "swapped": false,
+  "overall_winner": "v12.25",
+  "dimensions": {
+    "structural": {
+      "winner": "live",
+      "reasoning": "Deck 1 cleanly separates its cover into a dedicated 'Opening' group, making the section grouping semantically clear: Opening \u2192 The Shift \u2192 Technology \u2192 Challenges & Solutions \u2192 The Road Ahead. Deck 2 awkwardly bundles the cover slide inside the 'The Shift' content group, which is a structural mismatch \u2014 the cover is not a 'shift' slide. Both have 10 slides with proper badge/heading on every slide and gradient CTA closers, but Deck 1's group organization is more deliberate and correct."
+    },
+    "visual_hierarchy": {
+      "winner": "v12.25",
+      "reasoning": "Deck 2 applies 4xl/w:800 to both the cover AND closing slide, creating strong intentional bookending, while Deck 1 only uses 4xl on the cover and drops to 3xl for the closer. Deck 2 also uses number-row blocks (which render as large isolated stats) instead of metric-inside-grid, producing cleaner visual weight separation. The funnel block and matrix (SWOT) add two-dimensional spatial hierarchy that Deck 1 lacks entirely. Deck 2 also consistently uses spacing of 6 between badge\u2192heading and 10 before major blocks, slightly more refined than Deck 1's varied spacing."
+    },
+    "content_quality": {
+      "winner": "v12.25",
+      "reasoning": "Deck 2's slide headlines are more declarative and data-anchored: '70% of Knowledge Workers Will Be Remote by 2030', 'Four-Day Work Weeks Deliver Same Output With 20% Less Time', 'AI Co-pilots Turn Every Remote Worker Into a 10x Contributor'. Deck 1's headlines are occasionally vaguer: 'Five Pillars of the Modern Remote Stack', 'Structured Rituals and Clear Norms Close the Collaboration Gap'. Deck 2 also covers more distinctive territory \u2014 nomad visa programs, 15-minute cities, Iceland/Japan 4-day week trials, and a SWOT-style matrix \u2014 giving it more editorial depth. Both avoid placeholder text, but Deck 2's stats are more varied ($1.3T market, 195 countries, 92% productivity maintained, -65% sick days, 3.5B\u219240M funnel breakdown) and feel better sourced."
+    },
+    "block_variety": {
+      "winner": "v12.25",
+      "reasoning": "Deck 1 uses 15 block types: badge, heading, text, tag-group, metric, grid, flow, bullets, callout, icon-row, progress, table, steps, timeline, quote. Deck 2 uses 16: badge, heading, text, tag-group, number-row, progress, comparison, callout, matrix, icon-row, flow, checklist, timeline, steps, funnel, quote. More importantly, Deck 2's unique blocks are semantically well-placed: comparison (sync vs async culture contrast is a perfect fit), matrix (SWOT analysis of remote work strengths/weaknesses), funnel (global talent pipeline narrowing to remote-ready workers), and checklist (virtual HQ infrastructure adoption with done/partial/pending status). Deck 1 leans on bullets and grid-with-metric combos where more specific block types would serve better."
+    },
+    "brand_consistency": {
+      "winner": "tie",
+      "reasoning": "Both decks maintain a coherent deep-navy dark theme with blue accent colors. Deck 1 uses a single accent ($A #3B82F6) with $F (#172554) as badge backgrounds, and applies gradients on both cover and closing. Deck 2 introduces a secondary accent ($B #60A5FA) alongside $A, enabling more accent variation in number-rows and badges without clashing \u2014 the palette still reads as unified. Deck 2's closing gradient deliberately reverses the color direction from the cover (cover goes dark\u2192mid\u2192blue; closing goes blue\u2192dark\u2192mid-dark), which is a nice intentional bookend. Neither deck has clashing colors. The additional variable in Deck 2 adds expressiveness without sacrificing coherence \u2014 effectively a tie."
+    }
+  },
+  "overall_reasoning": "Deck 2 wins decisively on block variety (16 types vs 15, with semantically stronger placements like comparison, matrix, funnel, checklist), content quality (stronger assertion headlines, richer stats, more distinctive topic coverage), and visual hierarchy (better bookending with 4xl closers, cleaner stat presentation via number-row). The only dimension where Deck 1 is clearly ahead is structural grouping \u2014 its dedicated 'Opening' group is cleaner than Deck 2's cover-inside-content-section approach. But that is a minor structural quibble against Deck 2's broader advantages in substance and presentation sophistication."
+}

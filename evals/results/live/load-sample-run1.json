@@ -1,0 +1,36 @@
+{
+  "session_id": "1891514d-e97a-4f52-ba2e-a66ca74ad4f4",
+  "model": "sonnet",
+  "version": "live",
+  "scenario": "load-sample",
+  "rep": 1,
+  "turns": 4,
+  "totals": {
+    "input_tokens": 7,
+    "output_tokens": 455,
+    "cache_read_tokens": 38499,
+    "cache_write_tokens": 3639,
+    "total_tokens": 42600,
+    "cost_usd": 0.03204195,
+    "tool_calls": 4,
+    "duration_s": 9.6
+  },
+  "assertions": {
+    "passed": 1,
+    "total": 2,
+    "slides": 0,
+    "types_found": [],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "ships_ok",
+        "passed": false,
+        "detail": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "session_id": "unknown",
+  "model": "sonnet",
+  "version": "v12.25",
+  "scenario": "edit-translate",
+  "rep": 1,
+  "turns": 0,
+  "totals": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": 0.0,
+    "tool_calls": 0,
+    "duration_s": 300.0
+  },
+  "error": "timeout",
+  "assertions": {
+    "passed": 3,
+    "total": 4,
+    "slides": 30,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "code",
+      "divider",
+      "flow",
+      "grid",
+      "heading",
+      "icon-row",
+      "image",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "svg",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 30
+      },
+      {
+        "type": "text_present",
+        "passed": false,
+        "detail": "Apresenta"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 30,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "code",
+        "divider",
+        "flow",
+        "grid",
+        "heading",
+        "icon-row",
+        "image",
+        "progress",
+        "quote",
+        "spacer",
+        "steps",
+        "svg",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.95,
+      "block_type_entropy": 3.104,
+      "monotony_ratio": 0.216,
+      "theme_variety": 2,
+      "accent_colors": 9,
+      "gradient_slides": 16,
+      "heading_rate": 0.967,
+      "badge_rate": 0.433,
+      "words_per_slide": 18.0,
+      "blocks_per_slide": 4.9
+    }
+  }
+}
