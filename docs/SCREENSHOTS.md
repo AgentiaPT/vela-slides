@@ -131,6 +131,89 @@ When the fix approach is unclear, render 3+ techniques side by side in one HTML 
 
 `writing-mode: vertical-rl` + `transform: rotate(180deg)` has a known centering issue — flex `align-items: center` doesn't visually center the text because the layout box doesn't match the visual center after transform. Use `transform: rotate(-90deg)` + `white-space: nowrap` instead — it preserves the original horizontal layout box so flex centering works correctly.
 
+## Pixel-Level Alignment Verification
+
+**Don't trust LLM vision for alignment checks.** Use Playwright's `page.evaluate()` to measure actual pixel positions via `getBoundingClientRect()`.
+
+### Measuring Gap Balance (e.g., VS divider spacing)
+
+Create a `.mjs` script that measures bounding boxes of key elements and computes gaps:
+
+```javascript
+// decks/screenshot-comparison.mjs
+const metrics = await page.evaluate(() => {
+  const rows = document.querySelectorAll('.row');
+  const results = [];
+  rows.forEach((row, ri) => {
+    const tests = row.querySelectorAll('.test');
+    tests.forEach((test, ti) => {
+      const container = test.querySelector('div[style*="display:flex;gap:0"]');
+      if (!container) return;
+      const panes = container.children;
+
+      // Find VS circle
+      let vsRect = null;
+      for (const child of panes) {
+        const circle = child.querySelector('div[style*="border-radius:50%"]');
+        if (circle && circle.textContent === 'VS') {
+          vsRect = circle.getBoundingClientRect();
+          break;
+        }
+      }
+
+      // Find rightmost text pixel in left pane
+      const leftPane = panes[0];
+      let leftRightmostX = 0;
+      leftPane.querySelectorAll('span').forEach(s => {
+        const r = s.getBoundingClientRect();
+        if (r.right > leftRightmostX && r.width > 0 && s.textContent.length > 0)
+          leftRightmostX = r.right;
+      });
+
+      // Find leftmost element in right pane
+      const rightPane = panes[panes.length - 1];
+      let rightLeftmostX = Infinity;
+      rightPane.querySelectorAll('span[style*="border-radius:50%"]').forEach(s => {
+        const r = s.getBoundingClientRect();
+        if (r.left < rightLeftmostX && r.width > 0)
+          rightLeftmostX = r.left;
+      });
+
+      results.push({
+        row: ri, variant: ti === 0 ? 'BEFORE' : 'AFTER',
+        gapLeftTextToVS: vsRect ? Math.round(vsRect.left - leftRightmostX) : null,
+        gapVSToRightText: vsRect ? Math.round(rightLeftmostX - vsRect.right) : null,
+      });
+    });
+  });
+  return results;
+});
+
+metrics.forEach(m => {
+  const balance = Math.abs(m.gapLeftTextToVS - m.gapVSToRightText);
+  console.log(`Row ${m.row} ${m.variant}: L→VS=${m.gapLeftTextToVS}px  VS→R=${m.gapVSToRightText}px  BALANCE: ${balance}px`);
+});
+```
+
+### Checking Element Alignment (e.g., bullet dots share same x)
+
+```javascript
+// Verify all bullet dots in a pane share the same x coordinate
+const dots = pane.querySelectorAll('span[style*="border-radius:50%;background:#"]');
+const positions = [];
+dots.forEach(d => positions.push(Math.round(d.getBoundingClientRect().left)));
+const allSame = positions.every(x => x === positions[0]);
+console.log(`dots at x=${positions.join(', ')}${allSame ? ' ✅ ALIGNED' : ' ❌ MISALIGNED'}`);
+```
+
+### Key Principles
+
+- **Always measure pixels, never eyeball.** `getBoundingClientRect()` is ground truth.
+- **1px tolerance is acceptable** — sub-pixel rounding is normal.
+- **Test multiple scenarios**: short text, long text, uneven item counts, wrapping text.
+- **Before/After HTML** side-by-side lets you run both versions in one screenshot pass.
+- **Reusable scripts** go in `decks/screenshot-*.mjs` and `decks/check-*.mjs` (gitignored).
+
 ## Gotchas
 
 | Issue | Solution |

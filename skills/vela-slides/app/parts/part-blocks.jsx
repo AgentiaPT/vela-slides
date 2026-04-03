@@ -738,32 +738,36 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const rightColor = right.color || "#22c55e";
       const dividerLabel = block.dividerLabel || "VS";
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
-        <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            {left.icon && <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} />}
-            <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
-          </div>
-          {(left.items || []).map((pt, pi) => (
-            <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-              <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+        <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              {left.icon && <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} />}
+              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
             </div>
-          ))}
+            {(left.items || []).map((pt, pi) => (
+              <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
+                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
         </div>}
-        <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            {right.icon && <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} />}
-            <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
-          </div>
-          {(right.items || []).map((pt, pi) => (
-            <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-              <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+        <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              {right.icon && <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} />}
+              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
             </div>
-          ))}
+            {(right.items || []).map((pt, pi) => (
+              <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
+                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>;
     }

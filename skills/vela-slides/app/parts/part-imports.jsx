@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.29";
+const VELA_VERSION = "12.30";
 const VELA_CHANGELOG = [
+  { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
   { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
   { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
