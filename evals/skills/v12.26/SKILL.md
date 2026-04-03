@@ -48,7 +48,7 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 
 ## Workflow
 
-1. Write compact DSL to `<name>.vela`
+1. Write compact DSL to file
 2. Run: `vela server start <file> --port 3030` (local) or `vela deck ship <file> --output <name.jsx>` (cloud only)
 
 Done. Do not speak before, between, or after tool calls. NEVER read/print `.vela.env`.
