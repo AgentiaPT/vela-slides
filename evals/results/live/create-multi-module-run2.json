@@ -1,0 +1,116 @@
+{
+  "session_id": "d7dd2b2b-c5e1-4b14-9c9d-b3894dbb7a91",
+  "model": "sonnet",
+  "version": "live",
+  "scenario": "create-multi-module",
+  "rep": 2,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 8,
+    "output_tokens": 4388,
+    "cache_read_tokens": 55264,
+    "cache_write_tokens": 9595,
+    "total_tokens": 69255,
+    "cost_usd": 0.11840445000000001,
+    "tool_calls": 5,
+    "duration_s": 75.0
+  },
+  "assertions": {
+    "passed": 8,
+    "total": 8,
+    "slides": 12,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "code",
+      "flow",
+      "grid",
+      "heading",
+      "icon-row",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 12
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Strategy"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Execution"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "Results"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 12,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "code",
+        "flow",
+        "grid",
+        "heading",
+        "icon-row",
+        "progress",
+        "quote",
+        "steps",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.75,
+      "block_type_entropy": 3.305,
+      "monotony_ratio": 0.228,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 1,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 29.3,
+      "blocks_per_slide": 4.8
+    }
+  }
+}

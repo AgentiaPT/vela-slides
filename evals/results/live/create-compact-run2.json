@@ -1,0 +1,95 @@
+{
+  "session_id": "69638a9c-19ac-4696-807e-d7e5e600d8a2",
+  "model": "sonnet",
+  "version": "live",
+  "scenario": "create-compact",
+  "rep": 2,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 8,
+    "output_tokens": 2311,
+    "cache_read_tokens": 54984,
+    "cache_write_tokens": 5550,
+    "total_tokens": 62853,
+    "cost_usd": 0.0719967,
+    "tool_calls": 5,
+    "duration_s": 43.6
+  },
+  "assertions": {
+    "passed": 5,
+    "total": 5,
+    "slides": 6,
+    "types_found": [
+      "badge",
+      "callout",
+      "divider",
+      "grid",
+      "heading",
+      "icon-row",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 6
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 6,
+      "block_types_used": [
+        "badge",
+        "callout",
+        "divider",
+        "grid",
+        "heading",
+        "icon-row",
+        "progress",
+        "quote",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.6,
+      "block_type_entropy": 3.273,
+      "monotony_ratio": 0.095,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 0.333,
+      "badge_rate": 1.0,
+      "words_per_slide": 13.8,
+      "blocks_per_slide": 3.5
+    }
+  }
+}
