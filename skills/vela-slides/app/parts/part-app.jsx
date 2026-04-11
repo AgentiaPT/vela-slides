@@ -677,6 +677,20 @@ export default function App() {
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
 
+  // Test-only affordance: patch the current slide with a studyNotes object.
+  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
+  // offline student-mode renderer without depending on a live API. Always
+  // enabled — state.selectedId / slideIndex are readable in all modes.
+  useEffect(() => {
+    window.__velaTestInjectStudyNotes = (studyNotes) => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return false;
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      return true;
+    };
+    return () => { window.__velaTestInjectStudyNotes = null; };
+  }, [dispatch]);
+
   // Send deck changes to local server (browser → file)
   useEffect(() => {
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;

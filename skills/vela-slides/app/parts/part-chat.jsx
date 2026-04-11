@@ -1,6 +1,8 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Chat Markdown Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ChatMarkdown({ text }) {
+// ctx (optional): passes through to parseInline — used by StudentPanel to
+// thread studyNotes.glossary through so [term](#key) renders as X-Ray popups.
+function ChatMarkdown({ text, ctx }) {
   if (!text) return null;
   if (typeof text !== "string") return <span>{String(text)}</span>;
   const paragraphs = text.split(/\n\n+/);
@@ -15,13 +17,13 @@ function ChatMarkdown({ text }) {
           const cleaned = item.replace(/^\s*[-•●]\s*/, "").replace(/^\s*/, "");
           return <div key={ii} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
             {!/^[✅⚠️❌▸]/.test(item.trim()) && <span style={{ color: T.accent, flexShrink: 0, fontSize: 9, marginTop: 4 }}>●</span>}
-            <span>{parseInline(cleaned)}</span>
+            <span>{parseInline(cleaned, ctx)}</span>
           </div>;
         })}
       </div>;
     }
     // Regular paragraph
-    return <div key={pi} style={{ margin: pi > 0 ? "6px 0 0" : 0 }}>{parseInline(para)}</div>;
+    return <div key={pi} style={{ margin: pi > 0 ? "6px 0 0" : 0 }}>{parseInline(para, ctx)}</div>;
   })}</>;
 }
 

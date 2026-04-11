@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.31";
+const VELA_VERSION = "12.32";
 const VELA_CHANGELOG = [
+  { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
   { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
@@ -291,8 +292,8 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip HTML tags + truncate (entity escaping handled at render time)
-  return val.replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
+  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -447,6 +448,52 @@ function sanitizeComment(c) {
   };
 }
 
+// ━━━ Offline Study Notes sanitizer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Slide-level `studyNotes` field: pre-authored student-mode content that renders
+// with zero API calls. Shape: { text, diagram?, questions?, glossary? }.
+// Rich text (parseInline), inline X-Ray links ([label](url) + [term](#key)),
+// optional inline SVG diagram, up to 6 follow-up questions, and a glossary map.
+function sanitizeStudyNotes(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out = {};
+  if (typeof raw.text === "string") {
+    const t = sanitizeString(raw.text, 4000);
+    if (t) out.text = t;
+  }
+  if (!out.text) return undefined; // text is required; drop the whole block otherwise
+  if (typeof raw.diagram === "string" && raw.diagram.trim()) {
+    const svg = sanitizeSvgMarkup(raw.diagram.slice(0, 8000));
+    if (svg) out.diagram = svg;
+  }
+  if (Array.isArray(raw.questions)) {
+    const qs = raw.questions.slice(0, 6)
+      .map((q) => sanitizeString(typeof q === "string" ? q : String(q || ""), 160))
+      .filter((q) => q.length > 0);
+    if (qs.length) out.questions = qs;
+  }
+  if (raw.glossary && typeof raw.glossary === "object" && !Array.isArray(raw.glossary)) {
+    const gl = {};
+    let count = 0;
+    for (const [k, v] of Object.entries(raw.glossary)) {
+      if (count >= 24) break;
+      if (typeof k !== "string" || !v || typeof v !== "object") continue;
+      const key = k.toLowerCase().replace(/[^\w\-]/g, "").slice(0, 48);
+      if (!key) continue;
+      const def = sanitizeString(typeof v.definition === "string" ? v.definition : "", 400);
+      if (!def) continue;
+      const entry = { definition: def };
+      if (typeof v.url === "string" && v.url.trim()) {
+        const safe = sanitizeUrl(v.url.trim());
+        if (safe) entry.url = safe;
+      }
+      gl[key] = entry;
+      count++;
+    }
+    if (Object.keys(gl).length) out.glossary = gl;
+  }
+  return out;
+}
+
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
@@ -457,6 +504,10 @@ function sanitizeSlide(slide) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
+  if (clean.studyNotes) {
+    const sn = sanitizeStudyNotes(clean.studyNotes);
+    if (sn) clean.studyNotes = sn; else delete clean.studyNotes;
+  }
   return clean;
 }
 

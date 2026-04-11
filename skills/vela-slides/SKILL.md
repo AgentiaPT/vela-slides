@@ -1,7 +1,7 @@
 ---
 name: vela-slides
-version: 12.31
-updated: 2026-04-04
+version: 12.32
+updated: 2026-04-11
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2
 compatibility: Requires Python 3 and Bash. Designed for Claude Code.
@@ -42,6 +42,28 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 ## Blocks (use 10+ per deck)
 
 `{"_":"heading","x":"Title","s":"2xl","w":700}` `{"_":"text","x":"Body","s":"lg","c":"$C"}` `{"_":"badge","x":"LABEL","i":"Zap","b":"$E","c":"$A"}` `{"_":"code","x":"const x=1","lb":"JS"}` `{"_":"quote","x":"Text","author":"Name"}` `{"_":"callout","x":"Note","title":"Warn","b":"$F","i":"AlertTriangle"}` `{"_":"metric","value":"98%","lb":"Acc","s":"3xl","c":"$A"}` `{"_":"progress","value":75,"lb":"Done","c":"$A"}` `{"_":"icon-row","I":[{"i":"Brain","title":"AI","x":"Desc","ic":"$A","ib":"$E"}]}` `{"_":"tag-group","I":[{"x":"Tag","c":"$A"}],"v":"outline"}` `{"_":"bullets","I":["A","B"]}` `{"_":"table","H":["X","Y"],"R":[["1","2"]],"hb":"$A"}` `{"_":"grid","I":[{"blocks":[{"_":"metric","value":"5","lb":"X"}],"style":{"padding":"20px","background":"$F"}}]}` `{"_":"flow","I":[{"i":"Upload","lb":"In"},{"i":"Cpu","lb":"Process"}],"ac":"$A"}` `{"_":"steps","I":[{"title":"1","x":"Do"}],"lnc":"$A"}` `{"_":"timeline","I":[{"title":"Q1","x":"Launch"}],"dc":"$A"}` `{"_":"comparison","I":[{"title":"Before","i":"X","c":"$D","I":["Old way"]},{"title":"After","i":"Check","c":"$B","I":["New way"]}],"dl":"VS"}` `{"_":"funnel","I":[{"lb":"Visitors","val":"10K","c":"$A"},{"lb":"Signups","val":"2K","c":"$B","dr":"−80%"}]}` `{"_":"cycle","cl":"Loop","I":[{"lb":"Plan","c":"$A"},{"lb":"Do","c":"$B"},{"lb":"Check","c":"$C"}]}` `{"_":"number-row","I":[{"val":"99%","lb":"Uptime","i":"Activity","c":"$A"},{"val":"38ms","lb":"Latency","c":"$B"}]}` `{"_":"matrix","Q":[{"title":"Strengths","c":"$B","I":["Team"]},{"title":"Opportunities","c":"$A","I":["Market"]},{"title":"Weaknesses","c":"$D","I":["Scale"]},{"title":"Threats","c":"$D","I":["Competition"]}]}` `{"_":"checklist","I":[{"x":"Done","status":"done"},{"x":"Pending","status":"pending"}]}` `12`=spacer `{"_":"divider","c":"$C"}`
+
+## Study Notes (offline)
+
+Any slide can carry a `studyNotes` object that renders in the 🎓 student panel **with zero API calls**. Mirrors the live Vera Teacher output shape so existing renderers are reused. Compact key: `sN`.
+
+```
+"sN": {
+  "text": "Markdown with **bold**, *italic*, [external](https://…), and [X-Ray term](#agent).",
+  "diagram": "<svg viewBox='0 0 320 140'>…</svg>",
+  "questions": ["What is X?", "How does Y relate to Z?"],
+  "glossary": { "agent": { "definition": "A goal-driven loop that plans, acts, observes.", "url": "https://…" } }
+}
+```
+
+- `text` required; everything else optional.
+- Inline `[label](https://…)` renders as a sanitized external link (http/https/mailto only).
+- Inline `[label](#term)` looks up `glossary[term]` (lowercased) and shows a Kindle-style X-Ray popover with the definition + optional "Learn more" link.
+- When an API is reachable, authored questions become clickable Vera prompts + an Ask input appears. Offline, they render as static "QUESTIONS TO PONDER" bullets.
+- Slides carrying `studyNotes` show a 🎓 marker in the TOC, gallery thumbnails, and slide viewer.
+- Size limits: text ≤ 4000 chars (warn at 2000), diagram ≤ 8000 chars, ≤ 6 questions, ≤ 24 glossary terms. `sanitizeStudyNotes` strips unsafe SVG/URL payloads and NULL bytes.
+- X-Ray syntax (`[term](#key)`) only activates inside `studyNotes.text` — regular text blocks render it as plain label text.
+- Authoring is JSON-only in v12.32. A `set_study_notes` Vera tool is planned for a future release.
 
 ## Quality
 

@@ -100,6 +100,32 @@ def validate(path):
                         except (ValueError, IndexError):
                             pass
 
+                # studyNotes (offline student content) check
+                sn = slide.get("studyNotes")
+                if sn is not None:
+                    if not isinstance(sn, dict):
+                        errors.append(f"{loc}: studyNotes must be an object")
+                    else:
+                        text = sn.get("text")
+                        if not text or not isinstance(text, str):
+                            errors.append(f"{loc}: studyNotes.text is required (non-empty string)")
+                        elif len(text) > 4000:
+                            errors.append(f"{loc}: studyNotes.text exceeds 4000 chars ({len(text)})")
+                        elif len(text) > 2000:
+                            warnings.append(f"{loc}: studyNotes.text > 2000 chars (consider trimming)")
+                        if "diagram" in sn:
+                            if not isinstance(sn["diagram"], str):
+                                errors.append(f"{loc}: studyNotes.diagram must be a string")
+                            elif len(sn["diagram"]) > 8000:
+                                warnings.append(f"{loc}: studyNotes.diagram exceeds 8000 chars — will be truncated at sanitize")
+                        if "questions" in sn:
+                            if not isinstance(sn["questions"], list):
+                                errors.append(f"{loc}: studyNotes.questions must be an array")
+                            elif len(sn["questions"]) > 6:
+                                warnings.append(f"{loc}: studyNotes.questions > 6 (will be truncated at render)")
+                        if "glossary" in sn and not isinstance(sn["glossary"], dict):
+                            errors.append(f"{loc}: studyNotes.glossary must be an object")
+
                 # Block checks
                 blocks = slide.get("blocks", [])
                 if not blocks:
