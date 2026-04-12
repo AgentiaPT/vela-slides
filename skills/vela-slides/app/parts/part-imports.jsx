@@ -21,6 +21,13 @@ const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
 
+// ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
+// In local mode the channel port must be configured; in artifact mode we optimistically
+// assume the Anthropic proxy is available (Claude.ai injects it).
+const velaAIAvailable = () => VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : (typeof window !== "undefined" && window.self !== window.top);
+const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
+
 // Clipboard helper — Clipboard API is blocked in Claude.ai artifact iframes
 // Uses execCommand('copy') fallback with a temporary textarea
 const velaClipboard = (text) => {
@@ -57,8 +64,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.35";
+const VELA_VERSION = "12.36";
 const VELA_CHANGELOG = [
+  { v: "12.36", d: "AI capability detection: centralized velaAIAvailable() checks artifact proxy or channel availability. All AI buttons (Edit, Improve, Batch, Variants, Generate, Estimate, Vera chat send) are visible but disabled with tooltip when AI is unavailable. callClaudeAPI guards against missing backend. Fix vertical flow arrows: connector alignSelf uses 'center' in vertical mode so arrows align below nodes. Remove slide 16 from demo deck." },
   { v: "12.35", d: "Cols layout: new layout:'cols' for two-column slides using L (left) and R (right) block arrays. B/blocks renders full-width above columns. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32). Works with all 21 block types. Pipeline: expand/compact/validate/stats/extract-text/patch-text all handle L/R." },
   { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
   { v: "12.33", d: "Code block copy button: new 'copy' property (compact: 'cp') adds a 'Copiar' button in the top-right corner that copies block.text to clipboard with 'Copiado ✓' feedback for 2s. Extracted CodeBlock sub-component for useState hook. paddingRight: 80 prevents text overlap when copy is active." },

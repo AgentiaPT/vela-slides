@@ -856,9 +856,8 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   const messages = teacherHistory[slideKey] || [];
   const sn = slide && slide.studyNotes ? slide.studyNotes : null;
 
-  // Embedded-first: live API is optional. Artifact mode assumes proxy reachable
-  // (same signal callVeraTeacher uses — v12.16 routing).
-  const apiAvailable = VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : true;
+  // Centralized AI availability check (v12.36)
+  const apiAvailable = velaAIAvailable();
 
   useEffect(() => {
     activeKeyRef.current = slideKey;
@@ -1188,6 +1187,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
+  const aiOk = velaAIAvailable();
 
   // Virtual title card for presentation mode
   const presOffset = fullscreen && concept.presentCard ? 1 : 0;
@@ -1314,6 +1314,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   })();
 
   const runEstimate = async () => {
+    if (!aiOk) return;
     estimateCancelRef.current = false;
     setShowTimingScope(false);
     let jobs = [];
@@ -1571,7 +1572,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) });
       }
       // Shift+I: quick improve current slide (same as ✨ on single slide)
-      if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
+      if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   }, [slideIndex, slides.length, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altPreview, fontScale]);
@@ -1670,7 +1671,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Quick Edit (single slide, prompt-based) ──
   const runQuickEdit = async () => {
-    if (!quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
+    if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
@@ -1723,7 +1724,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Generate New Slide (prompt-based) ──
   const runNewSlide = async () => {
-    if (!newSlidePrompt.trim() || newSlideGenerating) return;
+    if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
@@ -1749,6 +1750,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   const runImprove = async (prompt, scopeOverride) => {
     if (improving) { stopImprove(); return; }
+    if (!aiOk) return;
     improveCancelRef.current = false;
     setShowImproveInput(false);
     const scope = scopeOverride || improveScope;
@@ -1845,7 +1847,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Alternatives ──
   const runAlternatives = async () => {
-    if (altLoading || !slides[slideIndex]) return;
+    if (!aiOk || altLoading || !slides[slideIndex]) return;
     altCancelRef.current = false;
     setAltLoading(true);
     setAlternatives(null);
@@ -1954,13 +1956,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
               placeholder={"Describe the slide... (paste image)\nE.g.: Title slide, comparison table..."}
               style={{ width: "100%", minHeight: 52, maxHeight: 80, padding: "6px 10px", fontSize: 13, fontFamily: FONT.body, background: "rgba(255,255,255,0.07)", border: `1px solid rgba(255,255,255,0.12)`, borderRadius: 6, color: "#fff", outline: "none", resize: "vertical", lineHeight: 1.4, boxSizing: "border-box" }} />
             {newSlideImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={newSlideImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", objectFit: "cover" }} /><button onClick={() => setNewSlideImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runNewSlide} disabled={!newSlidePrompt.trim()} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: newSlidePrompt.trim() ? T.green : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: newSlidePrompt.trim() ? "pointer" : "default", opacity: newSlidePrompt.trim() ? 1 : 0.4, width: "100%" }}>Generate slide</button>
+            <button onClick={runNewSlide} disabled={!aiOk || !newSlidePrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: aiOk && newSlidePrompt.trim() ? T.green : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: aiOk && newSlidePrompt.trim() ? "pointer" : "not-allowed", opacity: aiOk && newSlidePrompt.trim() ? 1 : 0.4, width: "100%" }}>{aiOk ? "Generate slide" : "AI not enabled"}</button>
           </div>}
           {!showQuickEdit && !showNewSlide && !quickEditing && !newSlideGenerating && <div style={{ display: "flex", gap: 3, padding: "3px 4px", opacity: 0.6, transition: "opacity 0.3s" }} onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}>
             <button onClick={() => { setShowNewSlide(true); setShowQuickEdit(false); }} title="New slide (N)" style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: T.green + "cc", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>+</button>
-            <button onClick={() => { setShowQuickEdit(true); setShowNewSlide(false); }} title="Edit slide (E)" style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: T.accent + "cc", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
-            <button onClick={() => { if (!improving && !altLoading && slides.length > 0) runImproveRef.current?.(null, "slide"); }} title="Improve (⇧I)" style={{ width: 26, height: 26, borderRadius: 6, background: improving ? T.accent + "30" : "transparent", border: "none", color: slides.length > 0 && !altLoading ? T.accent + "cc" : T.accent + "40", fontSize: 13, cursor: slides.length > 0 && !altLoading && !improving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}>✨</button>
-            <button onClick={() => { if (!altLoading && !improving && slides.length > 0) runAlternatives(); }} title="Design variants (1-4 preview, Enter accept)" style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "40", fontSize: 13, cursor: slides.length > 0 && !improving && !altLoading ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
+            <button onClick={() => { if (aiOk) { setShowQuickEdit(true); setShowNewSlide(false); } }} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: aiOk ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
+            <button onClick={() => { if (aiOk && !improving && !altLoading && slides.length > 0) runImproveRef.current?.(null, "slide"); }} title={aiOk ? "Improve (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: improving ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !altLoading ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !altLoading && !improving ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✨</button>
+            <button onClick={() => { if (aiOk && !altLoading && !improving && slides.length > 0) runAlternatives(); }} title={aiOk ? "Design variants (1-4 preview, Enter accept)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !improving && !altLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
           </div>}
           {(quickEditing || newSlideGenerating) && <div style={{ padding: "3px 4px" }}><div style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 13, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span></div></div>}
         </div>}
@@ -2094,7 +2096,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             </div>
             <textarea autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
             {quickEditImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={quickEditImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: `1px solid ${T.border}`, objectFit: "cover" }} /><button onClick={() => setQuickEditImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runQuickEdit} disabled={!quickEditPrompt.trim()} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: quickEditPrompt.trim() ? 1 : 0.4 })}>Apply edit</button>
+            <button onClick={runQuickEdit} disabled={!aiOk || !quickEditPrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && quickEditPrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Apply edit" : "AI not enabled"}</button>
           </div>}
           {/* New Slide */}
           {showNewSlide && !newSlideGenerating && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -2105,7 +2107,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             </div>
             <textarea autoFocus value={newSlidePrompt} onChange={(e) => setNewSlidePrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && newSlidePrompt.trim()) { e.preventDefault(); runNewSlide(); } if (e.key === "Escape") { setShowNewSlide(false); setNewSlideImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setNewSlideImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"Describe the slide... (paste image)"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
             {newSlideImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={newSlideImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: `1px solid ${T.border}`, objectFit: "cover" }} /><button onClick={() => setNewSlideImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runNewSlide} disabled={!newSlidePrompt.trim()} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: newSlidePrompt.trim() ? 1 : 0.4 })}>Generate slide</button>
+            <button onClick={runNewSlide} disabled={!aiOk || !newSlidePrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && newSlidePrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Generate slide" : "AI not enabled"}</button>
           </div>}
           {/* Timing */}
           {showTimingScope && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -2114,7 +2116,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
               <button onClick={() => setShowTimingScope(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
             </div>
             <ScopeSelector icon="⏱" scope={timingScope} setScope={setTimingScope} concept={concept} slideIndex={slideIndex} slides={slides} currentLane={currentLane} lanes={lanes} isMobile={isMobile}>
-              <button onClick={runEstimate} style={S.primaryBtn({ padding: "5px 14px", marginLeft: 4, flexShrink: 0 })}>Estimate</button>
+              <button onClick={runEstimate} disabled={!aiOk} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", marginLeft: 4, flexShrink: 0, opacity: aiOk ? 1 : 0.4 })}>Estimate</button>
             </ScopeSelector>
           </div>}
           {/* Estimating progress */}
@@ -2133,9 +2135,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button onClick={() => setShowQuickEdit((v) => !v)} title="Edit slide (E)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✏️{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Edit</span>}</button>
-          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={slides.length === 0 || altLoading} title="Auto-improve this slide (⇧I)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: slides.length === 0 ? 0.35 : 1 })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
-          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={slides.length === 0 || improving} title="Generate design alternatives (1-4 to preview, Enter to accept)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: slides.length === 0 ? 0.35 : 1 })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
+          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>✏️{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Edit</span>}</button>
+          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
+          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design alternatives (1-4 to preview, Enter to accept)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
           <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>

@@ -624,6 +624,7 @@ export default function App() {
   T = dark ? themes.dark : themes.light;
   const [hist, dispatch] = useReducer(reducer, historyInit);
   const state = hist.present;
+  const aiOk = velaAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
   const loaded = useRef(false);
@@ -1149,7 +1150,7 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button onClick={() => sa?.toggleBatchEdit?.()} disabled={!has || !sa?.slidesCount} title="Batch edit across slides" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
+              <button onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
               <button onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
               <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
@@ -1206,7 +1207,7 @@ export default function App() {
               const sa = slideActionsRef.current;
               return <>
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-                {selectedConcept && <button onClick={() => { sa?.toggleBatchEdit?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.improving ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{sa?.improving ? "⏹ Stop Improve" : "✨ Improve / Batch"}</button>}
+                {selectedConcept && <button onClick={() => { if (aiOk) { sa?.toggleBatchEdit?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); } }} disabled={!aiOk} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: !aiOk ? T.textDim + "60" : sa?.improving ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: aiOk ? "pointer" : "not-allowed" }}>{!aiOk ? "✨ AI not enabled" : sa?.improving ? "⏹ Stop Improve" : "✨ Improve / Batch"}</button>}
                 <button onClick={() => { sa?.toggleBranding?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.hasBranding ? T.accent : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🎨"} Brand & Guidelines</button>
               </>;
             })()}

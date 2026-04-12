@@ -95,6 +95,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
+  const aiOk = velaAIAvailable();
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [state.chatMessages]);
   // Auto-focus input when chat panel opens
   useEffect(() => { setTimeout(() => textareaRef.current?.focus(), 50); }, []);
@@ -123,6 +124,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   const removeImage = (idx) => setPendingImages((prev) => prev.filter((_, i) => i !== idx));
 
   const send = async (directMsg) => {
+    if (!aiOk) return;
     const msg = directMsg || input.trim();
     if ((!msg && pendingImages.length === 0) || state.chatLoading) return;
     const images = directMsg ? [] : [...pendingImages];
@@ -285,13 +287,17 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
           </div>
         ))}
       </div>}
-      <div style={{ padding: "8px 10px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6 }}>
+      <div style={{ padding: "8px 10px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, flexDirection: "column" }}>
+        {!aiOk && <div style={{ padding: "4px 8px", fontSize: 11, fontFamily: FONT.mono, color: T.amber, background: T.amber + "15", borderRadius: 4, textAlign: "center" }}>{VELA_AI_UNAVAILABLE_MSG}</div>}
+        <div style={{ display: "flex", gap: 6 }}>
         <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onPaste={handlePaste}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={pendingImages.length > 0 ? "Describe what to do with images..." : "Tell Vera... (paste images here)"}
-          rows={2} style={S.input({ padding: "6px 8px", borderRadius: 4, resize: "none", lineHeight: 1.4 })} />
-        <button onClick={() => send()} disabled={state.chatLoading || (!input.trim() && pendingImages.length === 0)}
-          style={{ padding: "0 12px", background: state.chatLoading || (!input.trim() && pendingImages.length === 0) ? T.border : T.accent, color: "#fff", border: "none", borderRadius: 4, cursor: state.chatLoading || (!input.trim() && pendingImages.length === 0) ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, alignSelf: "stretch" }}>↑</button>
+          placeholder={!aiOk ? "AI features not enabled" : pendingImages.length > 0 ? "Describe what to do with images..." : "Tell Vera... (paste images here)"}
+          disabled={!aiOk}
+          rows={2} style={S.input({ padding: "6px 8px", borderRadius: 4, resize: "none", lineHeight: 1.4, opacity: aiOk ? 1 : 0.5 })} />
+        <button onClick={() => send()} disabled={!aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0)} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined}
+          style={{ padding: "0 12px", background: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? T.border : T.accent, color: "#fff", border: "none", borderRadius: 4, cursor: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, alignSelf: "stretch" }}>↑</button>
+        </div>
       </div>
     </div>
   );

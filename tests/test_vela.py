@@ -2163,11 +2163,16 @@ def test_block_primitives():
     # 10. Demo deck contains all 6 new block types
     deck = json.load(open(starter, encoding="utf-8"))
     all_types = set()
-    for lane in deck.get("lanes", []):
-        for item in lane.get("items", []):
-            for slide in item.get("slides", []):
-                for block in slide.get("blocks", []):
-                    all_types.add(block.get("type"))
+    def _collect_block_types(obj):
+        if isinstance(obj, dict):
+            if "type" in obj:
+                all_types.add(obj["type"])
+            for v in obj.values():
+                _collect_block_types(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _collect_block_types(v)
+    _collect_block_types(deck)
     for bt in NEW_BLOCKS:
         if bt in all_types:
             ok(f'vela-demo.vela has "{bt}" block')

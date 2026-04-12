@@ -4,6 +4,7 @@
 
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
+  if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
   // Channel mode needs longer timeout — Claude Code roundtrip is slower than direct API
   const effectiveTimeout = (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) ? Math.max(timeoutMs, 120000) : timeoutMs;
   const controller = new AbortController();

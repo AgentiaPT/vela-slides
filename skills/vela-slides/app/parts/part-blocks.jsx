@@ -728,7 +728,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           const hasGate = item.gate;
           const gc = block.gateColor || st.accent;
           els.push(
-            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: "flex-start", height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
+            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: isVert ? "center" : "flex-start", height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
               {hasGate && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}

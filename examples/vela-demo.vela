@@ -1,5 +1,5 @@
 {
-  "deckTitle": "Vela Slides — Live Demo",
+  "deckTitle": "Vela Slides \u2014 Live Demo",
   "lanes": [
     {
       "id": "2c0639b3",
@@ -32,7 +32,7 @@
                 },
                 {
                   "type": "badge",
-                  "text": "v12.35 · APRIL 2026",
+                  "text": "v12.36 \u00b7 APRIL 2026",
                   "icon": "Sailboat",
                   "color": "#c4b5fd",
                   "bg": "#818cf820",
@@ -107,7 +107,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Vela is a presentation engine that runs as a Claude.ai artifact. Describe your ideas in natural language — Vera, the built-in AI, turns them into structured slides. No design skills. No separate tools. Just intent to output.",
+                  "text": "Vela is a presentation engine that runs as a Claude.ai artifact. Describe your ideas in natural language \u2014 Vera, the built-in AI, turns them into structured slides. No design skills. No separate tools. Just intent to output.",
                   "size": "lg",
                   "color": "#94a3b8"
                 },
@@ -269,7 +269,7 @@
     },
     {
       "id": "4a33b9e0",
-      "title": "What's New — v12",
+      "title": "What's New \u2014 v12",
       "collapsed": false,
       "items": [
         {
@@ -310,14 +310,14 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Student Mode 🎓",
+                  "text": "Student Mode \ud83c\udf93",
                   "size": "3xl",
                   "icon": "GraduationCap",
                   "iconColor": "#a78bfa"
                 },
                 {
                   "type": "text",
-                  "text": "Vera becomes a teaching assistant in presenter mode. Slides can embed **studyNotes** — offline-first markdown with diagrams, follow-up questions, and a glossary for Kindle-style X-Ray term popups.",
+                  "text": "Vera becomes a teaching assistant in presenter mode. Slides can embed **studyNotes** \u2014 offline-first markdown with diagrams, follow-up questions, and a glossary for Kindle-style X-Ray term popups.",
                   "size": "lg",
                   "color": "#c7d2fe"
                 },
@@ -330,7 +330,7 @@
                   "items": [
                     {
                       "icon": "BookOpen",
-                      "text": "Offline studyNotes — zero API calls"
+                      "text": "Offline studyNotes \u2014 zero API calls"
                     },
                     {
                       "icon": "Microscope",
@@ -356,7 +356,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "This slide has studyNotes attached — look for the 🎓 marker. Enter fullscreen, click 🎓 to see offline content with glossary terms you can tap to explore.",
+                  "text": "This slide has studyNotes attached \u2014 look for the \ud83c\udf93 marker. Enter fullscreen, click \ud83c\udf93 to see offline content with glossary terms you can tap to explore.",
                   "icon": "Zap",
                   "bg": "#a78bfa12",
                   "border": "#a78bfa30",
@@ -398,7 +398,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Two new ways to navigate and manage your decks — visual sorting and conflict-free updates.",
+                  "text": "Two new ways to navigate and manage your decks \u2014 visual sorting and conflict-free updates.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -415,7 +415,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Gallery View 🗂",
+                          "text": "Gallery View \ud83d\uddc2",
                           "size": "lg",
                           "icon": "Grid3x3",
                           "iconColor": "#a78bfa"
@@ -439,7 +439,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Smart Merge 🔀",
+                          "text": "Smart Merge \ud83d\udd00",
                           "size": "lg",
                           "icon": "GitMerge",
                           "iconColor": "#a78bfa"
@@ -450,7 +450,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Detects new embedded deck versions. Per-item conflict resolution — **Keep Mine**, **Use New**, or **Keep Both**.",
+                          "text": "Detects new embedded deck versions. Per-item conflict resolution \u2014 **Keep Mine**, **Use New**, or **Keep Both**.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -507,7 +507,7 @@
               "blocks": [
                 {
                   "type": "badge",
-                  "text": "NEW IN v12.35",
+                  "text": "NEW IN v12.36",
                   "icon": "Sparkles",
                   "color": "#34d399",
                   "bg": "#34d39915",
@@ -515,14 +515,14 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Columns Layout 📐",
+                  "text": "Columns Layout \ud83d\udcd0",
                   "size": "2xl",
                   "icon": "Columns",
                   "iconColor": "#34d399"
                 },
                 {
                   "type": "text",
-                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays — works with any block type.",
+                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays \u2014 works with any block type.",
                   "size": "md",
                   "color": "#94a3b8"
                 }
@@ -530,7 +530,7 @@
               "L": [
                 {
                   "type": "callout",
-                  "text": "Place any blocks side-by-side — text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
+                  "text": "Place any blocks side-by-side \u2014 text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
                   "title": "Flexible Columns",
                   "icon": "LayoutGrid",
                   "bg": "#34d39912",
@@ -695,7 +695,7 @@
                         },
                         {
                           "type": "quote",
-                          "text": "Semantic blocks carry meaning — a flow is a process, not a box with arrows.",
+                          "text": "Semantic blocks carry meaning \u2014 a flow is a process, not a box with arrows.",
                           "author": "Vela Slides",
                           "size": "md"
                         }
@@ -738,7 +738,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Linear flows, iterative loops, numbered steps, and **gate** checkpoints — all semantic, all themeable.",
+                  "text": "Linear flows, iterative loops, numbered steps, and **gate** checkpoints \u2014 all semantic, all themeable.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -856,7 +856,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Each release builds on semantic JSON — the same deck works across all versions without migration.",
+                  "text": "Each release builds on semantic JSON \u2014 the same deck works across all versions without migration.",
                   "icon": "GitBranch",
                   "bg": "#3b82f612",
                   "border": "#3b82f630"
@@ -945,7 +945,7 @@
                     ],
                     [
                       "matrix",
-                      "2×2 quadrant grids",
+                      "2\u00d72 quadrant grids",
                       "quadrants[], xLeft/yTop"
                     ],
                     [
@@ -1127,7 +1127,7 @@
                 },
                 {
                   "type": "code",
-                  "text": "// Vela slide JSON — semantic, not visual\n{\n  \"type\": \"flow\",\n  \"items\": [\n    { \"icon\": \"Brain\", \"label\": \"Think\" },\n    { \"icon\": \"Cpu\", \"label\": \"Build\" },\n    { \"icon\": \"Eye\", \"label\": \"Review\" }\n  ],\n  \"loop\": true,\n  \"loopLabel\": \"iterate\"\n}",
+                  "text": "// Vela slide JSON \u2014 semantic, not visual\n{\n  \"type\": \"flow\",\n  \"items\": [\n    { \"icon\": \"Brain\", \"label\": \"Think\" },\n    { \"icon\": \"Cpu\", \"label\": \"Build\" },\n    { \"icon\": \"Eye\", \"label\": \"Review\" }\n  ],\n  \"loop\": true,\n  \"loopLabel\": \"iterate\"\n}",
                   "label": "SLIDE JSON",
                   "copy": true,
                   "size": "sm",
@@ -1140,7 +1140,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "JSON-first means AI can reason about your slides. Vera reads, writes, and refactors this structure — no pixel-pushing.",
+                  "text": "JSON-first means AI can reason about your slides. Vera reads, writes, and refactors this structure \u2014 no pixel-pushing.",
                   "title": "Why JSON?",
                   "icon": "Lightbulb",
                   "reveal": true,
@@ -1170,7 +1170,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "For diagrams that structured blocks can't express — meshes, fan-outs, custom layouts.",
+                  "text": "For diagrams that structured blocks can't express \u2014 meshes, fan-outs, custom layouts.",
                   "size": "md",
                   "color": "#94a3b8",
                   "align": "center"
@@ -1183,7 +1183,7 @@
                   "type": "svg",
                   "markup": "<svg viewBox='0 0 500 140' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='60' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Skill</text><rect x='150' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='200' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Claude</text><rect x='290' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='340' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Artifact</text><rect x='430' y='40' width='60' height='60' rx='8' fill='{{accent}}' fill-opacity='0.15' stroke='{{accent}}' stroke-width='2'/><text x='460' y='75' text-anchor='middle' fill='{{accent}}' font-size='13' font-family='monospace'>You</text><line x1='110' y1='70' x2='150' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='250' y1='70' x2='290' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='390' y1='70' x2='430' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='6' markerHeight='6' orient='auto'><path d='M 0 0 L 10 5 L 0 10 z' fill='{{muted}}'/></marker></defs></svg>",
                   "align": "center",
-                  "caption": "Vela pipeline: Skill → Claude → Artifact → You",
+                  "caption": "Vela pipeline: Skill \u2192 Claude \u2192 Artifact \u2192 You",
                   "captionSize": "sm",
                   "captionColor": "#94a3b8"
                 },
@@ -1193,7 +1193,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens — they adapt to any theme automatically.",
+                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens \u2014 they adapt to any theme automatically.",
                   "icon": "Palette",
                   "bg": "#60a5fa12",
                   "border": "#60a5fa30"
@@ -1304,14 +1304,14 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Comparison · Funnel · Cycle",
+                  "text": "Comparison \u00b7 Funnel \u00b7 Cycle",
                   "size": "2xl",
                   "icon": "GitCompare",
                   "iconColor": "#f59e0b"
                 },
                 {
                   "type": "text",
-                  "text": "Structural analysis blocks — compare options, visualize pipelines, and map circular processes.",
+                  "text": "Structural analysis blocks \u2014 compare options, visualize pipelines, and map circular processes.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -1382,19 +1382,19 @@
                           "items": [
                             {
                               "label": "Describe",
-                              "icon": "💬"
+                              "icon": "\ud83d\udcac"
                             },
                             {
                               "label": "Build",
-                              "icon": "🔧"
+                              "icon": "\ud83d\udd27"
                             },
                             {
                               "label": "Review",
-                              "icon": "👁"
+                              "icon": "\ud83d\udc41"
                             },
                             {
                               "label": "Refine",
-                              "icon": "✨"
+                              "icon": "\u2728"
                             }
                           ],
                           "centerLabel": "Vela"
@@ -1416,7 +1416,7 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Number Row · Matrix · Checklist",
+                  "text": "Number Row \u00b7 Matrix \u00b7 Checklist",
                   "size": "2xl",
                   "icon": "LayoutGrid",
                   "iconColor": "#a78bfa"
@@ -1549,120 +1549,6 @@
                   ]
                 }
               ]
-            },
-            {
-              "title": "All New Primitives",
-              "duration": 60,
-              "padding": "36px 48px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#f59e0b",
-              "gap": 12,
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "New Block Primitives",
-                  "size": "xl",
-                  "icon": "Layers",
-                  "iconColor": "#f59e0b"
-                },
-                {
-                  "type": "comparison",
-                  "items": [
-                    {
-                      "title": "Option A",
-                      "color": "#3b82f6",
-                      "items": [
-                        "Fast",
-                        "Simple"
-                      ]
-                    },
-                    {
-                      "title": "Option B",
-                      "color": "#f59e0b",
-                      "items": [
-                        "Flexible",
-                        "Powerful"
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "funnel",
-                  "items": [
-                    {
-                      "label": "Awareness",
-                      "value": "10K"
-                    },
-                    {
-                      "label": "Interest",
-                      "value": "3K"
-                    },
-                    {
-                      "label": "Action",
-                      "value": "500"
-                    }
-                  ]
-                },
-                {
-                  "type": "cycle",
-                  "items": [
-                    "Plan",
-                    "Build",
-                    "Test",
-                    "Deploy"
-                  ]
-                },
-                {
-                  "type": "number-row",
-                  "items": [
-                    {
-                      "label": "Users",
-                      "value": "1.2M"
-                    },
-                    {
-                      "label": "Revenue",
-                      "value": "$4.8M"
-                    }
-                  ]
-                },
-                {
-                  "type": "matrix",
-                  "axes": {
-                    "x": "Effort",
-                    "y": "Impact"
-                  },
-                  "items": [
-                    {
-                      "label": "Quick Win",
-                      "x": 0.2,
-                      "y": 0.8
-                    },
-                    {
-                      "label": "Big Bet",
-                      "x": 0.8,
-                      "y": 0.9
-                    }
-                  ]
-                },
-                {
-                  "type": "checklist",
-                  "items": [
-                    {
-                      "text": "Design review",
-                      "checked": true
-                    },
-                    {
-                      "text": "Implementation",
-                      "checked": true
-                    },
-                    {
-                      "text": "Testing",
-                      "checked": false
-                    }
-                  ]
-                }
-              ]
             }
           ],
           "createdAt": "2026-03-23T23:14:42.516Z"
@@ -1709,7 +1595,7 @@
                 {
                   "type": "callout",
                   "title": "Left Column",
-                  "text": "Any blocks — bullets, steps, tables, code. This callout spans the **left half**.",
+                  "text": "Any blocks \u2014 bullets, steps, tables, code. This callout spans the **left half**.",
                   "icon": "ArrowLeft",
                   "bg": "#3b82f612",
                   "border": "#3b82f630",
@@ -1789,7 +1675,7 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Before / After — Pure Side-by-Side",
+                  "text": "Before / After \u2014 Pure Side-by-Side",
                   "size": "2xl",
                   "icon": "ArrowLeftRight",
                   "iconColor": "#f59e0b"
@@ -1881,12 +1767,12 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "🤖 Vera — Your Slide Co-Pilot",
+                  "text": "\ud83e\udd16 Vera \u2014 Your Slide Co-Pilot",
                   "size": "2xl"
                 },
                 {
                   "type": "text",
-                  "text": "An agentic AI assistant *inside* the artifact. 20 tools for deck manipulation — she builds, edits, searches, and restyles without leaving the canvas.",
+                  "text": "An agentic AI assistant *inside* the artifact. 20 tools for deck manipulation \u2014 she builds, edits, searches, and restyles without leaving the canvas.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -2010,7 +1896,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "From a single block to the entire deck — every edit supports Ctrl+Z undo.",
+                  "text": "From a single block to the entire deck \u2014 every edit supports Ctrl+Z undo.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -2047,14 +1933,14 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Auto-Improve (⇧I)",
+                          "text": "Auto-Improve (\u21e7I)",
                           "size": "md",
                           "icon": "Wand2",
                           "color": "#a78bfa"
                         },
                         {
                           "type": "text",
-                          "text": "Vera analyzes the current slide with layout stats and suggests improvements — density, hierarchy, visual balance.",
+                          "text": "Vera analyzes the current slide with layout stats and suggests improvements \u2014 density, hierarchy, visual balance.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2067,7 +1953,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Variants (🎲)",
+                          "text": "Variants (\ud83c\udfb2)",
                           "size": "md",
                           "icon": "Dices",
                           "color": "#a78bfa"
@@ -2145,7 +2031,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "A full deck authoring pipeline — from compact JSON to assembled artifact in one command. Three interchangeable formats for every stage.",
+                  "text": "A full deck authoring pipeline \u2014 from compact JSON to assembled artifact in one command. Three interchangeable formats for every stage.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -2266,7 +2152,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" — done across all slides instantly.",
+                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" \u2014 done across all slides instantly.",
                   "icon": "Wand2",
                   "bg": "#f59e0b12",
                   "border": "#f59e0b30"
@@ -2349,7 +2235,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Click any text on a slide to edit it directly — even in fullscreen. **Bold** and *italic* markdown.",
+                          "text": "Click any text on a slide to edit it directly \u2014 even in fullscreen. **Bold** and *italic* markdown.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2369,7 +2255,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Claude.ai blocks native fullscreen. Click the **⛵ icon** to get a bookmarklet for true browser fullscreen.",
+                          "text": "Claude.ai blocks native fullscreen. Click the **\u26f5 icon** to get a bookmarklet for true browser fullscreen.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2540,7 +2426,7 @@
           "order": 0,
           "slides": [
             {
-              "title": "Get Vela — It's Free",
+              "title": "Get Vela \u2014 It's Free",
               "duration": 20,
               "padding": "48px 80px",
               "bg": "#0f172a",
@@ -2565,7 +2451,7 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Get It Now — It's Free",
+                  "text": "Get It Now \u2014 It's Free",
                   "size": "4xl",
                   "align": "center"
                 },
@@ -2609,7 +2495,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "A standalone React artifact with Vera AI built-in. All 22+ block types, PDF vector export, branding, presenter mode — self-contained, no external dependencies.",
+                          "text": "A standalone React artifact with Vera AI built-in. All 22+ block types, PDF vector export, branding, presenter mode \u2014 self-contained, no external dependencies.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2646,7 +2532,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Install the Vela skill in any Claude Project. Ask Claude to create decks from any topic — it generates compact JSON, validates, and assembles the artifact automatically.",
+                          "text": "Install the Vela skill in any Claude Project. Ask Claude to create decks from any topic \u2014 it generates compact JSON, validates, and assembles the artifact automatically.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2744,7 +2630,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Create a deck explaining how neural networks learn — from perceptrons to backpropagation\"",
+                          "text": "\"Create a deck explaining how neural networks learn \u2014 from perceptrons to backpropagation\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2770,7 +2656,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Build a 12-slide investor pitch for an AI-powered legal assistant — TAM, traction, team, ask\"",
+                          "text": "\"Build a 12-slide investor pitch for an AI-powered legal assistant \u2014 TAM, traction, team, ask\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2796,7 +2682,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Make a team onboarding deck — values, first-week checklist, key tools, org chart, and culture\"",
+                          "text": "\"Make a team onboarding deck \u2014 values, first-week checklist, key tools, org chart, and culture\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2822,7 +2708,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Present the solar system — one slide per planet with key facts, a timeline of exploration, and stunning visuals\"",
+                          "text": "\"Present the solar system \u2014 one slide per planet with key facts, a timeline of exploration, and stunning visuals\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2835,7 +2721,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Tip: Be specific about slide count, sections, and style. Vera works best with clear intent — she can always refine after the first pass.",
+                  "text": "Tip: Be specific about slide count, sections, and style. Vera works best with clear intent \u2014 she can always refine after the first pass.",
                   "icon": "Lightbulb",
                   "bg": "#60a5fa12",
                   "border": "#60a5fa30",
@@ -2924,7 +2810,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "ELv2 — © 2025-present Rui Quintino · Vera AI powered by your Claude.ai subscription",
+                  "text": "ELv2 \u2014 \u00a9 2025-present Rui Quintino \u00b7 Vera AI powered by your Claude.ai subscription",
                   "size": "md",
                   "color": "#64748b",
                   "align": "center"
