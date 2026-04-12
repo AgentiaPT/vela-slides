@@ -341,7 +341,12 @@ async function runTests() {
   });
 
   await test('Block comment button opens inline comment input', async () => {
+    // Re-hover to ensure comment button is visible (hover state may be lost between tests)
+    const block = page.locator('[data-block-type]').first();
+    await block.hover();
+    await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.waitFor({ state: 'visible', timeout: 1000 });
     await commentBtn.click();
     await settle();
     const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
