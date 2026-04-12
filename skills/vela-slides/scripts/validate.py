@@ -128,7 +128,8 @@ def validate(path):
 
                 # Block checks
                 blocks = slide.get("blocks", [])
-                if not blocks:
+                has_cols_content = slide.get("layout") == "cols" and (bool(slide.get("L")) or bool(slide.get("R")))
+                if not blocks and not has_cols_content:
                     warnings.append(f"{loc}: Empty blocks array")
                 if len(blocks) > 7:
                     warnings.append(f"{loc}: {len(blocks)} blocks — may overflow (max 7 recommended)")
@@ -152,6 +153,15 @@ def validate(path):
                         items = block.get("items", [])
                         if len(items) > 6:
                             warnings.append(f"{loc}/B{bi+1}: Flow has {len(items)} items — max 5-6 recommended")
+
+                # L/R blocks (cols layout)
+                for col_key in ("L", "R"):
+                    for bi, block in enumerate(slide.get(col_key, [])):
+                        stats["blocks"] += 1
+                        bt = block.get("type", "unknown")
+                        stats["block_types"][bt] = stats["block_types"].get(bt, 0) + 1
+                        if bt not in VALID_BLOCK_TYPES:
+                            errors.append(f"{loc}/{col_key}{bi+1}: Unknown block type '{bt}'. Valid: {', '.join(sorted(VALID_BLOCK_TYPES))}")
 
     # Quality audit
     type_count = len(stats["block_types"])

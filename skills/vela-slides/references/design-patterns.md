@@ -374,3 +374,85 @@ For a 10-slide deck, aim for at least:
 ```
 
 **Rule of thumb:** Never use slide-level `align: "center"` if the slide contains `svg`, `divider`, or `progress` blocks. Use `align: "left"` + per-block centering instead.
+
+---
+
+## Cols Layout Patterns
+
+The `layout: "cols"` arranges blocks into two columns using `L` (left) and `R` (right) arrays. An optional `blocks` (compact: `B`) array renders full-width above the columns as a header area. `contentFlex` / `imageFlex` control column widths (default 1:1). `splitGap` controls the gap between columns (default 32px).
+
+### Header + Balanced Cols (most common)
+
+B: badge + heading + context callout
+L: primary content (steps, bullets, table)
+R: supporting visual (SVG, metrics, flow diagram)
+
+```json
+{
+  "layout": "cols",
+  "contentFlex": 3,
+  "imageFlex": 2,
+  "blocks": [
+    { "type": "badge", "text": "ARCHITECTURE" },
+    { "type": "heading", "text": "System Overview", "size": "2xl" }
+  ],
+  "L": [
+    { "type": "bullets", "items": ["Microservices", "Event-driven", "Auto-scaling"] }
+  ],
+  "R": [
+    { "type": "flow", "items": [{"icon": "Upload", "label": "In"}, {"icon": "Cpu", "label": "Process"}, {"icon": "Download", "label": "Out"}] }
+  ]
+}
+```
+
+### Pure Side-by-Side (no header)
+
+B: (empty / omitted)
+L: "Before" content with badge
+R: "After" content with badge
+
+```json
+{
+  "layout": "cols",
+  "L": [
+    { "type": "badge", "text": "BEFORE", "bg": "#dc2626" },
+    { "type": "bullets", "items": ["Manual deploys", "3-hour rollbacks"] }
+  ],
+  "R": [
+    { "type": "badge", "text": "AFTER", "bg": "#16a34a" },
+    { "type": "bullets", "items": ["CI/CD pipeline", "5-min rollbacks"] }
+  ]
+}
+```
+
+### Content + Sidebar
+
+contentFlex: 4, imageFlex: 1
+L: main content
+R: 1-2 metrics or single visual
+
+```json
+{
+  "layout": "cols",
+  "contentFlex": 4,
+  "imageFlex": 1,
+  "blocks": [
+    { "type": "heading", "text": "Q4 Results", "size": "2xl" }
+  ],
+  "L": [
+    { "type": "steps", "items": [{"title": "Step 1", "text": "Launched beta"}, {"title": "Step 2", "text": "Scaled to 10K users"}] }
+  ],
+  "R": [
+    { "type": "metric", "value": "98%", "label": "Uptime", "size": "2xl" }
+  ]
+}
+```
+
+### Common Ratio Patterns
+
+| Ratio | contentFlex:imageFlex | Use case |
+|-------|----------------------|----------|
+| Equal | 1:1 | Before/after, comparison |
+| Wide left | 3:2 | Text + supporting visual |
+| Wide right | 2:3 | Summary + detailed steps |
+| Sidebar | 4:1 or 1:4 | Main content + narrow metric strip |

@@ -1,7 +1,7 @@
 ---
 name: vela-slides
-version: 12.34
-updated: 2026-04-11
+version: 12.35
+updated: 2026-04-12
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2
 compatibility: Requires Python 3 and Bash. Designed for Claude Code.
@@ -36,6 +36,7 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 **`T`** — `"d"`:dark `{"b":"#0A0F1C","c":"#E6F1FF","a":"$A","p":"60px 72px"}`, `"a"`:alt different shade. Alternate d/a.
 **`G`** — Sections (USE FOR ALL DECKS): `[{"g":"Name","S":[slides]}]`. 3-5 narrative sections.
 **Slide** — `{"t":"d","n":"Assertion Headline","d":60,"B":[blocks]}`. Cover/CTA: `bgGradient`,`align:"center"`,`verticalAlign:"center"`. Duration: cover 20, content 60-90, CTA 25. Spacers: bare int.
+  Cols layout: `{"t":"d","n":"Headline","layout":"cols","contentFlex":3,"imageFlex":2,"B":[header blocks],"L":[left blocks],"R":[right blocks]}`. B = full-width above columns (optional). L/R = column content. splitGap controls gap between columns (default 32).
 
 **Keys**: `_`(type) `x`(text) `s`(size) `c`(color) `i`(icon) `b`(bg) `w`(weight) `ic`(iconColor) `ib`(iconBg) `I`(items) `g`(gap) `lb`(label) `v`(variant) `H`(headers) `R`(rows) `Q`(quadrants) `val`(value) `dl`(dividerLabel) `cl`(centerLabel) `dr`(drop)
 
@@ -70,6 +71,7 @@ Any slide can carry a `studyNotes` object that renders in the 🎓 student panel
 - Sections via `G` (3-5 groups). Assertion headlines ("Churn Drops to 2.1%", not "Churn")
 - 10+ block types, semantically matched. `4xl` cover → `2xl` body → `3xl` CTA
 - Badge every content slide. Closing: recap callout/tag-group + gradient. 960×540 canvas.
+- Use `layout:"cols"` for side-by-side content: agenda+visual, before/after, text+diagram, metrics+steps. Put shared context (badge, heading) in B.
 
 ## Workflow (STRICT — exactly 2 tool calls)
 

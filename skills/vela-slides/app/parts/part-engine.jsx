@@ -746,7 +746,7 @@ ${ICON_LIST}`;
 
   // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
   // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock"]);
+  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }

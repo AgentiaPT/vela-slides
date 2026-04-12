@@ -1251,11 +1251,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
   }, [slide, index, requestedJustify]);
 
-  if (!blocks.length) return null;
+  if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
   const layout = slide.layout || "stack";
+  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
   const isSplit = layout === "image-right" || layout === "image-left";
+  const colsL = isCols ? (slide.L || []) : [];
+  const colsR = isCols ? (slide.R || []) : [];
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -1337,6 +1340,20 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
+    if (isCols) {
+      const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+      const colsRow = (
+        <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          </div>
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          </div>
+        </div>
+      );
+      return [...headerBlocks, colsRow];
+    }
     if (isSplit) {
       const contentIdxs = [], imageIdxs = [];
       blocks.forEach((b, i) => { (b.type === "image" ? imageIdxs : contentIdxs).push(i); });

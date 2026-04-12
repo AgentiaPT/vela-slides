@@ -252,6 +252,12 @@ def _expand_slide(slide, themes):
             if full_prop not in expanded:
                 expanded[full_prop] = tv
 
+    # Expand blocks inside L and R arrays (cols layout)
+    if "L" in expanded and isinstance(expanded["L"], list):
+        expanded["L"] = [_expand_block(b) for b in expanded["L"]]
+    if "R" in expanded and isinstance(expanded["R"], list):
+        expanded["R"] = [_expand_block(b) for b in expanded["R"]]
+
     return expanded
 
 
@@ -426,6 +432,10 @@ def compact_deck(full):
                 continue  # Omit — comes from theme
             if k == "blocks":
                 cs[_SK_REV.get(k, k)] = [_compact_block(b) for b in v]
+            elif k == "L" and isinstance(v, list):
+                cs["L"] = [_compact_block(b) for b in v]
+            elif k == "R" and isinstance(v, list):
+                cs["R"] = [_compact_block(b) for b in v]
             elif k in _SK_REV:
                 cs[_SK_REV[k]] = v
             else:
@@ -1775,6 +1785,8 @@ def deck_stats(args):
                     issues.append(f'Slide {total_slides}: missing bg/bgGradient')
                 blocks = slide.get("blocks", [])
                 block_count = len(blocks)
+                block_count += len(slide.get("L", []))
+                block_count += len(slide.get("R", []))
                 if block_count > 7:
                     issues.append(f'Slide {total_slides}: {block_count} blocks (overflow risk)')
                 for b in blocks:
@@ -1786,6 +1798,16 @@ def deck_stats(args):
                             for cb in cell.get("blocks", []):
                                 cbt = cb.get("type", "unknown")
                                 block_counts[cbt] = block_counts.get(cbt, 0) + 1
+                # Count blocks in L/R (cols layout)
+                for col_key in ("L", "R"):
+                    for b in slide.get(col_key, []):
+                        bt = b.get("type", "unknown")
+                        block_counts[bt] = block_counts.get(bt, 0) + 1
+                        if bt == "grid":
+                            for cell in b.get("items", []):
+                                for cb in cell.get("blocks", []):
+                                    cbt = cb.get("type", "unknown")
+                                    block_counts[cbt] = block_counts.get(cbt, 0) + 1
                 # Check heading+bullets monotony
                 types = [b.get("type", "") for b in blocks]
                 rich_types = {"flow", "grid", "table", "metric", "timeline", "steps",
@@ -2096,6 +2118,52 @@ def _extract_texts(deck):
                                         for key in ("text", "x", "label", "title"):
                                             if key in git and isinstance(git[key], str):
                                                 texts[f"{gp}.i{gii}.{key}"] = git[key]
+                # L/R blocks (cols layout)
+                for col_key in ("L", "R"):
+                    for bi, block in enumerate(slide.get(col_key, [])):
+                        bt = block.get("type", "")
+                        bp = f"{prefix}.{col_key}{bi}"
+                        if bt == "code":
+                            if "label" in block:
+                                texts[f"{bp}.label"] = block["label"]
+                            continue
+                        if bt == "spacer":
+                            continue
+                        for key in ("text", "label", "title", "value", "author", "caption"):
+                            if key in block and isinstance(block[key], str):
+                                texts[f"{bp}.{key}"] = block[key]
+                        for ii, it in enumerate(block.get("items", [])):
+                            if isinstance(it, str):
+                                texts[f"{bp}.i{ii}"] = it
+                            elif isinstance(it, dict):
+                                for key in ("text", "x", "label", "lb", "sublabel", "sl", "title"):
+                                    if key in it and isinstance(it[key], str):
+                                        texts[f"{bp}.i{ii}.{key}"] = it[key]
+                        for hi, h in enumerate(block.get("headers", [])):
+                            if isinstance(h, str):
+                                texts[f"{bp}.h{hi}"] = h
+                        for ri, row in enumerate(block.get("rows", [])):
+                            if isinstance(row, list):
+                                for ci, cell in enumerate(row):
+                                    if isinstance(cell, str):
+                                        texts[f"{bp}.r{ri}.c{ci}"] = cell
+                        if bt == "grid":
+                            for gi, gcell in enumerate(block.get("items", [])):
+                                for gbi, gblock in enumerate(gcell.get("blocks", [])):
+                                    gbt = gblock.get("type", "")
+                                    gp = f"{bp}.g{gi}.b{gbi}"
+                                    if gbt in ("spacer", "icon"):
+                                        continue
+                                    for key in ("text", "label", "title", "value"):
+                                        if key in gblock and isinstance(gblock[key], str):
+                                            texts[f"{gp}.{key}"] = gblock[key]
+                                    for gii, git in enumerate(gblock.get("items", [])):
+                                        if isinstance(git, str):
+                                            texts[f"{gp}.i{gii}"] = git
+                                        elif isinstance(git, dict):
+                                            for key in ("text", "x", "label", "title"):
+                                                if key in git and isinstance(git[key], str):
+                                                    texts[f"{gp}.i{gii}.{key}"] = git[key]
     return texts
 
 
@@ -2176,6 +2244,60 @@ def _patch_texts(deck, texts):
                                             key = f"{gp}.i{gii}.{prop}"
                                             if key in texts:
                                                 git[prop] = texts[key]; patched += 1
+                # L/R blocks (cols layout)
+                for col_key in ("L", "R"):
+                    for bi, block in enumerate(slide.get(col_key, [])):
+                        bt = block.get("type", "")
+                        bp = f"{prefix}.{col_key}{bi}"
+                        if bt == "code":
+                            key = f"{bp}.label"
+                            if key in texts:
+                                block["label"] = texts[key]; patched += 1
+                            continue
+                        if bt == "spacer":
+                            continue
+                        for prop in ("text", "label", "title", "value", "author", "caption"):
+                            key = f"{bp}.{prop}"
+                            if key in texts:
+                                block[prop] = texts[key]; patched += 1
+                        for ii, it in enumerate(block.get("items", [])):
+                            if isinstance(it, str):
+                                key = f"{bp}.i{ii}"
+                                if key in texts:
+                                    block["items"][ii] = texts[key]; patched += 1
+                            elif isinstance(it, dict):
+                                for prop in ("text", "x", "label", "lb", "sublabel", "sl", "title"):
+                                    key = f"{bp}.i{ii}.{prop}"
+                                    if key in texts:
+                                        it[prop] = texts[key]; patched += 1
+                        for hi, h in enumerate(block.get("headers", [])):
+                            key = f"{bp}.h{hi}"
+                            if key in texts:
+                                block["headers"][hi] = texts[key]; patched += 1
+                        for ri, row in enumerate(block.get("rows", [])):
+                            if isinstance(row, list):
+                                for ci, cell in enumerate(row):
+                                    key = f"{bp}.r{ri}.c{ci}"
+                                    if key in texts:
+                                        row[ci] = texts[key]; patched += 1
+                        if bt == "grid":
+                            for gi, gcell in enumerate(block.get("items", [])):
+                                for gbi, gblock in enumerate(gcell.get("blocks", [])):
+                                    gp = f"{bp}.g{gi}.b{gbi}"
+                                    for prop in ("text", "label", "title", "value"):
+                                        key = f"{gp}.{prop}"
+                                        if key in texts:
+                                            gblock[prop] = texts[key]; patched += 1
+                                    for gii, git in enumerate(gblock.get("items", [])):
+                                        if isinstance(git, str):
+                                            key = f"{gp}.i{gii}"
+                                            if key in texts:
+                                                gblock["items"][gii] = texts[key]; patched += 1
+                                        elif isinstance(git, dict):
+                                            for prop in ("text", "x", "label", "title"):
+                                                key = f"{gp}.i{gii}.{prop}"
+                                                if key in texts:
+                                                    git[prop] = texts[key]; patched += 1
     return patched
 
 

@@ -16,11 +16,19 @@ Complete reference for all Vela v12 slide block types (27 total).
   "padding": "36px 48px",                       // slide padding (CSS format)
   "gap": 16,                                    // gap between blocks (px)
   "duration": 60,                               // speaking time estimate (seconds, REQUIRED)
-  "title": "Slide Name"                         // optional label for filmstrip/TOC
+  "title": "Slide Name",                        // optional label for filmstrip/TOC
+  "layout": "stack|image-right|image-left|cols", // layout mode (default: "stack")
+  "L": [ ...block objects... ],                 // left column blocks (cols layout only)
+  "R": [ ...block objects... ],                 // right column blocks (cols layout only)
+  "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
+  "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
+  "splitGap": 32                                // gap between columns in px (cols/split layouts)
 }
 ```
 
 **Layout note:** Left-aligned slides (`align: "left"` or default) stretch blocks to full width. Center-aligned slides (`align: "center"`) shrink-wrap blocks. This means flow, grid, and progress blocks automatically fill the canvas on content slides.
+
+**Cols layout:** When `layout: "cols"`, the `blocks` array renders full-width above the two columns (optional header area — badge, heading, etc.). `L` and `R` arrays contain the left and right column blocks respectively. At least one of L/R must be present. `contentFlex`/`imageFlex` control column width ratio (default 1:1). `splitGap` controls the gap between columns (default 32px). All block types work inside L/R.
 
 ## Slide-level optional: `studyNotes` (offline student content, v12.32+)
 
