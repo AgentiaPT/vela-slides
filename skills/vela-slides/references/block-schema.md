@@ -142,12 +142,13 @@ Inline image block.
 Note: When improving existing slides, keep `src` as `"keep-original"` to preserve image data.
 
 ### code
-Code snippet with label.
+Code snippet with label. Optional `copy: true` adds a "Copiar" button that copies text to clipboard.
 ```json
 {
   "type": "code",
   "text": "const hello = 'world';",
   "label": "JAVASCRIPT",
+  "copy": true,
   "size": "sm",
   "bg": "#1e293b",
   "color": "#e2e8f0"

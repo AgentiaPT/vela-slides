@@ -175,7 +175,8 @@ _BK = {
     "yT": "yTop", "yB": "yBottom", "sL": "showLabels",
     "brd": "bordered", "cpt": "compact", "hl": "highlight",
     "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
-    "val": "value"
+    "val": "value",
+    "cp": "copy"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 
