@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.31";
+const VELA_VERSION = "12.32";
 const VELA_CHANGELOG = [
+  { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
   { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
@@ -291,8 +292,8 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip HTML tags + truncate (entity escaping handled at render time)
-  return val.replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
+  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -447,6 +448,52 @@ function sanitizeComment(c) {
   };
 }
 
+// ━━━ Offline Study Notes sanitizer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Slide-level `studyNotes` field: pre-authored student-mode content that renders
+// with zero API calls. Shape: { text, diagram?, questions?, glossary? }.
+// Rich text (parseInline), inline X-Ray links ([label](url) + [term](#key)),
+// optional inline SVG diagram, up to 6 follow-up questions, and a glossary map.
+function sanitizeStudyNotes(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out = {};
+  if (typeof raw.text === "string") {
+    const t = sanitizeString(raw.text, 4000);
+    if (t) out.text = t;
+  }
+  if (!out.text) return undefined; // text is required; drop the whole block otherwise
+  if (typeof raw.diagram === "string" && raw.diagram.trim()) {
+    const svg = sanitizeSvgMarkup(raw.diagram.slice(0, 8000));
+    if (svg) out.diagram = svg;
+  }
+  if (Array.isArray(raw.questions)) {
+    const qs = raw.questions.slice(0, 6)
+      .map((q) => sanitizeString(typeof q === "string" ? q : String(q || ""), 160))
+      .filter((q) => q.length > 0);
+    if (qs.length) out.questions = qs;
+  }
+  if (raw.glossary && typeof raw.glossary === "object" && !Array.isArray(raw.glossary)) {
+    const gl = {};
+    let count = 0;
+    for (const [k, v] of Object.entries(raw.glossary)) {
+      if (count >= 24) break;
+      if (typeof k !== "string" || !v || typeof v !== "object") continue;
+      const key = k.toLowerCase().replace(/[^\w\-]/g, "").slice(0, 48);
+      if (!key) continue;
+      const def = sanitizeString(typeof v.definition === "string" ? v.definition : "", 400);
+      if (!def) continue;
+      const entry = { definition: def };
+      if (typeof v.url === "string" && v.url.trim()) {
+        const safe = sanitizeUrl(v.url.trim());
+        if (safe) entry.url = safe;
+      }
+      gl[key] = entry;
+      count++;
+    }
+    if (Object.keys(gl).length) out.glossary = gl;
+  }
+  return out;
+}
+
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
@@ -457,6 +504,10 @@ function sanitizeSlide(slide) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
+  if (clean.studyNotes) {
+    const sn = sanitizeStudyNotes(clean.studyNotes);
+    if (sn) clean.studyNotes = sn; else delete clean.studyNotes;
+  }
   return clean;
 }
 
@@ -1013,40 +1064,185 @@ class SlideErrorBoundary extends React.Component {
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
-function parseInline(text) {
+// ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
+// links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
+// All existing call sites omit ctx and behavior is identical to before.
+function parseInline(text, ctx) {
   if (!text || typeof text !== "string") return text;
-  const parseLine = (line) => {
-    if (!line.includes("*") && !line.includes("__") && !line.includes("~~")) return line;
-    const parts = [];
-    const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const glossary = ctx && ctx.glossary;
+  const keyPrefix = (ctx && ctx.keyPrefix) || "il";
+
+  const renderLinkToken = (tok, key) => {
+    const label = tok.label;
+    const target = tok.target;
+    if (target && target.charAt(0) === "#") {
+      const term = target.slice(1).toLowerCase();
+      const entry = glossary && glossary[term];
+      if (!entry) return label; // unknown term → plain text fallback
+      return <GlossaryLink key={key} label={label} term={term} entry={entry} />;
+    }
+    const safe = sanitizeUrl(target);
+    if (!safe) return label; // blocked URL → plain text fallback
+    return <a key={key} href={safe} target="_blank" rel="noopener noreferrer"
+              title={linkPreview(safe, label)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: T.accent, textDecoration: "underline", cursor: "pointer" }}>{label}</a>;
+  };
+
+  const spliceSentinels = (str, linkTokens, prefix) => {
+    // Replace \u0000LINK{i}\u0000 sentinels inside a plain string with React nodes
+    if (!str || typeof str !== "string" || !str.includes("\u0000LINK")) return [str];
+    const out = [];
+    const re = /\u0000LINK(\d+)\u0000/g;
     let last = 0, m;
-    while ((m = re.exec(line)) !== null) {
-      if (m.index > last) parts.push(line.slice(last, m.index));
-      if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-      else if (m[3]) parts.push({ text: m[3], bold: true });
-      else if (m[4]) parts.push({ text: m[4], italic: true });
-      else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-      else if (m[6]) parts.push({ text: m[6], bold: true });
-      else if (m[7]) parts.push({ text: m[7], italic: true });
-      else if (m[8]) parts.push({ text: m[8], strike: true });
+    while ((m = re.exec(str)) !== null) {
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const tok = linkTokens[parseInt(m[1], 10)];
+      if (tok) out.push(renderLinkToken(tok, `${prefix}-${m[1]}`));
       last = m.index + m[0].length;
     }
-    if (last < line.length) parts.push(line.slice(last));
-    if (parts.length === 1 && typeof parts[0] === "string") return line;
-    return parts.map((p, i) => typeof p === "string" ? p : <span key={i} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>{p.text}</span>);
+    if (last < str.length) out.push(str.slice(last));
+    return out;
   };
+
+  const parseLine = (line, lineKey) => {
+    // Fast path: no link, no formatting → return untouched
+    const hasLink = line.includes("[") && line.includes("](");
+    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
+    if (!hasLink && !hasFmt) return line;
+
+    // Pass 1: extract [label](target) link spans into sentinel placeholders
+    let working = line;
+    const linkTokens = [];
+    if (hasLink) {
+      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+      working = line.replace(linkRe, (_, label, target) => {
+        const idx = linkTokens.length;
+        linkTokens.push({ label, target });
+        return `\u0000LINK${idx}\u0000`;
+      });
+    }
+
+    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
+    if (!hasFmt && linkTokens.length === 0) return working;
+    const parts = [];
+    if (hasFmt) {
+      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+      let last = 0, m;
+      while ((m = re.exec(working)) !== null) {
+        if (m.index > last) parts.push(working.slice(last, m.index));
+        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
+        else if (m[3]) parts.push({ text: m[3], bold: true });
+        else if (m[4]) parts.push({ text: m[4], italic: true });
+        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
+        else if (m[6]) parts.push({ text: m[6], bold: true });
+        else if (m[7]) parts.push({ text: m[7], italic: true });
+        else if (m[8]) parts.push({ text: m[8], strike: true });
+        last = m.index + m[0].length;
+      }
+      if (last < working.length) parts.push(working.slice(last));
+    } else {
+      parts.push(working);
+    }
+
+    // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
+    if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;
+    const out = [];
+    parts.forEach((p, i) => {
+      if (typeof p === "string") {
+        const spliced = spliceSentinels(p, linkTokens, `${keyPrefix}-${lineKey}-t${i}`);
+        spliced.forEach((el, j) => {
+          if (typeof el === "string") out.push(el);
+          else out.push(React.cloneElement(el, { key: `${keyPrefix}-${lineKey}-t${i}s${j}` }));
+        });
+      } else {
+        const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
+        out.push(
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+            {children.length === 1 ? children[0] : children}
+          </span>
+        );
+      }
+    });
+    return out;
+  };
+
   const textLines = text.split("\n");
-  if (textLines.length === 1) return parseLine(textLines[0]);
+  if (textLines.length === 1) return parseLine(textLines[0], 0);
   const result = [];
   textLines.forEach((line, i) => {
-    if (i > 0) result.push(<br key={`br${i}`} />);
-    const parsed = parseLine(line);
+    if (i > 0) result.push(<br key={`${keyPrefix}-br${i}`} />);
+    const parsed = parseLine(line, i);
     if (Array.isArray(parsed)) parsed.forEach((el, j) => {
-      result.push(typeof el === "string" ? el : React.cloneElement(el, { key: `${i}x${j}` }));
+      result.push(typeof el === "string" ? el : React.cloneElement(el, { key: `${keyPrefix}-${i}x${j}` }));
     });
     else result.push(parsed);
   });
   return result;
+}
+
+// ━━━ X-Ray Glossary Link — inline popover for [term](#key) refs ━━━━
+// Used by parseInline when ctx.glossary is provided. Matches the popover
+// style used by CommentPopover (inline absolute, click-outside + Esc close).
+function GlossaryLink({ label, term, entry }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const preview = (entry && entry.definition ? entry.definition : "").slice(0, 140);
+  return (
+    <span ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <span
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        title={preview}
+        data-xray-term={term}
+        style={{
+          color: T.accent,
+          borderBottom: `1px dashed ${T.accent}`,
+          cursor: "help",
+          fontWeight: 600,
+        }}
+      >{label}</span>
+      {open && (
+        <span style={{
+          position: "absolute",
+          top: "100%",
+          left: 0,
+          zIndex: 50,
+          marginTop: 4,
+          minWidth: 220,
+          maxWidth: 320,
+          padding: "10px 12px",
+          background: "#0f1219",
+          border: `1px solid ${T.accent}60`,
+          borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "#E6F1FF",
+          fontFamily: FONT.body,
+          whiteSpace: "normal",
+          textAlign: "left",
+        }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{term}</div>
+          <div>{entry && entry.definition}</div>
+          {entry && entry.url && (
+            <a href={entry.url} target="_blank" rel="noopener noreferrer"
+               onClick={(e) => e.stopPropagation()}
+               style={{ display: "inline-block", marginTop: 6, color: T.accent, fontSize: 11, textDecoration: "underline" }}>
+              Learn more →
+            </a>
+          )}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
@@ -4316,6 +4512,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
+                    {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
                     <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
                   </div>
@@ -4365,6 +4562,181 @@ function TeacherMessage({ text }) {
     : p.content ? <div key={i}><ChatMarkdown text={p.content} /></div> : null
   )}</>;
 }
+// ━━━ Offline Study Notes — static panel that renders slide.studyNotes ━━
+// Shown by StudentPanel when the current slide has pre-authored studyNotes.
+// Renders markdown text + optional inline SVG diagram + pre-authored
+// follow-up questions, all with zero API calls. If a live channel is
+// reachable, questions become clickable Vera prompts and an Ask input
+// appears; layered live chat history is preserved per-slide just like the
+// regular TeacherPanel.
+function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slide }) {
+  const { teacherHistory, teacherLoading } = state;
+  const [input, setInput] = useState("");
+  const [streamingText, setStreamingText] = useState(null);
+  const scrollRef = useRef(null);
+  const activeKeyRef = useRef(null);
+  const slideKey = `${selectedId}-${slideIndex}`;
+  const messages = teacherHistory[slideKey] || [];
+  const sn = slide && slide.studyNotes ? slide.studyNotes : null;
+
+  // Embedded-first: live API is optional. Artifact mode assumes proxy reachable
+  // (same signal callVeraTeacher uses — v12.16 routing).
+  const apiAvailable = VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : true;
+
+  useEffect(() => {
+    activeKeyRef.current = slideKey;
+    setStreamingText(null);
+  }, [slideKey]);
+
+  // Strip incomplete markdown during streaming (mirrors TeacherPanel)
+  const cleanStream = (text) => {
+    let clean = text.split(/---\s*QUESTIONS/i)[0];
+    const stars = (clean.match(/\*\*/g) || []).length;
+    if (stars % 2 !== 0) clean = clean.replace(/\*\*[^*]*$/, "");
+    return clean;
+  };
+
+  const sendQuestion = async (q) => {
+    if (!apiAvailable) return;
+    const msg = q || input.trim();
+    if (!msg || teacherLoading) return;
+    if (!q) setInput("");
+    const myKey = slideKey;
+    dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
+    dispatch({ type: "TEACHER_LOADING", value: true });
+    if (activeKeyRef.current === myKey) setStreamingText("");
+    const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
+      if (activeKeyRef.current !== myKey) return;
+      setStreamingText(cleanStream(text));
+    });
+    if (activeKeyRef.current === myKey) setStreamingText(null);
+    const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
+    dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
+    if (activeKeyRef.current === myKey) dispatch({ type: "TEACHER_LOADING", value: false });
+  };
+
+  const questions = (sn && Array.isArray(sn.questions)) ? sn.questions : [];
+  const studyCtx = (sn && sn.glossary) ? { glossary: sn.glossary, keyPrefix: `sn-${slideKey}` } : undefined;
+
+  return (
+    <div data-teacher-panel data-study-panel onWheel={(e) => e.stopPropagation()} style={{ width: "35%", minWidth: 280, maxWidth: 400, background: "#0f1219", borderLeft: `1px solid ${T.accent}40`, display: "flex", flexDirection: "column" }}>
+      {/* Header */}
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid rgba(255,255,255,0.12)`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 16 }}>🎓</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>STUDY NOTES</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 10, color: "#8892B0" }}>{apiAvailable ? "ask vera for more" : "offline"}</span>
+        <button onClick={() => dispatch({ type: "SET_VERA_MODE", mode: "editor" })} title="Close study notes" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#8892B0", padding: 4, lineHeight: 1, opacity: 0.7 }} onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.7}>✕</button>
+      </div>
+
+      {/* Body */}
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Static authored notes */}
+        {sn && sn.text && (
+          <div data-study-notes-text style={{ fontSize: 14, lineHeight: 1.65, color: "#E6F1FF", fontFamily: FONT.body }}>
+            <ChatMarkdown text={sn.text} ctx={studyCtx} />
+          </div>
+        )}
+
+        {/* Optional pre-authored SVG diagram */}
+        {sn && sn.diagram && (
+          <div data-study-notes-diagram style={{ margin: "2px 0", borderRadius: 8, overflow: "hidden", background: "#1a1f2e", border: "1px solid rgba(59,130,246,0.2)" }} dangerouslySetInnerHTML={{ __html: sanitizeSvgMarkup(sn.diagram) }} />
+        )}
+
+        {/* Pre-authored follow-up questions */}
+        {questions.length > 0 && (
+          <div data-study-notes-questions style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
+            <span style={{ fontFamily: FONT.mono, fontSize: 10, color: "#8892B0", letterSpacing: "0.05em", fontWeight: 600 }}>
+              {apiAvailable ? "EXPLORE FURTHER" : "QUESTIONS TO PONDER"}
+            </span>
+            {questions.map((q, qi) => apiAvailable ? (
+              <button key={qi} onClick={() => sendQuestion(q)} disabled={teacherLoading} style={{
+                textAlign: "left", padding: "9px 14px", fontSize: 13, fontFamily: FONT.body, color: "#93c5fd",
+                background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.30)", borderRadius: 8, cursor: teacherLoading ? "default" : "pointer",
+                lineHeight: 1.45, transition: "all 0.15s", opacity: teacherLoading ? 0.5 : 1
+              }} onMouseEnter={(e) => { if (!teacherLoading) { e.currentTarget.style.background = "rgba(59,130,246,0.25)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.50)"; } }}
+                 onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(59,130,246,0.15)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.30)"; }}>
+                {q}
+              </button>
+            ) : (
+              <div key={qi} style={{ padding: "9px 14px", fontSize: 13, fontFamily: FONT.body, color: "#93c5fd", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.18)", borderRadius: 8, lineHeight: 1.45 }}>
+                • {q}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Layered live Vera chat turns (user clicks on a question, or types in the input) */}
+        {messages.length > 0 && (
+          <>
+            <div style={{ marginTop: 4, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.08)", fontFamily: FONT.mono, fontSize: 10, color: "#8892B0", letterSpacing: "0.05em", fontWeight: 600 }}>
+              VERA CHAT
+            </div>
+            {messages.map((m, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{
+                  padding: "12px 16px", borderRadius: 10, fontSize: 14, lineHeight: 1.6, fontFamily: FONT.body,
+                  ...(m.role === "user"
+                    ? { background: T.accent + "30", color: "#fff", alignSelf: "flex-end", maxWidth: "88%", borderBottomRightRadius: 4 }
+                    : { background: "rgba(255,255,255,0.10)", color: "#E6F1FF", maxWidth: "100%", borderBottomLeftRadius: 4, border: "1px solid rgba(255,255,255,0.06)" })
+                }}>
+                  {m.role === "assistant" ? <TeacherMessage text={m.content} /> : <ChatMarkdown text={m.content} />}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+        {/* Streaming bubble */}
+        {streamingText !== null && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ padding: "12px 16px", borderRadius: 10, borderBottomLeftRadius: 4, fontSize: 14, lineHeight: 1.6, fontFamily: FONT.body, background: "rgba(255,255,255,0.10)", color: "#E6F1FF", border: "1px solid rgba(255,255,255,0.06)" }}>
+              {streamingText.length > 0 ? <TeacherMessage text={streamingText} /> : <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>🎓</span><span style={{ fontFamily: FONT.mono, fontSize: 13, color: "#93c5fd" }}>thinking...</span></span>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer — live input only when API is reachable */}
+      {apiAvailable ? (
+        <>
+          <div style={{ padding: "0 14px 2px", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 13 }}>✨</span>
+            <span style={{ fontSize: 13, color: "#4a5a72", fontFamily: FONT.body }}>AI answers may contain errors — always verify key facts</span>
+          </div>
+          <div style={{ padding: "6px 12px 10px", display: "flex", gap: 6 }}>
+            <input value={input} onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && input.trim()) sendQuestion(); }}
+              placeholder="Ask Vera about this slide..."
+              style={{ flex: 1, padding: "9px 14px", fontSize: 14, fontFamily: FONT.body, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: 8, color: "#fff", outline: "none" }} />
+            <button onClick={() => sendQuestion()} disabled={!input.trim() || teacherLoading}
+              style={{ padding: "9px 16px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: input.trim() ? T.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 8, cursor: input.trim() ? "pointer" : "default", opacity: input.trim() ? 1 : 0.4 }}>Ask</button>
+          </div>
+        </>
+      ) : (
+        <div style={{ padding: "10px 14px", fontSize: 11, color: "#4a5a72", fontFamily: FONT.body, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          Offline mode — authored content only
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━ StudentPanel — dispatcher: static studyNotes first, else live Vera ━
+// If the current slide has pre-authored studyNotes, render the offline
+// StaticStudyPanel. Otherwise fall back to the existing live TeacherPanel.
+function StudentPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
+  // Reuse the same inline slide derivation pattern TeacherPanel uses
+  let slide = null;
+  for (const l of (lanes || [])) {
+    const it = l.items.find((i) => i.id === selectedId);
+    if (it) { slide = (it.slides || [])[slideIndex] || null; break; }
+  }
+  const hasStudyNotes = !!(slide && slide.studyNotes && slide.studyNotes.text);
+  if (hasStudyNotes) {
+    return <StaticStudyPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={selectedId} slideIndex={slideIndex} slide={slide} />;
+  }
+  return <TeacherPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={selectedId} slideIndex={slideIndex} />;
+}
+
 function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   const { teacherHistory, teacherLoading } = state;
   const [input, setInput] = useState("");
@@ -5317,7 +5689,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
       </div>
       </div>
-      {isStudent && <TeacherPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
+      {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
   );
@@ -5368,6 +5740,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                     if (sc.length === 0) return null;
                     return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
+                  {/* Study notes badge (top-left) — pure indicator in editor mode */}
+                  {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
+                    <div data-study-marker title="This slide has offline study notes — open student mode (🎓) to view" style={{ position: "absolute", top: 8, left: 8, zIndex: 10, width: 22, height: 22, borderRadius: 11, background: T.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.3)", pointerEvents: "none" }}>🎓</div>
+                  )}
                   {/* Review mode visual border indicator */}
                   {state.reviewMode && !fullscreen && <div style={{ position: "absolute", inset: 0, zIndex: 8, border: `2px solid ${T.amber}40`, borderRadius: 6, pointerEvents: "none" }} />}
                   {/* Comment popover */}
@@ -5735,6 +6111,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
           >
             {sPct > 0 && <div title={`${fmtTime(sDur)}${s.timeLock ? " 🔒" : ""}`} style={{ position: "absolute", left: 0, bottom: 0, height: 2, width: `${sPct}%`, background: "#8B5CF630", borderRadius: "0 1px 1px 0", cursor: "default" }} />}
             <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isActive ? T.accent : T.textDim, marginRight: 4, fontWeight: 700, minWidth: 14 }}>{(slideOffset || 0) + si + 1}</span>
+            {s.studyNotes?.text ? <span data-study-marker title="Has offline study notes" style={{ fontSize: 10, lineHeight: 1, marginRight: 3, flexShrink: 0 }}>🎓</span> : null}
             <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isActive ? T.accent : T.text, marginRight: 4, minWidth: 30, textAlign: "right", display: "inline-block" }}>{((t) => { const m = Math.floor(t / 60); const s = t % 60; return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; })(slideCumTime)}</span>
             {editingSi === si ? (
               <input autoFocus value={editTitle}
@@ -5937,7 +6314,9 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Chat Markdown Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ChatMarkdown({ text }) {
+// ctx (optional): passes through to parseInline — used by StudentPanel to
+// thread studyNotes.glossary through so [term](#key) renders as X-Ray popups.
+function ChatMarkdown({ text, ctx }) {
   if (!text) return null;
   if (typeof text !== "string") return <span>{String(text)}</span>;
   const paragraphs = text.split(/\n\n+/);
@@ -5952,13 +6331,13 @@ function ChatMarkdown({ text }) {
           const cleaned = item.replace(/^\s*[-•●]\s*/, "").replace(/^\s*/, "");
           return <div key={ii} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
             {!/^[✅⚠️❌▸]/.test(item.trim()) && <span style={{ color: T.accent, flexShrink: 0, fontSize: 9, marginTop: 4 }}>●</span>}
-            <span>{parseInline(cleaned)}</span>
+            <span>{parseInline(cleaned, ctx)}</span>
           </div>;
         })}
       </div>;
     }
     // Regular paragraph
-    return <div key={pi} style={{ margin: pi > 0 ? "6px 0 0" : 0 }}>{parseInline(para)}</div>;
+    return <div key={pi} style={{ margin: pi > 0 ? "6px 0 0" : 0 }}>{parseInline(para, ctx)}</div>;
   })}</>;
 }
 
@@ -7421,6 +7800,96 @@ uiSuite("Student Mode", [
   { name: "Exit fullscreen after student tests", fn: async () => {
     _key("f"); await _wait(300);
     await _waitFor(() => _$("header"), 3000);
+  }},
+]);
+
+// ── v12.32: Offline Study Notes Suite ───────────────────────────────
+// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// patch the current slide with a pre-authored studyNotes object, then
+// exercises the offline StaticStudyPanel rendering (text + glossary
+// X-Ray links + questions + diagram). Does not depend on a live API.
+uiSuite("Study Notes", [
+  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
+    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  }},
+  { name: "Inject studyNotes into current slide", fn: async () => {
+    const sn = {
+      text: "An **agent** is a goal-driven loop. See [ReAct](https://arxiv.org/abs/2210.03629) or [what an agent is](#agent).",
+      diagram: "<svg viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8' fill='#3b82f6'/></svg>",
+      questions: ["Why does this matter?", "When does it fail?"],
+      glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
+    };
+    const ok = window.__velaTestInjectStudyNotes(sn);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(150);
+  }},
+  { name: "🎓 study marker appears on slide viewer", fn: async () => {
+    await _waitFor(() => _$("[data-study-marker]"), 2000);
+  }},
+  { name: "Enter fullscreen for study-panel tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 3000);
+  }},
+  { name: "Activate student mode on studyNotes slide", fn: async () => {
+    const btn = _$("[data-testid='student-toggle']");
+    if (!btn) throw new Error("student-toggle not found");
+    _click(btn);
+    await _waitFor(() => _$("[data-study-panel]"), 3000);
+  }},
+  { name: "Panel renders STUDY NOTES header (not VERA)", fn: async () => {
+    const panel = _$("[data-study-panel]");
+    if (!panel) throw new Error("data-study-panel not found");
+    const txt = panel.textContent || "";
+    return txt.includes("STUDY NOTES");
+  }},
+  { name: "Authored text renders immediately (no spinner)", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    return !!body && (body.textContent || "").includes("goal-driven loop");
+  }},
+  { name: "Inline external link rendered as <a>", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    if (!body) return false;
+    const a = body.querySelector("a[href*='arxiv.org']");
+    return !!a;
+  }},
+  { name: "Glossary X-Ray link has dashed underline", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    if (!body) return false;
+    const span = body.querySelector("[data-xray-term='agent']");
+    if (!span) return false;
+    const style = span.getAttribute("style") || "";
+    return style.includes("dashed");
+  }},
+  { name: "Click X-Ray term opens glossary popover with definition", fn: async () => {
+    const span = _$("[data-xray-term='agent']");
+    if (!span) throw new Error("X-Ray term span not found");
+    _click(span);
+    await _wait(100);
+    const panel = _$("[data-study-panel]");
+    return !!panel && (panel.textContent || "").includes("goal-driven loop");
+  }},
+  { name: "SVG diagram renders inside panel", fn: async () => {
+    const dia = _$("[data-study-notes-diagram]");
+    return !!dia && !!dia.querySelector("svg");
+  }},
+  { name: "Authored questions render", fn: async () => {
+    const qs = _$("[data-study-notes-questions]");
+    return !!qs && (qs.textContent || "").includes("Why does this matter?");
+  }},
+  { name: "Exit student mode", fn: async () => {
+    const btn = _$("[data-testid='student-toggle']");
+    if (btn) _click(btn);
+    await _waitFor(() => !_$("[data-study-panel]"), 3000);
+  }},
+  { name: "Exit fullscreen after study-notes tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"), 3000);
+  }},
+  { name: "Clean up injected studyNotes", fn: async () => {
+    // Undo the UPDATE_SLIDE so we don't leak state into later tests
+    window.__velaTestInjectStudyNotes(undefined);
+    await _wait(100);
   }},
 ]);
 
@@ -12946,6 +13415,20 @@ export default function App() {
     };
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
+
+  // Test-only affordance: patch the current slide with a studyNotes object.
+  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
+  // offline student-mode renderer without depending on a live API. Always
+  // enabled — state.selectedId / slideIndex are readable in all modes.
+  useEffect(() => {
+    window.__velaTestInjectStudyNotes = (studyNotes) => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return false;
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      return true;
+    };
+    return () => { window.__velaTestInjectStudyNotes = null; };
+  }, [dispatch]);
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {

@@ -789,6 +789,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
+                    {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
                     <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
                   </div>
@@ -838,6 +839,181 @@ function TeacherMessage({ text }) {
     : p.content ? <div key={i}><ChatMarkdown text={p.content} /></div> : null
   )}</>;
 }
+// ━━━ Offline Study Notes — static panel that renders slide.studyNotes ━━
+// Shown by StudentPanel when the current slide has pre-authored studyNotes.
+// Renders markdown text + optional inline SVG diagram + pre-authored
+// follow-up questions, all with zero API calls. If a live channel is
+// reachable, questions become clickable Vera prompts and an Ask input
+// appears; layered live chat history is preserved per-slide just like the
+// regular TeacherPanel.
+function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slide }) {
+  const { teacherHistory, teacherLoading } = state;
+  const [input, setInput] = useState("");
+  const [streamingText, setStreamingText] = useState(null);
+  const scrollRef = useRef(null);
+  const activeKeyRef = useRef(null);
+  const slideKey = `${selectedId}-${slideIndex}`;
+  const messages = teacherHistory[slideKey] || [];
+  const sn = slide && slide.studyNotes ? slide.studyNotes : null;
+
+  // Embedded-first: live API is optional. Artifact mode assumes proxy reachable
+  // (same signal callVeraTeacher uses — v12.16 routing).
+  const apiAvailable = VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : true;
+
+  useEffect(() => {
+    activeKeyRef.current = slideKey;
+    setStreamingText(null);
+  }, [slideKey]);
+
+  // Strip incomplete markdown during streaming (mirrors TeacherPanel)
+  const cleanStream = (text) => {
+    let clean = text.split(/---\s*QUESTIONS/i)[0];
+    const stars = (clean.match(/\*\*/g) || []).length;
+    if (stars % 2 !== 0) clean = clean.replace(/\*\*[^*]*$/, "");
+    return clean;
+  };
+
+  const sendQuestion = async (q) => {
+    if (!apiAvailable) return;
+    const msg = q || input.trim();
+    if (!msg || teacherLoading) return;
+    if (!q) setInput("");
+    const myKey = slideKey;
+    dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
+    dispatch({ type: "TEACHER_LOADING", value: true });
+    if (activeKeyRef.current === myKey) setStreamingText("");
+    const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
+      if (activeKeyRef.current !== myKey) return;
+      setStreamingText(cleanStream(text));
+    });
+    if (activeKeyRef.current === myKey) setStreamingText(null);
+    const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
+    dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
+    if (activeKeyRef.current === myKey) dispatch({ type: "TEACHER_LOADING", value: false });
+  };
+
+  const questions = (sn && Array.isArray(sn.questions)) ? sn.questions : [];
+  const studyCtx = (sn && sn.glossary) ? { glossary: sn.glossary, keyPrefix: `sn-${slideKey}` } : undefined;
+
+  return (
+    <div data-teacher-panel data-study-panel onWheel={(e) => e.stopPropagation()} style={{ width: "35%", minWidth: 280, maxWidth: 400, background: "#0f1219", borderLeft: `1px solid ${T.accent}40`, display: "flex", flexDirection: "column" }}>
+      {/* Header */}
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid rgba(255,255,255,0.12)`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 16 }}>🎓</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>STUDY NOTES</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 10, color: "#8892B0" }}>{apiAvailable ? "ask vera for more" : "offline"}</span>
+        <button onClick={() => dispatch({ type: "SET_VERA_MODE", mode: "editor" })} title="Close study notes" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#8892B0", padding: 4, lineHeight: 1, opacity: 0.7 }} onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.7}>✕</button>
+      </div>
+
+      {/* Body */}
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Static authored notes */}
+        {sn && sn.text && (
+          <div data-study-notes-text style={{ fontSize: 14, lineHeight: 1.65, color: "#E6F1FF", fontFamily: FONT.body }}>
+            <ChatMarkdown text={sn.text} ctx={studyCtx} />
+          </div>
+        )}
+
+        {/* Optional pre-authored SVG diagram */}
+        {sn && sn.diagram && (
+          <div data-study-notes-diagram style={{ margin: "2px 0", borderRadius: 8, overflow: "hidden", background: "#1a1f2e", border: "1px solid rgba(59,130,246,0.2)" }} dangerouslySetInnerHTML={{ __html: sanitizeSvgMarkup(sn.diagram) }} />
+        )}
+
+        {/* Pre-authored follow-up questions */}
+        {questions.length > 0 && (
+          <div data-study-notes-questions style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
+            <span style={{ fontFamily: FONT.mono, fontSize: 10, color: "#8892B0", letterSpacing: "0.05em", fontWeight: 600 }}>
+              {apiAvailable ? "EXPLORE FURTHER" : "QUESTIONS TO PONDER"}
+            </span>
+            {questions.map((q, qi) => apiAvailable ? (
+              <button key={qi} onClick={() => sendQuestion(q)} disabled={teacherLoading} style={{
+                textAlign: "left", padding: "9px 14px", fontSize: 13, fontFamily: FONT.body, color: "#93c5fd",
+                background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.30)", borderRadius: 8, cursor: teacherLoading ? "default" : "pointer",
+                lineHeight: 1.45, transition: "all 0.15s", opacity: teacherLoading ? 0.5 : 1
+              }} onMouseEnter={(e) => { if (!teacherLoading) { e.currentTarget.style.background = "rgba(59,130,246,0.25)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.50)"; } }}
+                 onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(59,130,246,0.15)"; e.currentTarget.style.borderColor = "rgba(59,130,246,0.30)"; }}>
+                {q}
+              </button>
+            ) : (
+              <div key={qi} style={{ padding: "9px 14px", fontSize: 13, fontFamily: FONT.body, color: "#93c5fd", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.18)", borderRadius: 8, lineHeight: 1.45 }}>
+                • {q}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Layered live Vera chat turns (user clicks on a question, or types in the input) */}
+        {messages.length > 0 && (
+          <>
+            <div style={{ marginTop: 4, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.08)", fontFamily: FONT.mono, fontSize: 10, color: "#8892B0", letterSpacing: "0.05em", fontWeight: 600 }}>
+              VERA CHAT
+            </div>
+            {messages.map((m, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{
+                  padding: "12px 16px", borderRadius: 10, fontSize: 14, lineHeight: 1.6, fontFamily: FONT.body,
+                  ...(m.role === "user"
+                    ? { background: T.accent + "30", color: "#fff", alignSelf: "flex-end", maxWidth: "88%", borderBottomRightRadius: 4 }
+                    : { background: "rgba(255,255,255,0.10)", color: "#E6F1FF", maxWidth: "100%", borderBottomLeftRadius: 4, border: "1px solid rgba(255,255,255,0.06)" })
+                }}>
+                  {m.role === "assistant" ? <TeacherMessage text={m.content} /> : <ChatMarkdown text={m.content} />}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+        {/* Streaming bubble */}
+        {streamingText !== null && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ padding: "12px 16px", borderRadius: 10, borderBottomLeftRadius: 4, fontSize: 14, lineHeight: 1.6, fontFamily: FONT.body, background: "rgba(255,255,255,0.10)", color: "#E6F1FF", border: "1px solid rgba(255,255,255,0.06)" }}>
+              {streamingText.length > 0 ? <TeacherMessage text={streamingText} /> : <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>🎓</span><span style={{ fontFamily: FONT.mono, fontSize: 13, color: "#93c5fd" }}>thinking...</span></span>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer — live input only when API is reachable */}
+      {apiAvailable ? (
+        <>
+          <div style={{ padding: "0 14px 2px", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 13 }}>✨</span>
+            <span style={{ fontSize: 13, color: "#4a5a72", fontFamily: FONT.body }}>AI answers may contain errors — always verify key facts</span>
+          </div>
+          <div style={{ padding: "6px 12px 10px", display: "flex", gap: 6 }}>
+            <input value={input} onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && input.trim()) sendQuestion(); }}
+              placeholder="Ask Vera about this slide..."
+              style={{ flex: 1, padding: "9px 14px", fontSize: 14, fontFamily: FONT.body, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: 8, color: "#fff", outline: "none" }} />
+            <button onClick={() => sendQuestion()} disabled={!input.trim() || teacherLoading}
+              style={{ padding: "9px 16px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: input.trim() ? T.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 8, cursor: input.trim() ? "pointer" : "default", opacity: input.trim() ? 1 : 0.4 }}>Ask</button>
+          </div>
+        </>
+      ) : (
+        <div style={{ padding: "10px 14px", fontSize: 11, color: "#4a5a72", fontFamily: FONT.body, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          Offline mode — authored content only
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━ StudentPanel — dispatcher: static studyNotes first, else live Vera ━
+// If the current slide has pre-authored studyNotes, render the offline
+// StaticStudyPanel. Otherwise fall back to the existing live TeacherPanel.
+function StudentPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
+  // Reuse the same inline slide derivation pattern TeacherPanel uses
+  let slide = null;
+  for (const l of (lanes || [])) {
+    const it = l.items.find((i) => i.id === selectedId);
+    if (it) { slide = (it.slides || [])[slideIndex] || null; break; }
+  }
+  const hasStudyNotes = !!(slide && slide.studyNotes && slide.studyNotes.text);
+  if (hasStudyNotes) {
+    return <StaticStudyPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={selectedId} slideIndex={slideIndex} slide={slide} />;
+  }
+  return <TeacherPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={selectedId} slideIndex={slideIndex} />;
+}
+
 function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   const { teacherHistory, teacherLoading } = state;
   const [input, setInput] = useState("");
@@ -1790,7 +1966,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
       </div>
       </div>
-      {isStudent && <TeacherPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
+      {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
   );
@@ -1841,6 +2017,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                     if (sc.length === 0) return null;
                     return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
+                  {/* Study notes badge (top-left) — pure indicator in editor mode */}
+                  {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
+                    <div data-study-marker title="This slide has offline study notes — open student mode (🎓) to view" style={{ position: "absolute", top: 8, left: 8, zIndex: 10, width: 22, height: 22, borderRadius: 11, background: T.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.3)", pointerEvents: "none" }}>🎓</div>
+                  )}
                   {/* Review mode visual border indicator */}
                   {state.reviewMode && !fullscreen && <div style={{ position: "absolute", inset: 0, zIndex: 8, border: `2px solid ${T.amber}40`, borderRadius: 6, pointerEvents: "none" }} />}
                   {/* Comment popover */}

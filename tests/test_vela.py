@@ -167,6 +167,26 @@ def test_security():
     else:
         fail("sanitizeString HTML stripping")
 
+    # 6. sanitizeString strips NULL bytes (studyNotes X-Ray sentinel safety)
+    if 'replace(/\\u0000/g' in all_jsx:
+        ok("sanitizeString strips NULL bytes (sentinel safety)")
+    else:
+        fail("sanitizeString NULL byte stripping", "required for parseInline link sentinel safety")
+
+    # 7. sanitizeStudyNotes exists and routes diagram through sanitizeSvgMarkup
+    if 'function sanitizeStudyNotes' in all_jsx:
+        ok("sanitizeStudyNotes helper present")
+    else:
+        fail("sanitizeStudyNotes helper missing")
+    if 'sanitizeStudyNotes' in all_jsx and 'sanitizeSvgMarkup(raw.diagram' in all_jsx:
+        ok("sanitizeStudyNotes routes diagram through sanitizeSvgMarkup")
+    else:
+        fail("sanitizeStudyNotes diagram sanitization")
+    if 'sanitizeStudyNotes' in all_jsx and 'sanitizeUrl(v.url' in all_jsx:
+        ok("sanitizeStudyNotes glossary URL sanitization")
+    else:
+        fail("sanitizeStudyNotes glossary URL sanitization")
+
 
 # ━━━ Known Bugs (regression watchlist) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1841,6 +1861,215 @@ def run_e2e_tests():
     return result.returncode
 
 
+# ━━━ Offline Study Notes (v12.32) Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_study_notes():
+    print("\n── Study Notes (v12.32) Tests ──")
+
+    # Imports needed for round-trip tests
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck, _SK, _SK_REV
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    # 1. Compact short key registered
+    if _SK.get("sN") == "studyNotes" and _SK_REV.get("studyNotes") == "sN":
+        ok("_SK short key sN ↔ studyNotes")
+    else:
+        fail("_SK short key sN ↔ studyNotes", f"_SK.get('sN')={_SK.get('sN')}")
+
+    # Build a minimal full deck with studyNotes on slide 0
+    def minimal_deck():
+        return {
+            "deckTitle": "Study Notes Test",
+            "lanes": [{
+                "title": "Main",
+                "items": [{
+                    "title": "Topic",
+                    "status": "done",
+                    "slides": [
+                        {
+                            "title": "Intro",
+                            "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+                            "duration": 60,
+                            "blocks": [{"type": "heading", "text": "Hello", "size": "2xl"}],
+                            "studyNotes": {
+                                "text": "An **agent** is a goal-driven loop. See [ReAct](https://arxiv.org/abs/2210.03629) or [what an agent is](#agent). Use #3b82f6 for the accent color.",
+                                "diagram": "<svg viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8' fill='#3b82f6'/></svg>",
+                                "questions": ["Why does this matter?", "When would it fail?"],
+                                "glossary": {
+                                    "agent": {"definition": "A goal-driven loop.", "url": "https://example.com/a"}
+                                }
+                            }
+                        },
+                        {
+                            "title": "No notes",
+                            "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+                            "duration": 30,
+                            "blocks": [{"type": "text", "text": "plain"}]
+                        }
+                    ]
+                }]
+            }]
+        }
+
+    deck = minimal_deck()
+
+    # 2. validate.py accepts the deck
+    tmpdir = tempfile.mkdtemp()
+    try:
+        deck_path = os.path.join(tmpdir, "sn.vela")
+        with open(deck_path, "w", encoding="utf-8") as f:
+            json.dump(deck, f)
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), deck_path],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("validate.py accepts valid studyNotes")
+        else:
+            fail("validate.py accepts valid studyNotes", r.stdout + r.stderr)
+
+        # 3. validate.py rejects studyNotes missing required text
+        bad = minimal_deck()
+        bad["lanes"][0]["items"][0]["slides"][0]["studyNotes"] = {"questions": ["?"]}
+        bad_path = os.path.join(tmpdir, "bad.vela")
+        with open(bad_path, "w", encoding="utf-8") as f:
+            json.dump(bad, f)
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), bad_path],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and "studyNotes.text is required" in (r.stdout + r.stderr):
+            ok("validate.py rejects missing studyNotes.text")
+        else:
+            fail("validate.py rejects missing studyNotes.text", r.stdout + r.stderr)
+
+        # 4. validate.py rejects non-dict studyNotes
+        bad2 = minimal_deck()
+        bad2["lanes"][0]["items"][0]["slides"][0]["studyNotes"] = "just a string"
+        bad2_path = os.path.join(tmpdir, "bad2.vela")
+        with open(bad2_path, "w", encoding="utf-8") as f:
+            json.dump(bad2, f)
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), bad2_path],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and "studyNotes must be an object" in (r.stdout + r.stderr):
+            ok("validate.py rejects non-dict studyNotes")
+        else:
+            fail("validate.py rejects non-dict studyNotes", r.stdout + r.stderr)
+
+        # 5. validate.py rejects non-array questions
+        bad3 = minimal_deck()
+        bad3["lanes"][0]["items"][0]["slides"][0]["studyNotes"]["questions"] = "one, two"
+        bad3_path = os.path.join(tmpdir, "bad3.vela")
+        with open(bad3_path, "w", encoding="utf-8") as f:
+            json.dump(bad3, f)
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), bad3_path],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and "studyNotes.questions must be an array" in (r.stdout + r.stderr):
+            ok("validate.py rejects non-array studyNotes.questions")
+        else:
+            fail("validate.py rejects non-array studyNotes.questions", r.stdout + r.stderr)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 6. Compact round-trip: full → compact → expand → equal studyNotes
+    deck = minimal_deck()
+    compact = compact_deck(copy.deepcopy(deck))
+    sn_in_compact = None
+    if isinstance(compact.get("S"), list) and compact["S"]:
+        sn_in_compact = compact["S"][0].get("sN")
+    if sn_in_compact is not None:
+        ok("compact_deck emits 'sN' short key for studyNotes")
+    else:
+        fail("compact_deck emits 'sN' short key", f"got keys: {list(compact.get('S',[{}])[0].keys())}")
+
+    # Color-alias collision guard: the literal "#3b82f6" inside studyNotes.text must survive the palette-alias step
+    if sn_in_compact and "#3b82f6" in sn_in_compact.get("text", ""):
+        ok("compact_deck preserves literal hex codes inside studyNotes.text")
+    else:
+        fail("compact_deck preserves literal hex codes inside studyNotes.text",
+             f"text after compact: {sn_in_compact.get('text', '') if sn_in_compact else None!r}")
+
+    # Round-trip back to full and compare
+    expanded = expand_deck(copy.deepcopy(compact))
+    sn_round = expanded.get("lanes", [{}])[0].get("items", [{}])[0].get("slides", [{}])[0].get("studyNotes")
+    if sn_round and sn_round.get("text") == deck["lanes"][0]["items"][0]["slides"][0]["studyNotes"]["text"]:
+        ok("compact → expand round-trip preserves studyNotes.text verbatim")
+    else:
+        fail("compact → expand round-trip studyNotes.text",
+             f"orig={deck['lanes'][0]['items'][0]['slides'][0]['studyNotes']['text']!r} got={sn_round.get('text') if sn_round else None!r}")
+    if sn_round and sn_round.get("questions") == deck["lanes"][0]["items"][0]["slides"][0]["studyNotes"]["questions"]:
+        ok("compact → expand round-trip preserves studyNotes.questions")
+    else:
+        fail("compact → expand round-trip studyNotes.questions")
+    if sn_round and sn_round.get("glossary", {}).get("agent", {}).get("definition") == "A goal-driven loop.":
+        ok("compact → expand round-trip preserves studyNotes.glossary")
+    else:
+        fail("compact → expand round-trip studyNotes.glossary")
+
+    # 7. Turbo round-trip
+    deck = minimal_deck()
+    turbo = turbo_deck(copy.deepcopy(deck))
+    # Turbo slides are positional arrays; slide 0 should now have length 11 (10 base + optional position 10)
+    slide0_arr = turbo[1][0][1][0][3][0]  # deck → lanes → lane0 → items → item0 → slides → slide0
+    if len(slide0_arr) >= 11 and isinstance(slide0_arr[10], dict) and slide0_arr[10].get("text"):
+        ok("turbo_deck emits position 10 with studyNotes for carrying slides")
+    else:
+        fail("turbo_deck emits position 10 with studyNotes", f"slide0 len={len(slide0_arr)}")
+
+    # Slide 1 (no studyNotes) should still be length 10 — backward compatible shape
+    slide1_arr = turbo[1][0][1][0][3][1]
+    if len(slide1_arr) == 10:
+        ok("turbo_deck keeps length 10 for slides without studyNotes (backward compat)")
+    else:
+        fail("turbo_deck backward-compat length for non-studyNotes slide", f"got len={len(slide1_arr)}")
+
+    unturbo = unturbo_deck(copy.deepcopy(turbo))
+    sn_unturbo = unturbo.get("lanes", [{}])[0].get("items", [{}])[0].get("slides", [{}])[0].get("studyNotes")
+    if sn_unturbo and sn_unturbo.get("text") == deck["lanes"][0]["items"][0]["slides"][0]["studyNotes"]["text"]:
+        ok("turbo → unturbo round-trip preserves studyNotes.text")
+    else:
+        fail("turbo → unturbo round-trip studyNotes.text")
+
+    # 8. Part-file presence checks
+    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    if "function StaticStudyPanel" in slides_src and "function StudentPanel" in slides_src:
+        ok("StudentPanel + StaticStudyPanel exist in part-slides.jsx")
+    else:
+        fail("StudentPanel + StaticStudyPanel missing")
+    if "data-study-panel" in slides_src:
+        ok("data-study-panel test hook present")
+    else:
+        fail("data-study-panel hook missing")
+    if "data-study-marker" in slides_src:
+        ok("data-study-marker marker hook present in part-slides.jsx")
+    else:
+        fail("data-study-marker hook missing in part-slides.jsx")
+
+    list_src = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    if "studyNotes" in list_src and "data-study-marker" in list_src:
+        ok("TOC row study marker present in part-list.jsx")
+    else:
+        fail("TOC row study marker missing in part-list.jsx")
+
+    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    if "function GlossaryLink" in blocks_src and "data-xray-term" in blocks_src:
+        ok("GlossaryLink component + X-Ray hook present in part-blocks.jsx")
+    else:
+        fail("GlossaryLink component missing in part-blocks.jsx")
+    # Regression canary: parseInline link extraction regex
+    if "\\u0000LINK" in blocks_src and "linkTokens" in blocks_src:
+        ok("parseInline link sentinel tokenizer present")
+    else:
+        fail("parseInline link sentinel tokenizer missing")
+
+    # 9. sanitizeStudyNotes exists + wires in to sanitizeSlide
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    if "function sanitizeStudyNotes" in imports_src and "sanitizeStudyNotes(clean.studyNotes)" in imports_src:
+        ok("sanitizeStudyNotes wired into sanitizeSlide")
+    else:
+        fail("sanitizeStudyNotes not wired into sanitizeSlide")
+
+
 # ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_block_primitives():
@@ -2088,6 +2317,7 @@ if __name__ == "__main__":
         test_channel_local()
         test_server_hardening()
         test_block_primitives()
+        test_study_notes()
     if run_integration:
         test_integration()
         test_cli_commands()

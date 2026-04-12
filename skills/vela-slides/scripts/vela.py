@@ -180,7 +180,7 @@ _BK = {
 _BK_REV = {v: k for k, v in _BK.items()}
 
 # Slide-level key map: short → full
-_SK = {"n": "title", "d": "duration", "B": "blocks", "p": "padding"}
+_SK = {"n": "title", "d": "duration", "B": "blocks", "p": "padding", "sN": "studyNotes"}
 _SK_REV = {v: k for k, v in _SK.items()}
 
 # Theme preset key map: short → full slide property
@@ -277,7 +277,9 @@ def expand_deck(compact):
             # Skip known text-content keys to avoid corrupting prose.
             _TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
                                     "author", "loopLabel", "gateLabel", "caption",
-                                    "annotation", "date", "markup", "deckTitle"})
+                                    "annotation", "date", "markup", "deckTitle",
+                                    # studyNotes (offline student content) prose fields — preserve literal hex codes
+                                    "diagram", "questions", "glossary", "definition"})
             # Sort longest alias first so $AB is replaced before $A
             _sorted = sorted(palette.items(), key=lambda x: -len(x[0]))
 
@@ -434,6 +436,16 @@ def compact_deck(full):
         "S": compact_slides
     }
 
+    # Preserve studyNotes verbatim across the palette-aliasing step.
+    # The blind string-replace below would otherwise mangle literal hex codes
+    # ("#3b82f6") that happen to appear inside prose, SVG diagrams, or glossary
+    # definitions. Extract them now, restore after the JSON round-trip.
+    _preserved_sn = []
+    for _ci, _cs in enumerate(compact_slides):
+        if isinstance(_cs, dict) and _cs.get("sN") is not None:
+            _preserved_sn.append((_ci, _cs["sN"]))
+            _cs["sN"] = None  # placeholder — will be restored verbatim below
+
     # Color palette: find repeated colors in the JSON, alias as $A, $B, ...
     raw = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
     import re as _re
@@ -460,6 +472,12 @@ def compact_deck(full):
             cmap[alias] = color
         result = json.loads(raw)
         result["C"] = cmap
+
+    # Restore preserved studyNotes verbatim (bypassing palette aliasing)
+    if _preserved_sn and isinstance(result.get("S"), list):
+        for _ci, _sn in _preserved_sn:
+            if 0 <= _ci < len(result["S"]) and isinstance(result["S"][_ci], dict):
+                result["S"][_ci]["sN"] = _sn
 
     return result
 
@@ -858,7 +876,7 @@ def turbo_deck(deck):
     palette = _build_palette(deck)
 
     def encode_slide(s):
-        return [
+        arr = [
             s.get("title", ""),
             _ci(palette, s.get("bg", "")),
             s.get("bgGradient", ""),
@@ -870,6 +888,13 @@ def turbo_deck(deck):
             s.get("duration", 0),
             [_turbo_encode_block(b, palette) for b in s.get("blocks", [])]
         ]
+        # Optional position 10: studyNotes (offline student content).
+        # Backward compatible — old decoders reading new decks ignore extras;
+        # new decoders reading old decks handle missing position via len() guard.
+        sn = s.get("studyNotes")
+        if sn:
+            arr.append(sn)
+        return arr
 
     def encode_item(item):
         return [
@@ -918,6 +943,9 @@ def unturbo_deck(data):
         if s[7]: result["padding"] = s[7]
         if s[8]: result["duration"] = s[8]
         result["blocks"] = [_turbo_decode_block(b, palette) for b in s[9]]
+        # Optional position 10: studyNotes (backward compatible with length-10 turbo)
+        if len(s) > 10 and s[10]:
+            result["studyNotes"] = s[10]
         return result
 
     def decode_item(item):
@@ -1529,6 +1557,12 @@ def slide_view(args):
         print(f"  blocks ({len(slide.get('blocks', []))}):")
         for i, block in enumerate(slide.get("blocks", [])):
             print(f"    [{i}] {_block_summary(block)}")
+        sn = slide.get("studyNotes")
+        if sn and isinstance(sn, dict):
+            print(f"  studyNotes: {len(sn.get('text', ''))} chars, "
+                  f"{len(sn.get('questions', []) or [])} questions, "
+                  f"{len(sn.get('glossary', {}) or {})} glossary terms, "
+                  f"diagram={'yes' if sn.get('diagram') else 'no'}")
         sys.exit(EXIT_OK)
 
 def slide_edit(args):
