@@ -512,10 +512,13 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
   const showCopy = !!block.copy;
   const handleCopy = () => {
     if (!block.text) return;
-    navigator.clipboard.writeText(block.text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(block.text).then(done).catch(() => {
+        // Fallback for non-HTTPS / sandboxed iframes
+        try { const ta = Object.assign(document.createElement("textarea"), { value: block.text, style: "position:fixed;opacity:0" }); document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); } catch (_) {}
+      });
+    }
   };
   return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
     {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
@@ -526,6 +529,7 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
 
 // ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
 function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+  // reveal: true → starts collapsed (open=false); reveal: false/omitted → always open
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
