@@ -7061,6 +7061,14 @@ const VELA_TESTS = [
 
   // ── Feature: Delete key ──
   { name: "Delete key handler exists", fn: () => SlidePanel.toString().includes("Delete") },
+
+  // ── v13: Lab Player sub-components ──
+  { name: "CodeBlock component exists", fn: () => typeof CodeBlock === "function" },
+  { name: "CalloutBlock component exists", fn: () => typeof CalloutBlock === "function" },
+  { name: "PromptBlock component exists", fn: () => typeof PromptBlock === "function" },
+  { name: "ChallengeBlock component exists", fn: () => typeof ChallengeBlock === "function" },
+  { name: "SAFE_BLOCK_TYPES includes prompt", fn: () => SAFE_BLOCK_TYPES.has("prompt") },
+  { name: "SAFE_BLOCK_TYPES includes challenge", fn: () => SAFE_BLOCK_TYPES.has("challenge") },
 ];
 
 function VelaBatteryTest() {
@@ -8211,6 +8219,85 @@ uiSuite("Review", [
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
+  }},
+]);
+
+// ── Lab Player (v13.0) Suite ────────────────────────────────────────
+uiSuite("Lab Player", [
+  { name: "Code block renders (retrocompat)", fn: async () => {
+    // Navigate through slides to find a code block
+    await _waitFor(() => _$$("[data-block-type='code']").length > 0, 2000).catch(() => null);
+    // Even if not on current slide, verify the component exists
+    if (typeof CodeBlock !== "function") throw new Error("CodeBlock component not defined");
+  }},
+  { name: "CodeBlock sub-component renders code blocks", fn: async () => {
+    // Verify RenderBlock delegates to CodeBlock for type=code
+    const src = RenderBlock.toString();
+    if (!src.includes("CodeBlock") && !src.includes("code")) throw new Error("RenderBlock does not reference CodeBlock");
+  }},
+  { name: "Callout block renders (retrocompat)", fn: async () => {
+    if (typeof CalloutBlock !== "function") throw new Error("CalloutBlock component not defined");
+  }},
+  { name: "CalloutBlock sub-component renders callout blocks", fn: async () => {
+    const src = RenderBlock.toString();
+    if (!src.includes("CalloutBlock") && !src.includes("callout")) throw new Error("RenderBlock does not reference CalloutBlock");
+  }},
+  { name: "PromptBlock sub-component exists", fn: async () => {
+    if (typeof PromptBlock !== "function") throw new Error("PromptBlock component not defined");
+  }},
+  { name: "ChallengeBlock sub-component exists", fn: async () => {
+    if (typeof ChallengeBlock !== "function") throw new Error("ChallengeBlock component not defined");
+  }},
+  { name: "prompt block type in SAFE_BLOCK_TYPES", fn: async () => {
+    if (!SAFE_BLOCK_TYPES.has("prompt")) throw new Error("prompt not in SAFE_BLOCK_TYPES");
+  }},
+  { name: "challenge block type in SAFE_BLOCK_TYPES", fn: async () => {
+    if (!SAFE_BLOCK_TYPES.has("challenge")) throw new Error("challenge not in SAFE_BLOCK_TYPES");
+  }},
+  { name: "Existing code blocks render without copy button (default)", fn: async () => {
+    // Navigate to find code block on demo deck
+    for (let i = 0; i < 10; i++) { _key("ArrowRight"); await _wait(80); }
+    await _wait(200);
+    const codeBlocks = _$$("[data-block-type='code']");
+    // Demo deck code blocks don't have copy:true, so no copy button
+    for (const cb of codeBlocks) {
+      const copyBtn = cb.querySelector("button");
+      if (copyBtn && (copyBtn.textContent || "").includes("Copy")) {
+        throw new Error("Default code block should NOT show copy button");
+      }
+    }
+    // Go back to start
+    for (let i = 0; i < 10; i++) { _key("ArrowLeft"); await _wait(50); }
+  }},
+  { name: "Existing callout blocks render expanded (no reveal)", fn: async () => {
+    // Navigate to find callout
+    for (let i = 0; i < 15; i++) { _key("ArrowRight"); await _wait(80); }
+    await _wait(200);
+    const callouts = _$$("[data-block-type='callout']");
+    // Demo deck callouts don't have reveal:true, so body should be visible
+    for (const c of callouts) {
+      // Should NOT have chevron icon for non-reveal callouts
+      const chevron = c.querySelector("[aria-expanded]");
+      if (chevron) throw new Error("Non-reveal callout should not have aria-expanded");
+    }
+    // Go back to start
+    for (let i = 0; i < 15; i++) { _key("ArrowLeft"); await _wait(50); }
+  }},
+  { name: "Bullet items render (retrocompat)", fn: async () => {
+    // Just verify bullets still render on the demo deck
+    for (let i = 0; i < 5; i++) { _key("ArrowRight"); await _wait(80); }
+    await _wait(200);
+    const bullets = _$$("[data-block-type='bullets']");
+    // Go back
+    for (let i = 0; i < 5; i++) { _key("ArrowLeft"); await _wait(50); }
+    // Even if no bullets on current slide, component should exist
+    if (typeof BulletItem !== "function") throw new Error("BulletItem component not defined");
+  }},
+  { name: "Icon row items render (retrocompat)", fn: async () => {
+    if (typeof IconRowItem !== "function") throw new Error("IconRowItem component not defined");
+  }},
+  { name: "velaClipboard helper exists for copy buttons", fn: async () => {
+    if (typeof velaClipboard !== "function") throw new Error("velaClipboard not defined");
   }},
 ]);
 

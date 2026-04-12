@@ -105,9 +105,9 @@ bash evals/run-isolated.sh all
 
 Deck copy: `evals/results/<version>/<scenario>-run<N>-deck.json`
 
-## Scenarios (14 total, 12 non-holdout)
+## Scenarios (18 total, 16 non-holdout)
 
-### Create (6)
+### Create (9)
 
 | ID | Slides | Difficulty | Key assertions |
 |----|--------|-----------|----------------|
@@ -117,6 +117,9 @@ Deck copy: `evals/results/<version>/<scenario>-run<N>-deck.json`
 | `create-compact` | 6 | Medium | slide_count(6), format_compact |
 | `create-multi-module` | 12 | Medium | slide_count(12), 3 lanes, text_present |
 | `create-ship-serve` | 10 | Medium | JSON+JSX output, slide_count(10) |
+| `create-lab-player` | 10 | Hard | prompt, challenge, callout reveal, code copy, icon-row href |
+| `create-all-blocks-v13` | 15+ | Hard | All 29 block types incl. prompt, challenge |
+| `create-workshop-challenges` | 8 | Medium | challenge levels, prompt variants, callout reveal |
 
 ### Edit (6)
 

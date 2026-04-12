@@ -1,0 +1,102 @@
+{
+  "session_id": "147a1106-20ec-4eb3-b5a9-4641788503b8",
+  "model": "sonnet",
+  "version": "v13.0",
+  "scenario": "create-workshop-challenges",
+  "rep": 1,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 7,
+    "output_tokens": 2819,
+    "cache_read_tokens": 47141,
+    "cache_write_tokens": 20963,
+    "total_tokens": 70930,
+    "cost_usd": 0.13505955,
+    "tool_calls": 0,
+    "duration_s": 50.0
+  },
+  "assertions": {
+    "passed": 8,
+    "total": 8,
+    "slides": 8,
+    "types_found": [
+      "badge",
+      "callout",
+      "challenge",
+      "grid",
+      "heading",
+      "metric",
+      "prompt",
+      "spacer",
+      "steps",
+      "text"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 8
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "challenge"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "prompt"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "callout"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 8,
+      "block_types_used": [
+        "badge",
+        "callout",
+        "challenge",
+        "grid",
+        "heading",
+        "prompt",
+        "steps",
+        "text"
+      ],
+      "block_diversity": 0.4,
+      "block_type_entropy": 2.654,
+      "monotony_ratio": 0.273,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 40.0,
+      "blocks_per_slide": 4.1
+    }
+  }
+}
