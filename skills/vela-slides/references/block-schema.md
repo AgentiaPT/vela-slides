@@ -1,6 +1,6 @@
 # Vela Block Schema Reference
 
-Complete reference for all Vela v13 slide block types (27 total).
+Complete reference for all Vela v12 slide block types (27 total).
 
 ## Slide Object
 
