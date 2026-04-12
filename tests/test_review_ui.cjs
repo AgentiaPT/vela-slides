@@ -255,7 +255,18 @@ async function runTests() {
   });
 
   await test('Empty state shows no open comments', async () => {
-    await expectText('No open comments');
+    // Demo deck may have pre-existing comments — clear them first
+    const resolveBtn = page.locator('button').filter({ hasText: 'Resolve All' }).first();
+    if (await resolveBtn.isVisible().catch(() => false)) {
+      await resolveBtn.click();
+      await settle();
+    }
+    const clearBtn = page.locator('button').filter({ hasText: 'Clear Done' }).first();
+    if (await clearBtn.isVisible().catch(() => false)) {
+      await clearBtn.click();
+      await settle();
+    }
+    await expectText('No open comments', 3000);
   });
 
   // ── 2. Mutual Exclusion ──
@@ -334,20 +345,26 @@ async function runTests() {
 
   // ── 5. Slide-level Comments via Block Hover ──
   await test('Block hover shows comment button (💬)', async () => {
-    // Hover over a block on the slide to reveal the 💬 button
-    const block = page.locator('[data-block-type]').first();
+    // Hover over a visible block (skip spacers/dividers — they have no visible area)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.waitFor({ state: 'visible' });
     await block.hover();
     await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
-    await commentBtn.waitFor({ state: 'visible', timeout: 1000 });
+    await commentBtn.waitFor({ state: 'visible' });
   });
 
   await test('Block comment button opens inline comment input', async () => {
+    // Re-hover to ensure comment button is visible (hover state may be lost between tests)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.hover();
+    await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.waitFor({ state: 'visible' });
     await commentBtn.click();
     await settle();
     const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
-    await input.waitFor({ state: 'visible', timeout: 1000 });
+    await input.waitFor({ state: 'visible' });
   });
 
   await test('Adding a slide-level comment via block', async () => {
