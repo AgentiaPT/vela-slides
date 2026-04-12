@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.33";
+const VELA_VERSION = "12.34";
 const VELA_CHANGELOG = [
+  { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
   { v: "12.33", d: "Code block copy button: new 'copy' property (compact: 'cp') adds a 'Copiar' button in the top-right corner that copies block.text to clipboard with 'Copiado ✓' feedback for 2s. Extracted CodeBlock sub-component for useState hook. paddingRight: 80 prevents text overlap when copy is active." },
   { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
   { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
@@ -1571,6 +1572,24 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
   </div>;
 }
 
+// ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
+function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+  const [open, setOpen] = useState(!block.reveal);
+  const isReveal = !!block.reveal;
+  const chevron = isReveal ? (open ? "▾" : "▸") : null;
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+    {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...(isReveal ? { cursor: "pointer" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
+    <div style={{ flex: 1 }}>
+      {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
+        {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
+        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} />
+      </div>}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}</div>}
+      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />}
+    </div>
+  </div>;
+}
+
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
   // Runtime guard: ensure .style is always a plain object
@@ -1641,13 +1660,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       />)}</div>; })}</div>;
 
     case "callout":
-      return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
-        {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2 }}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
-        <div style={{ flex: 1 }}>
-          {block.title && <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: 4 }} />}
-          <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />
-        </div>
-      </div>;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>

@@ -176,7 +176,8 @@ _BK = {
     "brd": "bordered", "cpt": "compact", "hl": "highlight",
     "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
     "val": "value",
-    "cp": "copy"
+    "cp": "copy",
+    "rv": "reveal"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 

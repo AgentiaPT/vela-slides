@@ -190,12 +190,13 @@ Multi-column layout. Each cell contains its own blocks array.
 Max 2-3 cols. Max 6 cells. Keep cell blocks minimal (2-4 blocks each).
 
 ### callout
-Highlighted insight or tip box.
+Highlighted insight or tip box. Optional `reveal: true` makes it collapsible (starts closed, click to expand).
 ```json
 {
   "type": "callout",
   "text": "Key insight or important note here.",
   "title": "Optional Title",
+  "reveal": true,
   "bg": "rgba(59,130,246,0.15)",
   "border": "#3b82f6",
   "color": "#e2e8f0",
