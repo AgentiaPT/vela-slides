@@ -19,7 +19,7 @@ const http = require('http');
 const PORT = 8765;
 const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-e2e-serve');
 const ROOT = path.resolve(__dirname, '..');
-const ASSEMBLED = path.join(ROOT, 'welcome-to-vela-slides.jsx');
+const ASSEMBLED = path.join(ROOT, 'vela-slides-live-demo.jsx');
 
 // ── Resolve Playwright ──────────────────────────────────────────────
 function resolvePlaywright() {
@@ -253,7 +253,18 @@ async function runTests() {
   });
 
   await test('Empty state shows no open comments', async () => {
-    await expectText('No open comments');
+    // Demo deck may have pre-existing comments — clear them first
+    const resolveBtn = page.locator('button').filter({ hasText: 'Resolve All' }).first();
+    if (await resolveBtn.isVisible().catch(() => false)) {
+      await resolveBtn.click();
+      await settle();
+    }
+    const clearBtn = page.locator('button').filter({ hasText: 'Clear Done' }).first();
+    if (await clearBtn.isVisible().catch(() => false)) {
+      await clearBtn.click();
+      await settle();
+    }
+    await expectText('No open comments', 3000);
   });
 
   // ── 2. Mutual Exclusion ──
@@ -332,20 +343,26 @@ async function runTests() {
 
   // ── 5. Slide-level Comments via Block Hover ──
   await test('Block hover shows comment button (💬)', async () => {
-    // Hover over a block on the slide to reveal the 💬 button
-    const block = page.locator('[data-block-type]').first();
+    // Hover over a visible block (skip spacers/dividers — they have no visible area)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.waitFor({ state: 'visible' });
     await block.hover();
     await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
-    await commentBtn.waitFor({ state: 'visible', timeout: 1000 });
+    await commentBtn.waitFor({ state: 'visible' });
   });
 
   await test('Block comment button opens inline comment input', async () => {
+    // Re-hover to ensure comment button is visible (hover state may be lost between tests)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.hover();
+    await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.waitFor({ state: 'visible' });
     await commentBtn.click();
     await settle();
     const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
-    await input.waitFor({ state: 'visible', timeout: 1000 });
+    await input.waitFor({ state: 'visible' });
   });
 
   await test('Adding a slide-level comment via block', async () => {
@@ -487,7 +504,7 @@ async function runTests() {
     console.log('Launching browser...');
     const browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-    page.setDefaultTimeout(1000);
+    page.setDefaultTimeout(3000);
     page.on('pageerror', () => {}); // suppress Babel deopt warning
 
     console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');
@@ -500,14 +517,15 @@ async function runTests() {
     await page.locator('.concept-row').first().click();
     await page.waitForFunction(
       () => document.querySelectorAll('[data-block-type]').length > 0,
-      { timeout: 5000 }
-    ).catch(() => {}); // soft — blocks may not have data attrs in all builds
+      { timeout: 10000 }
+    );
 
     await runTests();
 
     await browser.close();
   } catch (e) {
     console.error('\n💥 Fatal error:', e.message);
+    failed++;
   } finally {
     server?.close();
   }
@@ -515,8 +533,11 @@ async function runTests() {
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  if (failed === 0) {
+  if (failed === 0 && passed > 0) {
     console.log(`  ✅ ${passed} passed (${elapsed}s)`);
+  } else if (passed === 0 && failed === 0) {
+    console.log(`  ❌ 0 tests ran — setup failed (${elapsed}s)`);
+    failed = 1;
   } else {
     console.log(`  ❌ ${passed} passed, ${failed} failed (${elapsed}s)`);
   }

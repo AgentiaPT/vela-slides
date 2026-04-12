@@ -1,0 +1,202 @@
+{
+  "session_id": "b69a8a7c-565a-4b8f-b88f-2f2d6c26fc29",
+  "model": "sonnet",
+  "version": "v13.0",
+  "scenario": "create-blocks",
+  "rep": 1,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 7,
+    "output_tokens": 10170,
+    "cache_read_tokens": 66274,
+    "cache_write_tokens": 16068,
+    "total_tokens": 92519,
+    "cost_usd": 0.23270820000000003,
+    "tool_calls": 0,
+    "duration_s": 125.4
+  },
+  "assertions": {
+    "passed": 24,
+    "total": 24,
+    "slides": 11,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "code",
+      "divider",
+      "flow",
+      "grid",
+      "heading",
+      "icon-row",
+      "image",
+      "metric",
+      "progress",
+      "quote",
+      "spacer",
+      "steps",
+      "svg",
+      "table",
+      "tag-group",
+      "text",
+      "timeline"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "heading"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "text"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "quote"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "badge"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "callout"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "bullets"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "icon-row"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "tag-group"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "grid"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "table"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "metric"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "progress"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "timeline"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "flow"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "steps"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "image"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "code"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "svg"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "spacer"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "divider"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 11,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "code",
+        "divider",
+        "flow",
+        "grid",
+        "heading",
+        "icon-row",
+        "image",
+        "progress",
+        "quote",
+        "steps",
+        "svg",
+        "table",
+        "tag-group",
+        "text",
+        "timeline"
+      ],
+      "block_diversity": 0.9,
+      "block_type_entropy": 3.525,
+      "monotony_ratio": 0.245,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 34.2,
+      "blocks_per_slide": 4.5
+    }
+  }
+}

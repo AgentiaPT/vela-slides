@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "name": "vela-slides-eval-v3",
-    "description": "12 scenarios: 6 create + 6 edit. Covers minimal/full/ambiguous creation, translation, improvement, rebranding, deletion, addition, error recovery.",
+    "name": "vela-slides-eval-v4",
+    "description": "16 scenarios: 8 create + 6 edit + 2 load. Covers minimal/full/ambiguous creation, translation, improvement, rebranding, deletion, addition, error recovery, lab player blocks (prompt, challenge, code copy, callout reveal).",
     "model": "opus",
     "repetitions": 5,
     "weighted_score": "70% time + 30% cost"
@@ -517,6 +517,174 @@
         },
         {
           "type": "ships_ok"
+        }
+      ]
+    },
+    {
+      "id": "create-lab-player",
+      "name": "Create AI training lab deck with prompt and challenge blocks",
+      "type": "create",
+      "difficulty": "hard",
+      "holdout": false,
+      "prompt": "Create a 10-slide presentation deck titled 'AI Copilot Workshop \u2014 Hands-On Lab'. This is a training deck for an AI lab session.\n\nSlide structure:\n1. Cover \u2014 gradient, bold title + tagline 'From Zero to AI Power User'\n2. Agenda \u2014 icon-row with 4 sections (Intro, Basics, Practice, Advanced)\n3. What is a Prompt? \u2014 text explanation + a prompt block (variant: full) showing a complete worked example prompt\n4. Prompt Anatomy \u2014 a prompt block (variant: partial) with {{role}}, {{task}}, {{format}} placeholders highlighted\n5. Challenge 1 \u2014 challenge block: 'Write Your First Prompt', level basic, 10 min, skills: Prompting\n6. Pro Tips \u2014 3 callout blocks with reveal:true (collapsible hints students can expand)\n7. Challenge 2 \u2014 challenge block: 'Iterate and Refine', level intermediate, 15 min, skills: Iteration, Tone, with a downloadable file\n8. Resources \u2014 icon-row with href links to external tools (download:true for files, external:true for URLs)\n9. Code Examples \u2014 2 code blocks with copy:true showing example prompts to copy\n10. Closing CTA \u2014 centered, prompt block (variant: empty) inviting students to build their own\n\nBrand: dark theme #0A0F1C/#E6F1FF with accent #8B5CF6.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 10
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "prompt"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "challenge"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "callout"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "code"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "icon-row"
+        },
+        {
+          "type": "text_present",
+          "text": "prompt"
+        },
+        {
+          "type": "text_present",
+          "text": "challenge"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-all-blocks-v13",
+      "name": "Create deck using all 29 block types including prompt and challenge",
+      "type": "create",
+      "difficulty": "hard",
+      "holdout": false,
+      "prompt": "Create a presentation deck titled 'Vela v13 Block Catalog' that demonstrates ALL 29 Vela block types. Each slide should showcase 2-3 block types with realistic content. The 29 types are: heading, text, quote, badge, callout (use reveal:true on at least one), bullets (use href on at least one item), icon-row (use href/download on at least one item), tag-group, grid, table, metric, progress, timeline, flow, steps, image, code (use copy:true on at least one), svg, spacer, divider, comparison, funnel, cycle, number-row, matrix, checklist, prompt (show all 3 variants: full, partial with {{placeholders}}, empty), challenge (show at least 2 levels).\n\nUse a dark theme (#0F172A/#E2E8F0, accent #3B82F6). Each slide should have a badge indicating which block types it demonstrates.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "prompt"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "challenge"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "comparison"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "funnel"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "cycle"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "matrix"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "checklist"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "flow"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "code"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "callout"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "icon-row"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "bullets"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
+        }
+      ]
+    },
+    {
+      "id": "create-workshop-challenges",
+      "name": "Create workshop deck with progressive challenges",
+      "type": "create",
+      "difficulty": "medium",
+      "holdout": false,
+      "prompt": "Create an 8-slide workshop deck titled 'Data Analysis with AI \u2014 Challenge Series'.\n\nSlide structure:\n1. Cover \u2014 gradient, title + tagline\n2. Overview \u2014 steps block showing the 5 challenge progression\n3. Challenge 1 \u2014 challenge block, level basic, 'Summarize a dataset', 10 min, skills: Prompting\n4. Challenge 2 \u2014 challenge block, level intermediate, 'Find patterns', 15 min, skills: Analysis, Iteration\n5. Challenge 3 \u2014 challenge block, level advanced, 'Build a report', 20 min, skills: Synthesis, Formatting\n6. Hints \u2014 3 callout blocks with reveal:true containing progressive hints\n7. Prompt Templates \u2014 2 prompt blocks: one partial with {{dataset}} and {{question}} placeholders, one full with a worked example\n8. Closing \u2014 metric blocks showing expected outcomes + callout with next steps\n\nBrand: dark theme #0F172A/#E2E8F0, accent #10B981.\n\nSave as evals/output/eval-deck.json and validate it.",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/output/eval-deck.json"
+        },
+        {
+          "type": "slide_count",
+          "expected": 8
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "challenge"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "prompt"
+        },
+        {
+          "type": "block_type_present",
+          "block_type": "callout"
+        },
+        {
+          "type": "ships_ok"
+        },
+        {
+          "type": "format_compact"
         }
       ]
     }

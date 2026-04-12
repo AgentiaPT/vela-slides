@@ -15,7 +15,8 @@ VALID_BLOCK_TYPES = {
     "heading", "text", "bullets", "image", "code", "grid", "callout",
     "metric", "quote", "badge", "icon", "icon-row", "flow", "table",
     "progress", "steps", "tag-group", "timeline", "svg", "spacer", "divider",
-    "comparison", "funnel", "cycle", "number-row", "matrix", "checklist"
+    "comparison", "funnel", "cycle", "number-row", "matrix", "checklist",
+    "prompt", "challenge"
 }
 SIZE_TOKENS = {"xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"}
 
