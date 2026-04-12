@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.32";
+const VELA_VERSION = "13.0";
 const VELA_CHANGELOG = [
+  { v: "13.0", d: "Lab Player capabilities: (1) code block copy button via copy:true, (2) callout reveal/collapse via reveal:true with accessible toggle, (3) icon-row href/download/external for resource links, (4) new prompt block with full/partial/empty variants and {{placeholder}} highlighting, (5) new challenge block with level/time/skills/files metadata card, (6) bullets href/download/external for inline resource links. Extracted CodeBlock, CalloutBlock, PromptBlock, ChallengeBlock sub-components. New compact keys: cp, rv, hr, dw, ext, lv, tm, sk, fi, desc, cd. Block count: 27 → 29." },
   { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
   { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
@@ -267,7 +268,7 @@ const now = () => new Date().toISOString();
 const MAX_IMPORT_SIZE = 10 * 1024 * 1024;
 const VALID_STATUSES = new Set(["todo", "done", "signed-off"]);
 const VALID_IMPORTANCES = new Set(["must", "should", "nice"]);
-const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg", "comparison", "funnel", "cycle", "number-row", "matrix", "checklist"]);
+const SAFE_BLOCK_TYPES = new Set(["heading", "text", "bullets", "image", "code", "grid", "callout", "metric", "quote", "divider", "spacer", "badge", "icon", "icon-row", "flow", "table", "progress", "steps", "tag-group", "timeline", "svg", "comparison", "funnel", "cycle", "number-row", "matrix", "checklist", "prompt", "challenge"]);
 
 const defaultBranding = {
   enabled: false,
@@ -356,8 +357,19 @@ function sanitizeBlock(block) {
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
-        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeUrl(it.link) } : {}) } : ""
+        typeof it === "string" ? sanitizeString(it, 1000) : typeof it === "object" && it.text ? { text: sanitizeString(it.text, 1000), ...(it.icon ? { icon: it.icon } : {}), ...(it.link ? { link: sanitizeUrl(it.link) } : {}), ...(it.href ? { href: sanitizeUrl(it.href) } : {}), ...(it.download ? { download: true } : {}), ...(it.external ? { external: true } : {}) } : ""
       );
+    }
+    if (clean.type === "icon-row") {
+      clean.items = clean.items.slice(0, 20).map((it) => {
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.title) c.title = sanitizeString(c.title, 500);
+        if (c.text) c.text = sanitizeString(c.text, 1000);
+        if (c.link) c.link = sanitizeUrl(c.link);
+        if (c.href) c.href = sanitizeUrl(c.href);
+        return c;
+      }).filter(Boolean);
     }
     if (clean.type === "grid") {
       clean.items = clean.items.slice(0, 6).map((cell) => ({
@@ -394,6 +406,16 @@ function sanitizeBlock(block) {
         return c;
       }).filter(Boolean);
     }
+  }
+  if (clean.type === "challenge") {
+    if (clean.code) clean.code = sanitizeString(clean.code, 20);
+    if (clean.description) clean.description = sanitizeString(clean.description, 500);
+    if (clean.time) clean.time = sanitizeString(clean.time, 30);
+    if (Array.isArray(clean.skills)) clean.skills = clean.skills.slice(0, 6).map((s) => sanitizeString(String(s), 50));
+    if (Array.isArray(clean.files)) clean.files = clean.files.slice(0, 10).map((f) => {
+      if (!f || typeof f !== "object") return null;
+      return { name: sanitizeString(f.name || "", 200), href: sanitizeUrl(f.href || "") };
+    }).filter(Boolean);
   }
   if (clean.type === "table") {
     if (Array.isArray(clean.headers)) clean.headers = clean.headers.slice(0, 10).map((h) => sanitizeString(String(h), 200));
