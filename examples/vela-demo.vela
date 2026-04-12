@@ -187,7 +187,7 @@
                       "blocks": [
                         {
                           "type": "metric",
-                          "value": "27",
+                          "value": "29",
                           "label": "BLOCK TYPES",
                           "icon": "Layers",
                           "iconColor": "#3b82f6",
@@ -833,6 +833,16 @@
                       "checklist",
                       "Status-aware tasks",
                       "items[], showLabels"
+                    ],
+                    [
+                      "prompt",
+                      "AI prompt display",
+                      "text, variant, label"
+                    ],
+                    [
+                      "challenge",
+                      "Lab exercise cards",
+                      "level, time, skills[]"
                     ]
                   ],
                   "striped": true,
@@ -953,6 +963,14 @@
                             {
                               "text": "checklist",
                               "color": "#14b8a6"
+                            },
+                            {
+                              "text": "prompt",
+                              "color": "#22c55e"
+                            },
+                            {
+                              "text": "challenge",
+                              "color": "#f43f5e"
                             }
                           ],
                           "variant": "filled",
@@ -1232,7 +1250,7 @@
                   "type": "number-row",
                   "items": [
                     {
-                      "value": "27",
+                      "value": "29",
                       "label": "Block Types",
                       "icon": "Layers",
                       "color": "#3b82f6"
@@ -1463,6 +1481,333 @@
             }
           ],
           "createdAt": "2026-03-23T23:14:42.516Z"
+        },
+        {
+          "id": "c4e8f1a2",
+          "title": "Lab & Interactive",
+          "notes": "Showcases Lab Player v13 blocks: prompt, challenge, and interactive enhancements",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 5,
+          "slides": [
+            {
+              "title": "Prompt Variants",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#22c55e",
+              "gap": 14,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "LAB PLAYER v13",
+                  "icon": "FlaskConical",
+                  "color": "#22c55e",
+                  "bg": "#22c55e15",
+                  "border": "#22c55e40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Prompt Block — Three Variants",
+                  "size": "2xl",
+                  "icon": "MessageSquare",
+                  "iconColor": "#22c55e"
+                },
+                {
+                  "type": "text",
+                  "text": "Scaffolded prompt display for AI literacy training: worked examples, fill-in-the-blank, and blank canvas.",
+                  "size": "sm",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "prompt",
+                  "text": "You are an expert data analyst. Summarize the attached CSV in 3 bullet points. Focus on trends, anomalies, and actionable insights. Use plain language.",
+                  "label": "FULL — ready to copy & use",
+                  "variant": "full"
+                },
+                {
+                  "type": "prompt",
+                  "text": "Act as {{role}}. Write a {{format}} about {{topic}}. Tone: {{tone}}. Max {{N}} words.",
+                  "label": "PARTIAL — fill in the placeholders",
+                  "variant": "partial"
+                },
+                {
+                  "type": "prompt",
+                  "text": "",
+                  "label": "EMPTY — build from scratch",
+                  "variant": "empty"
+                }
+              ]
+            },
+            {
+              "title": "Challenge Cards",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "gap": 12,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Challenge Block — Five Levels",
+                  "size": "2xl",
+                  "icon": "Trophy",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "Lab exercise cards with structured metadata — level badge, time estimate, skill tags, and file downloads.",
+                  "size": "sm",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 12,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "challenge",
+                          "title": "Write Your First Prompt",
+                          "code": "C01",
+                          "level": "basic",
+                          "time": "10 min",
+                          "skills": ["Prompting", "Clarity"],
+                          "description": "Create a prompt that follows the role-task-format pattern"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "challenge",
+                          "title": "Iterate & Compare",
+                          "code": "C02",
+                          "level": "intermediate",
+                          "time": "20 min",
+                          "skills": ["Iteration", "Evaluation"],
+                          "description": "Generate 3 versions, score each, merge the best parts"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "challenge",
+                          "title": "Chain of Thought Design",
+                          "code": "C03",
+                          "level": "advanced",
+                          "time": "30 min",
+                          "skills": ["CoT", "Reasoning", "Prompt Engineering"],
+                          "description": "Build a multi-step prompt with explicit reasoning steps"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "challenge",
+                          "title": "Build an Agent Loop",
+                          "code": "C04",
+                          "level": "expert",
+                          "time": "45 min",
+                          "skills": ["Agents", "Tool Use", "ReAct"],
+                          "description": "Design a plan-act-observe loop with tool calls and error recovery"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "challenge",
+                  "title": "Redesign the Entire Workflow",
+                  "code": "C05",
+                  "level": "aspirational",
+                  "time": "2 hours",
+                  "skills": ["Architecture", "System Design", "AI Strategy"],
+                  "description": "Reimagine the end-to-end process using AI agents, human review gates, and continuous feedback",
+                  "files": [
+                    { "name": "workflow-brief.pdf", "href": "/files/workflow-brief.pdf" }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Lab Enhancements",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "gap": 14,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Interactive Enhancements",
+                  "size": "2xl",
+                  "icon": "Sparkles",
+                  "iconColor": "#60a5fa"
+                },
+                {
+                  "type": "text",
+                  "text": "Code copy buttons, reveal callouts, resource links, and image blocks — all part of the Lab Player toolkit.",
+                  "size": "sm",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 14,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "code",
+                          "text": "# Click the copy button in corner\nimport vela\ndeck = vela.load(\"demo.vela\")\nvela.validate(deck)",
+                          "label": "PYTHON — copy enabled",
+                          "size": "sm",
+                          "bg": "#1e293b",
+                          "copy": true
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "callout",
+                          "title": "Click to reveal the answer",
+                          "text": "The ReAct loop iterates until the agent reaches a confidence threshold or exhausts its tool budget. Each step is logged for auditability.",
+                          "icon": "HelpCircle",
+                          "bg": "#60a5fa12",
+                          "border": "#60a5fa30",
+                          "reveal": true
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "icon-row",
+                          "items": [
+                            {
+                              "icon": "FileText",
+                              "title": "Lab Brief",
+                              "text": "Download exercise",
+                              "href": "/files/lab-brief.pdf",
+                              "download": true
+                            },
+                            {
+                              "icon": "Globe",
+                              "title": "Documentation",
+                              "text": "Open Vela docs",
+                              "href": "https://github.com/agentiapt/vela-slides",
+                              "external": true
+                            }
+                          ],
+                          "iconBg": "#60a5fa20",
+                          "iconColor": "#60a5fa",
+                          "gap": 12,
+                          "titleSize": "sm",
+                          "textSize": "sm"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "image",
+                          "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='160' viewBox='0 0 400 160'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%233b82f6'/%3E%3Cstop offset='100%25' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='400' height='160' rx='12' fill='url(%23g)'/%3E%3Ctext x='200' y='85' text-anchor='middle' fill='white' font-size='16' font-family='sans-serif'%3EImage Block Demo%3C/text%3E%3C/svg%3E",
+                          "caption": "Image block with shadow & rounded corners",
+                          "maxWidth": "100%",
+                          "shadow": true,
+                          "rounded": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Offline Study Notes",
+              "duration": 45,
+              "padding": "48px 64px",
+              "bg": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "gap": 20,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "OFFLINE STUDENT MODE",
+                  "icon": "GraduationCap",
+                  "color": "#a78bfa",
+                  "bg": "#a78bfa15",
+                  "border": "#a78bfa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Pre-Authored Study Notes",
+                  "size": "2xl",
+                  "icon": "BookOpen",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "This slide carries embedded studyNotes — markdown, SVG diagrams, glossary terms, and discussion questions. Open student mode to see them with **zero API calls**.",
+                  "size": "md",
+                  "color": "#c7d2fe"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    { "icon": "FileText", "text": "Markdown with bold, italic, links" },
+                    { "icon": "PenTool", "text": "Inline SVG diagrams" },
+                    { "icon": "BookOpen", "text": "X-Ray glossary popups" },
+                    { "icon": "HelpCircle", "text": "Discussion questions" }
+                  ],
+                  "cols": 2,
+                  "gap": 14,
+                  "iconBg": "#1e1b4b",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "callout",
+                  "text": "Slides with studyNotes show a mortar-board badge in the TOC, gallery, and slide viewer. When the API is reachable, questions become clickable prompts for Vera.",
+                  "icon": "Info",
+                  "bg": "#a78bfa12",
+                  "border": "#a78bfa30",
+                  "color": "#e0e7ff"
+                }
+              ],
+              "studyNotes": {
+                "text": "**Study Notes** are pre-authored companion content that renders with zero API calls. This lets instructors guarantee that every student sees consistent, high-quality notes even offline.\n\nThe key innovation is that studyNotes reuse the **same renderer** as live Vera Teacher output: markdown, inline SVG, and a [glossary](#glossary) system with Kindle-style popover definitions.\n\nWhen the API *is* reachable, authored questions become clickable buttons that send the question to Vera for a live, contextual answer. This creates a hybrid model: curated offline content + optional live AI interaction.\n\nSee the [block schema](#block-schema) reference for the full studyNotes specification.",
+                "diagram": "<svg viewBox='0 0 320 100' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='20' width='90' height='55' rx='6' fill='none' stroke='#a78bfa' stroke-width='1.5'/><text x='55' y='42' text-anchor='middle' font-size='10' fill='#e2e8f0' font-family='monospace'>studyNotes</text><text x='55' y='58' text-anchor='middle' font-size='8' fill='#94a3b8' font-family='monospace'>text + svg</text><rect x='120' y='10' width='70' height='35' rx='4' fill='none' stroke='#22c55e' stroke-width='1.5'/><text x='155' y='31' text-anchor='middle' font-size='9' fill='#e2e8f0' font-family='monospace'>Online</text><rect x='120' y='52' width='70' height='35' rx='4' fill='none' stroke='#f59e0b' stroke-width='1.5'/><text x='155' y='73' text-anchor='middle' font-size='9' fill='#e2e8f0' font-family='monospace'>Offline</text><line x1='100' y1='40' x2='118' y2='28' stroke='#94a3b8' stroke-width='1'/><line x1='100' y1='55' x2='118' y2='68' stroke='#94a3b8' stroke-width='1'/><rect x='210' y='10' width='90' height='35' rx='4' fill='none' stroke='#22c55e' stroke-width='1.5'/><text x='255' y='26' text-anchor='middle' font-size='8' fill='#e2e8f0' font-family='monospace'>Static + Vera</text><text x='255' y='38' text-anchor='middle' font-size='7' fill='#94a3b8' font-family='monospace'>clickable Qs</text><rect x='210' y='52' width='90' height='35' rx='4' fill='none' stroke='#f59e0b' stroke-width='1.5'/><text x='255' y='68' text-anchor='middle' font-size='8' fill='#e2e8f0' font-family='monospace'>Static only</text><text x='255' y='80' text-anchor='middle' font-size='7' fill='#94a3b8' font-family='monospace'>ponder bullets</text><line x1='190' y1='28' x2='208' y2='28' stroke='#94a3b8' stroke-width='1'/><line x1='190' y1='70' x2='208' y2='70' stroke='#94a3b8' stroke-width='1'/></svg>",
+                "questions": [
+                  "Why is it important to have offline-capable educational content?",
+                  "How does the hybrid online/offline model benefit students?",
+                  "What are the trade-offs of pre-authored vs. AI-generated study notes?"
+                ],
+                "glossary": {
+                  "glossary": {
+                    "definition": "A collection of term definitions that can be linked from study notes text using [label](#term) syntax, creating Kindle-style popover definitions."
+                  },
+                  "block-schema": {
+                    "definition": "The specification defining all 29 Vela slide block types, their properties, and rendering behavior."
+                  }
+                }
+              }
+            }
+          ],
+          "createdAt": "2026-04-12T10:00:00.000Z"
         }
       ]
     },
