@@ -157,14 +157,6 @@ const VELA_TESTS = [
 
   // ── Feature: Delete key ──
   { name: "Delete key handler exists", fn: () => SlidePanel.toString().includes("Delete") },
-
-  // ── v13: Lab Player sub-components ──
-  { name: "CodeBlock component exists", fn: () => typeof CodeBlock === "function" },
-  { name: "CalloutBlock component exists", fn: () => typeof CalloutBlock === "function" },
-  { name: "PromptBlock component exists", fn: () => typeof PromptBlock === "function" },
-  { name: "ChallengeBlock component exists", fn: () => typeof ChallengeBlock === "function" },
-  { name: "SAFE_BLOCK_TYPES includes prompt", fn: () => SAFE_BLOCK_TYPES.has("prompt") },
-  { name: "SAFE_BLOCK_TYPES includes challenge", fn: () => SAFE_BLOCK_TYPES.has("challenge") },
 ];
 
 function VelaBatteryTest() {

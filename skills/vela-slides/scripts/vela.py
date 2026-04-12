@@ -175,11 +175,7 @@ _BK = {
     "yT": "yTop", "yB": "yBottom", "sL": "showLabels",
     "brd": "bordered", "cpt": "compact", "hl": "highlight",
     "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
-    "val": "value",
-    "cp": "copy", "rv": "reveal",
-    "hr": "href", "dw": "download", "ext": "external",
-    "lv": "level", "tm": "time", "sk": "skills",
-    "fi": "files", "desc": "description", "cd": "code"
+    "val": "value"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 
