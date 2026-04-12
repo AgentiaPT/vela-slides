@@ -19,7 +19,7 @@ const http = require('http');
 const PORT = 8765;
 const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-e2e-serve');
 const ROOT = path.resolve(__dirname, '..');
-const ASSEMBLED = path.join(ROOT, 'welcome-to-vela-slides.jsx');
+const ASSEMBLED = path.join(ROOT, 'vela-slides-live-demo.jsx');
 
 // ── Resolve Playwright ──────────────────────────────────────────────
 function resolvePlaywright() {
@@ -508,6 +508,7 @@ async function runTests() {
     await browser.close();
   } catch (e) {
     console.error('\n💥 Fatal error:', e.message);
+    failed++;
   } finally {
     server?.close();
   }
@@ -515,8 +516,11 @@ async function runTests() {
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  if (failed === 0) {
+  if (failed === 0 && passed > 0) {
     console.log(`  ✅ ${passed} passed (${elapsed}s)`);
+  } else if (passed === 0 && failed === 0) {
+    console.log(`  ❌ 0 tests ran — setup failed (${elapsed}s)`);
+    failed = 1;
   } else {
     console.log(`  ❌ ${passed} passed, ${failed} failed (${elapsed}s)`);
   }
