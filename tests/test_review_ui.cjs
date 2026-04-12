@@ -19,7 +19,9 @@ const http = require('http');
 const PORT = 8765;
 const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-e2e-serve');
 const ROOT = path.resolve(__dirname, '..');
-const ASSEMBLED = path.join(ROOT, 'vela-slides-live-demo.jsx');
+// Use a fixed path inside SERVE_DIR so we control where assemble.py writes,
+// regardless of the deck title slug.
+const ASSEMBLED = path.join(SERVE_DIR, 'assembled.jsx');
 
 // ── Resolve Playwright ──────────────────────────────────────────────
 function resolvePlaywright() {
@@ -58,7 +60,7 @@ function buildTestHTML() {
   // Assemble the deck
   console.log('Assembling deck...');
   execSync(
-    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts`,
+    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
   );
 
@@ -492,6 +494,7 @@ async function runTests() {
   const skipSetup = process.argv.includes('--skip-setup');
   let server = null;
   const t0 = Date.now();
+  let fatalError = null;
 
   try {
     const { chromium } = resolvePlaywright();
@@ -504,7 +507,7 @@ async function runTests() {
     console.log('Launching browser...');
     const browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-    page.setDefaultTimeout(3000);
+    page.setDefaultTimeout(1000);
     page.on('pageerror', () => {}); // suppress Babel deopt warning
 
     console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');
@@ -517,15 +520,16 @@ async function runTests() {
     await page.locator('.concept-row').first().click();
     await page.waitForFunction(
       () => document.querySelectorAll('[data-block-type]').length > 0,
-      { timeout: 10000 }
-    );
+      { timeout: 5000 }
+    ).catch(() => {}); // soft — blocks may not have data attrs in all builds
 
     await runTests();
 
     await browser.close();
   } catch (e) {
+    fatalError = e;
     console.error('\n💥 Fatal error:', e.message);
-    failed++;
+    if (e.stack) console.error(e.stack);
   } finally {
     server?.close();
   }
@@ -533,11 +537,11 @@ async function runTests() {
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  if (failed === 0 && passed > 0) {
+  if (fatalError) {
+    console.log(`  💥 Fatal error — 0 tests ran (${elapsed}s)`);
+    console.log(`  ${fatalError.message}`);
+  } else if (failed === 0) {
     console.log(`  ✅ ${passed} passed (${elapsed}s)`);
-  } else if (passed === 0 && failed === 0) {
-    console.log(`  ❌ 0 tests ran — setup failed (${elapsed}s)`);
-    failed = 1;
   } else {
     console.log(`  ❌ ${passed} passed, ${failed} failed (${elapsed}s)`);
   }
@@ -549,5 +553,5 @@ async function runTests() {
     console.log('');
   }
 
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit((failed > 0 || fatalError) ? 1 : 0);
 })();

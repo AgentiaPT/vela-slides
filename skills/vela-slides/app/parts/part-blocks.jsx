@@ -333,33 +333,19 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
     onChange?.({ items: ni });
   };
 
-  const href = item.href;
-  const effectiveLink = link || href;
-  const isDownload = item.download;
-  const isExternal = item.external || (href && !isDownload);
-
-  const handleHrefClick = (e) => {
-    if (!href || editMode) return;
-    if (isDownload) return; // let browser handle <a download>
-    e.preventDefault();
-    window.open(href, "_blank", "noopener,noreferrer");
-  };
-
-  const innerContent = (
-    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", width: effectiveLink ? "fit-content" : undefined, gap: 14, alignItems: "center", ...(effectiveLink && (presenting || !editable) ? { cursor: "pointer" } : {}), ...(href && hovered ? { opacity: 0.85 } : {}) }}
-      title={link ? linkPreview(link, item.title) : (href ? href : undefined)}
-      data-pdf-link={effectiveLink || undefined}
-      onClick={!href && link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+  return (
+    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
+      title={link ? linkPreview(link, item.title) : undefined}
+      data-pdf-link={link || undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       <div style={{ flex: 1 }}>
         <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
-      {/* href indicator icon */}
-      {href && !editMode && <span style={{ marginLeft: "auto", alignSelf: "center", opacity: 0.5, display: "flex", flexShrink: 0 }}>{getIcon(isDownload ? "Download" : "ExternalLink", { size: 16, color: st.textDim })}</span>}
       {/* Presenter mode: subtle link badge */}
-      {link && !href && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Link badge (not hovered, edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -32, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode) */}
@@ -374,11 +360,6 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
       </div>}
     </div>
   );
-
-  if (href && !editMode) {
-    return <a href={href} download={isDownload || undefined} target={isExternal ? "_blank" : undefined} rel={isExternal ? "noopener noreferrer" : undefined} onClick={handleHrefClick} style={{ textDecoration: "none", color: "inherit" }}>{innerContent}</a>;
-  }
-  return innerContent;
 }
 
 // ━━━ Bullet Item (with per-item link editing) ━━━━━━━━━━━━━━━━━━━━━
@@ -388,10 +369,6 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
   const link = typeof item === "object" ? item.link : null;
-  const href = typeof item === "object" ? item.href : null;
-  const isDownload = typeof item === "object" && item.download;
-  const isExternal = typeof item === "object" && (item.external || (href && !isDownload));
-  const effectiveLink = link || href;
   const editMode = editable && !presenting;
 
   const updateItem = (patch) => {
@@ -406,18 +383,11 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
     onChange?.({ items: ni });
   };
 
-  const handleHrefClick = (e) => {
-    if (!href || editMode) return;
-    if (isDownload) return;
-    e.preventDefault();
-    window.open(href, "_blank", "noopener,noreferrer");
-  };
-
-  const innerContent = (
-    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", gap: 12, alignItems: "center", ...(effectiveLink && (presenting || !editable) ? { cursor: "pointer" } : {}), ...(href && hovered && !editMode ? { opacity: 0.85 } : {}) }}
-      title={link ? linkPreview(link, text) : (href ? href : undefined)}
-      data-pdf-link={effectiveLink || undefined}
-      onClick={!href && link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+  return (
+    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", gap: 12, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
+      title={link ? linkPreview(link, text) : undefined}
+      data-pdf-link={link || undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span>
         : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />}
@@ -425,13 +395,11 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
         onChange?.({ items: ni });
-      }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(effectiveLink ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
-      {/* href indicator icon */}
-      {href && !editMode && <span style={{ flexShrink: 0, display: "flex", opacity: 0.5 }}>{getIcon(isDownload ? "Download" : "ExternalLink", { size: 14, color: st.textDim })}</span>}
+      }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
       {/* Presenter mode: persistent link pill */}
-      {link && !href && presenting && <div style={{ padding: "2px 8px", borderRadius: 4, background: T.accent, fontSize: 10, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, opacity: hovered ? 1 : 0.35, transition: "opacity 0.2s", boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0, pointerEvents: "none" }}>🔗</div>}
-      {/* Non-presenting, non-editable: small arrow (link only, not href) */}
-      {link && !href && !presenting && !editable && <span style={{ flexShrink: 0, fontSize: 10, opacity: 0.5 }}>↗</span>}
+      {link && presenting && <div style={{ padding: "2px 8px", borderRadius: 4, background: T.accent, fontSize: 10, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, opacity: hovered ? 1 : 0.35, transition: "opacity 0.2s", boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0, pointerEvents: "none" }}>🔗</div>}
+      {/* Non-presenting, non-editable: small arrow */}
+      {link && !presenting && !editable && <span style={{ flexShrink: 0, fontSize: 10, opacity: 0.5 }}>↗</span>}
       {/* Link badge (when not hovered, in edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode only) */}
@@ -446,11 +414,6 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       </div>}
     </div>
   );
-
-  if (href && !editMode) {
-    return <a href={href} download={isDownload || undefined} target={isExternal ? "_blank" : undefined} rel={isExternal ? "noopener noreferrer" : undefined} onClick={handleHrefClick} style={{ textDecoration: "none", color: "inherit" }}>{innerContent}</a>;
-  }
-  return innerContent;
 }
 
 // ━━━ Grid Cell Block (with per-block link editing) ━━━━━━━━━━━━━━━
@@ -486,109 +449,6 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       </div>}
     </div>
   );
-}
-
-// ━━━ Code Block (with optional copy button) ━━━━━━━━━━━━━━━━━━━━━━
-function CodeBlock({ block, cls, st, SIZES, editable, onChange }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    velaClipboard(block.text || "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return <div className={cls} style={{ background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", position: "relative", ...block.style }}>
-    {block.copy && <button onClick={handleCopy} style={{ position: "absolute", top: 8, right: 8, background: copied ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.1)", border: "none", borderRadius: 4, padding: "4px 8px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: copied ? "#22c55e" : st.textDim, fontSize: 11, fontFamily: FONT.mono, transition: "all 0.2s", zIndex: 2 }}>{getIcon(copied ? "Check" : "Copy", { size: 14 })}{copied ? "Copied" : "Copy"}</button>}
-    {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
-    <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }} />
-  </div>;
-}
-
-// ━━━ Callout Block (with optional reveal/collapse) ━━━━━━━━━━━━━━━
-function CalloutBlock({ block, cls, st, SIZES, editable, onChange }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const accentColor = block.border || st.accent;
-  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${accentColor}`, alignItems: "flex-start", cursor: block.reveal ? "pointer" : "default", ...block.style }}
-    onClick={block.reveal ? () => setIsOpen(o => !o) : undefined}
-    role={block.reveal ? "button" : undefined}
-    aria-expanded={block.reveal ? isOpen : undefined}
-    tabIndex={block.reveal ? 0 : undefined}
-    onKeyDown={block.reveal ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setIsOpen(o => !o); } } : undefined}>
-    {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2 }}>{getIcon(block.icon, { size: 18, color: accentColor, strokeWidth: 2 })}</span>}
-    <div style={{ flex: 1 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ flex: 1 }}>
-          {block.title && <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: accentColor, marginBottom: (!block.reveal || isOpen) ? 4 : 0 }} />}
-        </div>
-        {block.reveal && <span style={{ flexShrink: 0, transition: "transform 0.2s", transform: isOpen ? "rotate(90deg)" : "none", display: "flex", marginLeft: 8 }}>{getIcon("ChevronRight", { size: 14, color: st.textDim })}</span>}
-      </div>
-      {(!block.reveal || isOpen) && <div style={{ overflow: "hidden", transition: "opacity 0.2s ease", marginTop: block.reveal && isOpen ? 4 : 0 }}>
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />
-      </div>}
-    </div>
-  </div>;
-}
-
-// ━━━ Prompt Block (AI prompt with placeholder highlighting) ━━━━━━
-function PromptBlock({ block, cls, st, SIZES, editable, onChange }) {
-  const [copied, setCopied] = useState(false);
-  const variant = block.variant || "full";
-  const handleCopy = () => {
-    velaClipboard(block.text || "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  const borderColor = variant === "full" ? "#22c55e" : variant === "partial" ? "#f59e0b" : st.textDim;
-  const labelColor = variant === "partial" ? "#f59e0b" : st.accent;
-  const renderPromptText = (text) => {
-    if (!text) return null;
-    const parts = text.split(/({{.*?}})/g);
-    return parts.map((part, i) => {
-      if (part.startsWith("{{") && part.endsWith("}}")) {
-        const placeholder = part.slice(2, -2);
-        return <span key={i} style={{ background: "rgba(251,191,36,0.25)", color: "#D97706", padding: "1px 6px", borderRadius: 3, fontWeight: 600, border: "1px dashed rgba(251,191,36,0.4)" }}>{placeholder}</span>;
-      }
-      return <span key={i}>{part}</span>;
-    });
-  };
-  return <div className={cls} style={{ background: variant === "empty" ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, borderLeft: `3px solid ${borderColor}`, position: "relative", ...block.style }}>
-    {variant !== "empty" && <button onClick={handleCopy} style={{ position: "absolute", top: 8, right: 8, background: copied ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.1)", border: "none", borderRadius: 4, padding: "4px 8px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: copied ? "#22c55e" : st.textDim, fontSize: 11, fontFamily: FONT.mono, transition: "all 0.2s", zIndex: 2 }}>{getIcon(copied ? "Check" : "Copy", { size: 14 })}{copied ? "Copied" : "Copy"}</button>}
-    {block.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: labelColor, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }}>{block.label}</div>}
-    {variant === "empty" ? (
-      <div style={{ fontFamily: FONT.mono, fontSize: SIZES.md, color: st.textDim, fontStyle: "italic", minHeight: 60, display: "flex", alignItems: "center" }}>Build your prompt from scratch</div>
-    ) : editable ? (
-      <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.7, whiteSpace: "pre-wrap" }} />
-    ) : (
-      <div style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{renderPromptText(block.text)}</div>
-    )}
-  </div>;
-}
-
-// ━━━ Challenge Block (lab exercise card) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ChallengeBlock({ block, cls, st, SIZES }) {
-  const levels = {
-    basic: { label: "Basic", color: "#22c55e", icon: "Shield" },
-    intermediate: { label: "Intermediate", color: "#f59e0b", icon: "Compass" },
-    advanced: { label: "Advanced", color: "#8b5cf6", icon: "Rocket" },
-    expert: { label: "Expert", color: "#ef4444", icon: "Flame" },
-    aspirational: { label: "Aspirational", color: "#ec4899", icon: "Stars" }
-  };
-  const lv = levels[block.level] || levels.basic;
-  return <div className={cls} style={{ background: `${lv.color}08`, border: `1px solid ${lv.color}30`, borderRadius: 12, padding: "20px 24px", ...block.style }}>
-    {/* Header: code + level badge + time */}
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-      {block.code && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.sm, fontWeight: 700, color: lv.color, opacity: 0.7 }}>{block.code}</span>}
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: `${lv.color}18`, color: lv.color, padding: "3px 10px", borderRadius: 20, fontSize: SIZES.xs, fontWeight: 600 }}>{getIcon(lv.icon, { size: 12 })} {lv.label}</span>
-      {block.time && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: st.textDim, fontSize: SIZES.xs }}>{getIcon("Clock", { size: 12 })} {block.time}</span>}
-    </div>
-    {/* Title */}
-    {block.title && <div style={{ fontFamily: FONT.display, fontSize: SIZES.xl, fontWeight: 700, color: st.text, marginBottom: 4 }}>{block.title}</div>}
-    {/* Description */}
-    {block.description && <div style={{ fontFamily: FONT.body, fontSize: SIZES.md, color: st.textDim, marginBottom: 12 }}>{block.description}</div>}
-    {/* Skills tags */}
-    {block.skills?.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>{block.skills.map((sk, i) => <span key={i} style={{ fontSize: SIZES.xs, padding: "2px 8px", borderRadius: 4, background: `${st.accent}15`, color: st.accent, fontFamily: FONT.mono }}>{sk}</span>)}</div>}
-    {/* Files */}
-    {block.files?.length > 0 && <div style={{ borderTop: `1px solid ${st.border}`, paddingTop: 10, marginTop: 4 }}>{block.files.map((f, i) => <a key={i} href={f.href} download style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", color: st.text, textDecoration: "none", fontSize: SIZES.sm, fontFamily: FONT.mono }}>{getIcon("FileDown", { size: 14, color: st.accent })}<span style={{ flex: 1 }}>{f.name}</span>{getIcon("Download", { size: 12, color: st.textDim })}</a>)}</div>}
-  </div>;
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -646,6 +506,46 @@ function ZoomWrap({ children, enabled }) {
   </>;
 }
 
+// ━━━ Code Block (sub-component for useState copy feedback) ━━━━━━━
+function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
+  const [copied, setCopied] = useState(false);
+  const showCopy = !!block.copy;
+  const handleCopy = () => {
+    if (!block.text) return;
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(block.text).then(done).catch(() => {
+        // Fallback for non-HTTPS / sandboxed iframes
+        try { const ta = Object.assign(document.createElement("textarea"), { value: block.text, style: "position:fixed;opacity:0" }); document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); } catch (_) {}
+      });
+    }
+  };
+  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+    {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+    <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
+    {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
+  </div>;
+}
+
+// ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
+function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+  // reveal: true → starts collapsed (open=false); reveal: false/omitted → always open
+  const [open, setOpen] = useState(!block.reveal);
+  const isReveal = !!block.reveal;
+  const chevron = isReveal ? (open ? "▾" : "▸") : null;
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+    {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...(isReveal ? { cursor: "pointer" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
+    <div style={{ flex: 1 }}>
+      {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
+        {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
+        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} />
+      </div>}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}</div>}
+      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />}
+    </div>
+  </div>;
+}
+
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
   // Runtime guard: ensure .style is always a plain object
@@ -694,7 +594,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div></ZoomWrap>;
 
     case "code":
-      return <CodeBlock block={block} cls={cls} st={st} SIZES={SIZES} editable={editable} onChange={onChange} />;
+      return <CodeBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
@@ -716,7 +616,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       />)}</div>; })}</div>;
 
     case "callout":
-      return <CalloutBlock block={block} cls={cls} st={st} SIZES={SIZES} editable={editable} onChange={onChange} />;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
@@ -1218,12 +1118,6 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         })}
       </div>;
     }
-
-    case "prompt":
-      return <PromptBlock block={block} cls={cls} st={st} SIZES={SIZES} editable={editable} onChange={onChange} />;
-
-    case "challenge":
-      return <ChallengeBlock block={block} cls={cls} st={st} SIZES={SIZES} />;
 
     default: return null;
   }

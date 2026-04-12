@@ -176,10 +176,8 @@ _BK = {
     "brd": "bordered", "cpt": "compact", "hl": "highlight",
     "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
     "val": "value",
-    "cp": "copy", "rv": "reveal",
-    "hr": "href", "dw": "download", "ext": "external",
-    "lv": "level", "tm": "time", "sk": "skills",
-    "fi": "files", "desc": "description", "cd": "code"
+    "cp": "copy",
+    "rv": "reveal"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 

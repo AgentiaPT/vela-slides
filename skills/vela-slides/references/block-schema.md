@@ -1,6 +1,6 @@
 # Vela Block Schema Reference
 
-Complete reference for all Vela v13 slide block types (29 total).
+Complete reference for all Vela v12 slide block types (27 total).
 
 ## Slide Object
 
@@ -110,15 +110,14 @@ Body text paragraph.
 ```
 
 ### bullets
-Bullet list with optional per-item icons. Items can include `href`/`download`/`external` for resource links.
+Bullet list with optional per-item icons.
 ```json
 {
   "type": "bullets",
   "items": [
     "Plain string item",
     { "text": "Item with icon", "icon": "CheckCircle" },
-    { "text": "Copilot Chat", "href": "https://copilot.microsoft.com", "icon": "ExternalLink" },
-    { "text": "Download template", "href": "/files/template.docx", "download": true, "icon": "Download" }
+    { "text": "Another item", "icon": "ArrowRight" }
   ],
   "size": "md",
   "dotColor": "#3b82f6",
@@ -127,9 +126,6 @@ Bullet list with optional per-item icons. Items can include `href`/`download`/`e
   "style": {}
 }
 ```
-- `href` *(optional, string)* — URL for the item. Renders as `<a>` when present.
-- `download` *(optional, boolean)* — triggers browser download instead of navigation.
-- `external` *(optional, boolean)* — opens in new tab. Default true when `href` is set and `download` is false.
 
 ### image
 Inline image block.
@@ -146,19 +142,18 @@ Inline image block.
 Note: When improving existing slides, keep `src` as `"keep-original"` to preserve image data.
 
 ### code
-Code snippet with label. Optional `copy: true` shows a copy-to-clipboard button.
+Code snippet with label. Optional `copy: true` adds a "Copiar" button that copies text to clipboard.
 ```json
 {
   "type": "code",
   "text": "const hello = 'world';",
   "label": "JAVASCRIPT",
+  "copy": true,
   "size": "sm",
   "bg": "#1e293b",
-  "color": "#e2e8f0",
-  "copy": true
+  "color": "#e2e8f0"
 }
 ```
-- `copy` *(optional, boolean, default false)* — shows a copy button in the top-right corner. Uses `velaClipboard()` (execCommand fallback for iframe sandbox).
 
 ### grid
 Multi-column layout. Each cell contains its own blocks array.
@@ -195,20 +190,19 @@ Multi-column layout. Each cell contains its own blocks array.
 Max 2-3 cols. Max 6 cells. Keep cell blocks minimal (2-4 blocks each).
 
 ### callout
-Highlighted insight or tip box. Optional `reveal: true` makes the body collapsible (click title to toggle).
+Highlighted insight or tip box. Optional `reveal: true` makes it collapsible (starts closed, click to expand).
 ```json
 {
   "type": "callout",
   "text": "Key insight or important note here.",
   "title": "Optional Title",
+  "reveal": true,
   "bg": "rgba(59,130,246,0.15)",
   "border": "#3b82f6",
   "color": "#e2e8f0",
-  "icon": "Lightbulb",
-  "reveal": true
+  "icon": "Lightbulb"
 }
 ```
-- `reveal` *(optional, boolean, default false)* — when true, body is collapsed by default; click/keyboard toggles. Chevron indicator rotates. Multiple reveal callouts on same slide are independent. PDF export always renders expanded.
 
 ### metric
 Large statistic/number display.
@@ -266,14 +260,14 @@ Standalone icon, optionally with circle background and label.
 Sizes: `sm` (16px), `md` (24px), `lg` (32px), `xl` (48px)
 
 ### icon-row
-Feature list with icons — use INSTEAD of bullets for visual impact. Items can include `href`/`download`/`external` for resource links.
+Feature list with icons — use INSTEAD of bullets for visual impact.
 ```json
 {
   "type": "icon-row",
   "items": [
     { "icon": "Zap", "title": "Fast", "text": "Sub-second response times", "iconColor": "#fbbf24", "iconBg": "#fbbf2420" },
-    { "icon": "FileText", "title": "briefing.docx", "text": "Full context", "iconColor": "#0D9488", "iconBg": "#CCFBF1", "href": "/files/briefing.docx", "download": true },
-    { "icon": "Globe", "title": "Copilot Chat", "text": "Open in browser", "href": "https://copilot.microsoft.com", "external": true }
+    { "icon": "Shield", "title": "Secure", "text": "End-to-end encryption", "iconColor": "#34d399", "iconBg": "#34d39920" },
+    { "icon": "Globe", "title": "Global", "text": "Available in 40+ countries", "iconColor": "#60a5fa", "iconBg": "#60a5fa20" }
   ],
   "iconBg": "#3b82f620",
   "iconColor": "#3b82f6",
@@ -283,9 +277,6 @@ Feature list with icons — use INSTEAD of bullets for visual impact. Items can 
   "textSize": "md"
 }
 ```
-- Item `href` *(optional, string)* — URL for the item. Shows Download or ExternalLink indicator icon.
-- Item `download` *(optional, boolean)* — triggers browser download. Uses `<a download>`.
-- Item `external` *(optional, boolean)* — opens in new tab. Default true when `href` is set and `download` is false.
 
 ### flow
 Process/pipeline diagram with connected steps.
@@ -691,54 +682,3 @@ Horizontal line separator.
   "spacing": 16
 }
 ```
-
-### prompt
-AI prompt display with `{{placeholder}}` highlighting and built-in copy button. Three variants for different pedagogical levels.
-```json
-{
-  "type": "prompt",
-  "text": "Act as {{role}}. Write a {{format}} about {{topic}}. Tone: {{tone}}. Max {{N}} words.",
-  "label": "Partial prompt — fill in the fields",
-  "variant": "partial"
-}
-```
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| text | string | | Prompt text. `{{placeholders}}` are highlighted in partial variant |
-| label | string | | Uppercase label above the prompt body |
-| variant | enum | `"full"` | `"full"` (green border, copy button), `"partial"` (amber border, placeholders highlighted), `"empty"` (gray border, placeholder text, no copy) |
-| size | size | `"sm"` | Text font size |
-| color | string | theme text | Text color |
-
-**Variant semantics:**
-- `full` — worked example, ready to copy and use. Green left border.
-- `partial` — completion problem with `{{placeholders}}` to fill in. Amber left border, placeholders styled with dashed amber border.
-- `empty` — challenge to build from scratch. Gray left border, italic placeholder text.
-
-Copy button copies raw text including `{{...}}` markers so students see them in their target tool.
-
-### challenge
-Lab exercise/activity card with structured metadata. Renders level badge, time estimate, skill tags, and file downloads.
-```json
-{
-  "type": "challenge",
-  "title": "The email that never comes out right",
-  "code": "C01",
-  "level": "basic",
-  "time": "15 min",
-  "skills": ["Prompting", "Iteration", "Tone"],
-  "files": [
-    { "name": "briefing-green-program.docx", "href": "/files/briefing.docx" }
-  ],
-  "description": "Generate 3 versions, pick the best, merge them"
-}
-```
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| title | string | *required* | Challenge title |
-| code | string | | Short reference code (e.g. "C01") |
-| level | enum | `"basic"` | `"basic"` (green), `"intermediate"` (amber), `"advanced"` (purple), `"expert"` (red), `"aspirational"` (pink) |
-| time | string | | Time estimate (e.g. "15 min") |
-| skills | string[] | `[]` | Skill tags (max 6 recommended) |
-| files | object[] | `[]` | `{ name: string, href: string }` — downloadable resource files |
-| description | string | | Brief description below the title |

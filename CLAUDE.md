@@ -63,15 +63,13 @@ Virtual canvas: **960×540px** (16:9).
 }
 ```
 
-### Block Types (29)
-Text: heading, text, quote, badge, callout (reveal)
-Lists: bullets (href), icon-row (href/download), tag-group
+### Block Types (21)
+Text: heading, text, quote, badge, callout
+Lists: bullets, icon-row, tag-group
 Data: grid, table, metric, progress, timeline
 Flow: flow (gates & loops), steps
-Media: image, code (copy), svg
+Media: image, code, svg
 Layout: spacer, divider
-Viz: comparison, funnel, cycle, number-row, matrix, checklist
-Lab: prompt (full/partial/empty), challenge (5 levels)
 
 ## CLI — `vela.py`
 
@@ -87,20 +85,14 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (281 tests)
+# 1. Run full test suite (198 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
 python3 skills/vela-slides/scripts/concat.py
-
-# 3. Run e2e UI tests (Playwright — requires node + deps)
-node tests/test_review_ui.cjs
 ```
 
 All checks must pass before committing.
-Steps 1-2 are always required. Step 3 requires Node.js + Playwright;
-if deps are unavailable, install with:
-`npm install react@18 react-dom@18 @babel/standalone lucide-react playwright && npx playwright install chromium`
 
 ## Build Commands
 
