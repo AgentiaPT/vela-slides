@@ -253,10 +253,9 @@ def _expand_slide(slide, themes):
                 expanded[full_prop] = tv
 
     # Expand blocks inside L and R arrays (cols layout)
-    if "L" in expanded and isinstance(expanded["L"], list):
-        expanded["L"] = [_expand_block(b) for b in expanded["L"]]
-    if "R" in expanded and isinstance(expanded["R"], list):
-        expanded["R"] = [_expand_block(b) for b in expanded["R"]]
+    for col_key in ("L", "R"):
+        if col_key in expanded and isinstance(expanded[col_key], list):
+            expanded[col_key] = [_expand_block(b) for b in expanded[col_key]]
 
     return expanded
 
