@@ -32,7 +32,7 @@
                 },
                 {
                   "type": "badge",
-                  "text": "v12.34 · APRIL 2026",
+                  "text": "v12.35 · APRIL 2026",
                   "icon": "Sailboat",
                   "color": "#c4b5fd",
                   "bg": "#818cf820",
@@ -489,6 +489,108 @@
                   "arrowColor": "#a78bfa",
                   "iconBg": "#1e1b4b",
                   "labelColor": "#e2e8f0"
+                }
+              ]
+            },
+            {
+              "title": "Columns Layout",
+              "duration": 75,
+              "padding": "48px 64px",
+              "bg": "linear-gradient(135deg, #0f172a 0%, #1a1b3a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "gap": 16,
+              "layout": "cols",
+              "contentFlex": 3,
+              "imageFlex": 2,
+              "splitGap": 28,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "NEW IN v12.35",
+                  "icon": "Sparkles",
+                  "color": "#34d399",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "heading",
+                  "text": "Columns Layout 📐",
+                  "size": "2xl",
+                  "icon": "Columns",
+                  "iconColor": "#34d399"
+                },
+                {
+                  "type": "text",
+                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays — works with any block type.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                }
+              ],
+              "L": [
+                {
+                  "type": "callout",
+                  "text": "Place any blocks side-by-side — text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
+                  "title": "Flexible Columns",
+                  "icon": "LayoutGrid",
+                  "bg": "#34d39912",
+                  "border": "#34d39930",
+                  "color": "#d1fae5"
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Set layout",
+                      "text": "layout: \"cols\""
+                    },
+                    {
+                      "title": "Add header",
+                      "text": "blocks (B) = full-width"
+                    },
+                    {
+                      "title": "Fill columns",
+                      "text": "L = left, R = right"
+                    }
+                  ],
+                  "lineColor": "#34d399",
+                  "numberColor": "#34d399",
+                  "titleColor": "#e2e8f0",
+                  "textColor": "#94a3b8"
+                }
+              ],
+              "R": [
+                {
+                  "type": "metric",
+                  "value": "3:2",
+                  "label": "This Slide's Ratio",
+                  "size": "3xl",
+                  "color": "#34d399",
+                  "icon": "Columns",
+                  "iconColor": "#34d399"
+                },
+                {
+                  "type": "tag-group",
+                  "items": [
+                    {
+                      "text": "1:1 Equal",
+                      "color": "#818cf8"
+                    },
+                    {
+                      "text": "3:2 Wide left",
+                      "color": "#34d399"
+                    },
+                    {
+                      "text": "2:3 Wide right",
+                      "color": "#f59e0b"
+                    },
+                    {
+                      "text": "4:1 Sidebar",
+                      "color": "#f472b6"
+                    }
+                  ],
+                  "variant": "outline",
+                  "gap": 8
                 }
               ]
             }
@@ -1150,10 +1252,22 @@
                         {
                           "type": "bullets",
                           "items": [
-                            { "text": "Data URI or external URL", "icon": "Link" },
-                            { "text": "Caption, rounded, shadow", "icon": "Settings" },
-                            { "text": "Click to zoom (lightbox)", "icon": "ZoomIn" },
-                            { "text": "maxWidth & maxHeight", "icon": "Maximize2" }
+                            {
+                              "text": "Data URI or external URL",
+                              "icon": "Link"
+                            },
+                            {
+                              "text": "Caption, rounded, shadow",
+                              "icon": "Settings"
+                            },
+                            {
+                              "text": "Click to zoom (lightbox)",
+                              "icon": "ZoomIn"
+                            },
+                            {
+                              "text": "maxWidth & maxHeight",
+                              "icon": "Maximize2"
+                            }
                           ],
                           "size": "sm",
                           "gap": 10
@@ -1552,6 +1666,193 @@
             }
           ],
           "createdAt": "2026-03-23T23:14:42.516Z"
+        },
+        {
+          "id": "cols-showcase",
+          "title": "Layout: Columns",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 5,
+          "slides": [
+            {
+              "title": "Header + Balanced Columns",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "gap": 14,
+              "layout": "cols",
+              "contentFlex": 1,
+              "imageFlex": 1,
+              "splitGap": 32,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "LAYOUT: COLS",
+                  "icon": "Columns",
+                  "color": "#93c5fd",
+                  "bg": "#3b82f615",
+                  "border": "#3b82f640"
+                },
+                {
+                  "type": "heading",
+                  "text": "Header + Balanced Columns",
+                  "size": "2xl",
+                  "icon": "LayoutGrid",
+                  "iconColor": "#3b82f6"
+                }
+              ],
+              "L": [
+                {
+                  "type": "callout",
+                  "title": "Left Column",
+                  "text": "Any blocks — bullets, steps, tables, code. This callout spans the **left half**.",
+                  "icon": "ArrowLeft",
+                  "bg": "#3b82f612",
+                  "border": "#3b82f630",
+                  "color": "#bfdbfe"
+                },
+                {
+                  "type": "bullets",
+                  "items": [
+                    {
+                      "text": "Text & lists",
+                      "icon": "FileText"
+                    },
+                    {
+                      "text": "Metrics & data",
+                      "icon": "BarChart"
+                    },
+                    {
+                      "text": "Flow & steps",
+                      "icon": "GitBranch"
+                    }
+                  ],
+                  "size": "sm",
+                  "gap": 8
+                }
+              ],
+              "R": [
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "FileText",
+                      "label": "Plan"
+                    },
+                    {
+                      "icon": "Code",
+                      "label": "Build"
+                    },
+                    {
+                      "icon": "Rocket",
+                      "label": "Ship"
+                    }
+                  ],
+                  "connectorStyle": "arrow",
+                  "arrowColor": "#3b82f6",
+                  "iconBg": "#1e3a5f",
+                  "direction": "vertical"
+                },
+                {
+                  "type": "metric",
+                  "value": "1:1",
+                  "label": "Equal Ratio",
+                  "size": "2xl",
+                  "color": "#3b82f6"
+                }
+              ]
+            },
+            {
+              "title": "Before / After Comparison",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "gap": 14,
+              "layout": "cols",
+              "contentFlex": 1,
+              "imageFlex": 1,
+              "splitGap": 32,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "COLS: NO HEADER BLOCKS",
+                  "icon": "Columns",
+                  "color": "#fbbf24",
+                  "bg": "#f59e0b15",
+                  "border": "#f59e0b40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Before / After — Pure Side-by-Side",
+                  "size": "2xl",
+                  "icon": "ArrowLeftRight",
+                  "iconColor": "#f59e0b"
+                }
+              ],
+              "L": [
+                {
+                  "type": "badge",
+                  "text": "BEFORE",
+                  "icon": "X",
+                  "bg": "#dc262630",
+                  "color": "#fca5a5",
+                  "border": "#dc262650"
+                },
+                {
+                  "type": "bullets",
+                  "items": [
+                    "Stacked blocks only",
+                    "Wasted horizontal space",
+                    "Image-left/right for images only",
+                    "No arbitrary side-by-side"
+                  ],
+                  "size": "sm",
+                  "dotColor": "#ef4444"
+                },
+                {
+                  "type": "metric",
+                  "value": "50%",
+                  "label": "Space Wasted",
+                  "size": "2xl",
+                  "color": "#ef4444"
+                }
+              ],
+              "R": [
+                {
+                  "type": "badge",
+                  "text": "AFTER",
+                  "icon": "Check",
+                  "bg": "#16a34a30",
+                  "color": "#86efac",
+                  "border": "#16a34a50"
+                },
+                {
+                  "type": "bullets",
+                  "items": [
+                    "Any blocks side-by-side",
+                    "Full horizontal space used",
+                    "Flexible ratio control",
+                    "Optional full-width header"
+                  ],
+                  "size": "sm",
+                  "dotColor": "#22c55e"
+                },
+                {
+                  "type": "metric",
+                  "value": "100%",
+                  "label": "Space Utilized",
+                  "size": "2xl",
+                  "color": "#22c55e"
+                }
+              ]
+            }
+          ]
         }
       ]
     },

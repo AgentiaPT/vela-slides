@@ -57,8 +57,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.34";
+const VELA_VERSION = "12.35";
 const VELA_CHANGELOG = [
+  { v: "12.35", d: "Cols layout: new layout:'cols' for two-column slides using L (left) and R (right) block arrays. B/blocks renders full-width above columns. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32). Works with all 21 block types. Pipeline: expand/compact/validate/stats/extract-text/patch-text all handle L/R." },
   { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
   { v: "12.33", d: "Code block copy button: new 'copy' property (compact: 'cp') adds a 'Copiar' button in the top-right corner that copies block.text to clipboard with 'Copiado ✓' feedback for 2s. Extracted CodeBlock sub-component for useState hook. paddingRight: 80 prevents text overlap when copy is active." },
   { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
@@ -500,6 +501,8 @@ function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
@@ -799,8 +802,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left", contentFlex?, imageFlex?, splitGap? }
-Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
 Block types:
@@ -2299,11 +2302,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
   }, [slide, index, requestedJustify]);
 
-  if (!blocks.length) return null;
+  if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
   const layout = slide.layout || "stack";
+  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
   const isSplit = layout === "image-right" || layout === "image-left";
+  const colsL = isCols ? (slide.L || []) : [];
+  const colsR = isCols ? (slide.R || []) : [];
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -2385,6 +2391,20 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
+    if (isCols) {
+      const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+      const colsRow = (
+        <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          </div>
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          </div>
+        </div>
+      );
+      return [...headerBlocks, colsRow];
+    }
     if (isSplit) {
       const contentIdxs = [], imageIdxs = [];
       blocks.forEach((b, i) => { (b.type === "image" ? imageIdxs : contentIdxs).push(i); });
@@ -3405,7 +3425,7 @@ ${ICON_LIST}`;
 
   // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
   // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock"]);
+  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }
