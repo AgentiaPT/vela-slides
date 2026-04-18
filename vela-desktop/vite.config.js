@@ -11,6 +11,13 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: "localhost",
+    // Allow serving files from the skills directory (vela.jsx monolith)
+    fs: {
+      allow: [
+        path.resolve(__dirname),
+        path.resolve(__dirname, "../skills/vela-slides/app"),
+      ],
+    },
   },
 
   // Env variables starting with VITE_ are exposed to the client
@@ -38,6 +45,11 @@ export default defineConfig({
     alias: {
       // Allow importing the monolith vela.jsx from the skills directory
       "@vela": path.resolve(__dirname, "../skills/vela-slides/app"),
+      // Ensure bare imports from vela.jsx (which lives outside the project root)
+      // resolve to our local node_modules instead of searching from the file's location
+      "lucide-react": path.resolve(__dirname, "node_modules/lucide-react"),
+      "react": path.resolve(__dirname, "node_modules/react"),
+      "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
     },
   },
 });
