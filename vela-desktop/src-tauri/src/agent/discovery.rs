@@ -125,7 +125,8 @@ mod tests {
     #[tokio::test]
     async fn test_discover_returns_vec() {
         let agents = discover().await;
-        // Should return a vec (may be empty in CI)
-        assert!(agents.len() >= 0);
+        // Should return a vec (may or may not find agents in CI)
+        // Just verify it doesn't panic
+        let _ = agents.len();
     }
 }
