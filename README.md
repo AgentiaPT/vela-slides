@@ -36,6 +36,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 | | **[▶ Open the live demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** | Interactive artifact on Claude.ai with Vera AI assistant |
 | **Set up for creation** | **[Upload as Claude.ai skill](#1-use-as-a-claudeai-skill)** | Generate decks from conversation on Claude.ai |
 | | **[Run locally with Claude Code](#2-run-locally-with-claude-code)** | Full CLI, live preview, file system access |
+| | **[Desktop app](#3-desktop-app)** | Standalone app with local AI agents |
 
 > The Claude.ai artifact runs entirely in your browser. AI features (Vera chat, batch edit) use your Claude.ai subscription. Vela has no backend and no access to your data. Requires **Settings → Feature Preview → AI-powered artifacts** enabled.
 
@@ -63,6 +64,18 @@ python3 skills/vela-slides/scripts/vela.py server start examples/
 With the skill installed, Claude Code can generate, edit, translate, and rebrand decks using the `vela` CLI — saving 80-97% of tokens vs manual JSON editing.
 
 **Channel bridge** (experimental): Connect the browser UI to Claude Code for click-to-edit workflows. See [`skills/vela-slides/channel/README.md`](skills/vela-slides/channel/README.md).
+
+### 3. Desktop App
+
+Standalone native app with local AI agent support. Double-click `.vela` files, use Claude Code, Ollama, or any compatible agent — no API keys needed.
+
+```bash
+cd vela-desktop
+npm install
+cargo tauri dev
+```
+
+See [`vela-desktop/README.md`](vela-desktop/README.md) for full setup and build instructions, or [`docs/DESKTOP.md`](docs/DESKTOP.md) for architecture details.
 
 ---
 

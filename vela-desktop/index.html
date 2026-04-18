@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vela Slides</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+
+    /* Loading screen */
+    #vela-loading { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 20px; opacity: 1; transition: opacity 0.4s ease; }
+    #vela-loading.fade-out { opacity: 0; pointer-events: none; }
+    #vela-loading .boat { font-size: 48px; animation: sail 3s ease-in-out infinite; }
+    @keyframes sail { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-8px) rotate(2deg); } }
+    #vela-loading .title { font-size: 24px; font-weight: 700; color: #e2e8f0; font-family: system-ui; letter-spacing: 4px; }
+    #vela-loading .wave { height: 3px; width: 120px; background: linear-gradient(90deg, transparent, #3b82f6, #8b5cf6, #3b82f6, transparent); border-radius: 2px; animation: wave-move 2s ease-in-out infinite; }
+    @keyframes wave-move { 0%,100% { transform: scaleX(0.6); opacity: 0.5; } 50% { transform: scaleX(1); opacity: 1; } }
+    #vela-loading .msg { font-size: 13px; color: #64748b; font-family: system-ui; transition: opacity 0.3s; }
+    #vela-loading .dots { display: inline-block; width: 20px; text-align: left; }
+    #vela-loading .hint { font-size: 11px; color: #475569; font-family: system-ui; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="vela-loading">
+      <div class="boat">⛵</div>
+      <div class="title">VELA</div>
+      <div class="wave"></div>
+      <div class="msg">Starting desktop app<span class="dots"></span></div>
+      <div class="hint">Detecting AI agents...</div>
+    </div>
+  </div>
+
+  <script>
+    // Loading screen animation
+    (function() {
+      var msgs = [
+        'Starting desktop app', 'Loading the engine', 'Detecting AI agents',
+        'Setting sail', 'Charting the course', 'Hoisting the sails',
+        'Reading the winds', 'Checking the compass',
+        'Arranging the slides', 'Warming up the engine',
+        'Preparing the stage', 'Almost there, captain',
+      ];
+      var hints = [
+        'Ctrl+O to open a .vela deck',
+        'Ctrl+S to save your work',
+        'Press F for fullscreen presenter mode',
+        'Ctrl+K to chat with your AI agent',
+        'Double-click any .vela file to open it here',
+        'Works offline — AI features need an agent',
+      ];
+      var msgEl = document.querySelector('#vela-loading .msg');
+      var dotsEl = document.querySelector('#vela-loading .dots');
+      var hintEl = document.querySelector('#vela-loading .hint');
+      var i = 0, d = 0;
+      if (hintEl) hintEl.textContent = hints[Math.floor(Math.random() * hints.length)];
+      setInterval(function() { d = (d + 1) % 4; if (dotsEl) dotsEl.textContent = '.'.repeat(d); }, 400);
+      setInterval(function() {
+        i = (i + 1) % msgs.length;
+        if (msgEl) { msgEl.style.opacity = '0'; setTimeout(function() { msgEl.childNodes[0].textContent = msgs[i]; msgEl.style.opacity = '1'; }, 300); }
+        if (hintEl) hintEl.textContent = hints[Math.floor(Math.random() * hints.length)];
+      }, 2500);
+    })();
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Rust build output
+target/
+
+# Node modules
+node_modules/
+
+# Vite build output
+dist/
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
