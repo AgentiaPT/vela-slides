@@ -74,6 +74,7 @@ evals/workdirs/
 opus-4-6.*
 *.jsx
 !skills/vela-slides/app/**/*.jsx
+!vela-desktop/src/**/*.jsx
 agentic-react-slides.json
 tests/contact-slide.json
 
