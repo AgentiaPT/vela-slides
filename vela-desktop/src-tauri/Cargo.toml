@@ -1,0 +1,39 @@
+[package]
+name = "vela-desktop"
+version = "0.1.0"
+description = "Vela Slides — AI-native presentation engine"
+authors = ["Agentia PT"]
+license = "ELv2"
+edition = "2021"
+
+[lib]
+name = "vela_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+notify = { version = "8", features = ["serde"] }
+dirs = "6"
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+async-trait = "0.1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
