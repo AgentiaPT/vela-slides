@@ -152,6 +152,8 @@ jobs:
 
       - name: Rebuild vela.jsx monolith
         run: python3 ../skills/vela-slides/scripts/concat.py
+        env:
+          PYTHONIOENCODING: utf-8
 
       - name: Install frontend dependencies
         run: npm install
