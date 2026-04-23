@@ -24,10 +24,27 @@ const loadingHint = $("vela-loading-hint");
 
 function setMsg(text) { if (loadingMsg) loadingMsg.textContent = text; }
 function setHint(text) { if (loadingHint) loadingHint.textContent = text; }
+
+// Never template user-reachable strings into innerHTML — runtime errors
+// surfaced here can originate from the Vela monolith's validators and
+// from Claude Code's stderr/stdout via the agents bridge, both of which
+// may include attacker-controlled deck content. The Neutralino webview
+// grants os.spawnProcess, so a single `<img onerror=…>` would escalate
+// DOM XSS straight to RCE on the host. We build the panel out of
+// textContent-only nodes to keep it purely inert.
 function showError(text) {
   const host = $("vela-loading");
-  if (!host) { alert(text); return; }
-  host.innerHTML = `<div class="title">VELA</div><div class="err">${text}</div>`;
+  const str = String(text == null ? "" : text);
+  if (!host) { alert(str); return; }
+  host.replaceChildren();
+  const h = document.createElement("div");
+  h.className = "title";
+  h.textContent = "VELA";
+  const body = document.createElement("div");
+  body.className = "err";
+  body.textContent = str;
+  host.appendChild(h);
+  host.appendChild(body);
 }
 
 async function boot() {
@@ -176,22 +193,30 @@ async function refreshPicker() {
 
 function renderPickerList() {
   const cur = deckIO.currentPath();
+  picker.list.replaceChildren();
   if (!picker.decks.length) {
-    picker.list.innerHTML = '<div class="empty">No .vela or .json files in this folder. Pick a different folder or add a deck.</div>';
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No .vela or .json files in this folder. Pick a different folder or add a deck.";
+    picker.list.appendChild(empty);
     return;
   }
-  picker.list.innerHTML = "";
   picker.decks.forEach((d, i) => {
+    // Filenames come from disk — use DOM primitives with textContent so a
+    // deck named "<img src=x onerror=…>.vela" cannot execute. The webview
+    // grants Neutralino.os.spawnProcess, so any HTML injection sink here
+    // is effectively RCE.
     const row = document.createElement("div");
     row.className = "item" + (d.path === cur ? " current" : "") + (i === picker.focusIdx ? " focus" : "");
-    row.innerHTML = `<span class="bullet"></span><span>${escapeHtml(d.name)}</span>`;
+    const bullet = document.createElement("span");
+    bullet.className = "bullet";
+    const name = document.createElement("span");
+    name.textContent = d.name;
+    row.appendChild(bullet);
+    row.appendChild(name);
     row.onclick = () => closePicker(d.path);
     picker.list.appendChild(row);
   });
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 async function openPicker() {
