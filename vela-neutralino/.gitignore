@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+bin/
+.tmp/
+.neutralino/
+.storage/
+resources/vela.jsx
+resources/js/neutralino.js
+resources/js/neutralino.d.ts
+neutralinojs.log
