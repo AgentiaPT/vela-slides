@@ -175,12 +175,14 @@ _BK = {
     "yT": "yTop", "yB": "yBottom", "sL": "showLabels",
     "brd": "bordered", "cpt": "compact", "hl": "highlight",
     "dr": "drop", "hd": "hideDivider", "sI": "showIcons",
-    "val": "value"
+    "val": "value",
+    "cp": "copy",
+    "rv": "reveal"
 }
 _BK_REV = {v: k for k, v in _BK.items()}
 
 # Slide-level key map: short → full
-_SK = {"n": "title", "d": "duration", "B": "blocks", "p": "padding"}
+_SK = {"n": "title", "d": "duration", "B": "blocks", "p": "padding", "sN": "studyNotes"}
 _SK_REV = {v: k for k, v in _SK.items()}
 
 # Theme preset key map: short → full slide property
@@ -250,6 +252,11 @@ def _expand_slide(slide, themes):
             if full_prop not in expanded:
                 expanded[full_prop] = tv
 
+    # Expand blocks inside L and R arrays (cols layout)
+    for col_key in ("L", "R"):
+        if col_key in expanded and isinstance(expanded[col_key], list):
+            expanded[col_key] = [_expand_block(b) for b in expanded[col_key]]
+
     return expanded
 
 
@@ -277,7 +284,9 @@ def expand_deck(compact):
             # Skip known text-content keys to avoid corrupting prose.
             _TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
                                     "author", "loopLabel", "gateLabel", "caption",
-                                    "annotation", "date", "markup", "deckTitle"})
+                                    "annotation", "date", "markup", "deckTitle",
+                                    # studyNotes (offline student content) prose fields — preserve literal hex codes
+                                    "diagram", "questions", "glossary", "definition"})
             # Sort longest alias first so $AB is replaced before $A
             _sorted = sorted(palette.items(), key=lambda x: -len(x[0]))
 
@@ -422,6 +431,10 @@ def compact_deck(full):
                 continue  # Omit — comes from theme
             if k == "blocks":
                 cs[_SK_REV.get(k, k)] = [_compact_block(b) for b in v]
+            elif k == "L" and isinstance(v, list):
+                cs["L"] = [_compact_block(b) for b in v]
+            elif k == "R" and isinstance(v, list):
+                cs["R"] = [_compact_block(b) for b in v]
             elif k in _SK_REV:
                 cs[_SK_REV[k]] = v
             else:
@@ -433,6 +446,16 @@ def compact_deck(full):
         "T": themes,
         "S": compact_slides
     }
+
+    # Preserve studyNotes verbatim across the palette-aliasing step.
+    # The blind string-replace below would otherwise mangle literal hex codes
+    # ("#3b82f6") that happen to appear inside prose, SVG diagrams, or glossary
+    # definitions. Extract them now, restore after the JSON round-trip.
+    _preserved_sn = []
+    for _ci, _cs in enumerate(compact_slides):
+        if isinstance(_cs, dict) and _cs.get("sN") is not None:
+            _preserved_sn.append((_ci, _cs["sN"]))
+            _cs["sN"] = None  # placeholder — will be restored verbatim below
 
     # Color palette: find repeated colors in the JSON, alias as $A, $B, ...
     raw = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
@@ -460,6 +483,12 @@ def compact_deck(full):
             cmap[alias] = color
         result = json.loads(raw)
         result["C"] = cmap
+
+    # Restore preserved studyNotes verbatim (bypassing palette aliasing)
+    if _preserved_sn and isinstance(result.get("S"), list):
+        for _ci, _sn in _preserved_sn:
+            if 0 <= _ci < len(result["S"]) and isinstance(result["S"][_ci], dict):
+                result["S"][_ci]["sN"] = _sn
 
     return result
 
@@ -858,7 +887,7 @@ def turbo_deck(deck):
     palette = _build_palette(deck)
 
     def encode_slide(s):
-        return [
+        arr = [
             s.get("title", ""),
             _ci(palette, s.get("bg", "")),
             s.get("bgGradient", ""),
@@ -870,6 +899,13 @@ def turbo_deck(deck):
             s.get("duration", 0),
             [_turbo_encode_block(b, palette) for b in s.get("blocks", [])]
         ]
+        # Optional position 10: studyNotes (offline student content).
+        # Backward compatible — old decoders reading new decks ignore extras;
+        # new decoders reading old decks handle missing position via len() guard.
+        sn = s.get("studyNotes")
+        if sn:
+            arr.append(sn)
+        return arr
 
     def encode_item(item):
         return [
@@ -918,6 +954,9 @@ def unturbo_deck(data):
         if s[7]: result["padding"] = s[7]
         if s[8]: result["duration"] = s[8]
         result["blocks"] = [_turbo_decode_block(b, palette) for b in s[9]]
+        # Optional position 10: studyNotes (backward compatible with length-10 turbo)
+        if len(s) > 10 and s[10]:
+            result["studyNotes"] = s[10]
         return result
 
     def decode_item(item):
@@ -1529,6 +1568,12 @@ def slide_view(args):
         print(f"  blocks ({len(slide.get('blocks', []))}):")
         for i, block in enumerate(slide.get("blocks", [])):
             print(f"    [{i}] {_block_summary(block)}")
+        sn = slide.get("studyNotes")
+        if sn and isinstance(sn, dict):
+            print(f"  studyNotes: {len(sn.get('text', ''))} chars, "
+                  f"{len(sn.get('questions', []) or [])} questions, "
+                  f"{len(sn.get('glossary', {}) or {})} glossary terms, "
+                  f"diagram={'yes' if sn.get('diagram') else 'no'}")
         sys.exit(EXIT_OK)
 
 def slide_edit(args):
@@ -1739,6 +1784,8 @@ def deck_stats(args):
                     issues.append(f'Slide {total_slides}: missing bg/bgGradient')
                 blocks = slide.get("blocks", [])
                 block_count = len(blocks)
+                block_count += len(slide.get("L", []))
+                block_count += len(slide.get("R", []))
                 if block_count > 7:
                     issues.append(f'Slide {total_slides}: {block_count} blocks (overflow risk)')
                 for b in blocks:
@@ -1750,6 +1797,16 @@ def deck_stats(args):
                             for cb in cell.get("blocks", []):
                                 cbt = cb.get("type", "unknown")
                                 block_counts[cbt] = block_counts.get(cbt, 0) + 1
+                # Count blocks in L/R (cols layout)
+                for col_key in ("L", "R"):
+                    for b in slide.get(col_key, []):
+                        bt = b.get("type", "unknown")
+                        block_counts[bt] = block_counts.get(bt, 0) + 1
+                        if bt == "grid":
+                            for cell in b.get("items", []):
+                                for cb in cell.get("blocks", []):
+                                    cbt = cb.get("type", "unknown")
+                                    block_counts[cbt] = block_counts.get(cbt, 0) + 1
                 # Check heading+bullets monotony
                 types = [b.get("type", "") for b in blocks]
                 rich_types = {"flow", "grid", "table", "metric", "timeline", "steps",
@@ -2060,6 +2117,52 @@ def _extract_texts(deck):
                                         for key in ("text", "x", "label", "title"):
                                             if key in git and isinstance(git[key], str):
                                                 texts[f"{gp}.i{gii}.{key}"] = git[key]
+                # L/R blocks (cols layout)
+                for col_key in ("L", "R"):
+                    for bi, block in enumerate(slide.get(col_key, [])):
+                        bt = block.get("type", "")
+                        bp = f"{prefix}.{col_key}{bi}"
+                        if bt == "code":
+                            if "label" in block:
+                                texts[f"{bp}.label"] = block["label"]
+                            continue
+                        if bt == "spacer":
+                            continue
+                        for key in ("text", "label", "title", "value", "author", "caption"):
+                            if key in block and isinstance(block[key], str):
+                                texts[f"{bp}.{key}"] = block[key]
+                        for ii, it in enumerate(block.get("items", [])):
+                            if isinstance(it, str):
+                                texts[f"{bp}.i{ii}"] = it
+                            elif isinstance(it, dict):
+                                for key in ("text", "x", "label", "lb", "sublabel", "sl", "title"):
+                                    if key in it and isinstance(it[key], str):
+                                        texts[f"{bp}.i{ii}.{key}"] = it[key]
+                        for hi, h in enumerate(block.get("headers", [])):
+                            if isinstance(h, str):
+                                texts[f"{bp}.h{hi}"] = h
+                        for ri, row in enumerate(block.get("rows", [])):
+                            if isinstance(row, list):
+                                for ci, cell in enumerate(row):
+                                    if isinstance(cell, str):
+                                        texts[f"{bp}.r{ri}.c{ci}"] = cell
+                        if bt == "grid":
+                            for gi, gcell in enumerate(block.get("items", [])):
+                                for gbi, gblock in enumerate(gcell.get("blocks", [])):
+                                    gbt = gblock.get("type", "")
+                                    gp = f"{bp}.g{gi}.b{gbi}"
+                                    if gbt in ("spacer", "icon"):
+                                        continue
+                                    for key in ("text", "label", "title", "value"):
+                                        if key in gblock and isinstance(gblock[key], str):
+                                            texts[f"{gp}.{key}"] = gblock[key]
+                                    for gii, git in enumerate(gblock.get("items", [])):
+                                        if isinstance(git, str):
+                                            texts[f"{gp}.i{gii}"] = git
+                                        elif isinstance(git, dict):
+                                            for key in ("text", "x", "label", "title"):
+                                                if key in git and isinstance(git[key], str):
+                                                    texts[f"{gp}.i{gii}.{key}"] = git[key]
     return texts
 
 
@@ -2140,6 +2243,60 @@ def _patch_texts(deck, texts):
                                             key = f"{gp}.i{gii}.{prop}"
                                             if key in texts:
                                                 git[prop] = texts[key]; patched += 1
+                # L/R blocks (cols layout)
+                for col_key in ("L", "R"):
+                    for bi, block in enumerate(slide.get(col_key, [])):
+                        bt = block.get("type", "")
+                        bp = f"{prefix}.{col_key}{bi}"
+                        if bt == "code":
+                            key = f"{bp}.label"
+                            if key in texts:
+                                block["label"] = texts[key]; patched += 1
+                            continue
+                        if bt == "spacer":
+                            continue
+                        for prop in ("text", "label", "title", "value", "author", "caption"):
+                            key = f"{bp}.{prop}"
+                            if key in texts:
+                                block[prop] = texts[key]; patched += 1
+                        for ii, it in enumerate(block.get("items", [])):
+                            if isinstance(it, str):
+                                key = f"{bp}.i{ii}"
+                                if key in texts:
+                                    block["items"][ii] = texts[key]; patched += 1
+                            elif isinstance(it, dict):
+                                for prop in ("text", "x", "label", "lb", "sublabel", "sl", "title"):
+                                    key = f"{bp}.i{ii}.{prop}"
+                                    if key in texts:
+                                        it[prop] = texts[key]; patched += 1
+                        for hi, h in enumerate(block.get("headers", [])):
+                            key = f"{bp}.h{hi}"
+                            if key in texts:
+                                block["headers"][hi] = texts[key]; patched += 1
+                        for ri, row in enumerate(block.get("rows", [])):
+                            if isinstance(row, list):
+                                for ci, cell in enumerate(row):
+                                    key = f"{bp}.r{ri}.c{ci}"
+                                    if key in texts:
+                                        row[ci] = texts[key]; patched += 1
+                        if bt == "grid":
+                            for gi, gcell in enumerate(block.get("items", [])):
+                                for gbi, gblock in enumerate(gcell.get("blocks", [])):
+                                    gp = f"{bp}.g{gi}.b{gbi}"
+                                    for prop in ("text", "label", "title", "value"):
+                                        key = f"{gp}.{prop}"
+                                        if key in texts:
+                                            gblock[prop] = texts[key]; patched += 1
+                                    for gii, git in enumerate(gblock.get("items", [])):
+                                        if isinstance(git, str):
+                                            key = f"{gp}.i{gii}"
+                                            if key in texts:
+                                                gblock["items"][gii] = texts[key]; patched += 1
+                                        elif isinstance(git, dict):
+                                            for prop in ("text", "x", "label", "title"):
+                                                key = f"{gp}.i{gii}.{prop}"
+                                                if key in texts:
+                                                    git[prop] = texts[key]; patched += 1
     return patched
 
 

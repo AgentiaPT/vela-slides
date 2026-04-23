@@ -21,6 +21,13 @@ const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
 
+// ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
+// In local mode the channel port must be configured; in artifact mode we optimistically
+// assume the Anthropic proxy is available (Claude.ai injects it).
+const velaAIAvailable = () => VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : (typeof window !== "undefined" && window.self !== window.top);
+const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
+
 // Clipboard helper — Clipboard API is blocked in Claude.ai artifact iframes
 // Uses execCommand('copy') fallback with a temporary textarea
 const velaClipboard = (text) => {
@@ -57,8 +64,13 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.31";
+const VELA_VERSION = "12.36";
 const VELA_CHANGELOG = [
+  { v: "12.36", d: "AI capability detection: centralized velaAIAvailable() checks artifact proxy or channel availability. All AI buttons (Edit, Improve, Batch, Variants, Generate, Estimate, Vera chat send) are visible but disabled with tooltip when AI is unavailable. callClaudeAPI guards against missing backend. Fix vertical flow arrows: connector alignSelf uses 'center' in vertical mode so arrows align below nodes. Remove slide 16 from demo deck." },
+  { v: "12.35", d: "Cols layout: new layout:'cols' for two-column slides using L (left) and R (right) block arrays. B/blocks renders full-width above columns. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32). Works with all 21 block types. Pipeline: expand/compact/validate/stats/extract-text/patch-text all handle L/R." },
+  { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
+  { v: "12.33", d: "Code block copy button: new 'copy' property (compact: 'cp') adds a 'Copiar' button in the top-right corner that copies block.text to clipboard with 'Copiado ✓' feedback for 2s. Extracted CodeBlock sub-component for useState hook. paddingRight: 80 prevents text overlap when copy is active." },
+  { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
   { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
   { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
   { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
@@ -291,8 +303,8 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip HTML tags + truncate (entity escaping handled at render time)
-  return val.replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
+  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -447,16 +459,68 @@ function sanitizeComment(c) {
   };
 }
 
+// ━━━ Offline Study Notes sanitizer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Slide-level `studyNotes` field: pre-authored student-mode content that renders
+// with zero API calls. Shape: { text, diagram?, questions?, glossary? }.
+// Rich text (parseInline), inline X-Ray links ([label](url) + [term](#key)),
+// optional inline SVG diagram, up to 6 follow-up questions, and a glossary map.
+function sanitizeStudyNotes(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out = {};
+  if (typeof raw.text === "string") {
+    const t = sanitizeString(raw.text, 4000);
+    if (t) out.text = t;
+  }
+  if (!out.text) return undefined; // text is required; drop the whole block otherwise
+  if (typeof raw.diagram === "string" && raw.diagram.trim()) {
+    const svg = sanitizeSvgMarkup(raw.diagram.slice(0, 8000));
+    if (svg) out.diagram = svg;
+  }
+  if (Array.isArray(raw.questions)) {
+    const qs = raw.questions.slice(0, 6)
+      .map((q) => sanitizeString(typeof q === "string" ? q : String(q || ""), 160))
+      .filter((q) => q.length > 0);
+    if (qs.length) out.questions = qs;
+  }
+  if (raw.glossary && typeof raw.glossary === "object" && !Array.isArray(raw.glossary)) {
+    const gl = {};
+    let count = 0;
+    for (const [k, v] of Object.entries(raw.glossary)) {
+      if (count >= 24) break;
+      if (typeof k !== "string" || !v || typeof v !== "object") continue;
+      const key = k.toLowerCase().replace(/[^\w\-]/g, "").slice(0, 48);
+      if (!key) continue;
+      const def = sanitizeString(typeof v.definition === "string" ? v.definition : "", 400);
+      if (!def) continue;
+      const entry = { definition: def };
+      if (typeof v.url === "string" && v.url.trim()) {
+        const safe = sanitizeUrl(v.url.trim());
+        if (safe) entry.url = safe;
+      }
+      gl[key] = entry;
+      count++;
+    }
+    if (Object.keys(gl).length) out.glossary = gl;
+  }
+  return out;
+}
+
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
+  if (clean.studyNotes) {
+    const sn = sanitizeStudyNotes(clean.studyNotes);
+    if (sn) clean.studyNotes = sn; else delete clean.studyNotes;
+  }
   return clean;
 }
 
@@ -746,8 +810,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left", contentFlex?, imageFlex?, splitGap? }
-Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
 Block types:

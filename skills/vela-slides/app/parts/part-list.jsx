@@ -219,6 +219,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
           >
             {sPct > 0 && <div title={`${fmtTime(sDur)}${s.timeLock ? " 🔒" : ""}`} style={{ position: "absolute", left: 0, bottom: 0, height: 2, width: `${sPct}%`, background: "#8B5CF630", borderRadius: "0 1px 1px 0", cursor: "default" }} />}
             <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isActive ? T.accent : T.textDim, marginRight: 4, fontWeight: 700, minWidth: 14 }}>{(slideOffset || 0) + si + 1}</span>
+            {s.studyNotes?.text ? <span data-study-marker title="Has offline study notes" style={{ fontSize: 10, lineHeight: 1, marginRight: 3, flexShrink: 0 }}>🎓</span> : null}
             <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isActive ? T.accent : T.text, marginRight: 4, minWidth: 30, textAlign: "right", display: "inline-block" }}>{((t) => { const m = Math.floor(t / 60); const s = t % 60; return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; })(slideCumTime)}</span>
             {editingSi === si ? (
               <input autoFocus value={editTitle}

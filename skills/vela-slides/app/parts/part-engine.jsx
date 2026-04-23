@@ -4,6 +4,7 @@
 
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
+  if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
   // Channel mode needs longer timeout — Claude Code roundtrip is slower than direct API
   const effectiveTimeout = (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) ? Math.max(timeoutMs, 120000) : timeoutMs;
   const controller = new AbortController();
@@ -746,7 +747,7 @@ ${ICON_LIST}`;
 
   // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
   // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock"]);
+  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }

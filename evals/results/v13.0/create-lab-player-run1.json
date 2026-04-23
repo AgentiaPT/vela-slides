@@ -1,0 +1,129 @@
+{
+  "session_id": "2aa1cfb0-3c01-45b1-99ea-efed2251c19c",
+  "model": "sonnet",
+  "version": "v13.0",
+  "scenario": "create-lab-player",
+  "rep": 1,
+  "turns": 5,
+  "totals": {
+    "input_tokens": 7,
+    "output_tokens": 3804,
+    "cache_read_tokens": 48225,
+    "cache_write_tokens": 22197,
+    "total_tokens": 74233,
+    "cost_usd": 0.15478725,
+    "tool_calls": 0,
+    "duration_s": 68.1
+  },
+  "assertions": {
+    "passed": 12,
+    "total": 12,
+    "slides": 10,
+    "types_found": [
+      "badge",
+      "bullets",
+      "callout",
+      "challenge",
+      "code",
+      "heading",
+      "icon-row",
+      "progress",
+      "prompt",
+      "spacer",
+      "steps",
+      "tag-group",
+      "text"
+    ],
+    "results": [
+      {
+        "type": "file_exists",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "json_valid",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "slide_count",
+        "passed": true,
+        "detail": 10
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "prompt"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "challenge"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "callout"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "code"
+      },
+      {
+        "type": "block_type_present",
+        "passed": true,
+        "detail": "icon-row"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "prompt"
+      },
+      {
+        "type": "text_present",
+        "passed": true,
+        "detail": "challenge"
+      },
+      {
+        "type": "ships_ok",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "type": "format_compact",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  "quality": {
+    "deterministic": {
+      "slide_count": 10,
+      "block_types_used": [
+        "badge",
+        "bullets",
+        "callout",
+        "challenge",
+        "code",
+        "heading",
+        "icon-row",
+        "progress",
+        "prompt",
+        "steps",
+        "tag-group",
+        "text"
+      ],
+      "block_diversity": 0.6,
+      "block_type_entropy": 3.131,
+      "monotony_ratio": 0.25,
+      "theme_variety": 0,
+      "accent_colors": 0,
+      "gradient_slides": 2,
+      "heading_rate": 1.0,
+      "badge_rate": 1.0,
+      "words_per_slide": 45.0,
+      "blocks_per_slide": 4.8
+    }
+  }
+}

@@ -253,6 +253,38 @@ Iterative process diagram — flow block with return arrow.
 
 ---
 
+### 15. Annotated Study Slide *(v12.32)*
+Any archetype above **plus** an offline `studyNotes` block that renders in the 🎓 student panel with zero API calls.
+
+**When to use:** course material, self-study decks, accessible presentations, and any environment where a live AI tutor can't be guaranteed (shared files, non-Claude hosts, offline viewing).
+
+**Design rules:**
+- Keep `studyNotes.text` tight — 150–400 words (3–6 paragraphs). The panel is a companion, not a handout.
+- Include a `diagram` only when the visual genuinely adds information. It's not decoration.
+- Write `questions` that probe *why* and *how*, not *what* (the slide already answered *what*).
+- Populate `glossary` with the 3–8 key jargon words that actually appear on the slide. Don't catalogue every noun.
+- Inline X-Ray links: `[term](#key)` where keys are lowercase. Unknown keys render as plain label text — safe fallback.
+- For a definition + "learn more" combo, prefer `glossary[term] = { definition, url }` over raw inline `[label](https://…)` — it keeps the prose clean and surfaces the definition as a popover.
+- Questions become clickable Vera prompts only when the live API is reachable. Design them so they still make sense as static "questions to ponder" when read offline.
+
+**Minimal example (compact format, inside a slide):**
+```json
+"sN": {
+  "text": "Agents close the loop: **plan → act → observe → revise**. Each iteration is an auditable step, unlike a single-shot LLM call. See the [ReAct paper](https://arxiv.org/abs/2210.03629) for the original formulation of this pattern, or explore [what an agent really is](#agent).",
+  "questions": [
+    "Why does exposing the loop matter for trust and debugging?",
+    "When would you stop iterating — cost, confidence, or task completion?"
+  ],
+  "glossary": {
+    "agent": { "definition": "A goal-driven loop that plans, acts, and observes — not just a single prompt.", "url": "https://example.com/agents" }
+  }
+}
+```
+
+The 🎓 marker appears in the TOC, gallery thumbnails, and the slide viewer automatically. No extra wiring needed.
+
+---
+
 ### Spacing & Rhythm
 - Start content slides with a `badge` (section label) → `spacer h:8` → `heading`
 - Use `spacer h:12-16` between heading and content
@@ -342,3 +374,85 @@ For a 10-slide deck, aim for at least:
 ```
 
 **Rule of thumb:** Never use slide-level `align: "center"` if the slide contains `svg`, `divider`, or `progress` blocks. Use `align: "left"` + per-block centering instead.
+
+---
+
+## Cols Layout Patterns
+
+The `layout: "cols"` arranges blocks into two columns using `L` (left) and `R` (right) arrays. An optional `blocks` (compact: `B`) array renders full-width above the columns as a header area. `contentFlex` / `imageFlex` control column widths (default 1:1). `splitGap` controls the gap between columns (default 32px).
+
+### Header + Balanced Cols (most common)
+
+B: badge + heading + context callout
+L: primary content (steps, bullets, table)
+R: supporting visual (SVG, metrics, flow diagram)
+
+```json
+{
+  "layout": "cols",
+  "contentFlex": 3,
+  "imageFlex": 2,
+  "blocks": [
+    { "type": "badge", "text": "ARCHITECTURE" },
+    { "type": "heading", "text": "System Overview", "size": "2xl" }
+  ],
+  "L": [
+    { "type": "bullets", "items": ["Microservices", "Event-driven", "Auto-scaling"] }
+  ],
+  "R": [
+    { "type": "flow", "items": [{"icon": "Upload", "label": "In"}, {"icon": "Cpu", "label": "Process"}, {"icon": "Download", "label": "Out"}] }
+  ]
+}
+```
+
+### Pure Side-by-Side (no header)
+
+B: (empty / omitted)
+L: "Before" content with badge
+R: "After" content with badge
+
+```json
+{
+  "layout": "cols",
+  "L": [
+    { "type": "badge", "text": "BEFORE", "bg": "#dc2626" },
+    { "type": "bullets", "items": ["Manual deploys", "3-hour rollbacks"] }
+  ],
+  "R": [
+    { "type": "badge", "text": "AFTER", "bg": "#16a34a" },
+    { "type": "bullets", "items": ["CI/CD pipeline", "5-min rollbacks"] }
+  ]
+}
+```
+
+### Content + Sidebar
+
+contentFlex: 4, imageFlex: 1
+L: main content
+R: 1-2 metrics or single visual
+
+```json
+{
+  "layout": "cols",
+  "contentFlex": 4,
+  "imageFlex": 1,
+  "blocks": [
+    { "type": "heading", "text": "Q4 Results", "size": "2xl" }
+  ],
+  "L": [
+    { "type": "steps", "items": [{"title": "Step 1", "text": "Launched beta"}, {"title": "Step 2", "text": "Scaled to 10K users"}] }
+  ],
+  "R": [
+    { "type": "metric", "value": "98%", "label": "Uptime", "size": "2xl" }
+  ]
+}
+```
+
+### Common Ratio Patterns
+
+| Ratio | contentFlex:imageFlex | Use case |
+|-------|----------------------|----------|
+| Equal | 1:1 | Before/after, comparison |
+| Wide left | 3:2 | Text + supporting visual |
+| Wide right | 2:3 | Summary + detailed steps |
+| Sidebar | 4:1 or 1:4 | Main content + narrow metric strip |

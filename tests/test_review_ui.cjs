@@ -19,7 +19,9 @@ const http = require('http');
 const PORT = 8765;
 const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-e2e-serve');
 const ROOT = path.resolve(__dirname, '..');
-const ASSEMBLED = path.join(ROOT, 'welcome-to-vela-slides.jsx');
+// Use a fixed path inside SERVE_DIR so we control where assemble.py writes,
+// regardless of the deck title slug.
+const ASSEMBLED = path.join(SERVE_DIR, 'assembled.jsx');
 
 // ── Resolve Playwright ──────────────────────────────────────────────
 function resolvePlaywright() {
@@ -58,7 +60,7 @@ function buildTestHTML() {
   // Assemble the deck
   console.log('Assembling deck...');
   execSync(
-    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts`,
+    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
   );
 
@@ -253,7 +255,18 @@ async function runTests() {
   });
 
   await test('Empty state shows no open comments', async () => {
-    await expectText('No open comments');
+    // Demo deck may have pre-existing comments — clear them first
+    const resolveBtn = page.locator('button').filter({ hasText: 'Resolve All' }).first();
+    if (await resolveBtn.isVisible().catch(() => false)) {
+      await resolveBtn.click();
+      await settle();
+    }
+    const clearBtn = page.locator('button').filter({ hasText: 'Clear Done' }).first();
+    if (await clearBtn.isVisible().catch(() => false)) {
+      await clearBtn.click();
+      await settle();
+    }
+    await expectText('No open comments', 3000);
   });
 
   // ── 2. Mutual Exclusion ──
@@ -332,20 +345,26 @@ async function runTests() {
 
   // ── 5. Slide-level Comments via Block Hover ──
   await test('Block hover shows comment button (💬)', async () => {
-    // Hover over a block on the slide to reveal the 💬 button
-    const block = page.locator('[data-block-type]').first();
+    // Hover over a visible block (skip spacers/dividers — they have no visible area)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.waitFor({ state: 'visible' });
     await block.hover();
     await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
-    await commentBtn.waitFor({ state: 'visible', timeout: 1000 });
+    await commentBtn.waitFor({ state: 'visible' });
   });
 
   await test('Block comment button opens inline comment input', async () => {
+    // Re-hover to ensure comment button is visible (hover state may be lost between tests)
+    const block = page.locator('[data-block-type]:not([data-block-type="spacer"]):not([data-block-type="divider"])').first();
+    await block.hover();
+    await settle();
     const commentBtn = page.locator('button[title="Add comment"]').first();
+    await commentBtn.waitFor({ state: 'visible' });
     await commentBtn.click();
     await settle();
     const input = page.locator('input[placeholder*="comment"], textarea[placeholder*="comment"]').first();
-    await input.waitFor({ state: 'visible', timeout: 1000 });
+    await input.waitFor({ state: 'visible' });
   });
 
   await test('Adding a slide-level comment via block', async () => {
@@ -475,6 +494,7 @@ async function runTests() {
   const skipSetup = process.argv.includes('--skip-setup');
   let server = null;
   const t0 = Date.now();
+  let fatalError = null;
 
   try {
     const { chromium } = resolvePlaywright();
@@ -507,7 +527,9 @@ async function runTests() {
 
     await browser.close();
   } catch (e) {
+    fatalError = e;
     console.error('\n💥 Fatal error:', e.message);
+    if (e.stack) console.error(e.stack);
   } finally {
     server?.close();
   }
@@ -515,7 +537,10 @@ async function runTests() {
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  if (failed === 0) {
+  if (fatalError) {
+    console.log(`  💥 Fatal error — 0 tests ran (${elapsed}s)`);
+    console.log(`  ${fatalError.message}`);
+  } else if (failed === 0) {
     console.log(`  ✅ ${passed} passed (${elapsed}s)`);
   } else {
     console.log(`  ❌ ${passed} passed, ${failed} failed (${elapsed}s)`);
@@ -528,5 +553,5 @@ async function runTests() {
     console.log('');
   }
 
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit((failed > 0 || fatalError) ? 1 : 0);
 })();

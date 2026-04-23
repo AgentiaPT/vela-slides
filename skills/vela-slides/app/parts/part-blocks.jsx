@@ -18,40 +18,185 @@ class SlideErrorBoundary extends React.Component {
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
-function parseInline(text) {
+// ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
+// links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
+// All existing call sites omit ctx and behavior is identical to before.
+function parseInline(text, ctx) {
   if (!text || typeof text !== "string") return text;
-  const parseLine = (line) => {
-    if (!line.includes("*") && !line.includes("__") && !line.includes("~~")) return line;
-    const parts = [];
-    const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const glossary = ctx && ctx.glossary;
+  const keyPrefix = (ctx && ctx.keyPrefix) || "il";
+
+  const renderLinkToken = (tok, key) => {
+    const label = tok.label;
+    const target = tok.target;
+    if (target && target.charAt(0) === "#") {
+      const term = target.slice(1).toLowerCase();
+      const entry = glossary && glossary[term];
+      if (!entry) return label; // unknown term → plain text fallback
+      return <GlossaryLink key={key} label={label} term={term} entry={entry} />;
+    }
+    const safe = sanitizeUrl(target);
+    if (!safe) return label; // blocked URL → plain text fallback
+    return <a key={key} href={safe} target="_blank" rel="noopener noreferrer"
+              title={linkPreview(safe, label)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: T.accent, textDecoration: "underline", cursor: "pointer" }}>{label}</a>;
+  };
+
+  const spliceSentinels = (str, linkTokens, prefix) => {
+    // Replace \u0000LINK{i}\u0000 sentinels inside a plain string with React nodes
+    if (!str || typeof str !== "string" || !str.includes("\u0000LINK")) return [str];
+    const out = [];
+    const re = /\u0000LINK(\d+)\u0000/g;
     let last = 0, m;
-    while ((m = re.exec(line)) !== null) {
-      if (m.index > last) parts.push(line.slice(last, m.index));
-      if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-      else if (m[3]) parts.push({ text: m[3], bold: true });
-      else if (m[4]) parts.push({ text: m[4], italic: true });
-      else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-      else if (m[6]) parts.push({ text: m[6], bold: true });
-      else if (m[7]) parts.push({ text: m[7], italic: true });
-      else if (m[8]) parts.push({ text: m[8], strike: true });
+    while ((m = re.exec(str)) !== null) {
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const tok = linkTokens[parseInt(m[1], 10)];
+      if (tok) out.push(renderLinkToken(tok, `${prefix}-${m[1]}`));
       last = m.index + m[0].length;
     }
-    if (last < line.length) parts.push(line.slice(last));
-    if (parts.length === 1 && typeof parts[0] === "string") return line;
-    return parts.map((p, i) => typeof p === "string" ? p : <span key={i} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>{p.text}</span>);
+    if (last < str.length) out.push(str.slice(last));
+    return out;
   };
+
+  const parseLine = (line, lineKey) => {
+    // Fast path: no link, no formatting → return untouched
+    const hasLink = line.includes("[") && line.includes("](");
+    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
+    if (!hasLink && !hasFmt) return line;
+
+    // Pass 1: extract [label](target) link spans into sentinel placeholders
+    let working = line;
+    const linkTokens = [];
+    if (hasLink) {
+      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+      working = line.replace(linkRe, (_, label, target) => {
+        const idx = linkTokens.length;
+        linkTokens.push({ label, target });
+        return `\u0000LINK${idx}\u0000`;
+      });
+    }
+
+    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
+    if (!hasFmt && linkTokens.length === 0) return working;
+    const parts = [];
+    if (hasFmt) {
+      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+      let last = 0, m;
+      while ((m = re.exec(working)) !== null) {
+        if (m.index > last) parts.push(working.slice(last, m.index));
+        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
+        else if (m[3]) parts.push({ text: m[3], bold: true });
+        else if (m[4]) parts.push({ text: m[4], italic: true });
+        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
+        else if (m[6]) parts.push({ text: m[6], bold: true });
+        else if (m[7]) parts.push({ text: m[7], italic: true });
+        else if (m[8]) parts.push({ text: m[8], strike: true });
+        last = m.index + m[0].length;
+      }
+      if (last < working.length) parts.push(working.slice(last));
+    } else {
+      parts.push(working);
+    }
+
+    // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
+    if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;
+    const out = [];
+    parts.forEach((p, i) => {
+      if (typeof p === "string") {
+        const spliced = spliceSentinels(p, linkTokens, `${keyPrefix}-${lineKey}-t${i}`);
+        spliced.forEach((el, j) => {
+          if (typeof el === "string") out.push(el);
+          else out.push(React.cloneElement(el, { key: `${keyPrefix}-${lineKey}-t${i}s${j}` }));
+        });
+      } else {
+        const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
+        out.push(
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+            {children.length === 1 ? children[0] : children}
+          </span>
+        );
+      }
+    });
+    return out;
+  };
+
   const textLines = text.split("\n");
-  if (textLines.length === 1) return parseLine(textLines[0]);
+  if (textLines.length === 1) return parseLine(textLines[0], 0);
   const result = [];
   textLines.forEach((line, i) => {
-    if (i > 0) result.push(<br key={`br${i}`} />);
-    const parsed = parseLine(line);
+    if (i > 0) result.push(<br key={`${keyPrefix}-br${i}`} />);
+    const parsed = parseLine(line, i);
     if (Array.isArray(parsed)) parsed.forEach((el, j) => {
-      result.push(typeof el === "string" ? el : React.cloneElement(el, { key: `${i}x${j}` }));
+      result.push(typeof el === "string" ? el : React.cloneElement(el, { key: `${keyPrefix}-${i}x${j}` }));
     });
     else result.push(parsed);
   });
   return result;
+}
+
+// ━━━ X-Ray Glossary Link — inline popover for [term](#key) refs ━━━━
+// Used by parseInline when ctx.glossary is provided. Matches the popover
+// style used by CommentPopover (inline absolute, click-outside + Esc close).
+function GlossaryLink({ label, term, entry }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const preview = (entry && entry.definition ? entry.definition : "").slice(0, 140);
+  return (
+    <span ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <span
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        title={preview}
+        data-xray-term={term}
+        style={{
+          color: T.accent,
+          borderBottom: `1px dashed ${T.accent}`,
+          cursor: "help",
+          fontWeight: 600,
+        }}
+      >{label}</span>
+      {open && (
+        <span style={{
+          position: "absolute",
+          top: "100%",
+          left: 0,
+          zIndex: 50,
+          marginTop: 4,
+          minWidth: 220,
+          maxWidth: 320,
+          padding: "10px 12px",
+          background: "#0f1219",
+          border: `1px solid ${T.accent}60`,
+          borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "#E6F1FF",
+          fontFamily: FONT.body,
+          whiteSpace: "normal",
+          textAlign: "left",
+        }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{term}</div>
+          <div>{entry && entry.definition}</div>
+          {entry && entry.url && (
+            <a href={entry.url} target="_blank" rel="noopener noreferrer"
+               onClick={(e) => e.stopPropagation()}
+               style={{ display: "inline-block", marginTop: 6, color: T.accent, fontSize: 11, textDecoration: "underline" }}>
+              Learn more →
+            </a>
+          )}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
@@ -361,6 +506,46 @@ function ZoomWrap({ children, enabled }) {
   </>;
 }
 
+// ━━━ Code Block (sub-component for useState copy feedback) ━━━━━━━
+function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
+  const [copied, setCopied] = useState(false);
+  const showCopy = !!block.copy;
+  const handleCopy = () => {
+    if (!block.text) return;
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(block.text).then(done).catch(() => {
+        // Fallback for non-HTTPS / sandboxed iframes
+        try { const ta = Object.assign(document.createElement("textarea"), { value: block.text, style: "position:fixed;opacity:0" }); document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); } catch (_) {}
+      });
+    }
+  };
+  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+    {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+    <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
+    {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
+  </div>;
+}
+
+// ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
+function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+  // reveal: true → starts collapsed (open=false); reveal: false/omitted → always open
+  const [open, setOpen] = useState(!block.reveal);
+  const isReveal = !!block.reveal;
+  const chevron = isReveal ? (open ? "▾" : "▸") : null;
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+    {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...(isReveal ? { cursor: "pointer" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
+    <div style={{ flex: 1 }}>
+      {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
+        {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
+        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} />
+      </div>}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}</div>}
+      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />}
+    </div>
+  </div>;
+}
+
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
   // Runtime guard: ensure .style is always a plain object
@@ -409,10 +594,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div></ZoomWrap>;
 
     case "code":
-      return <div className={cls} style={{ background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
-        {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }} />
-      </div>;
+      return <CodeBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
@@ -434,13 +616,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       />)}</div>; })}</div>;
 
     case "callout":
-      return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
-        {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2 }}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
-        <div style={{ flex: 1 }}>
-          {block.title && <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: 4 }} />}
-          <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />
-        </div>
-      </div>;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
@@ -552,7 +728,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           const hasGate = item.gate;
           const gc = block.gateColor || st.accent;
           els.push(
-            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: "flex-start", height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
+            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: isVert ? "center" : "flex-start", height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
               {hasGate && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
@@ -1075,11 +1251,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
   }, [slide, index, requestedJustify]);
 
-  if (!blocks.length) return null;
+  if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
   const layout = slide.layout || "stack";
+  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
   const isSplit = layout === "image-right" || layout === "image-left";
+  const colsL = isCols ? (slide.L || []) : [];
+  const colsR = isCols ? (slide.R || []) : [];
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -1161,6 +1340,20 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
+    if (isCols) {
+      const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+      const colsRow = (
+        <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          </div>
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
+            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          </div>
+        </div>
+      );
+      return [...headerBlocks, colsRow];
+    }
     if (isSplit) {
       const contentIdxs = [], imageIdxs = [];
       blocks.forEach((b, i) => { (b.type === "image" ? imageIdxs : contentIdxs).push(i); });

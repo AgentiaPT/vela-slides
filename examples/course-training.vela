@@ -62,7 +62,18 @@
                 },
                 { "type": "spacer", "h": 12 },
                 { "type": "callout", "text": "Prerequisites: Completion of Module 1 (AI Overview) and Module 2 (Language Models). Familiarity with at least one LLM interface (Claude, ChatGPT, etc.).", "icon": "Info", "bg": "#10b98115", "border": "#10b98140" }
-              ]
+              ],
+              "studyNotes": {
+                "text": "This module covers the four major [prompting strategies](#prompting-strategy) you'll encounter in practice. By the end, you should be able to pick the right strategy for any task.\n\nThe checklist on screen maps to the four objectives that will be assessed in your final project. You don't need to memorize every technique — the goal is to build a **mental model** for when to reach for each one.\n\nNote: the [CIEC framework](#ciec) will be introduced on slide 4. It's the structured approach we use to actually *write* prompts once you've chosen a strategy.",
+                "questions": [
+                  "Why might 'chain-of-thought' help with math problems but not sentiment analysis?",
+                  "Which objective do you think will be hardest to demonstrate in a project?"
+                ],
+                "glossary": {
+                  "prompting-strategy": { "definition": "A systematic approach to crafting LLM inputs. The four main strategies are zero-shot, few-shot, chain-of-thought, and direct instruction." },
+                  "ciec": { "definition": "Context, Instruction, Examples, Constraints — a four-step framework for writing structured prompts that consistently produce high-quality outputs." }
+                }
+              }
             },
             {
               "title": "Core Concepts",
@@ -89,7 +100,22 @@
                   ]
                 },
                 { "type": "text", "text": "Key insight: Few-shot prompting improves accuracy by 15-30% on classification tasks, but adds token cost. Choose based on your accuracy-cost tradeoff.", "size": "sm", "color": "#6ee7b7" }
-              ]
+              ],
+              "studyNotes": {
+                "text": "The matrix maps the four main [prompting strategies](#prompting-strategy) along two axes: task complexity (horizontal) and the accuracy-vs-cost tradeoff (vertical).\n\n**[Zero-shot](#zero-shot)** is the default starting point — no examples, lowest token cost, and works well for simple tasks where the LLM already 'knows' the domain. Move to **[few-shot](#few-shot)** when accuracy matters more than cost: providing 2-5 input/output pairs typically boosts classification accuracy by 15-30%.\n\nFor multi-step reasoning (math, logic chains, planning), **[chain-of-thought](#chain-of-thought)** prompting asks the model to show its work. This dramatically improves accuracy on problems with intermediate steps, but increases output length.\n\n**Direct instruction** is a strong baseline for tasks that don't fit the other categories — clear imperative sentences like 'Rewrite this paragraph at a 6th-grade reading level.'",
+                "diagram": "<svg viewBox='0 0 300 80' xmlns='http://www.w3.org/2000/svg'><text x='10' y='18' font-size='10' fill='#6ee7b7' font-family='monospace'>Prompt selection flow:</text><rect x='10' y='28' width='60' height='28' rx='4' fill='#064e3b' stroke='#34d399' stroke-width='1'/><text x='40' y='46' text-anchor='middle' font-size='9' fill='#d1fae5' font-family='monospace'>Simple?</text><line x1='70' y1='42' x2='100' y2='32' stroke='#34d399' stroke-width='1'/><text x='76' y='30' font-size='7' fill='#6ee7b7'>yes</text><line x1='70' y1='42' x2='100' y2='56' stroke='#f59e0b' stroke-width='1'/><text x='76' y='58' font-size='7' fill='#f59e0b'>no</text><rect x='100' y='20' width='65' height='24' rx='4' fill='#064e3b' stroke='#34d399'/><text x='132' y='36' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Zero-shot</text><rect x='100' y='44' width='65' height='24' rx='4' fill='#064e3b' stroke='#f59e0b'/><text x='132' y='60' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Multi-step?</text><line x1='165' y1='56' x2='195' y2='46' stroke='#3b82f6' stroke-width='1'/><text x='172' y='44' font-size='7' fill='#3b82f6'>yes</text><line x1='165' y1='56' x2='195' y2='66' stroke='#34d399' stroke-width='1'/><text x='172' y='70' font-size='7' fill='#34d399'>no</text><rect x='195' y='34' width='65' height='24' rx='4' fill='#064e3b' stroke='#3b82f6'/><text x='228' y='50' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>CoT</text><rect x='195' y='60' width='65' height='18' rx='4' fill='#064e3b' stroke='#34d399'/><text x='228' y='73' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Few-shot</text></svg>",
+                "questions": [
+                  "When would few-shot prompting actually hurt performance compared to zero-shot?",
+                  "Why does chain-of-thought work for math but less well for creative writing?",
+                  "How would you decide between zero-shot and direct instruction for a new task?"
+                ],
+                "glossary": {
+                  "prompting-strategy": { "definition": "A systematic approach to crafting LLM inputs — zero-shot, few-shot, chain-of-thought, or direct instruction — chosen based on task complexity and accuracy requirements." },
+                  "zero-shot": { "definition": "Asking the model to perform a task with no examples. Relies entirely on pre-training knowledge. Lowest token cost, works best for well-understood tasks." },
+                  "few-shot": { "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%." },
+                  "chain-of-thought": { "definition": "Prompting the model to reason step-by-step ('think out loud') before giving a final answer. Critical for multi-step problems like math, logic, and planning.", "url": "https://arxiv.org/abs/2201.11903" }
+                }
+              }
             },
             {
               "title": "The Framework",
@@ -120,7 +146,19 @@
                   "centerLabel": "CIEC",
                   "centerSub": "iterate"
                 }
-              ]
+              ],
+              "studyNotes": {
+                "text": "The [CIEC framework](#ciec) gives you a repeatable checklist for prompt construction. Think of it as the 'grammar' of good prompting — you can break the rules once you internalize them, but they prevent the most common mistakes.\n\n**Context** sets the stage. Saying 'You are a senior data analyst writing for a non-technical board' radically changes output style vs. the same question with no context.\n\n**Instruction** is the task itself. Be specific: 'Summarize in exactly 3 bullet points' beats 'Make it shorter.'\n\n**Examples** ([few-shot](#few-shot) anchoring) are optional but powerful. Even one input/output pair can steer formatting, tone, and depth.\n\n**Constraints** are your guardrails: token limits, forbidden topics, required schemas, tone requirements.\n\nThe [iterative cycle](#iteration) (Draft → Test → Evaluate → Refine) shown below the steps is how you improve prompts *after* the first draft. Treat prompts like code — you ship v1 fast and iterate based on output quality.",
+                "questions": [
+                  "Which CIEC step do beginners most often skip, and what goes wrong when they do?",
+                  "How would you apply CIEC to a task where you need code generation, not text?"
+                ],
+                "glossary": {
+                  "ciec": { "definition": "Context, Instruction, Examples, Constraints — a four-step framework for structured prompt writing that consistently produces higher-quality LLM outputs." },
+                  "few-shot": { "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%." },
+                  "iteration": { "definition": "The cycle of drafting, testing, evaluating, and refining a prompt. Like code review, each pass tightens quality — most production prompts go through 3-5 iterations." }
+                }
+              }
             },
             {
               "title": "Practice Exercise",

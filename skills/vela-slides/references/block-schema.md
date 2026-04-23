@@ -1,6 +1,6 @@
 # Vela Block Schema Reference
 
-Complete reference for all Vela v13 slide block types (27 total).
+Complete reference for all Vela v12 slide block types (27 total).
 
 ## Slide Object
 
@@ -16,11 +16,70 @@ Complete reference for all Vela v13 slide block types (27 total).
   "padding": "36px 48px",                       // slide padding (CSS format)
   "gap": 16,                                    // gap between blocks (px)
   "duration": 60,                               // speaking time estimate (seconds, REQUIRED)
-  "title": "Slide Name"                         // optional label for filmstrip/TOC
+  "title": "Slide Name",                        // optional label for filmstrip/TOC
+  "layout": "stack|image-right|image-left|cols", // layout mode (default: "stack")
+  "L": [ ...block objects... ],                 // left column blocks (cols layout only)
+  "R": [ ...block objects... ],                 // right column blocks (cols layout only)
+  "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
+  "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
+  "splitGap": 32                                // gap between columns in px (cols/split layouts)
 }
 ```
 
 **Layout note:** Left-aligned slides (`align: "left"` or default) stretch blocks to full width. Center-aligned slides (`align: "center"`) shrink-wrap blocks. This means flow, grid, and progress blocks automatically fill the canvas on content slides.
+
+**Cols layout:** When `layout: "cols"`, the `blocks` array renders full-width above the two columns (optional header area — badge, heading, etc.). `L` and `R` arrays contain the left and right column blocks respectively. At least one of L/R must be present. `contentFlex`/`imageFlex` control column width ratio (default 1:1). `splitGap` controls the gap between columns (default 32px). All block types work inside L/R.
+
+## Slide-level optional: `studyNotes` (offline student content, v12.32+)
+
+Pre-authored companion content that renders in the 🎓 student panel with **zero API calls**. Mirrors the live Vera Teacher output shape so the existing markdown + inline-SVG renderer is reused.
+
+```json
+{
+  "studyNotes": {
+    "text": "Markdown body. Supports **bold**, *italic*, ~~strike~~, [label](https://example.com), and [X-Ray term](#agent).",
+    "diagram": "<svg viewBox='0 0 320 140'>...</svg>",
+    "questions": ["Why does X happen?", "How does Y relate to Z?"],
+    "glossary": {
+      "agent": {
+        "definition": "A goal-driven loop that plans, acts, observes.",
+        "url": "https://example.com/agents"
+      }
+    }
+  }
+}
+```
+
+**Field reference:**
+- `text` *(required, string, ≤ 4000 chars, warn at 2000)* — markdown body, rendered via the same `parseInline` + `ChatMarkdown` pipeline used by live Vera chat. Supports `**bold**`, `*italic*`, `***both***`, `~~strike~~`, `__underscores__`, `[label](https://…)` external links, and `[label](#term)` X-Ray glossary refs.
+- `diagram` *(optional, string, ≤ 8000 chars)* — one complete, well-formed inline SVG. Rendered under the text body via `sanitizeSvgMarkup` (DOMParser-based strip of `<script>`, event handlers, `javascript:/data:/vbscript:` URIs).
+- `questions` *(optional, array, max 6, each ≤ 160 chars)* — pre-authored follow-up questions. When the Claude API / MCP channel is reachable they render as clickable buttons that send the question into the live Vera Teacher flow; otherwise they render as static "Questions to ponder" bullets.
+- `glossary` *(optional, object, max 24 entries)* — `{ termKey: { definition: string ≤ 400 chars, url?: sanitized URL } }`. Keys are lowercased and `[^\w-]` stripped on load, so match is case-insensitive. The inline syntax `[label](#term)` looks up the entry and renders a Kindle-style popover with the definition + optional "Learn more" link. Unknown terms render as plain label text.
+
+**Behavior matrix:**
+
+| Has `studyNotes` | API reachable | Result |
+|---|---|---|
+| yes | yes | Static content + clickable questions + Ask Vera input (live answers layer below) |
+| yes | no  | Static content only; questions become non-interactive bullets; no input |
+| no  | yes | Existing live `TeacherPanel` (auto-generates from the slide) |
+| no  | no  | Existing live `TeacherPanel` → graceful degrade via `callVeraTeacher` catch |
+
+**Sanitization:**
+- `text` strips HTML tags, NULL bytes (sentinel safety for the link parser), and truncates at 4000 chars.
+- `diagram` runs through `sanitizeSvgMarkup` — empty-string fallback if invalid.
+- External URLs allow only `http:`, `https:`, `mailto:` via `sanitizeUrl`. Blocked URLs render as plain text.
+- Glossary entries with empty definitions are dropped.
+
+**Visible marker:** Slides that carry `studyNotes` show a 🎓 badge in the TOC, gallery thumbnails, and main slide viewer (top-left, next to the top-right comment badge).
+
+**Limitation:** X-Ray `[term](#key)` syntax activates only inside `studyNotes.text`. Regular text / heading / bullets / callout blocks render it as plain label text because they call `parseInline(text)` without a glossary context.
+
+**Compact format:** short key `sN` on the slide object; value is passed verbatim (the palette-alias pass skips `studyNotes` fields so literal hex codes in prose aren't mangled).
+
+**Turbo format:** optional position 10 on the slide array. Backward compatible — old decoders ignore the extra position, new decoders guard on `len(s) > 10`.
+
+**Authoring:** JSON-only for v12.32. No in-app editor UI yet. A Vera `set_study_notes` tool is planned for a future release so the live engine can author offline notes on demand.
 
 ## Block Types
 
@@ -91,12 +150,13 @@ Inline image block.
 Note: When improving existing slides, keep `src` as `"keep-original"` to preserve image data.
 
 ### code
-Code snippet with label.
+Code snippet with label. Optional `copy: true` adds a "Copiar" button that copies text to clipboard.
 ```json
 {
   "type": "code",
   "text": "const hello = 'world';",
   "label": "JAVASCRIPT",
+  "copy": true,
   "size": "sm",
   "bg": "#1e293b",
   "color": "#e2e8f0"
@@ -138,12 +198,13 @@ Multi-column layout. Each cell contains its own blocks array.
 Max 2-3 cols. Max 6 cells. Keep cell blocks minimal (2-4 blocks each).
 
 ### callout
-Highlighted insight or tip box.
+Highlighted insight or tip box. Optional `reveal: true` makes it collapsible (starts closed, click to expand).
 ```json
 {
   "type": "callout",
   "text": "Key insight or important note here.",
   "title": "Optional Title",
+  "reveal": true,
   "bg": "rgba(59,130,246,0.15)",
   "border": "#3b82f6",
   "color": "#e2e8f0",

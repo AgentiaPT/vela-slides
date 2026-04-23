@@ -814,6 +814,96 @@ uiSuite("Student Mode", [
   }},
 ]);
 
+// ── v12.32: Offline Study Notes Suite ───────────────────────────────
+// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// patch the current slide with a pre-authored studyNotes object, then
+// exercises the offline StaticStudyPanel rendering (text + glossary
+// X-Ray links + questions + diagram). Does not depend on a live API.
+uiSuite("Study Notes", [
+  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
+    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  }},
+  { name: "Inject studyNotes into current slide", fn: async () => {
+    const sn = {
+      text: "An **agent** is a goal-driven loop. See [ReAct](https://arxiv.org/abs/2210.03629) or [what an agent is](#agent).",
+      diagram: "<svg viewBox='0 0 10 10' xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8' fill='#3b82f6'/></svg>",
+      questions: ["Why does this matter?", "When does it fail?"],
+      glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
+    };
+    const ok = window.__velaTestInjectStudyNotes(sn);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(150);
+  }},
+  { name: "🎓 study marker appears on slide viewer", fn: async () => {
+    await _waitFor(() => _$("[data-study-marker]"), 2000);
+  }},
+  { name: "Enter fullscreen for study-panel tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 3000);
+  }},
+  { name: "Activate student mode on studyNotes slide", fn: async () => {
+    const btn = _$("[data-testid='student-toggle']");
+    if (!btn) throw new Error("student-toggle not found");
+    _click(btn);
+    await _waitFor(() => _$("[data-study-panel]"), 3000);
+  }},
+  { name: "Panel renders STUDY NOTES header (not VERA)", fn: async () => {
+    const panel = _$("[data-study-panel]");
+    if (!panel) throw new Error("data-study-panel not found");
+    const txt = panel.textContent || "";
+    return txt.includes("STUDY NOTES");
+  }},
+  { name: "Authored text renders immediately (no spinner)", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    return !!body && (body.textContent || "").includes("goal-driven loop");
+  }},
+  { name: "Inline external link rendered as <a>", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    if (!body) return false;
+    const a = body.querySelector("a[href*='arxiv.org']");
+    return !!a;
+  }},
+  { name: "Glossary X-Ray link has dashed underline", fn: async () => {
+    const body = _$("[data-study-notes-text]");
+    if (!body) return false;
+    const span = body.querySelector("[data-xray-term='agent']");
+    if (!span) return false;
+    const style = span.getAttribute("style") || "";
+    return style.includes("dashed");
+  }},
+  { name: "Click X-Ray term opens glossary popover with definition", fn: async () => {
+    const span = _$("[data-xray-term='agent']");
+    if (!span) throw new Error("X-Ray term span not found");
+    _click(span);
+    await _wait(100);
+    const panel = _$("[data-study-panel]");
+    return !!panel && (panel.textContent || "").includes("goal-driven loop");
+  }},
+  { name: "SVG diagram renders inside panel", fn: async () => {
+    const dia = _$("[data-study-notes-diagram]");
+    return !!dia && !!dia.querySelector("svg");
+  }},
+  { name: "Authored questions render", fn: async () => {
+    const qs = _$("[data-study-notes-questions]");
+    return !!qs && (qs.textContent || "").includes("Why does this matter?");
+  }},
+  { name: "Exit student mode", fn: async () => {
+    const btn = _$("[data-testid='student-toggle']");
+    if (btn) _click(btn);
+    await _waitFor(() => !_$("[data-study-panel]"), 3000);
+  }},
+  { name: "Exit fullscreen after study-notes tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"), 3000);
+  }},
+  { name: "Clean up injected studyNotes", fn: async () => {
+    // Undo the UPDATE_SLIDE so we don't leak state into later tests
+    window.__velaTestInjectStudyNotes(undefined);
+    await _wait(100);
+  }},
+]);
+
 // ── v10: Gallery View Suite ──────────────────────────────────────────
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {
