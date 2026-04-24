@@ -117,15 +117,18 @@ async function stopWatcher() {
 }
 
 function onWatchEvent(evt) {
-  // Neutralino watcher event: { id, action, dir, filename }
+  // Neutralino watcher event: { id, action, dir, filename }.
+  // Action values in Neutralino 6.x: "add", "modified", "delete", "moved".
+  // Editors that save via atomic-rename (VS Code, many Claude Code tools)
+  // surface as "moved" or "add" rather than "modified", so we accept all
+  // three write-shaped actions.
   const payload = evt && evt.detail;
   if (!payload || !state.currentPath) return;
   const changed = `${payload.dir}/${payload.filename}`.replace(/\\/g, "/");
   const cur = state.currentPath.replace(/\\/g, "/");
   if (changed !== cur) return;
-  // Ignore echoes from our own writes.
   if (Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS) return;
-  if (payload.action !== "modify" && payload.action !== "add") return;
+  if (payload.action !== "modified" && payload.action !== "add" && payload.action !== "moved") return;
   readDeck(state.currentPath)
     .then((deck) => { if (state.onDeckLoaded) state.onDeckLoaded(deck, state.currentPath, { external: true }); })
     .catch((e) => console.warn("[deck-io] external reload failed:", e));
