@@ -1,0 +1,15 @@
+{
+  "name": "vela-neutralino",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vela slides desktop app (Neutralino.js shell).",
+  "license": "ELv2",
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "dev": "bash scripts/run.sh",
+    "build": "bash scripts/build.sh"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "11.7.1"
+  }
+}

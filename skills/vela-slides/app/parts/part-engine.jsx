@@ -5,6 +5,31 @@
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
   if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
+  // Neutralino desktop mode: the host shell installs window.__velaAgentSend
+  // that spawns a local coding CLI (Claude Code by default). We bypass the
+  // rest of this function entirely — no HTTP, no AbortController, timeouts
+  // are managed by the subprocess wrapper.
+  if (typeof window !== "undefined" && typeof window.__velaAgentSend === "function") {
+    // Per-deck trust gate (Neutralino desktop only). Returns "allow" / "deny";
+    // the shell shows a consent modal on first use. Missing gate → allow
+    // (artifact / serve.py runtimes have their own trust models).
+    if (typeof window.__velaTrustGate === "function") {
+      const decision = await window.__velaTrustGate();
+      if (decision === "deny") {
+        throw new Error("AI is disabled for this deck. Trust it in Settings to enable.");
+      }
+    }
+    const t0 = performance.now();
+    const text = await window.__velaAgentSend({
+      system: sysPrompt, messages, temperature, max_tokens: maxTokens, _callType,
+    });
+    velaSessionStats.add({
+      type: _callType, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_create_tokens: 0,
+      model: window.__velaAgentActive || "cli-agent", tool_calls: 0,
+      duration_ms: Math.round(performance.now() - t0), stop_reason: "cli",
+    });
+    return text || "";
+  }
   // Channel mode needs longer timeout — Claude Code roundtrip is slower than direct API
   const effectiveTimeout = (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) ? Math.max(timeoutMs, 120000) : timeoutMs;
   const controller = new AbortController();

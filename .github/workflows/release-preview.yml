@@ -1,8 +1,13 @@
 name: Release Preview
 
-# Builds a preview release ZIP from a PR branch.
-# Triggered by the release-preview-trigger.yml workflow (via /release-preview comment).
-# Can also be triggered manually from the Actions tab.
+# Builds a preview release from a PR branch:
+#   • skill ZIP — vela-slides skill package for Claude.ai upload
+#   • desktop binaries — unsigned per-OS Neutralino builds (linux x64/arm64,
+#     macOS x64/arm64/universal, windows x64)
+#
+# Triggered by release-preview-trigger.yml (via /release-preview PR comment)
+# or manually from the Actions tab. Skill and desktop jobs are independent:
+# either can fail without blocking the other's publish.
 
 on:
   workflow_dispatch:
@@ -25,10 +30,19 @@ permissions:
   pull-requests: write
 
 jobs:
-  build:
-    name: Build & Publish Preview
-    runs-on: ubuntu-latest
 
+  # ─────────────────────────────────────────────────────────────────────
+  # prepare — single source of truth for version, tag, and changelog.
+  # Avoids duplicating the Python regex in every consumer and keeps the
+  # release tag consistent across parallel build jobs.
+  # ─────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,13 +57,9 @@ jobs:
             echo "Building pinned SHA anyway for safety."
           fi
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Run tests
-        run: python3 tests/test_vela.py
 
       - name: Extract version
         id: version
@@ -82,57 +92,316 @@ jobs:
           echo "$NOTES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
+  # ─────────────────────────────────────────────────────────────────────
+  # build-skill — the primary artifact. Runs the full test suite, then
+  # packages the vela-slides skill directory into a ZIP for Claude.ai.
+  # ─────────────────────────────────────────────────────────────────────
+  build-skill:
+    name: Build skill ZIP
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pr_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: python3 tests/test_vela.py
+
       - name: Build skill ZIP
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           python3 skills/vela-slides/scripts/concat.py skills/vela-slides/app/parts skills/vela-slides/app/vela.jsx
           cd skills
-          zip -r ../vela-slides-skill-${{ steps.version.outputs.tag }}.zip vela-slides/
+          zip -r "../vela-slides-skill-${TAG}.zip" vela-slides/
           cd ..
-          echo "Built: vela-slides-skill-${{ steps.version.outputs.tag }}.zip"
           ls -lh vela-slides-skill-*.zip
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-zip
+          path: vela-slides-skill-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # build-desktop — unsigned Neutralino binaries. `neu build --release`
+  # cross-compiles all supported OSes from a single Linux runner, so no
+  # matrix is needed. Failure here does not block the skill publish.
+  # ─────────────────────────────────────────────────────────────────────
+  build-desktop:
+    name: Build desktop (unsigned)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pr_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install neu CLI
+        # Install into vela-neutralino/ directly — in CI we do not have the
+        # drvfs constraint that setup.sh works around on the dev machine.
+        # --ignore-workspace: repo root has a pnpm-workspace.yaml we must not
+        # pull in. --ignore-scripts: policy (see CLAUDE.md). --no-frozen-lockfile:
+        # vela-neutralino has no checked-in lockfile, so frozen would fail.
+        working-directory: vela-neutralino
+        run: pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
+
+      - name: Regenerate monolith
+        run: python3 skills/vela-slides/scripts/concat.py
+
+      - name: Preprocess vela.jsx for Neutralino
+        run: python3 vela-neutralino/scripts/sync-vela.py
+
+      - name: Fetch Neutralino runtime binaries
+        working-directory: vela-neutralino
+        run: ./node_modules/.bin/neu update
+
+      - name: Build desktop bundles
+        working-directory: vela-neutralino
+        run: ./node_modules/.bin/neu build --release
+
+      - name: Package per-OS ZIPs
+        working-directory: vela-neutralino/dist/vela
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # resources.neu must ship next to the binary — Neutralino loads the
+          # bundle relative to the executable path at launch.
+          package() {
+            local os="$1"; local bin="$2"; shift 2
+            local zip="../../vela-desktop-${TAG}-${os}.zip"
+            zip -j "$zip" "$bin" resources.neu "$@"
+            echo "  → $(basename "$zip")"
+          }
+          package linux_x64      vela-linux_x64
+          package linux_arm64    vela-linux_arm64
+          package mac_x64        vela-mac_x64
+          package mac_arm64      vela-mac_arm64
+          package mac_universal  vela-mac_universal
+          # Neutralino 6.x links against the system-installed WebView2
+          # runtime (shipped in Windows 10 1809+ / Windows 11), so we no
+          # longer need to bundle WebView2Loader.dll alongside the exe.
+          # If a future pin regresses this, fail loudly.
+          if [ -f WebView2Loader.dll ]; then
+            package win_x64      vela-win_x64.exe WebView2Loader.dll
+          else
+            package win_x64      vela-win_x64.exe
+          fi
+          ls -lh ../../vela-desktop-*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-zips
+          path: vela-neutralino/vela-desktop-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # publish — single release for whatever artifacts succeeded. Runs even
+  # if one of the builds failed. Rebuilds re-create the release with the
+  # same tag (atomic delete + create).
+  # ─────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish preview release
+    needs: [prepare, build-skill, build-desktop]
+    if: |
+      always() &&
+      (needs.build-skill.result == 'success' || needs.build-desktop.result == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      skill_ok: ${{ steps.flags.outputs.skill_ok }}
+      desktop_ok: ${{ steps.flags.outputs.desktop_ok }}
+    steps:
+      - name: Download skill artifact
+        if: needs.build-skill.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: skill-zip
+
+      - name: Download desktop artifacts
+        if: needs.build-desktop.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-zips
+
+      - name: Record which artifacts shipped
+        id: flags
+        run: |
+          skill_ok=false; desktop_ok=false
+          ls vela-slides-skill-*.zip 2>/dev/null && skill_ok=true || true
+          ls vela-desktop-*.zip       2>/dev/null && desktop_ok=true || true
+          echo "skill_ok=$skill_ok"     >> "$GITHUB_OUTPUT"
+          echo "desktop_ok=$desktop_ok" >> "$GITHUB_OUTPUT"
+          ls -lh *.zip || true
+
+      - name: Compose release notes
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          CHANGELOG: ${{ needs.prepare.outputs.notes }}
+          SKILL_OK: ${{ steps.flags.outputs.skill_ok }}
+          DESKTOP_OK: ${{ steps.flags.outputs.desktop_ok }}
+          SKILL_RESULT: ${{ needs.build-skill.result }}
+          DESKTOP_RESULT: ${{ needs.build-desktop.result }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_REF: ${{ inputs.pr_ref }}
+          PR_SHA: ${{ inputs.pr_sha }}
+        run: |
+          # Write notes to a file so gh can consume it via --notes-file,
+          # sidestepping shell quoting for changelog entries with special chars.
+          {
+            echo "## Preview Release — PR #${PR_NUMBER}"
+            echo
+            echo "> **Pre-release for testing.** The official release is created when the PR merges to main."
+            echo
+            echo "${CHANGELOG}"
+            echo
+            if [ "$SKILL_OK" = true ]; then
+              echo "### Skill (Claude.ai)"
+              echo
+              echo "1. Download \`vela-slides-skill-${TAG}.zip\` below"
+              echo "2. Claude.ai → **Customize → Skills → + → Upload a skill**"
+              echo "3. Upload the ZIP — done."
+              echo
+            elif [ "$SKILL_RESULT" != "success" ]; then
+              echo "### Skill (Claude.ai)"
+              echo
+              echo "⚠️ Skill build failed for this preview — see workflow logs."
+              echo
+            fi
+            if [ "$DESKTOP_OK" = true ]; then
+              echo "### Desktop (preview, unsigned)"
+              echo
+              echo "| OS | Asset |"
+              echo "|---|---|"
+              echo "| Linux x64 | \`vela-desktop-${TAG}-linux_x64.zip\` |"
+              echo "| Linux ARM64 | \`vela-desktop-${TAG}-linux_arm64.zip\` |"
+              echo "| macOS Apple Silicon | \`vela-desktop-${TAG}-mac_arm64.zip\` |"
+              echo "| macOS Intel | \`vela-desktop-${TAG}-mac_x64.zip\` |"
+              echo "| macOS Universal | \`vela-desktop-${TAG}-mac_universal.zip\` |"
+              echo "| Windows x64 | \`vela-desktop-${TAG}-win_x64.zip\` |"
+              echo
+              echo "⚠️ **Unsigned binaries.** First launch:"
+              echo "- **macOS**: \`xattr -d com.apple.quarantine vela-mac_*\` (Gatekeeper)."
+              echo "- **Windows**: SmartScreen → \"More info\" → \"Run anyway\"."
+              echo "- **Linux**: \`chmod +x vela-linux_*\` before running."
+              echo
+              echo "Unzip and keep the binary next to \`resources.neu\` — Neutralino loads the bundle relative to the executable."
+              echo
+            elif [ "$DESKTOP_RESULT" != "success" ]; then
+              echo "### Desktop (preview, unsigned)"
+              echo
+              echo "⚠️ Desktop build failed for this preview — see workflow logs."
+              echo
+            fi
+            echo "---"
+            echo "Branch \`${PR_REF}\` · Commit \`${PR_SHA}\`"
+          } > release-notes.md
+          echo "--- release notes ---"
+          cat release-notes.md
+
       - name: Delete existing preview release
-        run: |
-          gh release delete "${{ steps.version.outputs.tag }}" --yes 2>/dev/null || true
-          git push --delete origin "refs/tags/${{ steps.version.outputs.tag }}" 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create preview release
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            vela-slides-skill-${{ steps.version.outputs.tag }}.zip \
-            --title "Vela Slides ${{ steps.version.outputs.version }} (Preview PR #${{ inputs.pr_number }})" \
-            --notes "## Preview Release — PR #${{ inputs.pr_number }}
+          gh release delete "$TAG" --yes --repo "$REPO" 2>/dev/null || true
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" \
+            && git push --delete origin "refs/tags/$TAG" \
+            || true
 
-          > **This is a pre-release for testing.** The official release will be created when the PR is merged to main.
-
-          ${{ steps.changelog.outputs.notes }}
-
-          ### Installation
-
-          1. Download \`vela-slides-skill-${{ steps.version.outputs.tag }}.zip\` below
-          2. In Claude.ai → **Customize → Skills** → **\"+\"** → **Upload a skill**
-          3. Upload the ZIP — done!
-
-          ---
-          📌 Branch: \`${{ inputs.pr_ref }}\` · Commit: \`${{ inputs.pr_sha }}\`" \
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" \
+            *.zip \
+            --repo "$REPO" \
+            --title "Vela Slides ${VERSION} (Preview PR #${PR_NUMBER})" \
+            --notes-file release-notes.md \
             --prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Comment on PR
-        uses: actions/github-script@v7
+  # ─────────────────────────────────────────────────────────────────────
+  # comment-pr — single consolidated PR comment listing every asset that
+  # shipped. Runs after publish; skipped if publish did not succeed.
+  # ─────────────────────────────────────────────────────────────────────
+  comment-pr:
+    name: Comment on PR
+    needs: [prepare, publish]
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_SHA: ${{ inputs.pr_sha }}
+          SKILL_OK: ${{ needs.publish.outputs.skill_ok }}
+          DESKTOP_OK: ${{ needs.publish.outputs.desktop_ok }}
         with:
           script: |
-            const tag = '${{ steps.version.outputs.tag }}';
-            const version = '${{ steps.version.outputs.version }}';
-            const sha = '${{ inputs.pr_sha }}'.slice(0, 7);
+            const tag = process.env.TAG;
+            const version = process.env.VERSION;
+            const sha = process.env.PR_SHA.slice(0, 7);
             const releaseUrl = `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+            const assetUrl = (name) =>
+              `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/releases/download/${tag}/${name}`;
+
+            let body = `## ⛵ Preview Release Ready\n\n`;
+            body += `**Vela Slides v${version}** — [\`${tag}\`](${releaseUrl}) · Commit \`${sha}\`\n\n`;
+
+            if (process.env.SKILL_OK === 'true') {
+              body += `### Skill\n`;
+              body += `📦 [\`vela-slides-skill-${tag}.zip\`](${assetUrl(`vela-slides-skill-${tag}.zip`)})\n`;
+              body += `Install: **Customize → Skills → + → Upload a skill**\n\n`;
+            }
+
+            if (process.env.DESKTOP_OK === 'true') {
+              const rows = [
+                ['Linux x64', 'linux_x64'],
+                ['Linux ARM64', 'linux_arm64'],
+                ['macOS Apple Silicon', 'mac_arm64'],
+                ['macOS Intel', 'mac_x64'],
+                ['macOS Universal', 'mac_universal'],
+                ['Windows x64', 'win_x64'],
+              ];
+              body += `### Desktop (unsigned preview)\n`;
+              for (const [label, slug] of rows) {
+                const name = `vela-desktop-${tag}-${slug}.zip`;
+                body += `- ${label} — [\`${name}\`](${assetUrl(name)})\n`;
+              }
+              body += `\nFirst launch: Mac \`xattr -d com.apple.quarantine vela-mac_*\` · Linux \`chmod +x vela-linux_*\` · Windows SmartScreen → "Run anyway".\n`;
+            }
+
+            body += `\n<!-- vela-preview-release -->`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: parseInt('${{ inputs.pr_number }}'),
-              body: `## ⛵ Preview Release Ready\n\n**Vela Slides v${version}** — [\`${tag}\`](${releaseUrl})\n\n📦 [Download ZIP](${releaseUrl}) · 📌 Commit: \`${sha}\`\n\nInstall in Claude.ai: **Customize → Skills → + → Upload a skill**\n\n<!-- vela-preview-release -->`,
+              issue_number: parseInt(process.env.PR_NUMBER),
+              body,
             });

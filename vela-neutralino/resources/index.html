@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vela</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    #vela-loading { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; gap: 20px; opacity: 1; transition: opacity 0.4s ease; }
+    #vela-loading.fade-out { opacity: 0; pointer-events: none; }
+    #vela-loading .boat { font-size: 48px; animation: sail 3s ease-in-out infinite; }
+    @keyframes sail { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-8px) rotate(2deg); } }
+    #vela-loading .title { font-size: 24px; font-weight: 700; color: #e2e8f0; letter-spacing: 4px; }
+    #vela-loading .wave { height: 3px; width: 120px; background: linear-gradient(90deg, transparent, #3b82f6, #8b5cf6, #3b82f6, transparent); border-radius: 2px; animation: wave-move 2s ease-in-out infinite; }
+    @keyframes wave-move { 0%,100% { transform: scaleX(0.6); opacity: 0.5; } 50% { transform: scaleX(1); opacity: 1; } }
+    #vela-loading .msg { font-size: 13px; color: #64748b; transition: opacity 0.3s; }
+    #vela-loading .hint { font-size: 11px; color: #475569; margin-top: 8px; text-align: center; max-width: 420px; }
+    #vela-loading .err { font-size: 12px; color: #f87171; max-width: 500px; text-align: center; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); border-radius: 6px; padding: 10px 14px; font-family: ui-monospace, monospace; }
+
+    /* Deck picker overlay — shown at boot and via Ctrl+O after */
+    #deck-picker { position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+    #deck-picker.open { display: flex; }
+    #deck-picker .box { background: #0f172a; border: 1px solid #334155; border-radius: 14px; width: min(640px, 90vw); max-height: 75vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
+    #deck-picker h2 { font-size: 16px; font-weight: 700; padding: 18px 20px 8px; margin: 0; letter-spacing: 0.01em; }
+    #deck-picker .folder-row { display: flex; align-items: center; gap: 10px; padding: 0 20px 14px; font-size: 12px; color: #94a3b8; border-bottom: 1px solid #1e293b; }
+    #deck-picker .folder-row .path { flex: 1; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #deck-picker button.change { background: transparent; border: 1px solid #334155; color: #cbd5e1; padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    #deck-picker button.change:hover { border-color: #64748b; color: #e2e8f0; }
+    #deck-picker .list { overflow-y: auto; padding: 8px; flex: 1; min-height: 120px; }
+    #deck-picker .list .item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; cursor: pointer; color: #e2e8f0; font-size: 14px; }
+    #deck-picker .list .item:hover, #deck-picker .list .item.focus { background: #1e293b; }
+    #deck-picker .list .item .bullet { width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; flex-shrink: 0; }
+    #deck-picker .list .item.current .bullet { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,0.2); }
+    #deck-picker .list .empty { padding: 30px 20px; text-align: center; color: #64748b; font-size: 13px; }
+    #deck-picker .foot { padding: 10px 20px; font-size: 11px; color: #475569; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; }
+
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="vela-loading">
+      <div class="boat">⛵</div>
+      <div class="title">VELA</div>
+      <div class="wave"></div>
+      <div class="msg" id="vela-loading-msg">Setting sail…</div>
+      <div class="hint" id="vela-loading-hint"></div>
+    </div>
+  </div>
+
+  <div id="deck-picker" role="dialog" aria-modal="true">
+    <div class="box">
+      <h2>Open a deck</h2>
+      <div class="folder-row">
+        <span class="path" id="deck-picker-folder">—</span>
+        <button class="change" id="deck-picker-change">Change folder…</button>
+      </div>
+      <div class="list" id="deck-picker-list"></div>
+      <div class="foot"><span>Enter to open · Esc to close</span><span id="deck-picker-count"></span></div>
+    </div>
+  </div>
+
+  <!-- Neutralino client library (downloaded by `neu update`, gitignored) -->
+  <script src="js/neutralino.js"></script>
+
+  <!-- Vendored React / ReactDOM / lucide-react (UMD, pinned) -->
+  <script src="vendor/react.min.js"></script>
+  <script>window.react = window.React; /* lucide-react UMD reads lowercase */</script>
+  <script src="vendor/react-dom.min.js"></script>
+  <script src="vendor/lucide-react.min.js"></script>
+  <script>
+    // Normalise lucide global to the name vela.jsx expects (`lucideReact`).
+    window.lucideReact = window.LucideReact;
+    window._createRoot = (window.ReactDOM && window.ReactDOM.createRoot);
+  </script>
+
+  <!-- window.storage shim (Neutralino.storage when available, localStorage fallback) -->
+  <script src="js/storage-shim.js"></script>
+
+  <!-- Neutralino bootstrap: init(), deck I/O wiring, mount Vela when ready -->
+  <script type="module" src="js/nl-boot.js"></script>
+
+  <!-- Babel standalone: used below to transpile vela.jsx on load -->
+  <script src="vendor/babel.min.js"></script>
+</body>
+</html>

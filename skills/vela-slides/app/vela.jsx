@@ -25,7 +25,12 @@ const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
 // Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
 // In local mode the channel port must be configured; in artifact mode we optimistically
 // assume the Anthropic proxy is available (Claude.ai injects it).
-const velaAIAvailable = () => VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : (typeof window !== "undefined" && window.self !== window.top);
+const velaAIAvailable = () => {
+  // Neutralino desktop runtime: the shell installs a CLI-backed sender;
+  // AI availability follows whether that probe succeeded.
+  if (typeof window !== "undefined" && window.__velaAgentReady != null) return !!window.__velaAgentReady;
+  return VELA_LOCAL_MODE ? !!VELA_CHANNEL_PORT : (typeof window !== "undefined" && window.self !== window.top);
+};
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
 // Clipboard helper — Clipboard API is blocked in Claude.ai artifact iframes
@@ -64,8 +69,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.36";
+const VELA_VERSION = "12.40";
 const VELA_CHANGELOG = [
+  { v: "12.40", d: "Agent visibility + trust UX: footer now renders an agent chip (Vera · Claude Code · version · model · trust-state) that opens a settings dialog listing trusted decks in the current folder with per-deck revoke and revoke-all. AgentStatusChip subscribes to window.__velaAgentInfo + vela-agent-update events — it is feature-gated, so artifact and serve.py runtimes render nothing." },
+  { v: "12.39", d: "Per-deck trust gate for AI (Neutralino desktop): callClaudeAPI awaits window.__velaTrustGate before dispatching, so the host shell can prompt for consent on the first AI action per deck. The shell stores trust in <folder>/.vela/trust.json by relative path, denies are session-only (re-ask on next launch), and the first-ever AI use shows a one-time intro explaining the data path. Missing gate (artifact / serve.py) falls through as 'allow' — those runtimes keep their existing trust models." },
+  { v: "12.38", d: "Agent-bridge runtime hook: callClaudeAPI now routes to window.__velaAgentSend when defined, so host shells can plug in a local CLI coding agent (the Neutralino desktop build ships a Claude Code adapter that spawns `claude -p` via the Neutralino subprocess API). velaAIAvailable consults window.__velaAgentReady for Neutralino runtimes; artifact and serve.py flows are unchanged." },
+  { v: "12.37", d: "Header sail icon runtime hook: top-bar VelaIcon now calls window.__velaOpenDeckPicker when defined (Neutralino desktop shell registers it to open the deck folder picker), falling back to the About/Changelog dialog in artifact and serve.py runtimes so those flows are unchanged. Footer version badge remains the canonical entry point for release notes." },
   { v: "12.36", d: "AI capability detection: centralized velaAIAvailable() checks artifact proxy or channel availability. All AI buttons (Edit, Improve, Batch, Variants, Generate, Estimate, Vera chat send) are visible but disabled with tooltip when AI is unavailable. callClaudeAPI guards against missing backend. Fix vertical flow arrows: connector alignSelf uses 'center' in vertical mode so arrows align below nodes. Remove slide 16 from demo deck." },
   { v: "12.35", d: "Cols layout: new layout:'cols' for two-column slides using L (left) and R (right) block arrays. B/blocks renders full-width above columns. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32). Works with all 21 block types. Pipeline: expand/compact/validate/stats/extract-text/patch-text all handle L/R." },
   { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
@@ -2692,6 +2701,31 @@ function reducer(hist, a) {
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
   if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
+  // Neutralino desktop mode: the host shell installs window.__velaAgentSend
+  // that spawns a local coding CLI (Claude Code by default). We bypass the
+  // rest of this function entirely — no HTTP, no AbortController, timeouts
+  // are managed by the subprocess wrapper.
+  if (typeof window !== "undefined" && typeof window.__velaAgentSend === "function") {
+    // Per-deck trust gate (Neutralino desktop only). Returns "allow" / "deny";
+    // the shell shows a consent modal on first use. Missing gate → allow
+    // (artifact / serve.py runtimes have their own trust models).
+    if (typeof window.__velaTrustGate === "function") {
+      const decision = await window.__velaTrustGate();
+      if (decision === "deny") {
+        throw new Error("AI is disabled for this deck. Trust it in Settings to enable.");
+      }
+    }
+    const t0 = performance.now();
+    const text = await window.__velaAgentSend({
+      system: sysPrompt, messages, temperature, max_tokens: maxTokens, _callType,
+    });
+    velaSessionStats.add({
+      type: _callType, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_create_tokens: 0,
+      model: window.__velaAgentActive || "cli-agent", tool_calls: 0,
+      duration_ms: Math.round(performance.now() - t0), stop_reason: "cli",
+    });
+    return text || "";
+  }
   // Channel mode needs longer timeout — Claude Code roundtrip is slower than direct API
   const effectiveTimeout = (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) ? Math.max(timeoutMs, 120000) : timeoutMs;
   const controller = new AbortController();
@@ -13244,6 +13278,148 @@ function CostBadge() {
   );
 }
 
+// ━━━ Agent status chip (Neutralino desktop only) ━━━━━━━━━━━━━━━━━━━
+// Renders a small footer chip showing the active CLI agent, its detected
+// version / model, and the current deck's trust state. Click opens the
+// settings dialog below. Feature-gated on window.__velaAgentInfo — other
+// runtimes (artifact, serve.py) render nothing.
+
+function AgentStatusChip() {
+  const [, rerender] = useReducer((x) => x + 1, 0);
+  const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
+  const [trustState, setTrustState] = useState("unknown");
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    function onUpdate() {
+      setInfo(window.__velaAgentInfo || null);
+      rerender();
+    }
+    window.addEventListener("vela-agent-update", onUpdate);
+    return () => window.removeEventListener("vela-agent-update", onUpdate);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      if (typeof window.__velaTrustStatus !== "function") return;
+      try {
+        const s = await window.__velaTrustStatus();
+        if (!cancelled) setTrustState(s);
+      } catch {}
+    }
+    check();
+    const id = setInterval(check, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  if (!info) return null; // not in Neutralino runtime
+
+  const { available, label, version, model } = info;
+  let statusText, statusColor;
+  if (!available) { statusText = "offline"; statusColor = T.textMuted; }
+  else if (trustState === "trusted") { statusText = "trusted"; statusColor = T.accent; }
+  else if (trustState === "session") { statusText = "session"; statusColor = T.accent; }
+  else if (trustState === "denied-session") { statusText = "declined"; statusColor = "#f87171"; }
+  else { statusText = "untrusted"; statusColor = "#fbbf24"; }
+
+  const parts = [label];
+  if (version) parts.push(`v${version}`);
+  if (model) parts.push(model);
+  const detail = parts.join(" · ");
+
+  return (
+    <>
+      <span onClick={() => setShowSettings(true)} title="Agent settings" style={{
+        cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+        fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, letterSpacing: "0.03em",
+      }}>
+        <span style={{ color: T.text, fontWeight: 600 }}>Vera</span>
+        <span>·</span>
+        <span>{detail}</span>
+        <span>·</span>
+        <span style={{ color: statusColor, fontWeight: 600 }}>{statusText}</span>
+      </span>
+      {showSettings && <AgentSettingsDialog onClose={() => setShowSettings(false)} />}
+    </>
+  );
+}
+
+function AgentSettingsDialog({ onClose }) {
+  const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
+  const [trusted, setTrusted] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  async function loadTrusted() {
+    if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
+    try { setTrusted(await window.__velaTrustAdmin.listForCurrentFolder()); }
+    catch { setTrusted([]); }
+  }
+
+  useEffect(() => { loadTrusted(); }, []);
+
+  useEffect(() => {
+    function onUpdate() { setInfo(window.__velaAgentInfo || null); }
+    window.addEventListener("vela-agent-update", onUpdate);
+    return () => window.removeEventListener("vela-agent-update", onUpdate);
+  }, []);
+
+  async function revoke(relativePath) {
+    setBusy(true);
+    try { await window.__velaTrustAdmin.revoke(relativePath); await loadTrusted(); }
+    finally { setBusy(false); }
+  }
+
+  async function revokeAll() {
+    if (!confirm("Revoke AI trust for every deck in this folder? Each deck will re-prompt on next AI action.")) return;
+    setBusy(true);
+    try { await window.__velaTrustAdmin.revokeAll(); await loadTrusted(); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, width: "min(560px, 92vw)", maxHeight: "80vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
+
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active agent</div>
+        <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
+          <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
+          <div style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono, marginTop: 4 }}>
+            {info?.version ? `version ${info.version}` : "version unknown"}
+            {info?.model ? ` · last model ${info.model}` : ""}
+          </div>
+        </div>
+
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Trusted decks in this folder</span>
+          {trusted.length > 0 && <button onClick={revokeAll} disabled={busy} style={S.btn({ fontSize: 10, padding: "3px 8px", color: "#f87171" })}>Revoke all</button>}
+        </div>
+        {trusted.length === 0 ? (
+          <div style={{ fontSize: 12, color: T.textDim, padding: "14px 0" }}>No decks trusted yet. The first AI action on a deck will prompt for consent.</div>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", maxHeight: 240, overflow: "auto", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+            {trusted.map((t) => (
+              <li key={t.relativePath} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderBottom: `1px solid ${T.border}`, fontSize: 12 }}>
+                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: FONT.mono, marginRight: 10 }}>{t.relativePath}</div>
+                <button onClick={() => revoke(t.relativePath)} disabled={busy} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Revoke</button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div style={{ fontSize: 11, color: T.textDim, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+          Trust decisions are stored in <code style={{ fontFamily: FONT.mono }}>&lt;folder&gt;/.vela/trust.json</code> and only apply on this machine. Delete the folder to reset.
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+          <button onClick={onClose} style={S.btn({ padding: "6px 14px" })}>Close</button>
+        </div>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Main ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Item Fingerprint (for merge detection) ━━━━━━━━━━━━━━━━━━━━━━━
 function itemFingerprint(item) {
@@ -13924,7 +14100,7 @@ export default function App() {
       {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
-        <span onClick={() => setShowChangelog(true)} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title="About"><VelaIcon size={20} /></span>
+        <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}
@@ -14120,6 +14296,7 @@ export default function App() {
           <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 600, color: T.textDim, letterSpacing: "0.05em" }}>VELA v{VELA_VERSION}</span>
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, height: 12, borderRadius: "50%", border: `1px solid ${T.textDim}50`, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.textDim, lineHeight: 1, opacity: 0.6 }}>i</span>
         </span>
+        <AgentStatusChip />
         <span onClick={() => setShowShortcuts(true)} style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, cursor: "pointer" }} title="Keyboard shortcuts">Press <kbd style={{ fontSize: 8, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 2, padding: "0 3px", color: T.text }}>?</kbd> for shortcuts</span>
         <span style={{ fontFamily: FONT.body, fontSize: 9, color: T.textDim }}>© 2025-present <a href="https://www.linkedin.com/in/rquintino/" target="_blank" rel="noopener noreferrer" style={{ color: T.textMuted, textDecoration: "none" }}>Rui Quintino</a> · <a href="https://github.com/agentiapt/vela-slides/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" style={{ color: T.textDim, textDecoration: "none" }}>ELv2</a></span>
       </div>}
