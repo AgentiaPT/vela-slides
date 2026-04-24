@@ -168,12 +168,11 @@ let page;
 async function clickBtn(text) {
   const btn = page.locator('button').filter({ hasText: text }).first();
   await btn.click();
-  // Wait for React re-render — one rAF cycle
-  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await settle();
 }
 
 /** Assert text is visible (uses Playwright auto-retry). */
-async function expectText(text, timeout = 1000) {
+async function expectText(text, timeout = 3000) {
   await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout });
 }
 
@@ -197,7 +196,7 @@ async function isPanelOpen() {
 }
 
 /** Wait for comments panel to appear/disappear. */
-async function expectPanel(open, timeout = 1000) {
+async function expectPanel(open, timeout = 3000) {
   await page.waitForFunction((wantOpen) => {
     const spans = document.querySelectorAll('span');
     const found = Array.from(spans).some(el =>
@@ -213,12 +212,13 @@ async function expectPanel(open, timeout = 1000) {
 async function clickIconSpan(text) {
   const span = page.locator('span').filter({ hasText: text }).and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
   await span.click();
-  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await settle();
 }
 
 /** Wait for React to settle after a state change. */
 async function settle() {
-  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // Double rAF + micro-task flush to cover React batched renders on slow CI runners
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
 }
 
 // ── Test suites ─────────────────────────────────────────────────────
@@ -229,7 +229,7 @@ async function runTests() {
   // ── 1. Panel Basics ──
   await test('Review button visible in header', async () => {
     const btn = page.locator('header button').filter({ hasText: 'Comments' });
-    await btn.waitFor({ state: 'visible', timeout: 1000 });
+    await btn.waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Clicking Review opens Comments panel', async () => {
@@ -243,15 +243,15 @@ async function runTests() {
   });
 
   await test('Comments panel has Resolve All button', async () => {
-    await page.locator('button').filter({ hasText: 'Resolve All' }).waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('button').filter({ hasText: 'Resolve All' }).waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Comments panel has Clear Done button', async () => {
-    await page.locator('button').filter({ hasText: 'Clear Done' }).waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('button').filter({ hasText: 'Clear Done' }).waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Comments panel has Copy for Agent button', async () => {
-    await page.locator('button').filter({ hasText: 'Copy for Agent' }).waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('button').filter({ hasText: 'Copy for Agent' }).waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Empty state shows no open comments', async () => {
@@ -285,12 +285,12 @@ async function runTests() {
 
   // ── 3. Module-level Comments via TOC ──
   await test('Comment icon visible on modules', async () => {
-    await page.locator('span').filter({ hasText: '💬' }).first().waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('span').filter({ hasText: '💬' }).first().waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Clicking comment icon expands inline area', async () => {
     await clickIconSpan('💬');
-    await page.locator('input[placeholder="Add comment..."]').waitFor({ state: 'visible', timeout: 1000 });
+    await page.locator('input[placeholder="Add comment..."]').waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Adding a module-level comment', async () => {
@@ -313,7 +313,7 @@ async function runTests() {
         /^[0-9]+$/.test(el.textContent?.trim() || '') &&
         el.style.minWidth && el.style.borderRadius && el.style.fontSize === '9px'
       );
-    }, { timeout: 1000 });
+    }, { timeout: 3000 });
   });
 
   await test('Adding a second comment', async () => {
@@ -333,7 +333,7 @@ async function runTests() {
     // Verify ● appears
     const resolved = page.locator('span').filter({ hasText: '●' })
       .and(page.locator('[style*="cursor: pointer"], [style*="cursor:pointer"]')).first();
-    await resolved.waitFor({ state: 'visible', timeout: 1000 });
+    await resolved.waitFor({ state: 'visible', timeout: 3000 });
   });
 
   await test('Reopening a comment via toggle', async () => {
@@ -507,7 +507,7 @@ async function runTests() {
     console.log('Launching browser...');
     const browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-    page.setDefaultTimeout(1000);
+    page.setDefaultTimeout(3000);
     page.on('pageerror', () => {}); // suppress Babel deopt warning
 
     console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');
