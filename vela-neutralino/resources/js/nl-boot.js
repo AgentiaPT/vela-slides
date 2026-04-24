@@ -17,6 +17,8 @@
 
 import { deckIO } from "./deck-io.js";
 import { agents } from "./agents-bridge.js";
+import { configStore } from "./config-store.js";
+import { trust } from "./trust.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -57,6 +59,7 @@ async function boot() {
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
+  installTrustBridge();
   await installAgentsBridge();
 
   // Global Ctrl+O / Cmd+O opens the picker. Attached before Vela mounts so
@@ -275,13 +278,26 @@ function promptForDeck() {
 // If the CLI isn't on PATH the flag stays false and AI buttons render as
 // "unavailable" — same UX as in local mode without a channel running.
 
+function publishAgentInfo() {
+  window.__velaAgentInfo = agents.info();
+  window.__velaAgentActive = window.__velaAgentInfo.id;
+  window.dispatchEvent(new CustomEvent("vela-agent-update", { detail: window.__velaAgentInfo }));
+}
+
 async function installAgentsBridge() {
   try {
+    // Honour the user's saved agent preference (from ~/.vela/config.json).
+    // Falls through silently if the chosen backend no longer exists.
+    try {
+      const saved = await configStore.getAgent();
+      if (saved) agents.pick(saved);
+    } catch (e) { console.warn("[nl-boot] saved agent pick failed:", e); }
+
     const ok = await agents.available();
     window.__velaAgentReady = !!ok;
-    window.__velaAgentActive = agents.active().id;
+    publishAgentInfo();
     if (!ok) {
-      console.warn("[nl-boot] Claude Code CLI not on PATH — AI features disabled");
+      console.warn("[nl-boot] Agent CLI not on PATH — AI features disabled");
       return;
     }
     window.__velaAgentSend = async (payload) => {
@@ -294,12 +310,62 @@ async function installAgentsBridge() {
           ...r.stats,
         });
       }
+      // Refresh published info — stats.model may have filled in the
+      // lastModel slot on the first successful call.
+      publishAgentInfo();
       return r.text;
     };
   } catch (e) {
     console.warn("[nl-boot] agents bridge init failed:", e);
     window.__velaAgentReady = false;
   }
+}
+
+// ---------- Trust bridge --------------------------------------------------
+//
+// Installs window.__velaTrustGate (consumed by part-engine.jsx's
+// callClaudeAPI) and window.__velaTrustAdmin (for the Settings panel).
+// The gate auto-derives the current deck's folder from deckIO so callers
+// only need to pass their deck path — or nothing, if they trust the
+// currently-open deck.
+
+function installTrustBridge() {
+  window.__velaTrustGate = async (deckPath) => {
+    const folder = deckIO.folder();
+    const path = deckPath || deckIO.currentPath();
+    if (!folder || !path) return "allow";
+    return trust.gate(folder, path);
+  };
+  window.__velaTrustStatus = async (deckPath) => {
+    const folder = deckIO.folder();
+    const path = deckPath || deckIO.currentPath();
+    return trust.statusOf(folder, path);
+  };
+  window.__velaTrustAdmin = {
+    listForCurrentFolder: async () => {
+      const folder = deckIO.folder();
+      if (!folder) return [];
+      return trust.listTrustedIn(folder);
+    },
+    revoke: async (relativePath) => {
+      const folder = deckIO.folder();
+      if (folder) await trust.revoke(folder, relativePath);
+    },
+    revokeAll: async () => {
+      const folder = deckIO.folder();
+      if (folder) await trust.revokeAllIn(folder);
+    },
+  };
+  window.__velaConfig = {
+    get: () => configStore.get(),
+    setAgent: async (id) => {
+      agents.pick(id);
+      await configStore.setAgent(id);
+      // Re-probe the new backend and republish info.
+      await agents.refreshAvailability();
+      publishAgentInfo();
+    },
+  };
 }
 
 // ---------- Fullscreen bridge ---------------------------------------------

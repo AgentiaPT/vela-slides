@@ -102,8 +102,20 @@ async function runProcess(cmdLine, stdinText, { timeoutMs = 120000 } = {}) {
 class ClaudeCodeBackend {
   constructor() {
     this.id = "claude-code";
-    this.label = "Claude Code (local CLI)";
+    this.label = "Claude Code";
     this._avail = null; // cached tri-state: null=unknown, true/false=known
+    this._version = null; // captured from `claude --version`
+    this._lastModel = null; // populated after the first successful send()
+  }
+
+  info() {
+    return {
+      id: this.id,
+      label: this.label,
+      available: !!this._avail,
+      version: this._version,
+      model: this._lastModel,
+    };
   }
 
   async available({ refresh = false } = {}) {
@@ -111,6 +123,10 @@ class ClaudeCodeBackend {
     try {
       const r = await runProcess("claude --version", null, { timeoutMs: 10000 });
       this._avail = r.exitCode === 0 && /\d+\.\d+/.test(r.stdout);
+      if (this._avail) {
+        const m = r.stdout.match(/(\d+\.\d+(?:\.\d+)?)/);
+        this._version = m ? m[1] : null;
+      }
     } catch {
       this._avail = false;
     }
@@ -154,6 +170,7 @@ class ClaudeCodeBackend {
       parsed = { result: r.stdout };
     }
     const text = parsed.result != null ? String(parsed.result) : "";
+    if (parsed.model) this._lastModel = parsed.model;
 
     return {
       text,
@@ -185,6 +202,7 @@ let active = backends["claude-code"];
 export const agents = {
   list() { return Object.values(backends).map((b) => ({ id: b.id, label: b.label })); },
   active() { return active; },
+  info() { return active.info ? active.info() : { id: active.id, label: active.label }; },
   pick(id) {
     if (!backends[id]) throw new Error(`unknown backend: ${id}`);
     active = backends[id];

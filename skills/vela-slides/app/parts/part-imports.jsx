@@ -69,8 +69,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.38";
+const VELA_VERSION = "12.40";
 const VELA_CHANGELOG = [
+  { v: "12.40", d: "Agent visibility + trust UX: footer now renders an agent chip (Vera · Claude Code · version · model · trust-state) that opens a settings dialog listing trusted decks in the current folder with per-deck revoke and revoke-all. AgentStatusChip subscribes to window.__velaAgentInfo + vela-agent-update events — it is feature-gated, so artifact and serve.py runtimes render nothing." },
+  { v: "12.39", d: "Per-deck trust gate for AI (Neutralino desktop): callClaudeAPI awaits window.__velaTrustGate before dispatching, so the host shell can prompt for consent on the first AI action per deck. The shell stores trust in <folder>/.vela/trust.json by relative path, denies are session-only (re-ask on next launch), and the first-ever AI use shows a one-time intro explaining the data path. Missing gate (artifact / serve.py) falls through as 'allow' — those runtimes keep their existing trust models." },
   { v: "12.38", d: "Agent-bridge runtime hook: callClaudeAPI now routes to window.__velaAgentSend when defined, so host shells can plug in a local CLI coding agent (the Neutralino desktop build ships a Claude Code adapter that spawns `claude -p` via the Neutralino subprocess API). velaAIAvailable consults window.__velaAgentReady for Neutralino runtimes; artifact and serve.py flows are unchanged." },
   { v: "12.37", d: "Header sail icon runtime hook: top-bar VelaIcon now calls window.__velaOpenDeckPicker when defined (Neutralino desktop shell registers it to open the deck folder picker), falling back to the About/Changelog dialog in artifact and serve.py runtimes so those flows are unchanged. Footer version badge remains the canonical entry point for release notes." },
   { v: "12.36", d: "AI capability detection: centralized velaAIAvailable() checks artifact proxy or channel availability. All AI buttons (Edit, Improve, Batch, Variants, Generate, Estimate, Vera chat send) are visible but disabled with tooltip when AI is unavailable. callClaudeAPI guards against missing backend. Fix vertical flow arrows: connector alignSelf uses 'center' in vertical mode so arrows align below nodes. Remove slide 16 from demo deck." },

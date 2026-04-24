@@ -435,6 +435,148 @@ function CostBadge() {
   );
 }
 
+// ━━━ Agent status chip (Neutralino desktop only) ━━━━━━━━━━━━━━━━━━━
+// Renders a small footer chip showing the active CLI agent, its detected
+// version / model, and the current deck's trust state. Click opens the
+// settings dialog below. Feature-gated on window.__velaAgentInfo — other
+// runtimes (artifact, serve.py) render nothing.
+
+function AgentStatusChip() {
+  const [, rerender] = useReducer((x) => x + 1, 0);
+  const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
+  const [trustState, setTrustState] = useState("unknown");
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    function onUpdate() {
+      setInfo(window.__velaAgentInfo || null);
+      rerender();
+    }
+    window.addEventListener("vela-agent-update", onUpdate);
+    return () => window.removeEventListener("vela-agent-update", onUpdate);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      if (typeof window.__velaTrustStatus !== "function") return;
+      try {
+        const s = await window.__velaTrustStatus();
+        if (!cancelled) setTrustState(s);
+      } catch {}
+    }
+    check();
+    const id = setInterval(check, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  if (!info) return null; // not in Neutralino runtime
+
+  const { available, label, version, model } = info;
+  let statusText, statusColor;
+  if (!available) { statusText = "offline"; statusColor = T.textMuted; }
+  else if (trustState === "trusted") { statusText = "trusted"; statusColor = T.accent; }
+  else if (trustState === "session") { statusText = "session"; statusColor = T.accent; }
+  else if (trustState === "denied-session") { statusText = "declined"; statusColor = "#f87171"; }
+  else { statusText = "untrusted"; statusColor = "#fbbf24"; }
+
+  const parts = [label];
+  if (version) parts.push(`v${version}`);
+  if (model) parts.push(model);
+  const detail = parts.join(" · ");
+
+  return (
+    <>
+      <span onClick={() => setShowSettings(true)} title="Agent settings" style={{
+        cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+        fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, letterSpacing: "0.03em",
+      }}>
+        <span style={{ color: T.text, fontWeight: 600 }}>Vera</span>
+        <span>·</span>
+        <span>{detail}</span>
+        <span>·</span>
+        <span style={{ color: statusColor, fontWeight: 600 }}>{statusText}</span>
+      </span>
+      {showSettings && <AgentSettingsDialog onClose={() => setShowSettings(false)} />}
+    </>
+  );
+}
+
+function AgentSettingsDialog({ onClose }) {
+  const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
+  const [trusted, setTrusted] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  async function loadTrusted() {
+    if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
+    try { setTrusted(await window.__velaTrustAdmin.listForCurrentFolder()); }
+    catch { setTrusted([]); }
+  }
+
+  useEffect(() => { loadTrusted(); }, []);
+
+  useEffect(() => {
+    function onUpdate() { setInfo(window.__velaAgentInfo || null); }
+    window.addEventListener("vela-agent-update", onUpdate);
+    return () => window.removeEventListener("vela-agent-update", onUpdate);
+  }, []);
+
+  async function revoke(relativePath) {
+    setBusy(true);
+    try { await window.__velaTrustAdmin.revoke(relativePath); await loadTrusted(); }
+    finally { setBusy(false); }
+  }
+
+  async function revokeAll() {
+    if (!confirm("Revoke AI trust for every deck in this folder? Each deck will re-prompt on next AI action.")) return;
+    setBusy(true);
+    try { await window.__velaTrustAdmin.revokeAll(); await loadTrusted(); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, width: "min(560px, 92vw)", maxHeight: "80vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
+
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active agent</div>
+        <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
+          <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
+          <div style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono, marginTop: 4 }}>
+            {info?.version ? `version ${info.version}` : "version unknown"}
+            {info?.model ? ` · last model ${info.model}` : ""}
+          </div>
+        </div>
+
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Trusted decks in this folder</span>
+          {trusted.length > 0 && <button onClick={revokeAll} disabled={busy} style={S.btn({ fontSize: 10, padding: "3px 8px", color: "#f87171" })}>Revoke all</button>}
+        </div>
+        {trusted.length === 0 ? (
+          <div style={{ fontSize: 12, color: T.textDim, padding: "14px 0" }}>No decks trusted yet. The first AI action on a deck will prompt for consent.</div>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", maxHeight: 240, overflow: "auto", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+            {trusted.map((t) => (
+              <li key={t.relativePath} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderBottom: `1px solid ${T.border}`, fontSize: 12 }}>
+                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: FONT.mono, marginRight: 10 }}>{t.relativePath}</div>
+                <button onClick={() => revoke(t.relativePath)} disabled={busy} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Revoke</button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div style={{ fontSize: 11, color: T.textDim, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+          Trust decisions are stored in <code style={{ fontFamily: FONT.mono }}>&lt;folder&gt;/.vela/trust.json</code> and only apply on this machine. Delete the folder to reset.
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+          <button onClick={onClose} style={S.btn({ padding: "6px 14px" })}>Close</button>
+        </div>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Main ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Item Fingerprint (for merge detection) ━━━━━━━━━━━━━━━━━━━━━━━
 function itemFingerprint(item) {
@@ -1311,6 +1453,7 @@ export default function App() {
           <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 600, color: T.textDim, letterSpacing: "0.05em" }}>VELA v{VELA_VERSION}</span>
           <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, height: 12, borderRadius: "50%", border: `1px solid ${T.textDim}50`, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.textDim, lineHeight: 1, opacity: 0.6 }}>i</span>
         </span>
+        <AgentStatusChip />
         <span onClick={() => setShowShortcuts(true)} style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textMuted, cursor: "pointer" }} title="Keyboard shortcuts">Press <kbd style={{ fontSize: 8, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 2, padding: "0 3px", color: T.text }}>?</kbd> for shortcuts</span>
         <span style={{ fontFamily: FONT.body, fontSize: 9, color: T.textDim }}>© 2025-present <a href="https://www.linkedin.com/in/rquintino/" target="_blank" rel="noopener noreferrer" style={{ color: T.textMuted, textDecoration: "none" }}>Rui Quintino</a> · <a href="https://github.com/agentiapt/vela-slides/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" style={{ color: T.textDim, textDecoration: "none" }}>ELv2</a></span>
       </div>}

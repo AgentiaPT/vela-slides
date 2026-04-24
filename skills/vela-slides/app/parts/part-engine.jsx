@@ -10,6 +10,15 @@ async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens =
   // rest of this function entirely — no HTTP, no AbortController, timeouts
   // are managed by the subprocess wrapper.
   if (typeof window !== "undefined" && typeof window.__velaAgentSend === "function") {
+    // Per-deck trust gate (Neutralino desktop only). Returns "allow" / "deny";
+    // the shell shows a consent modal on first use. Missing gate → allow
+    // (artifact / serve.py runtimes have their own trust models).
+    if (typeof window.__velaTrustGate === "function") {
+      const decision = await window.__velaTrustGate();
+      if (decision === "deny") {
+        throw new Error("AI is disabled for this deck. Trust it in Settings to enable.");
+      }
+    }
     const t0 = performance.now();
     const text = await window.__velaAgentSend({
       system: sysPrompt, messages, temperature, max_tokens: maxTokens, _callType,
