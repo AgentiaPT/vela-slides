@@ -197,12 +197,15 @@ jobs:
           package mac_x64        vela-mac_x64
           package mac_arm64      vela-mac_arm64
           package mac_universal  vela-mac_universal
-          # Windows needs WebView2Loader.dll colocated with the .exe.
-          if [ ! -f WebView2Loader.dll ]; then
-            echo "ERROR: WebView2Loader.dll missing from dist/vela/" >&2
-            exit 1
+          # Neutralino 6.x links against the system-installed WebView2
+          # runtime (shipped in Windows 10 1809+ / Windows 11), so we no
+          # longer need to bundle WebView2Loader.dll alongside the exe.
+          # If a future pin regresses this, fail loudly.
+          if [ -f WebView2Loader.dll ]; then
+            package win_x64      vela-win_x64.exe WebView2Loader.dll
+          else
+            package win_x64      vela-win_x64.exe
           fi
-          package win_x64        vela-win_x64.exe WebView2Loader.dll
           ls -lh ../../vela-desktop-*.zip
 
       - uses: actions/upload-artifact@v4
