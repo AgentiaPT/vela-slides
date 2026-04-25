@@ -1,5 +1,5 @@
 {
-  "deckTitle": "Vela Slides \u2014 Live Demo",
+  "deckTitle": "Vela Slides — Live Demo",
   "lanes": [
     {
       "id": "2c0639b3",
@@ -32,7 +32,7 @@
                 },
                 {
                   "type": "badge",
-                  "text": "v12.36 \u00b7 APRIL 2026",
+                  "text": "v12.40 · APRIL 2026",
                   "icon": "Sailboat",
                   "color": "#c4b5fd",
                   "bg": "#818cf820",
@@ -64,7 +64,7 @@
                 },
                 {
                   "type": "heading",
-                  "text": "AI-native presentations inside Claude.ai",
+                  "text": "Agent-native presentations · Claude.ai · Browser · Desktop",
                   "size": "lg",
                   "align": "center",
                   "color": "#a5b4fc"
@@ -107,7 +107,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Vela is a presentation engine that runs as a Claude.ai artifact. Describe your ideas in natural language \u2014 Vera, the built-in AI, turns them into structured slides. No design skills. No separate tools. Just intent to output.",
+                  "text": "Vela is an agent-native presentation engine. Run it in a Claude.ai artifact, a local browser, or a native desktop window — and Vera, the built-in AI, turns your descriptions into structured slides. No design skills. No separate tools. Just intent to output.",
                   "size": "lg",
                   "color": "#94a3b8"
                 },
@@ -150,7 +150,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Vela runs entirely inside your Claude.ai subscription. No accounts, no installs, no data leaving the artifact sandbox.",
+                  "text": "Same engine, three runtimes — Claude.ai artifact, local browser server, or native desktop. Vera routes to whichever AI backend is available.",
                   "icon": "Shield",
                   "bg": "#3b82f612",
                   "border": "#3b82f630",
@@ -269,7 +269,7 @@
     },
     {
       "id": "4a33b9e0",
-      "title": "What's New \u2014 v12",
+      "title": "What's New — v12",
       "collapsed": false,
       "items": [
         {
@@ -310,14 +310,14 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Student Mode \ud83c\udf93",
+                  "text": "Student Mode 🎓",
                   "size": "3xl",
                   "icon": "GraduationCap",
                   "iconColor": "#a78bfa"
                 },
                 {
                   "type": "text",
-                  "text": "Vera becomes a teaching assistant in presenter mode. Slides can embed **studyNotes** \u2014 offline-first markdown with diagrams, follow-up questions, and a glossary for Kindle-style X-Ray term popups.",
+                  "text": "Vera becomes a teaching assistant in presenter mode. Slides can embed **studyNotes** — offline-first markdown with diagrams, follow-up questions, and a glossary for Kindle-style X-Ray term popups.",
                   "size": "lg",
                   "color": "#c7d2fe"
                 },
@@ -330,7 +330,7 @@
                   "items": [
                     {
                       "icon": "BookOpen",
-                      "text": "Offline studyNotes \u2014 zero API calls"
+                      "text": "Offline studyNotes — zero API calls"
                     },
                     {
                       "icon": "Microscope",
@@ -356,7 +356,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "This slide has studyNotes attached \u2014 look for the \ud83c\udf93 marker. Enter fullscreen, click \ud83c\udf93 to see offline content with glossary terms you can tap to explore.",
+                  "text": "This slide has studyNotes attached — look for the 🎓 marker. Enter fullscreen, click 🎓 to see offline content with glossary terms you can tap to explore.",
                   "icon": "Zap",
                   "bg": "#a78bfa12",
                   "border": "#a78bfa30",
@@ -398,7 +398,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Two new ways to navigate and manage your decks \u2014 visual sorting and conflict-free updates.",
+                  "text": "Two new ways to navigate and manage your decks — visual sorting and conflict-free updates.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -415,7 +415,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Gallery View \ud83d\uddc2",
+                          "text": "Gallery View 🗂",
                           "size": "lg",
                           "icon": "Grid3x3",
                           "iconColor": "#a78bfa"
@@ -439,7 +439,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Smart Merge \ud83d\udd00",
+                          "text": "Smart Merge 🔀",
                           "size": "lg",
                           "icon": "GitMerge",
                           "iconColor": "#a78bfa"
@@ -450,7 +450,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Detects new embedded deck versions. Per-item conflict resolution \u2014 **Keep Mine**, **Use New**, or **Keep Both**.",
+                          "text": "Detects new embedded deck versions. Per-item conflict resolution — **Keep Mine**, **Use New**, or **Keep Both**.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -515,14 +515,14 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Columns Layout \ud83d\udcd0",
+                  "text": "Columns Layout 📐",
                   "size": "2xl",
                   "icon": "Columns",
                   "iconColor": "#34d399"
                 },
                 {
                   "type": "text",
-                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays \u2014 works with any block type.",
+                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays — works with any block type.",
                   "size": "md",
                   "color": "#94a3b8"
                 }
@@ -530,7 +530,7 @@
               "L": [
                 {
                   "type": "callout",
-                  "text": "Place any blocks side-by-side \u2014 text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
+                  "text": "Place any blocks side-by-side — text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
                   "title": "Flexible Columns",
                   "icon": "LayoutGrid",
                   "bg": "#34d39912",
@@ -695,7 +695,7 @@
                         },
                         {
                           "type": "quote",
-                          "text": "Semantic blocks carry meaning \u2014 a flow is a process, not a box with arrows.",
+                          "text": "Semantic blocks carry meaning — a flow is a process, not a box with arrows.",
                           "author": "Vela Slides",
                           "size": "md"
                         }
@@ -738,7 +738,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Linear flows, iterative loops, numbered steps, and **gate** checkpoints \u2014 all semantic, all themeable.",
+                  "text": "Linear flows, iterative loops, numbered steps, and **gate** checkpoints — all semantic, all themeable.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -856,7 +856,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Each release builds on semantic JSON \u2014 the same deck works across all versions without migration.",
+                  "text": "Each release builds on semantic JSON — the same deck works across all versions without migration.",
                   "icon": "GitBranch",
                   "bg": "#3b82f612",
                   "border": "#3b82f630"
@@ -945,7 +945,7 @@
                     ],
                     [
                       "matrix",
-                      "2\u00d72 quadrant grids",
+                      "2×2 quadrant grids",
                       "quadrants[], xLeft/yTop"
                     ],
                     [
@@ -1127,7 +1127,7 @@
                 },
                 {
                   "type": "code",
-                  "text": "// Vela slide JSON \u2014 semantic, not visual\n{\n  \"type\": \"flow\",\n  \"items\": [\n    { \"icon\": \"Brain\", \"label\": \"Think\" },\n    { \"icon\": \"Cpu\", \"label\": \"Build\" },\n    { \"icon\": \"Eye\", \"label\": \"Review\" }\n  ],\n  \"loop\": true,\n  \"loopLabel\": \"iterate\"\n}",
+                  "text": "// Vela slide JSON — semantic, not visual\n{\n  \"type\": \"flow\",\n  \"items\": [\n    { \"icon\": \"Brain\", \"label\": \"Think\" },\n    { \"icon\": \"Cpu\", \"label\": \"Build\" },\n    { \"icon\": \"Eye\", \"label\": \"Review\" }\n  ],\n  \"loop\": true,\n  \"loopLabel\": \"iterate\"\n}",
                   "label": "SLIDE JSON",
                   "copy": true,
                   "size": "sm",
@@ -1140,7 +1140,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "JSON-first means AI can reason about your slides. Vera reads, writes, and refactors this structure \u2014 no pixel-pushing.",
+                  "text": "JSON-first means AI can reason about your slides. Vera reads, writes, and refactors this structure — no pixel-pushing.",
                   "title": "Why JSON?",
                   "icon": "Lightbulb",
                   "reveal": true,
@@ -1170,7 +1170,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "For diagrams that structured blocks can't express \u2014 meshes, fan-outs, custom layouts.",
+                  "text": "For diagrams that structured blocks can't express — meshes, fan-outs, custom layouts.",
                   "size": "md",
                   "color": "#94a3b8",
                   "align": "center"
@@ -1183,7 +1183,7 @@
                   "type": "svg",
                   "markup": "<svg viewBox='0 0 500 140' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='60' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Skill</text><rect x='150' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='200' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Claude</text><rect x='290' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='340' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Artifact</text><rect x='430' y='40' width='60' height='60' rx='8' fill='{{accent}}' fill-opacity='0.15' stroke='{{accent}}' stroke-width='2'/><text x='460' y='75' text-anchor='middle' fill='{{accent}}' font-size='13' font-family='monospace'>You</text><line x1='110' y1='70' x2='150' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='250' y1='70' x2='290' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='390' y1='70' x2='430' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='6' markerHeight='6' orient='auto'><path d='M 0 0 L 10 5 L 0 10 z' fill='{{muted}}'/></marker></defs></svg>",
                   "align": "center",
-                  "caption": "Vela pipeline: Skill \u2192 Claude \u2192 Artifact \u2192 You",
+                  "caption": "Vela pipeline: Skill → Claude → Artifact → You",
                   "captionSize": "sm",
                   "captionColor": "#94a3b8"
                 },
@@ -1193,7 +1193,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens \u2014 they adapt to any theme automatically.",
+                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens — they adapt to any theme automatically.",
                   "icon": "Palette",
                   "bg": "#60a5fa12",
                   "border": "#60a5fa30"
@@ -1304,14 +1304,14 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Comparison \u00b7 Funnel \u00b7 Cycle",
+                  "text": "Comparison · Funnel · Cycle",
                   "size": "2xl",
                   "icon": "GitCompare",
                   "iconColor": "#f59e0b"
                 },
                 {
                   "type": "text",
-                  "text": "Structural analysis blocks \u2014 compare options, visualize pipelines, and map circular processes.",
+                  "text": "Structural analysis blocks — compare options, visualize pipelines, and map circular processes.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -1382,19 +1382,19 @@
                           "items": [
                             {
                               "label": "Describe",
-                              "icon": "\ud83d\udcac"
+                              "icon": "💬"
                             },
                             {
                               "label": "Build",
-                              "icon": "\ud83d\udd27"
+                              "icon": "🔧"
                             },
                             {
                               "label": "Review",
-                              "icon": "\ud83d\udc41"
+                              "icon": "👁"
                             },
                             {
                               "label": "Refine",
-                              "icon": "\u2728"
+                              "icon": "✨"
                             }
                           ],
                           "centerLabel": "Vela"
@@ -1416,7 +1416,7 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Number Row \u00b7 Matrix \u00b7 Checklist",
+                  "text": "Number Row · Matrix · Checklist",
                   "size": "2xl",
                   "icon": "LayoutGrid",
                   "iconColor": "#a78bfa"
@@ -1595,7 +1595,7 @@
                 {
                   "type": "callout",
                   "title": "Left Column",
-                  "text": "Any blocks \u2014 bullets, steps, tables, code. This callout spans the **left half**.",
+                  "text": "Any blocks — bullets, steps, tables, code. This callout spans the **left half**.",
                   "icon": "ArrowLeft",
                   "bg": "#3b82f612",
                   "border": "#3b82f630",
@@ -1675,7 +1675,7 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Before / After \u2014 Pure Side-by-Side",
+                  "text": "Before / After — Pure Side-by-Side",
                   "size": "2xl",
                   "icon": "ArrowLeftRight",
                   "iconColor": "#f59e0b"
@@ -1767,12 +1767,12 @@
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "\ud83e\udd16 Vera \u2014 Your Slide Co-Pilot",
+                  "text": "🤖 Vera — Your Slide Co-Pilot",
                   "size": "2xl"
                 },
                 {
                   "type": "text",
-                  "text": "An agentic AI assistant *inside* the artifact. 20 tools for deck manipulation \u2014 she builds, edits, searches, and restyles without leaving the canvas.",
+                  "text": "An agentic AI assistant *inside* every Vela runtime — backend-agnostic, with 20 tools for deck manipulation. She builds, edits, searches, and restyles without leaving the canvas.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -1896,7 +1896,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "From a single block to the entire deck \u2014 every edit supports Ctrl+Z undo.",
+                  "text": "From a single block to the entire deck — every edit supports Ctrl+Z undo.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -1933,14 +1933,14 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Auto-Improve (\u21e7I)",
+                          "text": "Auto-Improve (⇧I)",
                           "size": "md",
                           "icon": "Wand2",
                           "color": "#a78bfa"
                         },
                         {
                           "type": "text",
-                          "text": "Vera analyzes the current slide with layout stats and suggests improvements \u2014 density, hierarchy, visual balance.",
+                          "text": "Vera analyzes the current slide with layout stats and suggests improvements — density, hierarchy, visual balance.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -1953,7 +1953,7 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Variants (\ud83c\udfb2)",
+                          "text": "Variants (🎲)",
                           "size": "md",
                           "icon": "Dices",
                           "color": "#a78bfa"
@@ -2031,7 +2031,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "A full deck authoring pipeline \u2014 from compact JSON to assembled artifact in one command. Three interchangeable formats for every stage.",
+                  "text": "A full deck authoring pipeline — from compact JSON to assembled artifact in one command. Three interchangeable formats for every stage.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -2085,6 +2085,299 @@
             }
           ],
           "createdAt": "2026-03-23T23:14:42.516Z"
+        },
+        {
+          "title": "Runtimes & Desktop",
+          "status": "todo",
+          "slides": [
+            {
+              "title": "Three Runtimes, One Engine",
+              "duration": 60,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Three Runtimes, One Engine",
+                  "size": "2xl",
+                  "icon": "Layers",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "The same Vela engine renders in three places — Vera transparently routes to whichever AI backend is available in that runtime.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "grid",
+                  "cols": 3,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Claude.ai Artifact",
+                          "size": "lg",
+                          "icon": "Cloud",
+                          "iconColor": "#60a5fa"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "text",
+                          "text": "Runs entirely in your browser. Vera uses Claude.ai’s artifact proxy — no setup, no install.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "Zero install",
+                          "bg": "#60a5fa20",
+                          "color": "#bfdbfe",
+                          "border": "#60a5fa40"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "10px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Local Browser Server",
+                          "size": "lg",
+                          "icon": "Server",
+                          "iconColor": "#34d399"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "text",
+                          "text": "Driven by your coding-agent CLI via the channel bridge. File-system access, live reload.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "vela server start",
+                          "bg": "#34d39920",
+                          "color": "#bbf7d0",
+                          "border": "#34d39940"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "10px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Native Desktop",
+                          "size": "lg",
+                          "icon": "Monitor",
+                          "iconColor": "#f59e0b"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "text",
+                          "text": "Neutralino window with a pluggable bridge to your local coding-agent CLI. Linux, macOS, Windows.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "New in v12.40",
+                          "bg": "#f59e0b20",
+                          "color": "#fcd34d",
+                          "border": "#f59e0b40"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "10px"
+                    }
+                  ]
+                }
+              ],
+              "id": "692e75c4",
+              "comments": []
+            },
+            {
+              "title": "Vela Desktop — Bring Your Own Agent",
+              "duration": 75,
+              "padding": "48px 64px",
+              "bg": "linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "NEW · v12.40",
+                  "bg": "#f59e0b15",
+                  "color": "#fcd34d",
+                  "border": "#f59e0b40",
+                  "icon": "Sparkles"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "heading",
+                  "text": "Vela Desktop — Bring Your Own Agent",
+                  "size": "2xl",
+                  "icon": "Monitor",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "text",
+                  "text": "A native window built on Neutralino.js. Vera’s edits, batch ops, and chat run on *your* machine through a locally-installed coding-agent CLI — no API key, no proxy.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "Terminal",
+                      "label": "Local CLI"
+                    },
+                    {
+                      "icon": "Plug",
+                      "label": "Adapter"
+                    },
+                    {
+                      "icon": "Bot",
+                      "label": "Vera"
+                    },
+                    {
+                      "icon": "Sailboat",
+                      "label": "Vela Engine"
+                    }
+                  ],
+                  "connectorStyle": "arrow",
+                  "arrowColor": "#f59e0b",
+                  "iconBg": "#1e293b",
+                  "labelColor": "#e2e8f0"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Pluggable Adapter",
+                          "size": "md",
+                          "icon": "Plug",
+                          "iconColor": "#a78bfa"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Claude Code adapter ships today (claude -p)",
+                            "GitHub Copilot CLI, Codex CLI on the roadmap",
+                            "Adapter contract is public — add your own"
+                          ],
+                          "size": "sm",
+                          "color": "#cbd5e1"
+                        }
+                      ],
+                      "padding": "14px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Per-Deck Trust",
+                          "size": "md",
+                          "icon": "ShieldCheck",
+                          "iconColor": "#34d399"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "First AI action prompts for consent",
+                            "Trust stored at <folder>/.vela/trust.json",
+                            "Footer chip shows agent + trust state"
+                          ],
+                          "size": "sm",
+                          "color": "#cbd5e1"
+                        }
+                      ],
+                      "padding": "14px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "callout",
+                  "text": "Unsigned preview binaries on every release: `linux_x64` · `linux_arm64` · `mac_x64` · `mac_arm64` · `mac_universal` · `win_x64`",
+                  "icon": "Download",
+                  "bg": "#f59e0b12",
+                  "border": "#f59e0b30",
+                  "color": "#fcd34d"
+                }
+              ],
+              "id": "73d92d64",
+              "comments": []
+            }
+          ],
+          "id": "ebd7ef5b"
         },
         {
           "id": "1a262244",
@@ -2152,7 +2445,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" \u2014 done across all slides instantly.",
+                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" — done across all slides instantly.",
                   "icon": "Wand2",
                   "bg": "#f59e0b12",
                   "border": "#f59e0b30"
@@ -2235,7 +2528,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Click any text on a slide to edit it directly \u2014 even in fullscreen. **Bold** and *italic* markdown.",
+                          "text": "Click any text on a slide to edit it directly — even in fullscreen. **Bold** and *italic* markdown.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2255,7 +2548,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Claude.ai blocks native fullscreen. Click the **\u26f5 icon** to get a bookmarklet for true browser fullscreen.",
+                          "text": "Claude.ai blocks native fullscreen. Click the **⛵ icon** to get a bookmarklet for true browser fullscreen.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2426,7 +2719,7 @@
           "order": 0,
           "slides": [
             {
-              "title": "Get Vela \u2014 It's Free",
+              "title": "Get Vela — It's Free",
               "duration": 20,
               "padding": "48px 80px",
               "bg": "#0f172a",
@@ -2451,7 +2744,7 @@
                 },
                 {
                   "type": "heading",
-                  "text": "Get It Now \u2014 It's Free",
+                  "text": "Get It Now — It's Free",
                   "size": "4xl",
                   "align": "center"
                 },
@@ -2495,7 +2788,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "A standalone React artifact with Vera AI built-in. All 22+ block types, PDF vector export, branding, presenter mode \u2014 self-contained, no external dependencies.",
+                          "text": "A standalone React artifact with Vera AI built-in. All 22+ block types, PDF vector export, branding, presenter mode — self-contained, no external dependencies.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2532,7 +2825,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "Install the Vela skill in any Claude Project. Ask Claude to create decks from any topic \u2014 it generates compact JSON, validates, and assembles the artifact automatically.",
+                          "text": "Install the Vela skill in any Claude Project. Ask Claude to create decks from any topic — it generates compact JSON, validates, and assembles the artifact automatically.",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2630,7 +2923,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Create a deck explaining how neural networks learn \u2014 from perceptrons to backpropagation\"",
+                          "text": "\"Create a deck explaining how neural networks learn — from perceptrons to backpropagation\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2656,7 +2949,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Build a 12-slide investor pitch for an AI-powered legal assistant \u2014 TAM, traction, team, ask\"",
+                          "text": "\"Build a 12-slide investor pitch for an AI-powered legal assistant — TAM, traction, team, ask\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2682,7 +2975,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Make a team onboarding deck \u2014 values, first-week checklist, key tools, org chart, and culture\"",
+                          "text": "\"Make a team onboarding deck — values, first-week checklist, key tools, org chart, and culture\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2708,7 +3001,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "\"Present the solar system \u2014 one slide per planet with key facts, a timeline of exploration, and stunning visuals\"",
+                          "text": "\"Present the solar system — one slide per planet with key facts, a timeline of exploration, and stunning visuals\"",
                           "size": "sm",
                           "color": "#94a3b8"
                         }
@@ -2721,7 +3014,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Tip: Be specific about slide count, sections, and style. Vera works best with clear intent \u2014 she can always refine after the first pass.",
+                  "text": "Tip: Be specific about slide count, sections, and style. Vera works best with clear intent — she can always refine after the first pass.",
                   "icon": "Lightbulb",
                   "bg": "#60a5fa12",
                   "border": "#60a5fa30",
@@ -2810,7 +3103,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "ELv2 \u2014 \u00a9 2025-present Rui Quintino \u00b7 Vera AI powered by your Claude.ai subscription",
+                  "text": "ELv2 — © 2025-present Rui Quintino · Vera AI powered by your Claude.ai subscription",
                   "size": "md",
                   "color": "#64748b",
                   "align": "center"
