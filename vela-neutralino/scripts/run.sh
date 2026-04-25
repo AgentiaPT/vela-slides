@@ -8,6 +8,7 @@ neu="$tools/node_modules/.bin/neu"
 cd "$here"
 [ -d bin ] || "$neu" update
 python3 "$here/scripts/sync-vela.py"
-# To debug with DevTools, flip "enableInspector" to true in
-# neutralino.config.json (window.enableInspector). Release builds ship false.
-exec "$neu" run
+# Inspector is disabled in neutralino.config.json (release-safe default).
+# Re-enable it for dev only via Neutralino's runtime CLI override —
+# `--` separates neu's own args from args forwarded to the binary.
+exec "$neu" run -- --window-enable-inspector=true

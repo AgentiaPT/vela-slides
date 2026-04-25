@@ -46,7 +46,7 @@
       "fullScreen": false,
       "alwaysOnTop": false,
       "icon": "/resources/icons/vela.png",
-      "enableInspector": true,
+      "enableInspector": false,
       "borderless": false,
       "maximize": false,
       "hidden": false,

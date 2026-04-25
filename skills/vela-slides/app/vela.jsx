@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.42";
+const VELA_VERSION = "12.43";
 const VELA_CHANGELOG = [
+  { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
   { v: "12.40", d: "Agent visibility + trust UX: footer now renders an agent chip (Vera · Claude Code · version · model · trust-state) that opens a settings dialog listing trusted decks in the current folder with per-deck revoke and revoke-all. AgentStatusChip subscribes to window.__velaAgentInfo + vela-agent-update events — it is feature-gated, so artifact and serve.py runtimes render nothing." },
