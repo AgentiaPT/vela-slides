@@ -247,12 +247,12 @@ jobs:
               echo "| macOS Universal | \`vela-desktop-${TAG}-mac_universal.zip\` |"
               echo "| Windows x64 | \`vela-desktop-${TAG}-win_x64.zip\` |"
               echo
+              echo "Single-file binaries — resources are embedded via \`neu build --embed-resources\`, so each ZIP contains just the executable."
+              echo
               echo "⚠️ **Unsigned binaries.** First launch:"
               echo "- **macOS**: \`xattr -d com.apple.quarantine vela-mac_*\` (Gatekeeper)."
               echo "- **Windows**: SmartScreen → \"More info\" → \"Run anyway\"."
               echo "- **Linux**: \`chmod +x vela-linux_*\` before running."
-              echo
-              echo "Unzip and keep the binary next to \`resources.neu\` — Neutralino loads the bundle relative to the executable."
               echo
             elif [ "$DESKTOP_RESULT" != "success" ]; then
               echo "### Desktop (preview, unsigned)"

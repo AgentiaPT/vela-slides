@@ -9,4 +9,6 @@ cd "$here"
 [ -d bin ] || "$neu" update
 python3 "$here/scripts/verify-runtime.py"
 python3 "$here/scripts/sync-vela.py"
-exec "$neu" build --release
+# --embed-resources matches CI: resources.neu is injected into each per-OS
+# binary so dist/vela/* is a single self-contained executable per platform.
+exec "$neu" build --release --embed-resources

@@ -72,8 +72,15 @@ jobs:
         run: python3 vela-neutralino/scripts/verify-runtime.py
 
       - name: Build desktop bundles
+        # --embed-resources injects resources.neu into each per-OS binary via
+        # the postject library, producing a true single-file executable per
+        # platform (no companion resources.neu needed). Requires neu CLI ≥
+        # 11.6.0 and framework ≥ 6.3.0 — both pinned in vela-neutralino/.
+        # If we ever add code-signing, sign AFTER this step: postject mutates
+        # the binary, so a signature applied to the un-embedded build would
+        # be invalidated.
         working-directory: vela-neutralino
-        run: ./node_modules/.bin/neu build --release
+        run: ./node_modules/.bin/neu build --release --embed-resources
 
       - name: Package per-OS ZIPs
         working-directory: vela-neutralino/dist/vela
@@ -81,12 +88,11 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # resources.neu must ship next to the binary — Neutralino loads the
-          # bundle relative to the executable path at launch.
+          # Single-file binary — resources.neu is now embedded by postject.
           package() {
             local os="$1"; local bin="$2"; shift 2
             local zip="../../vela-desktop-${TAG}-${os}.zip"
-            zip -j "$zip" "$bin" resources.neu "$@"
+            zip -j "$zip" "$bin" "$@"
             echo "  → $(basename "$zip")"
           }
           package linux_x64      vela-linux_x64
