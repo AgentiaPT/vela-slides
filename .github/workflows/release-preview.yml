@@ -28,6 +28,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Required for actions/attest-build-provenance — produces SLSA attestations
+  # bound to the workflow run that built the artefacts.
+  id-token: write
+  attestations: write
 
 jobs:
 
@@ -130,90 +134,19 @@ jobs:
           retention-days: 14
 
   # ─────────────────────────────────────────────────────────────────────
-  # build-desktop — unsigned Neutralino binaries. `neu build --release`
-  # cross-compiles all supported OSes from a single Linux runner, so no
-  # matrix is needed. Failure here does not block the skill publish.
+  # build-desktop — unsigned Neutralino binaries. Delegated to a reusable
+  # workflow shared with release.yml (push to main), so the preview ZIP
+  # and the stable ZIP are bit-for-bit equivalent. Failure here does not
+  # block the skill publish.
   # ─────────────────────────────────────────────────────────────────────
   build-desktop:
     name: Build desktop (unsigned)
     needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.pr_sha }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Install neu CLI
-        # Install into vela-neutralino/ directly — in CI we do not have the
-        # drvfs constraint that setup.sh works around on the dev machine.
-        # --ignore-workspace: repo root has a pnpm-workspace.yaml we must not
-        # pull in. --ignore-scripts: policy (see CLAUDE.md). --no-frozen-lockfile:
-        # vela-neutralino has no checked-in lockfile, so frozen would fail.
-        working-directory: vela-neutralino
-        run: pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
-
-      - name: Regenerate monolith
-        run: python3 skills/vela-slides/scripts/concat.py
-
-      - name: Preprocess vela.jsx for Neutralino
-        run: python3 vela-neutralino/scripts/sync-vela.py
-
-      - name: Fetch Neutralino runtime binaries
-        working-directory: vela-neutralino
-        run: ./node_modules/.bin/neu update
-
-      - name: Build desktop bundles
-        working-directory: vela-neutralino
-        run: ./node_modules/.bin/neu build --release
-
-      - name: Package per-OS ZIPs
-        working-directory: vela-neutralino/dist/vela
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          # resources.neu must ship next to the binary — Neutralino loads the
-          # bundle relative to the executable path at launch.
-          package() {
-            local os="$1"; local bin="$2"; shift 2
-            local zip="../../vela-desktop-${TAG}-${os}.zip"
-            zip -j "$zip" "$bin" resources.neu "$@"
-            echo "  → $(basename "$zip")"
-          }
-          package linux_x64      vela-linux_x64
-          package linux_arm64    vela-linux_arm64
-          package mac_x64        vela-mac_x64
-          package mac_arm64      vela-mac_arm64
-          package mac_universal  vela-mac_universal
-          # Neutralino 6.x links against the system-installed WebView2
-          # runtime (shipped in Windows 10 1809+ / Windows 11), so we no
-          # longer need to bundle WebView2Loader.dll alongside the exe.
-          # If a future pin regresses this, fail loudly.
-          if [ -f WebView2Loader.dll ]; then
-            package win_x64      vela-win_x64.exe WebView2Loader.dll
-          else
-            package win_x64      vela-win_x64.exe
-          fi
-          ls -lh ../../vela-desktop-*.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-zips
-          path: vela-neutralino/vela-desktop-*.zip
-          if-no-files-found: error
-          retention-days: 14
+    uses: ./.github/workflows/_build-desktop.yml
+    with:
+      ref: ${{ inputs.pr_sha }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      artifact_name: desktop-zips
 
   # ─────────────────────────────────────────────────────────────────────
   # publish — single release for whatever artifacts succeeded. Runs even
@@ -252,6 +185,21 @@ jobs:
           echo "skill_ok=$skill_ok"     >> "$GITHUB_OUTPUT"
           echo "desktop_ok=$desktop_ok" >> "$GITHUB_OUTPUT"
           ls -lh *.zip || true
+
+      - name: Generate SHA256SUMS
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          sha256sum *.zip > "SHA256SUMS-${TAG}.txt"
+          cat "SHA256SUMS-${TAG}.txt"
+
+      - name: Attest build provenance
+        # SLSA attestation per ZIP, verifiable with `gh attestation verify`.
+        # Even on a prerelease, this lets reviewers confirm the bytes came
+        # from this exact workflow run.
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: '*.zip'
 
       - name: Compose release notes
         env:
@@ -312,6 +260,14 @@ jobs:
               echo "⚠️ Desktop build failed for this preview — see workflow logs."
               echo
             fi
+            echo "### Verification"
+            echo
+            echo "All ZIPs are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
+            echo "\`\`\`bash"
+            echo "sha256sum -c SHA256SUMS-${TAG}.txt"
+            echo "gh attestation verify <zip> --repo ${{ github.repository }}"
+            echo "\`\`\`"
+            echo
             echo "---"
             echo "Branch \`${PR_REF}\` · Commit \`${PR_SHA}\`"
           } > release-notes.md
@@ -338,7 +294,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh release create "$TAG" \
-            *.zip \
+            *.zip "SHA256SUMS-${TAG}.txt" \
             --repo "$REPO" \
             --title "Vela Slides ${VERSION} (Preview PR #${PR_NUMBER})" \
             --notes-file release-notes.md \

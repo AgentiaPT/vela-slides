@@ -52,6 +52,10 @@ if [ ! -d "$here/bin" ]; then
   (cd "$here" && "$tools/node_modules/.bin/neu" update)
 fi
 
+# Verify runtime binaries and client library against committed SHA256 pins.
+# Aborts setup loudly if `neu update` fetched a tampered or unexpected build.
+python3 "$here/scripts/verify-runtime.py"
+
 echo
 echo "next: bash $here/scripts/run.sh   # dev"
 echo "      bash $here/scripts/build.sh # release build"

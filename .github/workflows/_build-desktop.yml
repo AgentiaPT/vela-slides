@@ -1,0 +1,113 @@
+name: Build Desktop (reusable)
+
+# Reusable workflow that builds unsigned per-OS Neutralino desktop binaries
+# and uploads them as an artifact. Called from both release.yml (push to main)
+# and release-preview.yml (PR preview). Centralising the build keeps the
+# stable release and the preview release bit-for-bit equivalent.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref or SHA to check out (a SHA pins safely against branch movement).'
+        required: true
+        type: string
+      tag:
+        description: 'Tag to embed in ZIP filenames, e.g. v10.5 or v10.5-rc.pr42.'
+        required: true
+        type: string
+      artifact_name:
+        description: 'Name of the uploaded artifact bundle.'
+        required: false
+        type: string
+        default: desktop-zips
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build desktop (unsigned)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install neu CLI
+        # --ignore-workspace: repo root has a pnpm-workspace.yaml we must not
+        # pull in. --ignore-scripts: policy (see CLAUDE.md). --no-frozen-lockfile:
+        # vela-neutralino has no checked-in lockfile, so frozen would fail.
+        # @neutralinojs/neu is exact-pinned in vela-neutralino/package.json.
+        working-directory: vela-neutralino
+        run: pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
+
+      - name: Regenerate monolith
+        run: python3 skills/vela-slides/scripts/concat.py
+
+      - name: Preprocess vela.jsx for Neutralino
+        run: python3 vela-neutralino/scripts/sync-vela.py
+
+      - name: Fetch Neutralino runtime binaries
+        working-directory: vela-neutralino
+        run: ./node_modules/.bin/neu update
+
+      - name: Verify runtime against pinned checksums
+        # Fails the build if `neu update` fetched anything that does not match
+        # vela-neutralino/checksums/runtime-v<binaryVersion>.sha256 +
+        # clientlib-v<clientVersion>.sha256. Catches upstream re-rolls and
+        # tampered downloads before we ship binaries to users.
+        run: python3 vela-neutralino/scripts/verify-runtime.py
+
+      - name: Build desktop bundles
+        working-directory: vela-neutralino
+        run: ./node_modules/.bin/neu build --release
+
+      - name: Package per-OS ZIPs
+        working-directory: vela-neutralino/dist/vela
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # resources.neu must ship next to the binary — Neutralino loads the
+          # bundle relative to the executable path at launch.
+          package() {
+            local os="$1"; local bin="$2"; shift 2
+            local zip="../../vela-desktop-${TAG}-${os}.zip"
+            zip -j "$zip" "$bin" resources.neu "$@"
+            echo "  → $(basename "$zip")"
+          }
+          package linux_x64      vela-linux_x64
+          package linux_arm64    vela-linux_arm64
+          package mac_x64        vela-mac_x64
+          package mac_arm64      vela-mac_arm64
+          package mac_universal  vela-mac_universal
+          # Neutralino 6.x links against the system-installed WebView2
+          # runtime (shipped in Windows 10 1809+ / Windows 11), so we no
+          # longer need to bundle WebView2Loader.dll alongside the exe.
+          # If a future pin regresses this, fail loudly.
+          if [ -f WebView2Loader.dll ]; then
+            package win_x64      vela-win_x64.exe WebView2Loader.dll
+          else
+            package win_x64      vela-win_x64.exe
+          fi
+          ls -lh ../../vela-desktop-*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: vela-neutralino/vela-desktop-*.zip
+          if-no-files-found: error
+          retention-days: 14

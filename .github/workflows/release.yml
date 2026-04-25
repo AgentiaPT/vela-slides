@@ -1,31 +1,46 @@
 name: Release
 
+# Stable release on every push to main that touches skill or desktop sources.
+# Builds the skill ZIP and the unsigned desktop binaries in parallel, then a
+# single publish job uploads both (plus SHA256SUMS) to one GitHub Release tag
+# derived from VELA_VERSION. Idempotent — re-running on the same version is a
+# no-op.
+
 on:
   push:
     branches: [main]
     paths:
       - 'skills/vela-slides/**'
+      - 'vela-neutralino/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/_build-desktop.yml'
 
 permissions:
   contents: write
+  # Required for actions/attest-build-provenance — produces SLSA attestations
+  # bound to the workflow run that built the artefacts.
+  id-token: write
+  attestations: write
 
 jobs:
-  release:
-    name: Build & Release
+  # ─────────────────────────────────────────────────────────────────────
+  # prepare — single source of truth for the version + tag. Centralises
+  # the regex so build-skill and publish do not duplicate it.
+  # ─────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare metadata
     runs-on: ubuntu-latest
-    # Only run after CI passes (same commit)
-    needs: []
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.check.outputs.exists }}
+      notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Run full test suite
-        run: python3 tests/test_vela.py
 
       - name: Extract version
         id: version
@@ -41,74 +56,198 @@ jobs:
           echo "Detected version: $VERSION"
 
       - name: Check if release already exists
-        id: check_release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "${{ steps.version.outputs.tag }}" &>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release ${{ steps.version.outputs.tag }} already exists — skipping."
+            echo "Release ${{ steps.version.outputs.tag }} already exists — downstream jobs will skip."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Release ${{ steps.version.outputs.tag }} does not exist — will create."
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract changelog entry
-        if: steps.check_release.outputs.exists == 'false'
+        if: steps.check.outputs.exists == 'false'
         id: changelog
         run: |
           NOTES=$(python3 -c "
-          import re, json
+          import re
           content = open('skills/vela-slides/app/parts/part-imports.jsx').read()
           m = re.search(r'const VELA_CHANGELOG\s*=\s*\[([^\]]+)\]', content, re.DOTALL)
           if m:
-              # Extract first entry's description
               entry = re.search(r'd:\s*\"([^\"]+)\"', m.group(1))
-              if entry:
-                  print(entry.group(1))
-              else:
-                  print('New release')
+              print(entry.group(1) if entry else 'New release')
           else:
               print('New release')
           ")
-          # Write multiline-safe output
           echo "notes<<EOF" >> "$GITHUB_OUTPUT"
           echo "$NOTES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
+  # ─────────────────────────────────────────────────────────────────────
+  # build-skill — runs the full test suite, then packages the skill dir.
+  # ─────────────────────────────────────────────────────────────────────
+  build-skill:
+    name: Build skill ZIP
+    needs: prepare
+    if: needs.prepare.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run full test suite
+        run: python3 tests/test_vela.py
+
       - name: Build skill ZIP
-        if: steps.check_release.outputs.exists == 'false'
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          # Rebuild template from parts (ensure clean build)
           python3 skills/vela-slides/scripts/concat.py skills/vela-slides/app/parts skills/vela-slides/app/vela.jsx
-
-          # Create the installable skill ZIP
           cd skills
-          zip -r ../vela-slides-skill-${{ steps.version.outputs.tag }}.zip vela-slides/
+          zip -r "../vela-slides-skill-${TAG}.zip" vela-slides/
           cd ..
-
-          echo "Built: vela-slides-skill-${{ steps.version.outputs.tag }}.zip"
           ls -lh vela-slides-skill-*.zip
 
-      - name: Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-zip
+          path: vela-slides-skill-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # build-desktop — calls the shared reusable workflow used by the
+  # PR-preview build, so stable and preview ship bit-for-bit equivalent
+  # binaries. Verifies pinned Neutralino runtime checksums internally.
+  # ─────────────────────────────────────────────────────────────────────
+  build-desktop:
+    name: Build desktop (unsigned)
+    needs: prepare
+    if: needs.prepare.outputs.exists == 'false'
+    uses: ./.github/workflows/_build-desktop.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      artifact_name: desktop-zips
+
+  # ─────────────────────────────────────────────────────────────────────
+  # publish — single release combining whatever artefacts succeeded.
+  # Generates SHA256SUMS and SLSA build-provenance attestations.
+  # ─────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish release
+    needs: [prepare, build-skill, build-desktop]
+    if: |
+      always() &&
+      needs.prepare.outputs.exists == 'false' &&
+      (needs.build-skill.result == 'success' || needs.build-desktop.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download skill artifact
+        if: needs.build-skill.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: skill-zip
+
+      - name: Download desktop artifacts
+        if: needs.build-desktop.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-zips
+
+      - name: Generate SHA256SUMS
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            vela-slides-skill-${{ steps.version.outputs.tag }}.zip \
-            --title "Vela Slides ${{ steps.version.outputs.tag }}" \
-            --notes "## Vela Slides ${{ steps.version.outputs.version }}
+          ls -lh *.zip
+          # `sha256sum` writes paths verbatim — keeping ZIPs and SHA256SUMS in
+          # the same dir means the file works with `sha256sum -c` after
+          # downloading both from the release page.
+          sha256sum *.zip > "SHA256SUMS-${TAG}.txt"
+          echo "--- SHA256SUMS-${TAG}.txt ---"
+          cat "SHA256SUMS-${TAG}.txt"
 
-          ${{ steps.changelog.outputs.notes }}
+      - name: Attest build provenance
+        # Produces a SLSA-compliant attestation binding each ZIP to the
+        # workflow run + commit that built it. Verifiable with `gh attestation
+        # verify <file> --repo <owner>/<repo>`. SHA256SUMS itself is intentionally
+        # excluded — it is a manifest of attested artefacts, not an artefact.
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: '*.zip'
 
-          ### Installation
+      - name: Compose release notes
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CHANGELOG: ${{ needs.prepare.outputs.notes }}
+          SKILL_RESULT: ${{ needs.build-skill.result }}
+          DESKTOP_RESULT: ${{ needs.build-desktop.result }}
+        run: |
+          {
+            echo "## Vela Slides ${VERSION}"
+            echo
+            echo "${CHANGELOG}"
+            echo
+            if [ "$SKILL_RESULT" = "success" ]; then
+              echo "### Skill (Claude.ai)"
+              echo
+              echo "1. Download \`vela-slides-skill-${TAG}.zip\` below"
+              echo "2. Claude.ai → **Customize → Skills → + → Upload a skill**"
+              echo "3. Upload the ZIP — done."
+              echo
+              echo "For Claude Code:"
+              echo "\`\`\`bash"
+              echo "unzip vela-slides-skill-${TAG}.zip -d ~/.claude/skills/"
+              echo "\`\`\`"
+              echo
+            fi
+            if [ "$DESKTOP_RESULT" = "success" ]; then
+              echo "### Desktop (unsigned)"
+              echo
+              echo "| OS | Asset |"
+              echo "|---|---|"
+              echo "| Linux x64 | \`vela-desktop-${TAG}-linux_x64.zip\` |"
+              echo "| Linux ARM64 | \`vela-desktop-${TAG}-linux_arm64.zip\` |"
+              echo "| macOS Apple Silicon | \`vela-desktop-${TAG}-mac_arm64.zip\` |"
+              echo "| macOS Intel | \`vela-desktop-${TAG}-mac_x64.zip\` |"
+              echo "| macOS Universal | \`vela-desktop-${TAG}-mac_universal.zip\` |"
+              echo "| Windows x64 | \`vela-desktop-${TAG}-win_x64.zip\` |"
+              echo
+              echo "⚠️ **Unsigned binaries.** First launch:"
+              echo "- **macOS**: \`xattr -d com.apple.quarantine vela-mac_*\` (Gatekeeper)."
+              echo "- **Windows**: SmartScreen → \"More info\" → \"Run anyway\"."
+              echo "- **Linux**: \`chmod +x vela-linux_*\` before running."
+              echo
+              echo "Unzip and keep the binary next to \`resources.neu\` — Neutralino loads the bundle relative to the executable."
+              echo
+            fi
+            echo "### Verification"
+            echo
+            echo "All ZIPs are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
+            echo "\`\`\`bash"
+            echo "sha256sum -c SHA256SUMS-${TAG}.txt"
+            echo "gh attestation verify <zip> --repo ${{ github.repository }}"
+            echo "\`\`\`"
+          } > release-notes.md
+          echo "--- release notes ---"
+          cat release-notes.md
 
-          1. Download \`vela-slides-skill-${{ steps.version.outputs.tag }}.zip\` below
-          2. In Claude.ai → **Customize → Skills** → **\"+\"** → **Upload a skill**
-          3. Upload the ZIP — done!
-
-          For Claude Code:
-          \`\`\`bash
-          unzip vela-slides-skill-${{ steps.version.outputs.tag }}.zip -d ~/.claude/skills/
-          \`\`\`"
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" \
+            *.zip "SHA256SUMS-${TAG}.txt" \
+            --repo "$REPO" \
+            --title "Vela Slides ${VERSION}" \
+            --notes-file release-notes.md
