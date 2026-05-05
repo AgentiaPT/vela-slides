@@ -68,6 +68,7 @@ evals/output/
 evals/reports/
 evals/archive/
 evals/workdirs/
+evals/results/
 
 # Local working files
 .vela.json
