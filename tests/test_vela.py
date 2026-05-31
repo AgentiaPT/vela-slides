@@ -150,16 +150,24 @@ def test_security():
     else:
         fail("Private URLs", f"found: {found_private}")
 
-    # 4. SVG sanitization present (defense-in-depth)
-    if 'foreignObject' in all_jsx and 'replace(/<foreignObject' in all_jsx:
-        ok("SVG foreignObject sanitization present")
+    # 4. SVG sanitization present (defense-in-depth, DOM-based via sanitizeSvgMarkup)
+    #    foreignObject (and script/use/animate/etc.) are removed by tag name through SVG_BLOCKED_TAGS.
+    if 'SVG_BLOCKED_TAGS' in all_jsx and 'foreignobject' in all_jsx.lower() and 'SVG_BLOCKED_TAGS.has(tag)' in all_jsx:
+        ok("SVG foreignObject sanitization present (DOM-based SVG_BLOCKED_TAGS)")
     else:
         fail("SVG foreignObject sanitization")
 
-    if 'xlink:href' in all_jsx and 'data-blocked-href' in all_jsx:
-        ok("SVG xlink:href sanitization present")
+    #    href/xlink:href scheme filtering inside the DOMParser walk.
+    if 'xlink:href' in all_jsx and "startsWith(\"javascript:\")" in all_jsx:
+        ok("SVG xlink:href / href scheme sanitization present")
     else:
         fail("SVG xlink:href sanitization")
+
+    #    svg BLOCK markup must route through the DOM-based sanitizer (not the old regex chain).
+    if 'sanitizeSvgMarkup(clean.markup' in all_jsx and 'processed = sanitizeSvgMarkup(processed)' in all_jsx:
+        ok("svg block routes markup through sanitizeSvgMarkup (import + render)")
+    else:
+        fail("svg block sanitizeSvgMarkup routing", "svg block must use DOM-based sanitizer at import and render")
 
     # 5. sanitizeString strips HTML tags
     if 'replace(/<[^>]*>/g' in all_jsx:

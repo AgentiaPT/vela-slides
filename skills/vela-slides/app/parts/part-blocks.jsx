@@ -641,21 +641,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // Theme token injection
       const tokens = { "{{color}}": st.text || "#e2e8f0", "{{accent}}": st.accent || "#3b82f6", "{{bg}}": st.bg || "#0f172a", "{{muted}}": (st.muted || "#94a3b8") };
       for (const [tok, val] of Object.entries(tokens)) { while (processed.includes(tok)) processed = processed.replace(tok, val); }
-      // Sanitize — defense-in-depth against SVG XSS vectors
-      processed = processed
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+      // Sanitize — defense-in-depth against SVG XSS vectors. Runs AFTER theme-token injection
+      // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
+      // the prior regex chain let unquoted/obfuscated javascript: URIs through.
+      processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}

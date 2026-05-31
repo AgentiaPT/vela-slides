@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.43";
+const VELA_VERSION = "12.44";
 const VELA_CHANGELOG = [
+  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
@@ -349,7 +350,9 @@ function sanitizeSvgMarkup(raw) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
             const val = a.value.trim().toLowerCase();
-            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
+            // Scheme check ignores ASCII whitespace/control chars (browsers strip tab/newline/CR inside URL schemes — "java\tscript:" === "javascript:")
+            const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+            if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
             if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
           }
@@ -425,22 +428,10 @@ function sanitizeBlock(block) {
     );
   }
   if (clean.type === "svg") {
-    if (typeof clean.markup === "string") {
-      clean.markup = clean.markup.slice(0, 50000)
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-    } else { clean.markup = ""; }
+    // DOM-based sanitization (same pipeline as study-notes/chat diagrams). The previous
+    // regex chain was bypassable: unquoted and whitespace-obfuscated javascript:/data: URIs
+    // in href/xlink:href survived it, yielding stored XSS on click.
+    clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
   // Guard: style must be a plain object, never an array or primitive
   if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;

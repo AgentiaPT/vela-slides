@@ -904,6 +904,50 @@ uiSuite("Study Notes", [
   }},
 ]);
 
+// ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
+// The svg block previously used a regex chain that let unquoted and
+// whitespace-obfuscated javascript: URIs through. These assert the
+// DOM-based sanitizeSvgMarkup() neutralizes the known bypasses.
+uiSuite("SVG Sanitizer (XSS)", [
+  { name: "Benign svg survives sanitization", fn: async () => {
+    const out = sanitizeSvgMarkup("<rect x='1' y='1' width='8' height='8' fill='#3b82f6'/>");
+    return out.includes("<rect") && out.includes("#3b82f6");
+  }},
+  { name: "Unquoted javascript: href stripped (or whole svg rejected)", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href=javascript:alert(1)><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "Quoted javascript: href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out) && !/href\s*=/i.test(out.replace(/data-blocked-href/gi, ""));
+  }},
+  { name: "Whitespace-obfuscated scheme neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="java\tscript:alert(1)"><text>x</text></a>');
+    // either attr removed, or whitespace normalized so it is no longer a javascript scheme
+    return !/javascript:/i.test(out.replace(/\s+/g, ""));
+  }},
+  { name: "xlink:href javascript: stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a xlink:href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "data: URI in href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="data:text/html,<script>alert(1)</script>" />');
+    return !/data:/i.test(out);
+  }},
+  { name: "Event handler attribute stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "script element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
+    return !/<script/i.test(out);
+  }},
+  { name: "foreignObject element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
+    return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
+  }},
+]);
+
 // ── v10: Gallery View Suite ──────────────────────────────────────────
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {
