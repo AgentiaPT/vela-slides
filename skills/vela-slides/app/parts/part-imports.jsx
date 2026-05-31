@@ -69,8 +69,14 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.43";
+const VELA_VERSION = "12.49";
 const VELA_CHANGELOG = [
+  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
+  { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
+  { v: "12.46", d: "Security (Medium/defense-in-depth): close javascript:/data: link gaps. Per-item `link` fields on icon-row, flow, steps, timeline, tag-group, funnel, cycle, number-row and checklist items were not URL-sanitized at import (only block-level and bullet links were), and click handlers passed them straight to window.open — block scheme abuse is mitigated by modern browser window.open rules but not guaranteed on the desktop webview runtime. Now: (1) sanitizeBlock URL-sanitizes item-level links (+ a new icon-row item branch), (2) all deck-supplied link clicks route through a shared openExternalLink() that re-sanitizes at the sink, and (3) the study-notes glossary 'Learn more' anchor re-sanitizes entry.url at render instead of trusting import." },
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
+  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
@@ -233,8 +239,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
     } catch (e) {
-      dbg("[PATCH] Sanitize failed, loading raw:", e);
-      dispatch({ type: "LOAD", payload: STARTUP_PATCH });
+      // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
+      // on fundamentally invalid input (not an object / no lanes array) now that the
+      // lane-count limit is clamped rather than thrown.
+      dbg("[PATCH] Sanitize failed, skipping patch (not loading raw):", e);
     }
     return;
   }
@@ -330,7 +338,15 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   } catch (_) { return ""; }
 }
 
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+// Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
+// vbscript: link can never reach window.open even if a mutation path skipped import
+// sanitization or a future runtime (e.g. desktop webview) allows those schemes.
+function openExternalLink(url) {
+  const safe = sanitizeUrl(url);
+  if (safe) window.open(safe, "_blank", "noopener,noreferrer");
+}
+
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener"]);
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -341,6 +357,11 @@ function sanitizeSvgMarkup(raw) {
     const walk = (node) => {
       const children = Array.from(node.childNodes);
       for (const child of children) {
+        // Keep only element (1) and text (3) nodes. Drop comment (8), CDATA (4) and
+        // processing-instruction (7) nodes: they serialize literally (unescaped), so a
+        // smuggled </style></title></text> inside CDATA breaks out of rawtext when the
+        // serialized string is re-parsed as HTML by dangerouslySetInnerHTML (mutation XSS).
+        if (child.nodeType !== 1 && child.nodeType !== 3) { child.remove(); continue; }
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
           if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
@@ -349,7 +370,9 @@ function sanitizeSvgMarkup(raw) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
             const val = a.value.trim().toLowerCase();
-            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
+            // Scheme check ignores ASCII whitespace/control chars (browsers strip tab/newline/CR inside URL schemes — "java\tscript:" === "javascript:")
+            const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+            if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
             if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
           }
@@ -388,6 +411,18 @@ function sanitizeBlock(block) {
         blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
       }));
     }
+    if (clean.type === "icon-row") {
+      clean.items = clean.items.slice(0, 20).map((it) => {
+        if (typeof it === "string") return sanitizeString(it, 500);
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.text) c.text = sanitizeString(c.text, 500);
+        if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.value) c.value = sanitizeString(String(c.value), 100);
+        if (c.link) c.link = sanitizeUrl(c.link);
+        return c;
+      }).filter(Boolean);
+    }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
         if (!it || typeof it !== "object") return null;
@@ -396,6 +431,7 @@ function sanitizeBlock(block) {
         if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
+        if (c.link) c.link = sanitizeUrl(c.link);
         return c;
       }).filter(Boolean);
     }
@@ -425,22 +461,10 @@ function sanitizeBlock(block) {
     );
   }
   if (clean.type === "svg") {
-    if (typeof clean.markup === "string") {
-      clean.markup = clean.markup.slice(0, 50000)
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-    } else { clean.markup = ""; }
+    // DOM-based sanitization (same pipeline as study-notes/chat diagrams). The previous
+    // regex chain was bypassable: unquoted and whitespace-obfuscated javascript:/data: URIs
+    // in href/xlink:href survived it, yielding stored XSS on click.
+    clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
   // Guard: style must be a plain object, never an array or primitive
   if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;
@@ -560,8 +584,9 @@ function sanitizeItem(item) {
 function validateAndSanitizeDeck(raw) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
-  if (raw.lanes.length > 50) throw new Error("Too many lanes (max 50)");
-  const lanes = raw.lanes.map((lane) => {
+  // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
+  // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
     const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
     return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };

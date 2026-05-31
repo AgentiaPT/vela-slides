@@ -32,9 +32,11 @@ function innerReducer(state, a) {
       const laneId = lanes[0].id;
       const newItems = (a.concepts || []).map((c) => {
         const nid = uid();
-        if (c.slides?.length) _dirtyMods.add(nid);
-        return { id: nid, title: c.title || "Imported", status: "todo", importance: "should",
-        order: lanes[0].items.length + 1, slides: Array.isArray(c.slides) ? c.slides : [], createdAt: now() };
+        // Sanitize pasted/imported slides here — IMPORT_CONCEPTS bypasses validateAndSanitizeDeck.
+        const slides = Array.isArray(c.slides) ? c.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [];
+        if (slides.length) _dirtyMods.add(nid);
+        return { id: nid, title: sanitizeString(c.title || "Imported", 200), status: "todo", importance: "should",
+        order: lanes[0].items.length + 1, slides, createdAt: now() };
       });
       lanes = lanes.map((l) => l.id === laneId ? { ...l, items: [...l.items, ...newItems] } : l);
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };

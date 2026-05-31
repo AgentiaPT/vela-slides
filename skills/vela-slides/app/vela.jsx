@@ -69,8 +69,14 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.43";
+const VELA_VERSION = "12.49";
 const VELA_CHANGELOG = [
+  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
+  { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
+  { v: "12.46", d: "Security (Medium/defense-in-depth): close javascript:/data: link gaps. Per-item `link` fields on icon-row, flow, steps, timeline, tag-group, funnel, cycle, number-row and checklist items were not URL-sanitized at import (only block-level and bullet links were), and click handlers passed them straight to window.open — block scheme abuse is mitigated by modern browser window.open rules but not guaranteed on the desktop webview runtime. Now: (1) sanitizeBlock URL-sanitizes item-level links (+ a new icon-row item branch), (2) all deck-supplied link clicks route through a shared openExternalLink() that re-sanitizes at the sink, and (3) the study-notes glossary 'Learn more' anchor re-sanitizes entry.url at render instead of trusting import." },
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
+  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
@@ -233,8 +239,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
     } catch (e) {
-      dbg("[PATCH] Sanitize failed, loading raw:", e);
-      dispatch({ type: "LOAD", payload: STARTUP_PATCH });
+      // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
+      // on fundamentally invalid input (not an object / no lanes array) now that the
+      // lane-count limit is clamped rather than thrown.
+      dbg("[PATCH] Sanitize failed, skipping patch (not loading raw):", e);
     }
     return;
   }
@@ -330,7 +338,15 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   } catch (_) { return ""; }
 }
 
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+// Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
+// vbscript: link can never reach window.open even if a mutation path skipped import
+// sanitization or a future runtime (e.g. desktop webview) allows those schemes.
+function openExternalLink(url) {
+  const safe = sanitizeUrl(url);
+  if (safe) window.open(safe, "_blank", "noopener,noreferrer");
+}
+
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener"]);
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -341,6 +357,11 @@ function sanitizeSvgMarkup(raw) {
     const walk = (node) => {
       const children = Array.from(node.childNodes);
       for (const child of children) {
+        // Keep only element (1) and text (3) nodes. Drop comment (8), CDATA (4) and
+        // processing-instruction (7) nodes: they serialize literally (unescaped), so a
+        // smuggled </style></title></text> inside CDATA breaks out of rawtext when the
+        // serialized string is re-parsed as HTML by dangerouslySetInnerHTML (mutation XSS).
+        if (child.nodeType !== 1 && child.nodeType !== 3) { child.remove(); continue; }
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
           if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
@@ -349,7 +370,9 @@ function sanitizeSvgMarkup(raw) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
             const val = a.value.trim().toLowerCase();
-            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
+            // Scheme check ignores ASCII whitespace/control chars (browsers strip tab/newline/CR inside URL schemes — "java\tscript:" === "javascript:")
+            const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+            if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
             if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
           }
@@ -388,6 +411,18 @@ function sanitizeBlock(block) {
         blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
       }));
     }
+    if (clean.type === "icon-row") {
+      clean.items = clean.items.slice(0, 20).map((it) => {
+        if (typeof it === "string") return sanitizeString(it, 500);
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.text) c.text = sanitizeString(c.text, 500);
+        if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.value) c.value = sanitizeString(String(c.value), 100);
+        if (c.link) c.link = sanitizeUrl(c.link);
+        return c;
+      }).filter(Boolean);
+    }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
         if (!it || typeof it !== "object") return null;
@@ -396,6 +431,7 @@ function sanitizeBlock(block) {
         if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
+        if (c.link) c.link = sanitizeUrl(c.link);
         return c;
       }).filter(Boolean);
     }
@@ -425,22 +461,10 @@ function sanitizeBlock(block) {
     );
   }
   if (clean.type === "svg") {
-    if (typeof clean.markup === "string") {
-      clean.markup = clean.markup.slice(0, 50000)
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-    } else { clean.markup = ""; }
+    // DOM-based sanitization (same pipeline as study-notes/chat diagrams). The previous
+    // regex chain was bypassable: unquoted and whitespace-obfuscated javascript:/data: URIs
+    // in href/xlink:href survived it, yielding stored XSS on click.
+    clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
   // Guard: style must be a plain object, never an array or primitive
   if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;
@@ -560,8 +584,9 @@ function sanitizeItem(item) {
 function validateAndSanitizeDeck(raw) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
-  if (raw.lanes.length > 50) throw new Error("Too many lanes (max 50)");
-  const lanes = raw.lanes.map((lane) => {
+  // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
+  // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
     const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
     return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
@@ -1257,8 +1282,8 @@ function GlossaryLink({ label, term, entry }) {
         }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{term}</div>
           <div>{entry && entry.definition}</div>
-          {entry && entry.url && (
-            <a href={entry.url} target="_blank" rel="noopener noreferrer"
+          {entry && entry.url && sanitizeUrl(entry.url) && (
+            <a href={sanitizeUrl(entry.url)} target="_blank" rel="noopener noreferrer"
                onClick={(e) => e.stopPropagation()}
                style={{ display: "inline-block", marginTop: 6, color: T.accent, fontSize: 11, textDecoration: "underline" }}>
               Learn more →
@@ -1408,7 +1433,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
     <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, item.title) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       <div style={{ flex: 1 }}>
@@ -1416,7 +1441,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
       {/* Presenter mode: subtle link badge */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Link badge (not hovered, edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -32, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode) */}
@@ -1458,7 +1483,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
     <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", gap: 12, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, text) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span>
         : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />}
@@ -1500,12 +1525,12 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
     <div style={{ position: "relative", ...(link ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, block.text || block.value || block.title) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Link badge (not hovered, edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode) */}
@@ -1676,7 +1701,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         if (cell.border) cellStyle.border = cell.border;
         const safeStyle = cell.style && typeof cell.style === "object" && !Array.isArray(cell.style) ? cell.style : {};
         const cellLink = (cell.blocks || []).find(b => b.link)?.link;
-        return <div key={ci} style={{ ...cellStyle, ...safeStyle, ...(cellLink ? { cursor: "pointer" } : {}) }} data-pdf-link={cellLink || undefined} onClick={cellLink ? (e) => { e.stopPropagation(); window.open(cellLink, "_blank", "noopener,noreferrer"); } : undefined}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
+        return <div key={ci} style={{ ...cellStyle, ...safeStyle, ...(cellLink ? { cursor: "pointer" } : {}) }} data-pdf-link={cellLink || undefined} onClick={cellLink ? (e) => { e.stopPropagation(); openExternalLink(cellLink); } : undefined}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
         onChange={onChange ? (patch) => {
           const newItems = (block.items || []).map((c, i) => i === ci
@@ -1712,21 +1737,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // Theme token injection
       const tokens = { "{{color}}": st.text || "#e2e8f0", "{{accent}}": st.accent || "#3b82f6", "{{bg}}": st.bg || "#0f172a", "{{muted}}": (st.muted || "#94a3b8") };
       for (const [tok, val] of Object.entries(tokens)) { while (processed.includes(tok)) processed = processed.replace(tok, val); }
-      // Sanitize — defense-in-depth against SVG XSS vectors
-      processed = processed
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+      // Sanitize — defense-in-depth against SVG XSS vectors. Runs AFTER theme-token injection
+      // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
+      // the prior regex chain let unquoted/obfuscated javascript: URIs through.
+      processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
@@ -2340,7 +2354,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
-      onClick={b.link ? (e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); }}>
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
@@ -2380,13 +2394,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
       {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
   ) : (
-    <div key={i} data-block-type={b.type} title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined} data-pdf-link={b.link || undefined} onClick={b.link ? (e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); } : undefined} style={b.link ? { cursor: "pointer" } : undefined}>
+    <div key={i} data-block-type={b.type} title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined} data-pdf-link={b.link || undefined} onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined} style={b.link ? { cursor: "pointer" } : undefined}>
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
@@ -2497,9 +2511,11 @@ function innerReducer(state, a) {
       const laneId = lanes[0].id;
       const newItems = (a.concepts || []).map((c) => {
         const nid = uid();
-        if (c.slides?.length) _dirtyMods.add(nid);
-        return { id: nid, title: c.title || "Imported", status: "todo", importance: "should",
-        order: lanes[0].items.length + 1, slides: Array.isArray(c.slides) ? c.slides : [], createdAt: now() };
+        // Sanitize pasted/imported slides here — IMPORT_CONCEPTS bypasses validateAndSanitizeDeck.
+        const slides = Array.isArray(c.slides) ? c.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [];
+        if (slides.length) _dirtyMods.add(nid);
+        return { id: nid, title: sanitizeString(c.title || "Imported", 200), status: "todo", importance: "should",
+        order: lanes[0].items.length + 1, slides, createdAt: now() };
       });
       lanes = lanes.map((l) => l.id === laneId ? { ...l, items: [...l.items, ...newItems] } : l);
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };
@@ -7997,6 +8013,132 @@ uiSuite("Study Notes", [
     // Undo the UPDATE_SLIDE so we don't leak state into later tests
     window.__velaTestInjectStudyNotes(undefined);
     await _wait(100);
+  }},
+]);
+
+// ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
+// The svg block previously used a regex chain that let unquoted and
+// whitespace-obfuscated javascript: URIs through. These assert the
+// DOM-based sanitizeSvgMarkup() neutralizes the known bypasses.
+uiSuite("SVG Sanitizer (XSS)", [
+  { name: "Benign svg survives sanitization", fn: async () => {
+    const out = sanitizeSvgMarkup("<rect x='1' y='1' width='8' height='8' fill='#3b82f6'/>");
+    return out.includes("<rect") && out.includes("#3b82f6");
+  }},
+  { name: "Unquoted javascript: href stripped (or whole svg rejected)", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href=javascript:alert(1)><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "Quoted javascript: href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out) && !/href\s*=/i.test(out.replace(/data-blocked-href/gi, ""));
+  }},
+  { name: "Whitespace-obfuscated scheme neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="java\tscript:alert(1)"><text>x</text></a>');
+    // either attr removed, or whitespace normalized so it is no longer a javascript scheme
+    return !/javascript:/i.test(out.replace(/\s+/g, ""));
+  }},
+  { name: "xlink:href javascript: stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a xlink:href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "data: URI in href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="data:text/html,<script>alert(1)</script>" />');
+    return !/data:/i.test(out);
+  }},
+  { name: "Event handler attribute stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "script element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
+    return !/<script/i.test(out);
+  }},
+  { name: "foreignObject element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
+    return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
+  }},
+  // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
+  // dangerouslySetInnerHTML does, and assert no live event handler materializes.
+  { name: "CDATA-in-style mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<style><![CDATA[</style><img src=x onerror=alert(1)>]]" + "></style>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "CDATA-in-text mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<text><![CDATA[</text><img src=x onerror=alert(1)>]]" + "></text>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "Comment-node smuggling neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<!--<img src=x onerror=alert(1)>-->");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !d.querySelector("img") && !/onerror/i.test(out);
+  }},
+  { name: "sanitizeUrl blocks javascript:/data:/vbscript:", fn: async () => {
+    return sanitizeUrl("javascript:alert(1)") === "" &&
+           sanitizeUrl("data:text/html,<script>alert(1)</script>") === "" &&
+           sanitizeUrl("vbscript:msgbox(1)") === "" &&
+           sanitizeUrl("https://example.com/x") === "https://example.com/x";
+  }},
+  { name: "item-level links sanitized by sanitizeBlock", fn: async () => {
+    const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
+    const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
+    return !ir.items[0].link && !fl.items[0].link;
+  }},
+  { name: "SMIL animate/animateTransform/animateMotion stripped", fn: async () => {
+    const a = sanitizeSvgMarkup('<a><animate attributeName="href" to="javascript:alert(1)" begin="0s"/><text>x</text></a>');
+    const t = sanitizeSvgMarkup('<rect><animateTransform attributeName="transform" type="rotate" onbegin="alert(1)"/></rect>');
+    const mo = sanitizeSvgMarkup('<rect><animateMotion onbegin="alert(1)" dur="1s"/></rect>');
+    return !/<animate/i.test(a) && !/<animatetransform/i.test(t) && !/<animatemotion/i.test(mo) && !/onbegin/i.test(t + mo);
+  }},
+  // Entity-encoded scheme: parser decodes &#58;/&#x3a;/&#115; before the scheme check runs
+  { name: "Entity-encoded javascript: scheme stripped (dec/hex/letter)", fn: async () => {
+    const hasJsAnchor = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a", d).some((a) => /^\s*javascript:/i.test((a.getAttribute("href") || "").replace(/\s/g, ""))); };
+    return !hasJsAnchor('<a href="javascript&#58;alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="javascript&#x3a;alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="java&#115;cript:alert(1)"><text>x</text></a>');
+  }},
+  // Regex-class bypasses: tag reconstruction + unclosed/incomplete tags → fail-closed empty output
+  { name: "Tag-reconstruction <scr<script>..ipt> neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<scr<script></script>ipt>alert(1)</scr<script></script>ipt>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !/<script/i.test(out) && !d.querySelector("script");
+  }},
+  { name: "Unclosed iframe/embed/script/foreignObject neutralized", fn: async () => {
+    const danger = (mk) => { const out = sanitizeSvgMarkup(mk); const d = document.createElement("div"); d.innerHTML = out;
+      return !!d.querySelector("iframe,embed,script,foreignObject") ||
+             _$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name))); };
+    return !danger('<iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;">') &&
+           !danger('<embed src="data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;">') &&
+           !danger("<script>alert(1)") &&
+           !danger("<foreignObject><img src=x onerror=alert(1)>");
+  }},
+  { name: "vbscript: via xlink:href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="vbscript:msgbox(1)"><text>x</text></a></svg>');
+    return !/vbscript:/i.test(out);
+  }},
+]);
+
+// ── Security: deck-level sanitization (fail-closed + clamp + IMPORT_CONCEPTS) ──
+uiSuite("Deck Sanitization (XSS)", [
+  { name: ">50 lanes clamps to 50 without throwing (no fail-open trigger)", fn: async () => {
+    const lanes = []; for (let i = 0; i < 60; i++) lanes.push({ title: "L" + i, items: [] });
+    let threw = false, res = null;
+    try { res = validateAndSanitizeDeck({ deckTitle: "x", lanes }); } catch (e) { threw = true; }
+    return !threw && res && res.lanes.length === 50;
+  }},
+  { name: "Large deck still sanitizes item-level javascript: link", fn: async () => {
+    const lanes = [{ title: "L0", items: [{ title: "m", slides: [{ blocks: [
+      { type: "icon-row", items: [{ text: "Click", link: "javascript:alert(1)" }] }] }] }] }];
+    for (let i = 1; i < 60; i++) lanes.push({ title: "L" + i, items: [] });
+    const res = validateAndSanitizeDeck({ deckTitle: "x", lanes });
+    const ir = res.lanes[0].items[0].slides[0].blocks.find((b) => b.type === "icon-row");
+    return !!ir && !ir.items[0].link;
+  }},
+  { name: "Non-whitelisted block type dropped by sanitizeBlock", fn: async () => {
+    return sanitizeBlock({ type: "NOT_A_BLOCK", evil: true }) === null;
   }},
 ]);
 
@@ -13725,8 +13867,9 @@ export default function App() {
         };
         dispatch({ type: "LOAD", payload });
       } catch (e) {
-        dbg("[local-sync] Sanitize failed, loading raw:", e);
-        dispatch({ type: "LOAD", payload: deck });
+        // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
+        // long-poll channel — never load it raw/unsanitized if validation fails.
+        dbg("[local-sync] Sanitize failed, dropping update (not loading raw):", e);
       }
       setTimeout(() => { _localSyncIncoming.current = false; }, 1000);
     };
@@ -14314,7 +14457,7 @@ export default function App() {
         if (result) {
           const patchId = result._lastPatchId || "";
           delete result._lastPatchId;
-          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { result._lastPatchId = patchId; dispatch({ type: "LOAD", payload: result }); dispatch({ type: "DESELECT" }); selectFirstModule(); }
+          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
         } else {
           // User skipped — store current patchId so we don't ask again
           if (STARTUP_PATCH?._patchId) {
