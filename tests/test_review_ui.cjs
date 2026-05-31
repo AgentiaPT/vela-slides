@@ -68,7 +68,6 @@ function buildTestHTML() {
   const deps = {
     'react.js': 'react/umd/react.production.min.js',
     'react-dom.js': 'react-dom/umd/react-dom.production.min.js',
-    'babel.js': '@babel/standalone/babel.min.js',
     'lucide.js': 'lucide-react/dist/umd/lucide-react.js',
   };
   for (const [dest, src] of Object.entries(deps)) {
@@ -87,6 +86,19 @@ function buildTestHTML() {
       'const _LucideAll = LucideReact;')
     .replace(/^export default function App/m, 'function App');
 
+  // Pre-transpile JSX in Node (fast, deterministic ~2s) instead of shipping the full
+  // ~1.1MB monolith to a fragile in-browser @babel/standalone pass, which on a large
+  // file can OOM / throw in CI and — with pageerror suppressed — silently never mount,
+  // surfacing only as a waitForSelector('header') timeout.
+  const Babel = require('@babel/standalone');
+  const bootstrap = '\nconst root = ReactDOM.createRoot(document.getElementById("root"));\nroot.render(React.createElement(App));\n';
+  let appScript;
+  try {
+    appScript = Babel.transform(jsx + bootstrap, { presets: ['react'], compact: false }).code;
+  } catch (e) {
+    throw new Error('JSX transpile failed (syntax error in monolith): ' + (e && e.message));
+  }
+
   const html = [
     '<!DOCTYPE html><html><head><meta charset="UTF-8">',
     '<style>*{margin:0;padding:0;box-sizing:border-box}html,body,#root{width:100%;height:100%;overflow:hidden}</style>',
@@ -94,18 +106,14 @@ function buildTestHTML() {
     '<script src="react-dom.js"></script>',
     '<script>window.react = React;</script>',
     '<script src="lucide.js"></script>',
-    '<script src="babel.js"></script>',
     '</head><body><div id="root"></div>',
-    '<script type="text/babel" data-presets="react">',
-    jsx,
-    '',
-    'const root = ReactDOM.createRoot(document.getElementById("root"));',
-    'root.render(React.createElement(App));',
+    '<script>',
+    appScript,
     '</script></body></html>',
   ].join('\n');
 
   fs.writeFileSync(path.join(SERVE_DIR, 'index.html'), html);
-  console.log(`Built test HTML (${Math.round(html.length / 1024)}KB)`);
+  console.log(`Built test HTML (${Math.round(html.length / 1024)}KB, pre-transpiled)`);
 }
 
 // ── Start HTTP server ───────────────────────────────────────────────
@@ -508,11 +516,14 @@ async function runTests() {
     const browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     page.setDefaultTimeout(3000);
-    page.on('pageerror', () => {}); // suppress Babel deopt warning
+    // Surface real runtime errors instead of hiding them — a silent throw used to
+    // present only as a header-wait timeout.
+    page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 
-    console.log('Loading app (Babel transpiles ~1MB JSX, please wait)...');
+    console.log('Loading app (pre-transpiled)...');
     await page.goto(`http://localhost:${PORT}/`, { timeout: 60000, waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('header', { timeout: 180000 });
+    // App is pre-transpiled, so it mounts almost immediately; a healthy app shows header in ~1s.
+    await page.waitForSelector('header', { timeout: 10000 });
     // Wait for React to mount fully
     await page.waitForFunction(() => document.querySelectorAll('.concept-row').length > 0, { timeout: 10000 });
 
