@@ -31,6 +31,8 @@
     "filesystem.getStats",
     "filesystem.createWatcher",
     "filesystem.removeWatcher",
+    "filesystem.remove",
+    "filesystem.move",
     "storage.*",
     "events.*"
   ],
