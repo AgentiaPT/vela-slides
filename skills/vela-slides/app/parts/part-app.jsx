@@ -879,8 +879,9 @@ export default function App() {
         };
         dispatch({ type: "LOAD", payload });
       } catch (e) {
-        dbg("[local-sync] Sanitize failed, loading raw:", e);
-        dispatch({ type: "LOAD", payload: deck });
+        // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
+        // long-poll channel — never load it raw/unsanitized if validation fails.
+        dbg("[local-sync] Sanitize failed, dropping update (not loading raw):", e);
       }
       setTimeout(() => { _localSyncIncoming.current = false; }, 1000);
     };
@@ -1468,7 +1469,7 @@ export default function App() {
         if (result) {
           const patchId = result._lastPatchId || "";
           delete result._lastPatchId;
-          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { result._lastPatchId = patchId; dispatch({ type: "LOAD", payload: result }); dispatch({ type: "DESELECT" }); selectFirstModule(); }
+          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
         } else {
           // User skipped — store current patchId so we don't ask again
           if (STARTUP_PATCH?._patchId) {

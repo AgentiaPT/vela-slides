@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.46";
+const VELA_VERSION = "12.47";
 const VELA_CHANGELOG = [
+  { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
   { v: "12.46", d: "Security (Medium/defense-in-depth): close javascript:/data: link gaps. Per-item `link` fields on icon-row, flow, steps, timeline, tag-group, funnel, cycle, number-row and checklist items were not URL-sanitized at import (only block-level and bullet links were), and click handlers passed them straight to window.open — block scheme abuse is mitigated by modern browser window.open rules but not guaranteed on the desktop webview runtime. Now: (1) sanitizeBlock URL-sanitizes item-level links (+ a new icon-row item branch), (2) all deck-supplied link clicks route through a shared openExternalLink() that re-sanitizes at the sink, and (3) the study-notes glossary 'Learn more' anchor re-sanitizes entry.url at render instead of trusting import." },
   { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
   { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
@@ -236,8 +237,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
     } catch (e) {
-      dbg("[PATCH] Sanitize failed, loading raw:", e);
-      dispatch({ type: "LOAD", payload: STARTUP_PATCH });
+      // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
+      // on fundamentally invalid input (not an object / no lanes array) now that the
+      // lane-count limit is clamped rather than thrown.
+      dbg("[PATCH] Sanitize failed, skipping patch (not loading raw):", e);
     }
     return;
   }
@@ -579,8 +582,9 @@ function sanitizeItem(item) {
 function validateAndSanitizeDeck(raw) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
-  if (raw.lanes.length > 50) throw new Error("Too many lanes (max 50)");
-  const lanes = raw.lanes.map((lane) => {
+  // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
+  // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
     const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
     return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
