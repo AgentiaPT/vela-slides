@@ -974,6 +974,12 @@ uiSuite("SVG Sanitizer (XSS)", [
     const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
     return !ir.items[0].link && !fl.items[0].link;
   }},
+  { name: "SMIL animate/animateTransform/animateMotion stripped", fn: async () => {
+    const a = sanitizeSvgMarkup('<a><animate attributeName="href" to="javascript:alert(1)" begin="0s"/><text>x</text></a>');
+    const t = sanitizeSvgMarkup('<rect><animateTransform attributeName="transform" type="rotate" onbegin="alert(1)"/></rect>');
+    const mo = sanitizeSvgMarkup('<rect><animateMotion onbegin="alert(1)" dur="1s"/></rect>');
+    return !/<animate/i.test(a) && !/<animatetransform/i.test(t) && !/<animatemotion/i.test(mo) && !/onbegin/i.test(t + mo);
+  }},
 ]);
 
 // ── v10: Gallery View Suite ──────────────────────────────────────────

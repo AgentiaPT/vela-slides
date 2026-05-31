@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.47";
+const VELA_VERSION = "12.48";
 const VELA_CHANGELOG = [
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
   { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
   { v: "12.46", d: "Security (Medium/defense-in-depth): close javascript:/data: link gaps. Per-item `link` fields on icon-row, flow, steps, timeline, tag-group, funnel, cycle, number-row and checklist items were not URL-sanitized at import (only block-level and bullet links were), and click handlers passed them straight to window.open — block scheme abuse is mitigated by modern browser window.open rules but not guaranteed on the desktop webview runtime. Now: (1) sanitizeBlock URL-sanitizes item-level links (+ a new icon-row item branch), (2) all deck-supplied link clicks route through a shared openExternalLink() that re-sanitizes at the sink, and (3) the study-notes glossary 'Learn more' anchor re-sanitizes entry.url at render instead of trusting import." },
   { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
@@ -344,7 +345,7 @@ function openExternalLink(url) {
   if (safe) window.open(safe, "_blank", "noopener,noreferrer");
 }
 
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener"]);
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -8083,6 +8084,12 @@ uiSuite("SVG Sanitizer (XSS)", [
     const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
     const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
     return !ir.items[0].link && !fl.items[0].link;
+  }},
+  { name: "SMIL animate/animateTransform/animateMotion stripped", fn: async () => {
+    const a = sanitizeSvgMarkup('<a><animate attributeName="href" to="javascript:alert(1)" begin="0s"/><text>x</text></a>');
+    const t = sanitizeSvgMarkup('<rect><animateTransform attributeName="transform" type="rotate" onbegin="alert(1)"/></rect>');
+    const mo = sanitizeSvgMarkup('<rect><animateMotion onbegin="alert(1)" dur="1s"/></rect>');
+    return !/<animate/i.test(a) && !/<animatetransform/i.test(t) && !/<animatemotion/i.test(mo) && !/onbegin/i.test(t + mo);
   }},
 ]);
 
