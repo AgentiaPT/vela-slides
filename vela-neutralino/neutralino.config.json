@@ -32,8 +32,7 @@
     "filesystem.createWatcher",
     "filesystem.removeWatcher",
     "storage.*",
-    "events.*",
-    "clipboard.*"
+    "events.*"
   ],
   "modes": {
     "window": {
