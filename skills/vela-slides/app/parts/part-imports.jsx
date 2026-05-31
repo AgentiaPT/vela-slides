@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.44";
+const VELA_VERSION = "12.45";
 const VELA_CHANGELOG = [
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
   { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
@@ -342,6 +343,11 @@ function sanitizeSvgMarkup(raw) {
     const walk = (node) => {
       const children = Array.from(node.childNodes);
       for (const child of children) {
+        // Keep only element (1) and text (3) nodes. Drop comment (8), CDATA (4) and
+        // processing-instruction (7) nodes: they serialize literally (unescaped), so a
+        // smuggled </style></title></text> inside CDATA breaks out of rawtext when the
+        // serialized string is re-parsed as HTML by dangerouslySetInnerHTML (mutation XSS).
+        if (child.nodeType !== 1 && child.nodeType !== 3) { child.remove(); continue; }
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
           if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }

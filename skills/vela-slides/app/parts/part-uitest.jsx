@@ -946,6 +946,23 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
     return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
   }},
+  // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
+  // dangerouslySetInnerHTML does, and assert no live event handler materializes.
+  { name: "CDATA-in-style mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<style><![CDATA[</style><img src=x onerror=alert(1)>]]" + "></style>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "CDATA-in-text mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<text><![CDATA[</text><img src=x onerror=alert(1)>]]" + "></text>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "Comment-node smuggling neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<!--<img src=x onerror=alert(1)>-->");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !d.querySelector("img") && !/onerror/i.test(out);
+  }},
 ]);
 
 // ── v10: Gallery View Suite ──────────────────────────────────────────
