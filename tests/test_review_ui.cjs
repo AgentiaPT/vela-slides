@@ -98,6 +98,12 @@ function buildTestHTML() {
   } catch (e) {
     throw new Error('JSX transpile failed (syntax error in monolith): ' + (e && e.message));
   }
+  // Defang HTML-significant sequences in the inline <script> body. String literals in the
+  // monolith (e.g. SVG XSS test payloads, deck content) can contain "</script>", "<script",
+  // or "<!--", which would prematurely close the script element / confuse the HTML tokenizer.
+  // Inserting a backslash after "<" is a no-op in JS strings ("<\/script" === "</script") but
+  // stops the HTML parser from recognizing the tag/comment.
+  appScript = appScript.replace(/<(\/?script|!--)/gi, '<\\$1');
 
   const html = [
     '<!DOCTYPE html><html><head><meta charset="UTF-8">',
