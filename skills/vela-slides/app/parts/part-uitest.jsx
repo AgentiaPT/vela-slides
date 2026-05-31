@@ -963,6 +963,17 @@ uiSuite("SVG Sanitizer (XSS)", [
     const d = document.createElement("div"); d.innerHTML = out;
     return !d.querySelector("img") && !/onerror/i.test(out);
   }},
+  { name: "sanitizeUrl blocks javascript:/data:/vbscript:", fn: async () => {
+    return sanitizeUrl("javascript:alert(1)") === "" &&
+           sanitizeUrl("data:text/html,<script>alert(1)</script>") === "" &&
+           sanitizeUrl("vbscript:msgbox(1)") === "" &&
+           sanitizeUrl("https://example.com/x") === "https://example.com/x";
+  }},
+  { name: "item-level links sanitized by sanitizeBlock", fn: async () => {
+    const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
+    const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
+    return !ir.items[0].link && !fl.items[0].link;
+  }},
 ]);
 
 // ── v10: Gallery View Suite ──────────────────────────────────────────
