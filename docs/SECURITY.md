@@ -97,7 +97,7 @@ If you discover a security vulnerability in Vela Slides, please report it respon
 
 ## Security Bounty Program
 
-Vela Slides is an open-source project. We offer symbolic bounties to recognize security researchers who help make Vela safer for everyone.
+Vela Slides is a solo-maintained open-source project. We offer **symbolic bounties** as a token of appreciation — not market-rate compensation — to researchers who help make Vela safer. Hall of Fame recognition is the primary reward; cash is supplementary and capped.
 
 ### Rewards
 
@@ -109,11 +109,27 @@ Vela Slides is an open-source project. We offer symbolic bounties to recognize s
 | **Low** | $10 + Hall of Fame | Information leakage, denial of service, header injection |
 | **Informational** | Hall of Fame | Best practice violations, defense-in-depth improvements |
 
+**Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
+
+This ceiling is non-negotiable. Reports submitted after the cap is hit are still triaged and credited — they simply do not receive cash that year. Final severity and reward are at maintainer discretion.
+
 Bounties are paid via GitHub Sponsors, PayPal, or donation to a charity of the reporter's choice.
+
+### Submission Requirements (mandatory)
+
+Reports missing **any** of the following will be closed without triage:
+
+1. **Working proof-of-concept** — exact reproduction steps, payload, or minimal repro deck. Theoretical issues without a PoC are not eligible.
+2. **Demonstrated impact** — what an attacker actually gains (data accessed, code executed, etc.). "Could potentially lead to..." is not impact.
+3. **Affected commit SHA or version** — pin the vulnerability to specific code.
+4. **Suggested severity with justification** — map your finding to the table above.
+
+Automated-scanner output and AI-generated reports **without manual verification and a working PoC** will be closed without response.
 
 ### Rules
 
 - **One issue per report.** Duplicates of known issues are not eligible.
+- **First valid report of a given class wins.** Subsequent reports of the same root cause receive Hall of Fame only.
 - **Provide a clear reproduction.** Include steps, environment, and expected vs. actual behavior.
 - **Allow 48 hours** for acknowledgment and **30 days** for a fix before public disclosure.
 - **Do not** test against production Claude.ai artifacts or other users' data.
