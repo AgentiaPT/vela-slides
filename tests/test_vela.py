@@ -195,6 +195,66 @@ def test_security():
     else:
         fail("sanitizeStudyNotes glossary URL sanitization")
 
+    # 8. SVG_BLOCKED_TAGS covers the dangerous element set incl. the full SMIL animation family (v12.48)
+    blocked_required = ["script", "foreignobject", "iframe", "embed", "object", "use",
+                        "animate", "animatetransform", "animatemotion", "set"]
+    blk = re.search(r'SVG_BLOCKED_TAGS = new Set\(\[([^\]]*)\]', all_jsx)
+    blk_lower = (blk.group(1).lower() if blk else "")
+    missing = [t for t in blocked_required if f'"{t}"' not in blk_lower]
+    if blk and not missing:
+        ok("SVG_BLOCKED_TAGS covers dangerous tags + full SMIL family")
+    else:
+        fail("SVG_BLOCKED_TAGS coverage", f"missing: {missing or 'set not found'}")
+
+    # 9. sanitizeSvgMarkup strips comment/CDATA/PI nodes — mXSS fix (v12.45)
+    if 'child.nodeType !== 1 && child.nodeType !== 3' in all_jsx:
+        ok("sanitizeSvgMarkup drops comment/CDATA/PI nodes (mXSS)")
+    else:
+        fail("sanitizeSvgMarkup CDATA/comment node strip", "mutation-XSS regression risk")
+
+    # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
+    if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
+        ok("SVG scheme check strips control/whitespace before scheme match")
+    else:
+        fail("SVG scheme normalization", "java\\tscript: / control-char bypass risk")
+
+    # 11. Deck lane limit CLAMPS rather than throws — fail-open sanitizer off-switch fix (v12.47)
+    if 'raw.lanes.slice(0, 50)' in all_jsx:
+        ok("validateAndSanitizeDeck clamps lanes (slice) instead of throwing")
+    else:
+        fail("deck lane clamp", "lane count must clamp, not throw (fail-open trigger)")
+    if 'lanes.length > 50) throw' in all_jsx or 'lanes.length>50)throw' in all_jsx.replace(" ", ""):
+        fail("deck lane limit throws", "throwing on >50 lanes is weaponizable via fail-open callers")
+    else:
+        ok("validateAndSanitizeDeck does not throw on lane count")
+
+    # 12. Deck load callers fail CLOSED — no raw/unsanitized dispatch on sanitize failure (v12.47)
+    failopen = [p for p in ('payload: STARTUP_PATCH', 'payload: deck }', 'payload: result }') if p in all_jsx]
+    if not failopen:
+        ok("deck load fallbacks fail closed (no raw LOAD on catch)")
+    else:
+        fail("fail-open deck load", f"raw unsanitized LOAD still present: {failopen}")
+
+    # 13. IMPORT_CONCEPTS sanitizes pasted slides (bypassed validateAndSanitizeDeck) (v12.47)
+    if 'c.slides.slice(0, 100).map(sanitizeSlide)' in all_jsx:
+        ok("IMPORT_CONCEPTS sanitizes slides via sanitizeSlide")
+    else:
+        fail("IMPORT_CONCEPTS sanitization", "pasted concepts must route slides through sanitizeSlide")
+
+    # 14. Link sinks: item-level links sanitized at import + safe window.open helper, no raw window.open(<deck link>) (v12.46)
+    if 'function openExternalLink' in all_jsx and 'window.open(safe' in all_jsx:
+        ok("openExternalLink helper re-sanitizes URLs at the window.open sink")
+    else:
+        fail("openExternalLink sink helper missing")
+    if re.search(r'window\.open\((?:link|cellLink|b\.link)\b', all_jsx):
+        fail("raw window.open of deck link", "deck-supplied links must go through openExternalLink")
+    else:
+        ok("no raw window.open() of deck-supplied links")
+    if 'if (c.link) c.link = sanitizeUrl(c.link)' in all_jsx:
+        ok("item-level link fields sanitized in sanitizeBlock")
+    else:
+        fail("item-level link sanitization", "icon-row/flow/etc. item links must be sanitizeUrl'd")
+
 
 # ━━━ Known Bugs (regression watchlist) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
