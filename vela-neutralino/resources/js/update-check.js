@@ -241,6 +241,11 @@ async function _check(configStore) {
   const current = typeof NL_APPVERSION === "string" ? NL_APPVERSION : null;
   if (!current || !parseSemver(current)) return;
 
+  // Persist the check timestamp before the fetch so any failure (network,
+  // HTTP error, bad JSON, invalid schema) is rate-limited to once per 24h
+  // instead of retrying on every launch.
+  await configStore.patch({ lastUpdateCheck: Date.now() });
+
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 10000);
   let res;
@@ -256,10 +261,6 @@ async function _check(configStore) {
 
   const text = await res.text();
   if (text.length > MAX_MANIFEST_BYTES) return;
-
-  // Persist the check timestamp before parsing so a poisoned non-JSON
-  // response doesn't cause a retry loop on every launch.
-  await configStore.patch({ lastUpdateCheck: Date.now() });
 
   let parsed;
   try { parsed = JSON.parse(text); } catch { return; }
