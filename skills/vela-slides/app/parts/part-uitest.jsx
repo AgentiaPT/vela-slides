@@ -1007,6 +1007,39 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="vbscript:msgbox(1)"><text>x</text></a></svg>');
     return !/vbscript:/i.test(out);
   }},
+  // Mixed-case schemes — DOMParser preserves case in attribute values; the sanitizer
+  // must fold case before scheme comparison.
+  { name: "Mixed-case javascript:/data:/vbscript: schemes stripped", fn: async () => {
+    const hasJsAnchor = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a,image", d).some((el) => {
+        const v = (el.getAttribute("href") || el.getAttribute("xlink:href") || "").replace(/[\u0000-\u0020]/g, "").toLowerCase();
+        return v.startsWith("javascript:") || v.startsWith("data:") || v.startsWith("vbscript:"); }); };
+    return !hasJsAnchor('<a href="JaVaScRiPt:alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="JAVASCRIPT:alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="Data:text/html,<script>alert(1)</script>"><text>x</text></a>') &&
+           !hasJsAnchor('<a xlink:href="VbScript:msgbox(1)"><text>x</text></a>');
+  }},
+  // Allowlist enforcement — unexpected protocols (file:, blob:, chrome:, intent:) must be
+  // stripped after browser normalization, not just the historic js:/data:/vbscript: trio.
+  { name: "Unexpected protocols (file:/blob:/chrome:/intent:) stripped from href", fn: async () => {
+    const has = (mk, scheme) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a", d).some((el) => (el.getAttribute("href") || "").toLowerCase().startsWith(scheme)); };
+    return !has('<a href="file:///etc/passwd"><text>x</text></a>', "file:") &&
+           !has('<a href="blob:https://x/abc"><text>x</text></a>', "blob:") &&
+           !has('<a href="chrome://settings"><text>x</text></a>', "chrome:") &&
+           !has('<a href="intent://x"><text>x</text></a>', "intent:");
+  }},
+  // Allowlisted schemes + fragment + relative must SURVIVE the allowlist (regression guard).
+  { name: "Allowlisted href schemes preserved (http/https/mailto/tel/#frag/relative)", fn: async () => {
+    const keptHref = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      const a = d.querySelector("a"); return a && a.getAttribute("href"); };
+    return !!keptHref('<a href="https://example.com/x"><text>x</text></a>') &&
+           !!keptHref('<a href="http://example.com/x"><text>x</text></a>') &&
+           !!keptHref('<a href="mailto:a@b.c"><text>x</text></a>') &&
+           !!keptHref('<a href="tel:+15551234"><text>x</text></a>') &&
+           !!keptHref('<a href="#anchor"><text>x</text></a>') &&
+           !!keptHref('<a href="path/to/x.svg"><text>x</text></a>');
+  }},
 ]);
 
 // ── Security: deck-level sanitization (fail-closed + clamp + IMPORT_CONCEPTS) ──

@@ -169,6 +169,13 @@ def test_security():
     else:
         fail("svg block sanitizeSvgMarkup routing", "svg block must use DOM-based sanitizer at import and render")
 
+    #    href is ALLOWLIST (http/https/mailto/tel + fragment/relative). Blocklist alone
+    #    would let file:/blob:/chrome:/intent: through after browser normalization.
+    if '["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())' in all_jsx:
+        ok("SVG href validation uses scheme allowlist (post-DOMParser)")
+    else:
+        fail("SVG href allowlist", "href scheme check must use an allowlist, not a blocklist")
+
     # 5. sanitizeString strips HTML tags
     if 'replace(/<[^>]*>/g' in all_jsx:
         ok("sanitizeString strips HTML tags")
