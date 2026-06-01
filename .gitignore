@@ -31,7 +31,9 @@ build/
 # Node / pnpm
 node_modules/
 .pnpm-store/
-package-lock.json
+# package-lock.json is committed — `npm ci` in CI requires it and it is the
+# single source of truth for exact versions + sha512 integrity hashes that
+# pin our supply chain (jsdom, playwright, react, etc.).
 
 # Temporary files
 *.tmp
