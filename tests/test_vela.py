@@ -196,13 +196,16 @@ def test_security():
         fail("sanitizeStudyNotes glossary URL sanitization")
 
     # 8. SVG_BLOCKED_TAGS covers the dangerous element set incl. the full SMIL animation family (v12.48)
+    #    + style/link CSS-exfil channel (v12.51): <style>url()/@import</style> and <link rel=stylesheet>
+    #    fire outbound GETs at render — beacon/exfil with no CSP backstop inside the artifact srcdoc.
     blocked_required = ["script", "foreignobject", "iframe", "embed", "object", "use",
-                        "animate", "animatetransform", "animatemotion", "set"]
+                        "animate", "animatetransform", "animatemotion", "set",
+                        "style", "link"]
     blk = re.search(r'SVG_BLOCKED_TAGS = new Set\(\[([^\]]*)\]', all_jsx)
     blk_lower = (blk.group(1).lower() if blk else "")
     missing = [t for t in blocked_required if f'"{t}"' not in blk_lower]
     if blk and not missing:
-        ok("SVG_BLOCKED_TAGS covers dangerous tags + full SMIL family")
+        ok("SVG_BLOCKED_TAGS covers dangerous tags + SMIL family + CSS-exfil (style/link)")
     else:
         fail("SVG_BLOCKED_TAGS coverage", f"missing: {missing or 'set not found'}")
 

