@@ -160,5 +160,5 @@ We gratefully acknowledge the following security researchers:
 
 | Researcher | Contribution | Date |
 |------------|-------------|------|
-| *Be the first!* | | |
+| Mirochill | XSS Vuln.| 2026-May |
 
