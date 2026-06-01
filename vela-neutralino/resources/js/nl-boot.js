@@ -454,7 +454,15 @@ function injectStartupPatch(jsx, deck) {
     console.warn("[nl-boot] STARTUP_PATCH marker not found — app will boot empty");
     return jsx;
   }
-  const safe = JSON.stringify(deck).replace(/<\//g, "<\\/");
+  // Escape the full set of chars that can break out of a <script> block or
+  // terminate a JS string literal — aligned with assemble.py/serve.py's
+  // escape_for_script_context() for defense-in-depth consistency.
+  const safe = JSON.stringify(deck)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
   return jsx.replace(marker, `const STARTUP_PATCH = ${safe};`);
 }
 
