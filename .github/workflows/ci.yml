@@ -204,11 +204,14 @@ jobs:
           echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
           exit $exit_code
 
-      - name: Install e2e dependencies
+      - name: Install Playwright browser
         if: always()
-        run: |
-          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.55.1
-          npx playwright install --with-deps chromium
+        # npm packages (react, react-dom, @babel/standalone, lucide-react,
+        # playwright) are already installed by the locked `npm ci` step at
+        # the top of the job. Only the Chromium binary still needs fetching
+        # — Playwright's npm package is just the driver, the browser is a
+        # separate download.
+        run: npx playwright install --with-deps chromium
 
       - name: Run e2e UI tests
         id: e2e
