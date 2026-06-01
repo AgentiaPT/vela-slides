@@ -257,10 +257,14 @@ async function _check(configStore) {
   const text = await res.text();
   if (text.length > MAX_MANIFEST_BYTES) return;
 
-  const manifest = validateManifest(JSON.parse(text));
-  if (!manifest) return;
-
+  // Persist the check timestamp before parsing so a poisoned non-JSON
+  // response doesn't cause a retry loop on every launch.
   await configStore.patch({ lastUpdateCheck: Date.now() });
+
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return; }
+  const manifest = validateManifest(parsed);
+  if (!manifest) return;
 
   if (compareSemver(current, manifest.latest) >= 0) return;
 
