@@ -32,15 +32,40 @@ blast radius if that primary defense is ever bypassed.**
    Any method in the allowlist that no longer appears in that list should be
    removed.
 
-3. **Inert error/UI surfaces** (`resources/js/nl-boot.js`). Strings that may
+   **`os.spawnProcess` is intentionally NOT granted.** It is the host
+   command-execution primitive (used only by the agent bridge to run
+   `claude -p`), and is the single largest XSS→RCE risk. With it removed,
+   even a full script-execution escape in the webview has no exec to call.
+   **Trade-off:** Vera AI is disabled in the desktop build — `agents-bridge`
+   probes availability, the spawn is denied, `__velaAgentReady` stays false,
+   and AI buttons render disabled (no crash). The desktop app is a
+   viewer/editor only. Re-enabling AI later means adding `os.spawnProcess`
+   and `os.updateSpawnedProcess` back to the allowlist (and accepting the
+   larger blast radius, or first moving exec into a Neutralino extension).
+
+3. **Filesystem path guard** (`resources/js/fs-guard.js`). The shell still
+   needs `filesystem.*` to read/write decks and config, so a script-execution
+   escape could otherwise read/write arbitrary files. `fsGuard.install()`
+   (called in `nl-boot.js` right after `Neutralino.init()`) wraps every
+   `Neutralino.filesystem.*` method so its path argument(s) must resolve
+   inside an explicitly-allowed root: the user's **decks folder** (registered
+   by `deck-io.js`) and **`~/.vela`** (registered by `config-store.js`).
+   Traversal (`..`) segments and prefix-sibling paths (`/Decks` vs
+   `/DecksEvil`) are rejected. This caps the *file* blast radius to Vela's own
+   data. It is not a full sandbox — same-realm JS can never be fully contained
+   — but combined with no `os.spawnProcess`, it removes the "arbitrary file
+   read/write" capability.
+
+4. **Inert error/UI surfaces** (`resources/js/nl-boot.js`). Strings that may
    contain attacker-controlled deck content (validator errors, agent
    stderr/stdout, on-disk filenames in the deck picker) are rendered with
    `textContent`-only DOM nodes — never `innerHTML` — so a filename like
    `<img src=x onerror=…>.vela` cannot execute.
 
-4. **Injection-safe agent bridge** (`resources/js/agents-bridge.js`). The CLI
-   is invoked with a hardcoded command (`claude -p …`); the prompt is passed
-   on **stdin**, never interpolated into the command line.
+5. **Injection-safe agent bridge** (`resources/js/agents-bridge.js`). Dormant
+   while `os.spawnProcess` is ungranted (see layer 2). If re-enabled, the CLI
+   is invoked with a hardcoded command (`claude -p …`) and the prompt is
+   passed on **stdin**, never interpolated into the command line.
 
 ## Known gap / path to strict CSP
 

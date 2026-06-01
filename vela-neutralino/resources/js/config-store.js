@@ -11,6 +11,8 @@
 //
 // Exposed as window.__velaConfig after boot (see nl-boot.js).
 
+import { fsGuard } from "./fs-guard.js";
+
 const CONFIG_VERSION = 1;
 const EMPTY = { _v: CONFIG_VERSION, agent: null, firstLaunchSeen: false, recentFolders: [] };
 
@@ -21,7 +23,10 @@ async function homeDir() {
     (await Neutralino.os.getEnv("HOME")) ||
     (await Neutralino.os.getEnv("USERPROFILE"));
   if (!home) throw new Error("cannot locate user home directory");
-  return home.replace(/[\\/]+$/, "");
+  const h = home.replace(/[\\/]+$/, "");
+  // Vela's global config lives in ~/.vela — register it as an allowed FS root.
+  fsGuard.allow(`${h}/.vela`);
+  return h;
 }
 
 async function configPath() {
