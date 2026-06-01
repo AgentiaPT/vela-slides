@@ -785,6 +785,56 @@ def test_integration():
         else:
             fail("assemble.py builds artifact", result.stderr.strip())
 
+        # 4b. Regression: every char that can break out of a <script> block
+        # (HTML parser) or terminate a JS string literal (JS parser) must be
+        # escaped in the STARTUP_PATCH region. The assembled .jsx is loaded
+        # inside <script type="text/babel"> by both app/local.html and the
+        # Claude.ai artifact viewer. Covered chars: < > & U+2028 U+2029.
+        evil_deck = {
+            "deckTitle": "Evil </script><script>x</script> & <!-- -->    ",
+            "lanes": [{
+                "title": "x",
+                "items": [{
+                    "title": "</script><script>window.__pwned=1</script>",
+                    "status": "todo",
+                    "slides": [{"bg": "#000", "color": "#fff", "duration": 10,
+                                "blocks": [{"type": "heading", "text": "hi"}]}]
+                }]
+            }]
+        }
+        evil_in = os.path.join(tmpdir, "evil.vela")
+        evil_out = os.path.join(tmpdir, "evil.jsx")
+        with open(evil_in, "w", encoding="utf-8") as f:
+            json.dump(evil_deck, f, ensure_ascii=False)
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "assemble.py"), evil_in, evil_out],
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": SCRIPTS}
+        )
+        if result.returncode == 0 and os.path.exists(evil_out):
+            evil_artifact = open(evil_out, encoding="utf-8").read()
+            patch_idx = evil_artifact.find("const STARTUP_PATCH = {")
+            patch_end = evil_artifact.find("};\n", patch_idx) if patch_idx >= 0 else -1
+            patch_region = evil_artifact[patch_idx:patch_end] if patch_idx >= 0 else ""
+            # Bad: any raw < > & or line-separator inside the JSON value.
+            # (The literal "const STARTUP_PATCH = {" prefix has its own = sign and
+            # braces, but no < > & or U+2028/9, so the region is clean to scan.)
+            json_region = patch_region[len("const STARTUP_PATCH = "):] if patch_region else ""
+            bad = [c for c in ("<", ">", "&", " ", " ") if c in json_region]
+            # Good: the escaped forms must be present (proof the deck data made it through).
+            need = ("\\u003c", "\\u003e", "\\u0026", "\\u2028", "\\u2029")
+            missing = [e for e in need if e not in json_region]
+            if not bad and not missing:
+                ok("assemble.py escapes <,>,&,U+2028,U+2029 in deck content (no breakout)")
+            elif bad:
+                fail("assemble.py script-context escape",
+                     f"unescaped {bad!r} in STARTUP_PATCH region — XSS / JS-string breakout possible")
+            else:
+                fail("assemble.py script-context escape",
+                     f"escape forms missing from output: {missing!r}")
+        else:
+            fail("assemble.py evil-deck run", result.stderr.strip())
+
         # 5. Version extraction works
         version_match = re.search(r'const VELA_VERSION\s*=\s*"([^"]+)"', built)
         if version_match:
@@ -979,10 +1029,11 @@ def test_channel_local():
             ok("serve.py injects deck path into HTML")
         else:
             fail("serve.py deck path")
-        if '<\\\\/' in srv or '<\\/' in srv:
-            ok("serve.py escapes </ for XSS prevention")
+        if "escape_for_script_context(deck_json_str)" in srv:
+            ok("serve.py escapes deck JSON for <script> context (helper wired)")
         else:
-            fail("serve.py XSS escape")
+            fail("serve.py XSS escape",
+                 "expected call to escape_for_script_context(deck_json_str) before STARTUP_PATCH injection")
         if "long-poll" in srv.lower() or "DeckVersionTracker" in srv:
             ok("serve.py uses long-polling with version tracker")
         else:
