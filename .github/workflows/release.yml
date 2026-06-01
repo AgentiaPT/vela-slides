@@ -101,6 +101,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install jsdom for sanitizer round-trip tests
+        # tests/test_vela.py runs tests/test_svg_mxss.cjs under jsdom to assert
+        # no live event handler materializes for any SVG mXSS payload. Must be
+        # installed before the test step. Same pin as ci.yml + package.json.
+        run: npm install jsdom@^29.1.1
+
       - name: Run full test suite
         run: python3 tests/test_vela.py
 
