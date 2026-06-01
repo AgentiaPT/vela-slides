@@ -1,16 +1,28 @@
 # Vela Desktop (Neutralino) — Security Notes
 
 The desktop shell wraps the same Vela engine in a Neutralino webview that is
-granted **native capabilities** the browser/artifact runtimes never have:
-`os.spawnProcess` (to run the local coding-agent CLI) and `filesystem.*`
-(to read/write decks on disk). This raises the stakes of any in-app XSS: in
-the artifact sandbox a sanitizer bypass is contained DOM XSS; **in this
-webview the same bypass could reach `Neutralino.os.spawnProcess` → host RCE.**
+granted **native filesystem capabilities** the browser/artifact runtimes
+never have: `filesystem.*` (to read/write decks on disk). This raises the
+stakes of any in-app XSS: in the artifact sandbox a sanitizer bypass is
+contained DOM XSS; **in this webview the same bypass could reach
+`Neutralino.filesystem.*` and read/overwrite files inside the user's
+allowed roots.**
+
+`os.spawnProcess` — the host command-execution primitive — is **not granted**.
+With it absent, even a full script-execution escape in the webview has no
+exec to call, so the worst case is bounded to file reads/writes within the
+allowed roots (see layer 3), not host RCE.
 
 The primary defense remains the engine's deck-JSON sanitization
 (`validateAndSanitizeDeck` / `sanitizeSvgMarkup` / link sanitizers — see the
 repo-level `docs/SECURITY.md`). The measures here exist to **contain the
 blast radius if that primary defense is ever bypassed.**
+
+The shell also surfaces an **explicit "externally authored deck" warning**
+on every deck open (see `resources/js/deck-warning.js`). Vela is intended
+for personal authoring with AI-agent assistance — opening someone else's
+deck is the primary social-engineering vector and the warning forces an
+acknowledgment before the deck mounts.
 
 ## Layers in place
 
@@ -32,29 +44,48 @@ blast radius if that primary defense is ever bypassed.**
    Any method in the allowlist that no longer appears in that list should be
    removed.
 
-   **`os.spawnProcess` is intentionally NOT granted.** It is the host
-   command-execution primitive (used only by the agent bridge to run
-   `claude -p`), and is the single largest XSS→RCE risk. With it removed,
-   even a full script-execution escape in the webview has no exec to call.
-   **Trade-off:** Vera AI is disabled in the desktop build — `agents-bridge`
-   probes availability, the spawn is denied, `__velaAgentReady` stays false,
-   and AI buttons render disabled (no crash). The desktop app is a
-   viewer/editor only. Re-enabling AI later means adding `os.spawnProcess`
-   and `os.updateSpawnedProcess` back to the allowlist (and accepting the
-   larger blast radius, or first moving exec into a Neutralino extension).
+   **`os.spawnProcess` is intentionally NOT granted, and the AI integration
+   that depended on it is fully disabled.** Process spawn is the host
+   command-execution primitive and is the single largest XSS→RCE risk.
+   `nl-boot.js` no longer imports `agents-bridge.js`, no longer probes for
+   a CLI agent, and hardcodes `window.__velaAgentReady = false` so the
+   monolith's `velaAIAvailable()` reports AI as unavailable. The
+   `agents-bridge.js` source file is kept for reference but is dead code —
+   none of its `Neutralino.os.spawnProcess` / `updateSpawnedProcess` calls
+   can run because (a) the methods are absent from the allowlist and
+   (b) nothing imports the module. The desktop app is a **viewer/editor
+   only**. Re-enabling AI later requires: (1) putting `os.spawnProcess`
+   and `os.updateSpawnedProcess` back in the allowlist, (2) re-importing
+   `agents-bridge.js` from `nl-boot.js` and restoring `installAgentsBridge()`,
+   (3) accepting the larger XSS→RCE blast radius (or first moving exec
+   into a Neutralino extension process).
 
 3. **Filesystem path guard** (`resources/js/fs-guard.js`). The shell still
-   needs `filesystem.*` to read/write decks and config, so a script-execution
-   escape could otherwise read/write arbitrary files. `fsGuard.install()`
-   (called in `nl-boot.js` right after `Neutralino.init()`) wraps every
-   `Neutralino.filesystem.*` method so its path argument(s) must resolve
-   inside an explicitly-allowed root: the user's **decks folder** (registered
-   by `deck-io.js`) and **`~/.vela`** (registered by `config-store.js`).
+   needs `filesystem.*` to read/write decks and app config, so a
+   script-execution escape could otherwise read/write arbitrary files.
+   `fsGuard.install()` (called in `nl-boot.js` right after
+   `Neutralino.init()`) wraps every `Neutralino.filesystem.*` method so its
+   path argument(s) must resolve inside an explicitly-allowed root. Only
+   two roots are ever registered:
+
+   - The **user's decks folder** — registered by `deck-io.js` after the
+     user picks it via `os.showFolderDialog`. **This is the only location
+     deck saves can write to.** All in-app edits flow through
+     `deckIO.saveCurrent` → `Neutralino.filesystem.writeFile` with a path
+     under this root.
+   - **`~/.vela`** — registered by `config-store.js` for the global app
+     config (`config.json`, recent folders) and per-folder trust state
+     (`<folder>/.vela/trust.json`). Holds no deck content.
+
    Traversal (`..`) segments and prefix-sibling paths (`/Decks` vs
-   `/DecksEvil`) are rejected. This caps the *file* blast radius to Vela's own
-   data. It is not a full sandbox — same-realm JS can never be fully contained
-   — but combined with no `os.spawnProcess`, it removes the "arbitrary file
-   read/write" capability.
+   `/DecksEvil`) are rejected. Re-audit allowed roots with:
+   ```
+   grep -n "fsGuard.allow" resources/js/*.js
+   ```
+   This caps the *file* blast radius to Vela's own data. It is not a full
+   sandbox — same-realm JS can never be fully contained — but combined
+   with no `os.spawnProcess`, it removes the "arbitrary file read/write"
+   capability outside those two roots.
 
 4. **Inert error/UI surfaces** (`resources/js/nl-boot.js`). Strings that may
    contain attacker-controlled deck content (validator errors, agent
@@ -62,10 +93,21 @@ blast radius if that primary defense is ever bypassed.**
    `textContent`-only DOM nodes — never `innerHTML` — so a filename like
    `<img src=x onerror=…>.vela` cannot execute.
 
-5. **Injection-safe agent bridge** (`resources/js/agents-bridge.js`). Dormant
-   while `os.spawnProcess` is ungranted (see layer 2). If re-enabled, the CLI
-   is invoked with a hardcoded command (`claude -p …`) and the prompt is
-   passed on **stdin**, never interpolated into the command line.
+5. **Injection-safe agent bridge** (`resources/js/agents-bridge.js`).
+   Currently **not imported** by `nl-boot.js` and therefore not executed at
+   all (see layer 2). Kept as reference for any future AI re-enablement.
+   If re-enabled, the CLI would be invoked with a hardcoded command
+   (`claude -p …`) and the prompt passed on **stdin**, never interpolated
+   into the command line.
+
+6. **Externally-authored-deck warning** (`resources/js/deck-warning.js`).
+   A modal shown on every deck load (initial boot + picker selection)
+   reminds the user that Vela is intended for personal authoring with AI
+   agents, and that externally authored decks should never be trusted. The
+   user has to explicitly acknowledge before the deck mounts. There is no
+   "don't show again" — the reminder is the point. This is a behavioural /
+   social-engineering defense, layered on top of (not in place of) the
+   technical sanitizers and the no-`os.spawnProcess` posture.
 
 ## Known gap / path to strict CSP
 

@@ -4,6 +4,17 @@
 // interface so Copilot CLI and Codex CLI can be added as separate files
 // without touching this module or the monolith.
 //
+// ⚠️ THIS MODULE IS NOT LOADED BY THE DESKTOP SHELL.
+// `os.spawnProcess` / `os.updateSpawnedProcess` are intentionally absent
+// from neutralino.config.json's nativeAllowList for security reasons (see
+// SECURITY.md), so the runProcess() helper below cannot run. nl-boot.js
+// does not import this file — every Neutralino.os.spawnProcess call here
+// is dead code preserved only as a reference if AI is ever re-enabled.
+// Re-enabling AI requires: (1) putting `os.spawnProcess` and
+// `os.updateSpawnedProcess` back in the allowlist, (2) re-importing this
+// module from nl-boot.js, (3) accepting the larger XSS→RCE blast radius
+// (or first moving exec into a Neutralino extension process).
+//
 // Contract (mirrors vela-channel's /action payload so the monolith's
 // existing channel branch shape is reused):
 //   send({ system, messages, temperature, max_tokens, _callType })
