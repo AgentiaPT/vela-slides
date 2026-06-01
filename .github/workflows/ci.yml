@@ -85,6 +85,15 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install jsdom for sanitizer round-trip tests
+        # Unit tests include tests/test_svg_mxss.cjs which loads the real
+        # sanitizer source under jsdom and asserts no live event handler
+        # materializes for any of the SVG mXSS payloads. Must be installed
+        # BEFORE the unit step (e2e deps install runs much later). Pinned
+        # to the same version recorded in package.json devDependencies so
+        # dev + CI behave identically.
+        run: npm install jsdom@^29.1.1
+
       - name: Run unit tests
         id: unit
         run: |

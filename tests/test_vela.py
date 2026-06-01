@@ -151,11 +151,15 @@ def test_security():
         fail("Private URLs", f"found: {found_private}")
 
     # 4. SVG sanitization present (defense-in-depth, DOM-based via sanitizeSvgMarkup)
-    #    foreignObject (and script/use/animate/etc.) are removed by tag name through SVG_BLOCKED_TAGS.
-    if 'SVG_BLOCKED_TAGS' in all_jsx and 'foreignobject' in all_jsx.lower() and 'SVG_BLOCKED_TAGS.has(tag)' in all_jsx:
-        ok("SVG foreignObject sanitization present (DOM-based SVG_BLOCKED_TAGS)")
+    #    v12.54: switched from a SVG_BLOCKED_TAGS blocklist to a SVG_ALLOWED_TAGS
+    #    allowlist mirroring DOMPurify's `svg + svgFilters` profile. Dangerous
+    #    elements (script/foreignObject/use/animate*/iframe/embed/object/link)
+    #    are removed simply because they are not in the allowlist.
+    if 'SVG_ALLOWED_TAGS' in all_jsx and '!SVG_ALLOWED_TAGS.has(tag)' in all_jsx:
+        ok("SVG sanitizer uses allowlist (DOMPurify-style), not blocklist")
     else:
-        fail("SVG foreignObject sanitization")
+        fail("SVG allowlist sanitizer",
+             "sanitizeSvgMarkup must enforce SVG_ALLOWED_TAGS via `!SVG_ALLOWED_TAGS.has(tag)` remove")
 
     #    href/xlink:href scheme filtering inside the DOMParser walk.
     if 'xlink:href' in all_jsx and "startsWith(\"javascript:\")" in all_jsx:
@@ -202,18 +206,42 @@ def test_security():
     else:
         fail("sanitizeStudyNotes glossary URL sanitization")
 
-    # 8. SVG_BLOCKED_TAGS covers the dangerous element set incl. the full SMIL animation family (v12.48)
-    #    + <link> CSS-loader (v12.51). <style> is kept (Mermaid/Vera diagrams need inner CSS) but
-    #    its textContent is filtered by isSvgStyleSafe — verified separately below.
-    blocked_required = ["script", "foreignobject", "iframe", "embed", "object", "use",
-                        "animate", "animatetransform", "animatemotion", "set", "link"]
-    blk = re.search(r'SVG_BLOCKED_TAGS = new Set\(\[([^\]]*)\]', all_jsx)
-    blk_lower = (blk.group(1).lower() if blk else "")
-    missing = [t for t in blocked_required if f'"{t}"' not in blk_lower]
-    if blk and not missing:
-        ok("SVG_BLOCKED_TAGS covers dangerous tags + SMIL family + <link> CSS-loader")
+    # 8. SVG_ALLOWED_TAGS allowlist must EXCLUDE the historically-dangerous set
+    #    (the inverse of the old blocklist coverage check). If any of these
+    #    ever creeps back into the allowlist, that's a regression.
+    forbidden_in_allowlist = [
+        "script", "foreignobject", "iframe", "embed", "object", "link",
+        "use",                   # cross-doc reference XSS (Cure53 #283 class)
+        "animate", "animatetransform", "animatemotion", "animatecolor",
+        "set", "mpath", "discard", "cursor",  # SMIL attr-mutation family
+        "handler", "listener",   # legacy scripting hooks
+        # HTML rawtext-on-serialize family (HTML 13.3 step 3.2): even if a future
+        # browser routed these through SVG namespace, text-node escaping rules
+        # differ — keep them out of the allowlist entirely.
+        "xmp", "noembed", "noframes", "noscript", "plaintext", "listing",
+    ]
+    allow = re.search(r'SVG_ALLOWED_TAGS = new Set\(\[([\s\S]*?)\]\)', all_jsx)
+    allow_lower = (allow.group(1).lower() if allow else "")
+    leaked = [t for t in forbidden_in_allowlist if f'"{t}"' in allow_lower]
+    if allow and not leaked:
+        ok("SVG_ALLOWED_TAGS excludes script/foreignObject/use/animate*/iframe/embed/object/link + rawtext family")
     else:
-        fail("SVG_BLOCKED_TAGS coverage", f"missing: {missing or 'set not found'}")
+        fail("SVG_ALLOWED_TAGS coverage",
+             f"dangerous tags present in allowlist: {leaked or 'allowlist not found'}")
+
+    #    Allowlist must include the legitimate Mermaid/draw.io/Vera diagram surface
+    #    (structural + shapes + filter primitives) so existing decks render.
+    required_in_allowlist = [
+        "svg", "g", "defs", "title", "desc", "marker", "clippath", "mask", "pattern",
+        "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
+        "text", "tspan", "lineargradient", "radialgradient", "stop", "style",
+        "fegaussianblur", "fecolormatrix", "feblend", "feoffset", "femerge",
+    ]
+    missing_allow = [t for t in required_in_allowlist if f'"{t}"' not in allow_lower]
+    if allow and not missing_allow:
+        ok("SVG_ALLOWED_TAGS includes structural + shape + text + filter primitives")
+    else:
+        fail("SVG_ALLOWED_TAGS coverage", f"missing legitimate elements: {missing_allow}")
 
     # 8b. SVG <style> CSS-text filter (v12.51): preserve Mermaid/Vera class CSS + url(#fragment)
     #     paint-server refs, but block @import / external url() / CSS \XX escape bypasses that
@@ -229,6 +257,65 @@ def test_security():
         ok("sanitizeSvgMarkup drops comment/CDATA/PI nodes (mXSS)")
     else:
         fail("sanitizeSvgMarkup CDATA/comment node strip", "mutation-XSS regression risk")
+
+    # 9a. v12.54: walk MUST descend into <style> so the nodeType filter above
+    # actually runs on CDATA children. The v12.45 fix shipped with a
+    # skip-descend `continue;` after the isSvgStyleSafe check, leaving CDATA
+    # in <style> untouched — that's how the mXSS got through.
+    # Match from the style branch open through the FINAL closing `}` of the
+    # branch (the body has a nested if so we can't use a non-greedy `[^}]*`).
+    style_branch_m = re.search(
+        r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{'
+        r'(?:[^{}]+|\{[^{}]*\})*'
+        r'\}',
+        all_jsx,
+    )
+    if style_branch_m and 'walk(child)' in style_branch_m.group(0):
+        ok("sanitizeSvgMarkup <style> branch descends (v12.54 mXSS fix)")
+    else:
+        fail("sanitizeSvgMarkup <style> walk-descent",
+             "CDATA inside <style> escapes rawtext via dangerouslySetInnerHTML — must call walk(child)")
+
+    # 9b. v12.54: isSvgStyleSafe rejects '<' and ']]>' as defense-in-depth.
+    if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("<"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx) and \
+       re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("\]\]>"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx):
+        ok("isSvgStyleSafe rejects '<' and ']]>' (defense-in-depth for rawtext breakout)")
+    else:
+        fail("isSvgStyleSafe rawtext-breakout filters",
+             "must reject '<' and ']]>' so a CDATA/comment slip can't re-enable mXSS")
+
+    # 9c. v12.54: CI-gated functional round-trip via jsdom — the source-only
+    # checks above gave false confidence in v12.53 because the right code
+    # was present but unreachable inside <style>. This script actually
+    # runs the sanitizer and asserts no live handler materializes.
+    mxss_script = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
+    if os.path.exists(mxss_script):
+        env = os.environ.copy()
+        # CI installs jsdom at the repo root; local dev may have it in /tmp.
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""),
+            os.path.join(REPO_ROOT, "node_modules"),
+            "/tmp/node_modules",
+        ]))
+        try:
+            r = subprocess.run(
+                ["node", mxss_script],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r.returncode == 0:
+                # Last summary line: "  N passed, 0 failed"
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"SVG mXSS jsdom round-trip suite ({count} payloads)")
+            else:
+                fail("SVG mXSS jsdom round-trip suite",
+                     f"node tests/test_svg_mxss.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("SVG mXSS jsdom round-trip suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("SVG mXSS jsdom round-trip suite", "timeout after 60s")
+    else:
+        fail("SVG mXSS jsdom round-trip suite", f"missing: {mxss_script}")
 
     # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
     if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
