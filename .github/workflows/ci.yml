@@ -85,14 +85,21 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install jsdom for sanitizer round-trip tests
-        # Unit tests include tests/test_svg_mxss.cjs which loads the real
-        # sanitizer source under jsdom and asserts no live event handler
-        # materializes for any of the SVG mXSS payloads. Must be installed
-        # BEFORE the unit step (e2e deps install runs much later). Pinned
-        # to the same version recorded in package.json devDependencies so
-        # dev + CI behave identically.
-        run: npm install jsdom@^29.1.1
+      - name: Install npm devDependencies (locked)
+        # Uses `npm ci` so the install is driven by package-lock.json — exact
+        # versions + sha512 integrity hashes, no registry re-resolution. This
+        # is what gates jsdom (used by tests/test_svg_mxss.cjs to load the
+        # sanitizer source under a fake DOM) to a known-good version. The
+        # `--ignore-scripts` flag is belt-and-suspenders alongside
+        # `ignore-scripts=true` in .npmrc — blocks any pre/post-install hook
+        # from a future compromised transitive dep.
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (high+ fails the build)
+        # Surfaces newly-disclosed advisories in our pinned tree before they
+        # silently ride along in a release. Dev-only deps, so any high or
+        # critical is worth investigating immediately.
+        run: npm audit --audit-level=high
 
       - name: Run unit tests
         id: unit
@@ -197,11 +204,14 @@ jobs:
           echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
           exit $exit_code
 
-      - name: Install e2e dependencies
+      - name: Install Playwright browser
         if: always()
-        run: |
-          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.55.1
-          npx playwright install --with-deps chromium
+        # npm packages (react, react-dom, @babel/standalone, lucide-react,
+        # playwright) are already installed by the locked `npm ci` step at
+        # the top of the job. Only the Chromium binary still needs fetching
+        # — Playwright's npm package is just the driver, the browser is a
+        # separate download.
+        run: npx playwright install --with-deps chromium
 
       - name: Run e2e UI tests
         id: e2e

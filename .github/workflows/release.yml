@@ -101,6 +101,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install npm devDependencies (locked)
+        # `npm ci` consumes package-lock.json — exact versions + sha512
+        # integrity hashes, no registry re-resolution. Gates jsdom (used by
+        # tests/test_svg_mxss.cjs) to the audited pin. `--ignore-scripts`
+        # is defense-in-depth alongside .npmrc.
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (high+ fails the build)
+        run: npm audit --audit-level=high
+
       - name: Run full test suite
         run: python3 tests/test_vela.py
 

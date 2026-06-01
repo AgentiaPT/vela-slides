@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # npm devDependencies (jsdom, react, react-dom, @babel/standalone,
+  # lucide-react, playwright). All are dev-only — none ship to users —
+  # but we lock them in CI via `npm ci`, so a silent caret drift can't
+  # happen and we want patch-level advisories surfaced as PRs.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      dev-minor-patch:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  # GitHub Actions are pinned by full commit SHA in our workflows;
+  # Dependabot understands SHA-pinned uses and keeps the trailing
+  # `# vN` comment in sync.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
