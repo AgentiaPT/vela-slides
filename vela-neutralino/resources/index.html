@@ -13,9 +13,10 @@
        close real vectors: no plugins/embeds (object-src), no <base> hijack (base-uri),
        no clickjack/framing (frame-ancestors), no form-based exfil (form-action),
        and connect-src restricts network/exfil to same-origin + the local Neutralino bridge. -->
-  <!-- connect-src includes raw.githubusercontent.com for the update-manifest.json
-       fetch (update-check.js, see SECURITY.md layer 7). Read-only, no auth, no user data sent. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:* https://raw.githubusercontent.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" />
+  <!-- connect-src includes the exact update-manifest.json URL on raw.githubusercontent.com
+       (update-check.js, see SECURITY.md layer 7). Path-pinned so XSS cannot fetch arbitrary
+       GitHub content. Read-only, no auth, no user data sent. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:* https://raw.githubusercontent.com/agentiapt/vela-slides/main/vela-neutralino/update-manifest.json; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" />
   <title>Vela</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>" />
   <style>

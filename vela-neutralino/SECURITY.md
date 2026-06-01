@@ -127,17 +127,19 @@ acknowledgment before the deck mounts.
    page. Even with the hardcoded pattern, the built URL is normalized via
    `new URL().href` and verified against the expected origin.
 
-   **CSP change:** `https://raw.githubusercontent.com` was added to
-   `connect-src` (the only CSP modification). This is a read-only CDN; no
-   POST bodies or query-string data can be received by an attacker. The fetch
-   carries no authentication, no cookies, and sends no user data.
+   **CSP change:** The `connect-src` directive was extended with the **exact
+   manifest URL** on `raw.githubusercontent.com` — path-pinned, not a
+   domain-wide grant. CSP path matching ensures XSS cannot `fetch()` from
+   arbitrary paths on that domain (e.g., attacker-controlled repos). The
+   fetch carries no authentication, no cookies, and sends no user data.
 
    **Residual risk — `unsafe-eval` compound.** With `script-src` still
-   allowing `'unsafe-eval'`, an XSS exploit could use the widened
-   `connect-src` to fetch a stage-2 payload from any public GitHub repo and
-   `eval()` it. This makes XSS payloads remotely updatable rather than
-   self-contained. The mitigation is the existing deck-JSON sanitizer chain;
-   the long-term fix is eliminating `unsafe-eval` (see "Known gap" below).
+   allowing `'unsafe-eval'`, an XSS exploit could theoretically read the
+   manifest response. However, the path-pinned CSP means only the single
+   manifest JSON file is reachable — not arbitrary GitHub content — so
+   the attacker cannot use `raw.githubusercontent.com` as a stage-2 payload
+   source. The long-term fix is eliminating `unsafe-eval` (see "Known gap"
+   below).
 
    **Privacy.** The fetch leaks the user's IP address and User-Agent to
    GitHub/Fastly CDN. This is opt-outable via `checkForUpdates: false` in
