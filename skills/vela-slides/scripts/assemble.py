@@ -85,6 +85,11 @@ def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
         sys.exit(1)
 
     deck_json_str = json.dumps(deck, ensure_ascii=False, separators=(',', ':'))
+    # Prevent </script> breakout: the assembled .jsx is loaded inside a
+    # <script type="text/babel"> block (app/local.html and the Claude.ai
+    # artifact viewer). HTML parsers close <script> on the literal </script
+    # token regardless of JS string quoting. Mirrors serve.py.
+    deck_json_str = deck_json_str.replace("</", "<\\/")
 
     # Step 2: read template
     with open(TEMPLATE, 'r', encoding="utf-8") as f:

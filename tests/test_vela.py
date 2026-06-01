@@ -692,6 +692,44 @@ def test_integration():
         else:
             fail("assemble.py builds artifact", result.stderr.strip())
 
+        # 4b. Regression: </script> in deck content must NOT appear unescaped
+        # in assembled output (else it breaks out of the <script type="text/babel">
+        # block when loaded via app/local.html or the Claude.ai artifact viewer).
+        evil_deck = {
+            "deckTitle": "Evil",
+            "lanes": [{
+                "title": "x",
+                "items": [{
+                    "title": "</script><script>window.__pwned=1</script>",
+                    "status": "todo",
+                    "slides": [{"bg": "#000", "color": "#fff", "duration": 10,
+                                "blocks": [{"type": "heading", "text": "hi"}]}]
+                }]
+            }]
+        }
+        evil_in = os.path.join(tmpdir, "evil.vela")
+        evil_out = os.path.join(tmpdir, "evil.jsx")
+        with open(evil_in, "w", encoding="utf-8") as f:
+            json.dump(evil_deck, f)
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "assemble.py"), evil_in, evil_out],
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": SCRIPTS}
+        )
+        if result.returncode == 0 and os.path.exists(evil_out):
+            evil_artifact = open(evil_out, encoding="utf-8").read()
+            # Find the STARTUP_PATCH assignment line and verify </script> is escaped there
+            patch_idx = evil_artifact.find("const STARTUP_PATCH = {")
+            patch_end = evil_artifact.find("};\n", patch_idx) if patch_idx >= 0 else -1
+            patch_region = evil_artifact[patch_idx:patch_end] if patch_idx >= 0 else ""
+            if patch_region and "</script" not in patch_region.lower() and "<\\/script" in patch_region.lower():
+                ok("assemble.py escapes </script> in deck content (no breakout)")
+            else:
+                fail("assemble.py </script> escape",
+                     "unescaped </script> appears in STARTUP_PATCH region — XSS breakout possible")
+        else:
+            fail("assemble.py evil-deck run", result.stderr.strip())
+
         # 5. Version extraction works
         version_match = re.search(r'const VELA_VERSION\s*=\s*"([^"]+)"', built)
         if version_match:
