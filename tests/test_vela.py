@@ -203,15 +203,26 @@ def test_security():
         fail("sanitizeStudyNotes glossary URL sanitization")
 
     # 8. SVG_BLOCKED_TAGS covers the dangerous element set incl. the full SMIL animation family (v12.48)
+    #    + <link> CSS-loader (v12.51). <style> is kept (Mermaid/Vera diagrams need inner CSS) but
+    #    its textContent is filtered by isSvgStyleSafe — verified separately below.
     blocked_required = ["script", "foreignobject", "iframe", "embed", "object", "use",
-                        "animate", "animatetransform", "animatemotion", "set"]
+                        "animate", "animatetransform", "animatemotion", "set", "link"]
     blk = re.search(r'SVG_BLOCKED_TAGS = new Set\(\[([^\]]*)\]', all_jsx)
     blk_lower = (blk.group(1).lower() if blk else "")
     missing = [t for t in blocked_required if f'"{t}"' not in blk_lower]
     if blk and not missing:
-        ok("SVG_BLOCKED_TAGS covers dangerous tags + full SMIL family")
+        ok("SVG_BLOCKED_TAGS covers dangerous tags + SMIL family + <link> CSS-loader")
     else:
         fail("SVG_BLOCKED_TAGS coverage", f"missing: {missing or 'set not found'}")
+
+    # 8b. SVG <style> CSS-text filter (v12.51): preserve Mermaid/Vera class CSS + url(#fragment)
+    #     paint-server refs, but block @import / external url() / CSS \XX escape bypasses that
+    #     would fire a zero-click exfil beacon on render.
+    if 'function isSvgStyleSafe' in all_jsx and 'isSvgStyleSafe(child.textContent' in all_jsx:
+        ok("SVG <style> CSS-text filtered by isSvgStyleSafe (called from walk)")
+    else:
+        fail("SVG <style> CSS-text filter",
+             "isSvgStyleSafe must exist AND be invoked on <style>.textContent during the SVG walk")
 
     # 9. sanitizeSvgMarkup strips comment/CDATA/PI nodes — mXSS fix (v12.45)
     if 'child.nodeType !== 1 && child.nodeType !== 3' in all_jsx:

