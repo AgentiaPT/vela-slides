@@ -19,6 +19,37 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(SKILL_DIR, "app", "vela.jsx")
 CONCAT_SCRIPT = os.path.join(SKILL_DIR, "scripts", "concat.py")
 
+def escape_for_script_context(json_str):
+    """Make a JSON string safe to embed inline in an HTML <script> block.
+
+    The assembled .jsx is loaded inside <script type="text/babel"> (both
+    app/local.html and the Claude.ai artifact viewer wrap it that way), so
+    the HTML tokenizer sees the JSON before the JS parser does. We escape
+    the full set of chars that can either break out of the script element
+    or terminate a JS string literal:
+
+      <            HTML parser closes <script> on </script (and historically
+                   on <!-- / <script>); escape to \\u003c.
+      >            symmetric; escape to \\u003e for defense in depth.
+      &            matches the Django/Flask/Rails json_script escape set;
+                   harmless inside <script> but cheap and consistent.
+      U+2028/2029  terminate JS string literals on pre-ES2019 engines and
+                   on some Babel-standalone code paths.
+
+    All five remain valid JSON (\\uXXXX is legal inside JSON strings, and
+    these characters never appear in JSON structural positions). Keep this
+    in sync with serve.py:escape_for_script_context().
+    """
+    return (
+        json_str
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def safe_minify(jsx_text):
     """JSX-safe minification: strip comments, blanks, changelog. Never breaks ASI."""
     # Phase 1: nuke multi-line const blocks (VELA_CHANGELOG) in one regex pass
@@ -85,11 +116,7 @@ def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
         sys.exit(1)
 
     deck_json_str = json.dumps(deck, ensure_ascii=False, separators=(',', ':'))
-    # Prevent </script> breakout: the assembled .jsx is loaded inside a
-    # <script type="text/babel"> block (app/local.html and the Claude.ai
-    # artifact viewer). HTML parsers close <script> on the literal </script
-    # token regardless of JS string quoting. Mirrors serve.py.
-    deck_json_str = deck_json_str.replace("</", "<\\/")
+    deck_json_str = escape_for_script_context(deck_json_str)
 
     # Step 2: read template
     with open(TEMPLATE, 'r', encoding="utf-8") as f:

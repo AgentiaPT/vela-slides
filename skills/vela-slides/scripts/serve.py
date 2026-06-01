@@ -42,6 +42,7 @@ MAX_THREADS = 20
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 from vela import expand_deck as _expand_compact_deck
+from assemble import escape_for_script_context
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")
 LOCAL_HTML_PATH = os.path.join(SKILL_DIR, "app", "local.html")
@@ -854,7 +855,7 @@ class VelaLocalServer:
         marker = "const STARTUP_PATCH = null;"
         if marker not in vela_jsx:
             raise RuntimeError("STARTUP_PATCH marker not found in template")
-        deck_json_str = deck_json_str.replace("</", "<\\/")
+        deck_json_str = escape_for_script_context(deck_json_str)
         vela_jsx = vela_jsx.replace(marker, f"const STARTUP_PATCH = {deck_json_str};", 1)
 
         # Strip ES module imports → UMD globals
