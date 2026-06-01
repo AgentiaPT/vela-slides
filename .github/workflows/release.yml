@@ -106,11 +106,15 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install jsdom for sanitizer round-trip tests
-        # tests/test_vela.py runs tests/test_svg_mxss.cjs under jsdom to assert
-        # no live event handler materializes for any SVG mXSS payload. Must be
-        # installed before the test step. Same pin as ci.yml + package.json.
-        run: npm install jsdom@^29.1.1
+      - name: Install npm devDependencies (locked)
+        # `npm ci` consumes package-lock.json — exact versions + sha512
+        # integrity hashes, no registry re-resolution. Gates jsdom (used by
+        # tests/test_svg_mxss.cjs) to the audited pin. `--ignore-scripts`
+        # is defense-in-depth alongside .npmrc.
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (high+ fails the build)
+        run: npm audit --audit-level=high
 
       - name: Run full test suite
         run: python3 tests/test_vela.py
