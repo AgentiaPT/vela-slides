@@ -10,16 +10,20 @@
 //      load it as a separate static file instead so the build pipeline is
 //      plain `cp` and the dev loop is a file-watcher refresh away.
 //
-// The AI path (agents bridge) is intentionally absent from PR2. AI buttons
-// inside Vela are disabled because VELA_LOCAL_MODE is true but
-// VELA_CHANNEL_PORT is 0, so velaAIAvailable() cleanly returns false. PR3
-// wires the Neutralino-mode branch into part-engine.jsx.
+// The AI path (agents bridge) is intentionally disabled in this build for
+// security reasons — see SECURITY.md. We hardcode `__velaAgentReady = false`
+// so the monolith's velaAIAvailable() cleanly returns false and AI UI
+// renders as unavailable. `agents-bridge.js` is not imported.
 
 import { deckIO } from "./deck-io.js";
-import { agents } from "./agents-bridge.js";
+// Agents bridge intentionally NOT imported. `os.spawnProcess` is not in the
+// nativeAllowList (see neutralino.config.json + SECURITY.md), so the CLI agent
+// path cannot run. We also avoid loading agents-bridge.js so nothing in the
+// shell exposes an AI surface that would only fail at probe time.
 import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
 import { fsGuard } from "./fs-guard.js";
+import { showDeckWarning } from "./deck-warning.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -29,12 +33,11 @@ function setMsg(text) { if (loadingMsg) loadingMsg.textContent = text; }
 function setHint(text) { if (loadingHint) loadingHint.textContent = text; }
 
 // Never template user-reachable strings into innerHTML — runtime errors
-// surfaced here can originate from the Vela monolith's validators and
-// from Claude Code's stderr/stdout via the agents bridge, both of which
+// surfaced here can originate from the Vela monolith's validators, which
 // may include attacker-controlled deck content. The Neutralino webview
-// grants os.spawnProcess, so a single `<img onerror=…>` would escalate
-// DOM XSS straight to RCE on the host. We build the panel out of
-// textContent-only nodes to keep it purely inert.
+// grants filesystem.* on a sandboxed root, so DOM XSS could still lead to
+// arbitrary read/write inside the user's decks folder. We build the panel
+// out of textContent-only nodes to keep it purely inert.
 function showError(text) {
   const host = $("vela-loading");
   const str = String(text == null ? "" : text);
@@ -65,7 +68,10 @@ async function boot() {
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
   installTrustBridge();
-  await installAgentsBridge();
+  // AI features disabled in the desktop build — see SECURITY.md. Publish the
+  // ready flag as false so the monolith's velaAIAvailable() renders AI UI as
+  // unavailable instead of probing for a CLI we cannot spawn.
+  window.__velaAgentReady = false;
 
   // Global Ctrl+O / Cmd+O opens the picker. Attached before Vela mounts so
   // the shortcut is available even if Vela never finishes loading.
@@ -106,6 +112,12 @@ async function boot() {
   } catch (e) {
     return showError("Failed to load deck: " + e.message);
   }
+
+  // Display the externally-authored-deck warning before the monolith mounts.
+  // Vela is intended for personal authoring — opening a deck someone else
+  // wrote (or that came from a download / shared folder) is the primary
+  // social-engineering path into the app.
+  await showDeckWarning(deckPath);
 
   // Expose the startup patch BEFORE vela.jsx is transpiled so STARTUP_PATCH
   // inside the monolith picks it up on first render.
@@ -211,9 +223,10 @@ function renderPickerList() {
   }
   picker.decks.forEach((d, i) => {
     // Filenames come from disk — use DOM primitives with textContent so a
-    // deck named "<img src=x onerror=…>.vela" cannot execute. The webview
-    // grants Neutralino.os.spawnProcess, so any HTML injection sink here
-    // is effectively RCE.
+    // deck named "<img src=x onerror=…>.vela" cannot execute. Even without
+    // os.spawnProcess, the webview grants filesystem.* on the user's deck
+    // folder, so HTML injection here would still be a path to data
+    // exfil/tamper.
     const row = document.createElement("div");
     row.className = "item" + (d.path === cur ? " current" : "") + (i === picker.focusIdx ? " focus" : "");
     const bullet = document.createElement("span");
@@ -250,6 +263,7 @@ async function closePicker(selectedPath) {
   // Post-boot navigation — load the chosen deck into the running app.
   if (selectedPath && selectedPath !== deckIO.currentPath()) {
     try {
+      await showDeckWarning(selectedPath);
       const deck = await deckIO.openDeck(selectedPath);
       if (window.__velaReceiveDeckUpdate) {
         window.__velaReceiveDeckUpdate(deck);
@@ -268,62 +282,6 @@ function promptForDeck() {
     picker.resolve = resolve;
     openPicker();
   });
-}
-
-// ---------- Agents bridge -------------------------------------------------
-//
-// Probes the active backend (Claude Code by default) for availability and
-// installs two globals the Vela monolith reads:
-//
-//   window.__velaAgentSend  — callable; returns the assistant text reply.
-//                             Vela's callClaudeAPI uses this when defined.
-//   window.__velaAgentReady — boolean; flips velaAIAvailable() on in the
-//                             Neutralino build (part-engine.jsx v12.38+).
-//
-// If the CLI isn't on PATH the flag stays false and AI buttons render as
-// "unavailable" — same UX as in local mode without a channel running.
-
-function publishAgentInfo() {
-  window.__velaAgentInfo = agents.info();
-  window.__velaAgentActive = window.__velaAgentInfo.id;
-  window.dispatchEvent(new CustomEvent("vela-agent-update", { detail: window.__velaAgentInfo }));
-}
-
-async function installAgentsBridge() {
-  try {
-    // Honour the user's saved agent preference (from ~/.vela/config.json).
-    // Falls through silently if the chosen backend no longer exists.
-    try {
-      const saved = await configStore.getAgent();
-      if (saved) agents.pick(saved);
-    } catch (e) { console.warn("[nl-boot] saved agent pick failed:", e); }
-
-    const ok = await agents.available();
-    window.__velaAgentReady = !!ok;
-    publishAgentInfo();
-    if (!ok) {
-      console.warn("[nl-boot] Agent CLI not on PATH — AI features disabled");
-      return;
-    }
-    window.__velaAgentSend = async (payload) => {
-      const r = await agents.send(payload);
-      if (r.stats && window.velaSessionStats?.add) {
-        window.velaSessionStats.add({
-          type: payload._callType || "chat",
-          tool_calls: 0,
-          stop_reason: "cli",
-          ...r.stats,
-        });
-      }
-      // Refresh published info — stats.model may have filled in the
-      // lastModel slot on the first successful call.
-      publishAgentInfo();
-      return r.text;
-    };
-  } catch (e) {
-    console.warn("[nl-boot] agents bridge init failed:", e);
-    window.__velaAgentReady = false;
-  }
 }
 
 // ---------- Trust bridge --------------------------------------------------
@@ -363,13 +321,8 @@ function installTrustBridge() {
   };
   window.__velaConfig = {
     get: () => configStore.get(),
-    setAgent: async (id) => {
-      agents.pick(id);
-      await configStore.setAgent(id);
-      // Re-probe the new backend and republish info.
-      await agents.refreshAvailability();
-      publishAgentInfo();
-    },
+    // setAgent intentionally removed — AI is disabled in the desktop build
+    // (os.spawnProcess not granted, see SECURITY.md).
   };
 }
 
