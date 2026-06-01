@@ -17,23 +17,18 @@
     "window.*",
     "debug.log",
     "os.showFolderDialog",
-    "os.showOpenDialog",
-    "os.showMessageBox",
-    "os.spawnProcess",
-    "os.updateSpawnedProcess",
     "os.getEnv",
-    "os.getPath",
     "filesystem.readFile",
     "filesystem.writeFile",
-    "filesystem.appendFile",
     "filesystem.readDirectory",
     "filesystem.createDirectory",
     "filesystem.getStats",
     "filesystem.createWatcher",
     "filesystem.removeWatcher",
+    "filesystem.remove",
+    "filesystem.move",
     "storage.*",
-    "events.*",
-    "clipboard.*"
+    "events.*"
   ],
   "modes": {
     "window": {

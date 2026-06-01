@@ -1,0 +1,74 @@
+// Filesystem path guard for the Neutralino shell.
+//
+// The webview is granted filesystem.* (to read/write decks and config). If a
+// DOM-XSS ever slips past the engine's deck-JSON sanitizers, it runs in the
+// same realm as this shell and could call `Neutralino.filesystem.*` directly
+// to read or overwrite arbitrary files on the user's machine. This guard
+// wraps those methods so every path argument must resolve inside an
+// explicitly-allowed root — the user's decks folder and ~/.vela. It caps the
+// *file* blast radius; it is not a full sandbox (same-realm JS can never be
+// fully contained), but combined with the CSP and the minimal nativeAllowList
+// (no os.spawnProcess) it removes the "arbitrary file read/write" capability.
+//
+// Roots are registered at-source by the modules that own them
+// (config-store → ~/.vela, deck-io → the decks folder) so a root is always
+// allowed before that module touches the filesystem. install() wraps the
+// native methods and must be called once, early in boot.
+
+const roots = [];          // normalized absolute roots, no trailing slash
+let installed = false;
+
+function norm(p) {
+  return String(p == null ? "" : p).replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function underRoot(p) {
+  const n = norm(p);
+  if (!n) return false;
+  // Reject any path containing a traversal segment outright — defense in
+  // depth so a "<root>/../../etc/passwd" can never normalize back inside.
+  if (n.split("/").includes("..")) return false;
+  return roots.some((r) => n === r || n.startsWith(r + "/"));
+}
+
+function guard(method, p) {
+  if (!underRoot(p)) {
+    throw new Error(`[fs-guard] blocked ${method} outside allowed roots: ${norm(p)}`);
+  }
+}
+
+// Methods whose FIRST argument is a path.
+const ARG0 = [
+  "readFile", "readBinaryFile", "writeFile", "writeBinaryFile",
+  "appendFile", "appendBinaryFile", "readDirectory", "createDirectory",
+  "remove", "getStats", "createWatcher",
+];
+// Methods whose first TWO arguments are paths (source, destination).
+const ARG01 = ["move", "copy"];
+
+export const fsGuard = {
+  // Register an absolute directory as an allowed root. Idempotent.
+  allow(root) {
+    const n = norm(root);
+    if (n && !roots.includes(n)) roots.push(n);
+  },
+  roots() { return [...roots]; },
+  // Wrap Neutralino.filesystem.* in place. Idempotent and safe to call before
+  // any root is registered (the wrappers read `roots` at call time).
+  install() {
+    if (installed) return;
+    if (typeof Neutralino === "undefined" || !Neutralino.filesystem) return;
+    installed = true;
+    const fs = Neutralino.filesystem;
+    for (const m of ARG0) {
+      const orig = fs[m];
+      if (typeof orig !== "function") continue;
+      fs[m] = function (path, ...rest) { guard(m, path); return orig.call(fs, path, ...rest); };
+    }
+    for (const m of ARG01) {
+      const orig = fs[m];
+      if (typeof orig !== "function") continue;
+      fs[m] = function (a, b, ...rest) { guard(m, a); guard(m, b); return orig.call(fs, a, b, ...rest); };
+    }
+  },
+};

@@ -19,6 +19,7 @@ import { deckIO } from "./deck-io.js";
 import { agents } from "./agents-bridge.js";
 import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
+import { fsGuard } from "./fs-guard.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -56,6 +57,10 @@ async function boot() {
   } catch (e) {
     return showError("Neutralino.init() failed: " + e.message);
   }
+  // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
+  // root (the decks folder + ~/.vela, registered by deck-io/config-store).
+  // Installed before any module touches the filesystem.
+  fsGuard.install();
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
