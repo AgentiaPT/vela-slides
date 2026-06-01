@@ -53,11 +53,26 @@ jobs:
           ref: ${{ inputs.pr_sha }}
 
       - name: Verify SHA matches branch tip
+        # SECURITY: pr_ref is a freeform branch name (attacker-controlled on
+        # fork PRs). Interpolating it into a `run:` block is shell injection
+        # under id-token: write — pass via env: and quote it as a shell var.
+        # pr_sha is constrained to 40 hex chars by git-rev-parse downstream,
+        # but we env-ize it too for consistency.
+        env:
+          PR_REF: ${{ inputs.pr_ref }}
+          PR_SHA: ${{ inputs.pr_sha }}
         run: |
-          git fetch origin "${{ inputs.pr_ref }}" --depth=1
+          # Validate ref name shape before passing to git — refuse anything
+          # outside the safe charset, even though env-quoting alone is
+          # sufficient against shell injection.
+          if ! printf '%s' "$PR_REF" | grep -qE '^[A-Za-z0-9._/-]+$'; then
+            echo "❌ Invalid pr_ref: contains characters outside [A-Za-z0-9._/-]"
+            exit 1
+          fi
+          git fetch origin "$PR_REF" --depth=1
           BRANCH_TIP=$(git rev-parse FETCH_HEAD)
-          if [ "$BRANCH_TIP" != "${{ inputs.pr_sha }}" ]; then
-            echo "⚠️  Branch has moved since dispatch. Expected ${{ inputs.pr_sha }}, got $BRANCH_TIP."
+          if [ "$BRANCH_TIP" != "$PR_SHA" ]; then
+            echo "⚠️  Branch has moved since dispatch. Expected $PR_SHA, got $BRANCH_TIP."
             echo "Building pinned SHA anyway for safety."
           fi
 

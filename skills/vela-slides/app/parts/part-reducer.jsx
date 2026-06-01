@@ -163,7 +163,22 @@ function innerReducer(state, a) {
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
-    case "LOAD_LANES": return { ...state, lanes: a.lanes };
+    case "LOAD_LANES": {
+      // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
+      // edit_slide / clear_all) dispatch through LOAD_LANES — the only ingest
+      // path that previously skipped sanitizeSlide. Prompt-injected blocks
+      // could write SVG markup with <script>, dangerous CSS in block.style,
+      // or attacker-host image src. Re-sanitize defensively on every Vera
+      // write so the SVG/render sinks aren't the only backstop.
+      const safeLanes = Array.isArray(a.lanes) ? a.lanes.map((l) => ({
+        ...l,
+        items: Array.isArray(l?.items) ? l.items.map((it) => ({
+          ...it,
+          slides: Array.isArray(it?.slides) ? it.slides.map(sanitizeSlide).filter(Boolean) : [],
+        })) : [],
+      })) : state.lanes;
+      return { ...state, lanes: safeLanes };
+    }
     case "SET_BRANDING": return { ...state, branding: { ...state.branding, ...a.branding } };
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
