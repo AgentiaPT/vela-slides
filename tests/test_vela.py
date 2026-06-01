@@ -262,15 +262,21 @@ def test_security():
     # actually runs on CDATA children. The v12.45 fix shipped with a
     # skip-descend `continue;` after the isSvgStyleSafe check, leaving CDATA
     # in <style> untouched — that's how the mXSS got through.
-    # Match from the style branch open through the FINAL closing `}` of the
-    # branch (the body has a nested if so we can't use a non-greedy `[^}]*`).
-    style_branch_m = re.search(
-        r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{'
-        r'(?:[^{}]+|\{[^{}]*\})*'
-        r'\}',
-        all_jsx,
-    )
-    if style_branch_m and 'walk(child)' in style_branch_m.group(0):
+    # Use a brace counter (not a nested-alternation regex) to extract the
+    # branch body — avoids catastrophic backtracking flagged by CodeQL.
+    style_open = re.search(r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{', all_jsx)
+    style_branch_body = ""
+    if style_open:
+        i = style_open.end()
+        depth = 1
+        n = len(all_jsx)
+        while i < n and depth > 0:
+            ch = all_jsx[i]
+            if ch == '{': depth += 1
+            elif ch == '}': depth -= 1
+            i += 1
+        style_branch_body = all_jsx[style_open.end():i - 1]
+    if style_open and 'walk(child)' in style_branch_body:
         ok("sanitizeSvgMarkup <style> branch descends (v12.54 mXSS fix)")
     else:
         fail("sanitizeSvgMarkup <style> walk-descent",
