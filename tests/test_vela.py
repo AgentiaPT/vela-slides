@@ -436,6 +436,39 @@ def test_audit_2025_05_fixes():
         fail("H5 ReAct loop enforcement",
              "MAX_TOOLS_PER_TURN / MAX_TOTAL_TOOLS / MAX_MESSAGES_BYTES must be checked inside the for loop")
 
+    # ── H7: every third-party action must be pinned to a commit SHA. Tag
+    #        pins (@v4, @v7 etc.) are mutable — if the action's publisher
+    #        account is compromised, attacker can re-point the tag and
+    #        backdoor every CI run. Recent precedents: tj-actions/changed-files
+    #        and reviewdog/action-setup (March 2025). Release-pipeline blast
+    #        radius for us = forged SLSA attestations on signed skill ZIPs.
+    wf_dir = os.path.join(REPO_ROOT, ".github", "workflows")
+    if os.path.isdir(wf_dir):
+        offenders = []
+        for fn in sorted(os.listdir(wf_dir)):
+            if not fn.endswith(".yml"):
+                continue
+            path = os.path.join(wf_dir, fn)
+            for i, line in enumerate(open(path, encoding="utf-8").read().splitlines(), 1):
+                m = re.search(r'uses:\s*([\w./_-]+)@([^\s#]+)', line)
+                if not m:
+                    continue
+                action, ref = m.group(1), m.group(2)
+                # Reusable local workflows (./.github/workflows/*.yml) don't have @ref.
+                if action.startswith("./"):
+                    continue
+                # SHA pin = 40 lowercase hex chars.
+                if not re.fullmatch(r'[a-f0-9]{40}', ref):
+                    offenders.append(f"{fn}:{i} {action}@{ref}")
+        if offenders:
+            fail("H7 actions pinned by mutable tag",
+                 f"{len(offenders)} action(s) pinned to non-SHA refs: " + "; ".join(offenders[:5]) +
+                 (f" (+{len(offenders)-5} more)" if len(offenders) > 5 else ""))
+        else:
+            ok("H7 all workflow actions pinned to 40-char SHAs")
+    else:
+        fail("H7 workflows dir not found", wf_dir)
+
 
 # ━━━ Known Bugs (regression watchlist) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
