@@ -319,6 +319,20 @@ def test_security():
     else:
         fail("image-block src data:image-only",
              "image src must be inline data:image/* — http/https auto-load beacon otherwise")
+    # (5) v12.62: SVG sanitizer strips src/srcset (inert in SVG, but <image>
+    #     HTML-aliases to a fetching <img> when the output is re-parsed as HTML)
+    #     AND keeps the output SVG-scoped so HTML-aliasing can't occur at the sink.
+    #     Behaviour is gated functionally by the jsdom round-trip (9c).
+    if re.search(r'name === "src" \|\| name === "srcset"', all_jsx):
+        ok("SVG sanitizer strips src/srcset (HTML-alias <image>->fetching <img> beacon)")
+    else:
+        fail("SVG src/srcset strip",
+             "src/srcset must be stripped — bare <image src> HTML-aliases to a zero-click <img> fetch")
+    if 'top[0].localName' in all_jsx and 'top[0].outerHTML' in all_jsx and 'root.outerHTML' in all_jsx:
+        ok("SVG sanitizer output kept SVG-scoped (no HTML-insertion-mode re-parse at the sink)")
+    else:
+        fail("SVG output SVG-scoping",
+             "sanitizeSvgMarkup must return an SVG-scoped string so <image> etc. cannot HTML-alias at the dangerouslySetInnerHTML sink")
 
     # 9c. v12.54: CI-gated functional round-trip via jsdom — the source-only
     # checks above gave false confidence in v12.53 because the right code
