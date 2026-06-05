@@ -1,0 +1,17 @@
+# Keep the Docker build context small + deterministic. Context is the repo
+# root, but the Neutralino build only needs the source tree — never artefacts.
+.git
+**/node_modules
+vela-neutralino/bin
+vela-neutralino/dist
+vela-neutralino/dist-docker
+vela-neutralino/.tmp
+vela-neutralino/.neutralino
+vela-neutralino/.storage
+vela-neutralino/resources/js/neutralino.js
+vela-neutralino/resources/js/neutralino.d.ts
+vela-neutralino/resources/vela.jsx
+vela-neutralino/neutralinojs.log
+**/__pycache__
+evals/results
+decks

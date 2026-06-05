@@ -110,6 +110,17 @@ python3 skills/vela-slides/scripts/validate.py deck.vela
 python3 tests/test_vela.py
 ```
 
+## Neutralino Desktop Build (Docker)
+
+Reproducible cross-OS binaries via `vela-neutralino/Dockerfile` (context = repo root):
+
+```bash
+DOCKER_BUILDKIT=1 docker build -f vela-neutralino/Dockerfile --target export \
+  --output type=local,dest=vela-neutralino/dist-docker .
+```
+
+Single Linux build emits all win/linux/mac binaries (`neu build` bundles prebuilt runtimes). Runs `concat.py` → `neu update` → `verify-runtime.py` (SHA256 pins) → `sync-vela.py` → `neu build --embed-resources`. Output `dist-docker/vela/` is gitignored — never commit binaries.
+
 ## Key Directories
 
 ```

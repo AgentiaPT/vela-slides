@@ -69,8 +69,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.56";
+const VELA_VERSION = "12.58";
 const VELA_CHANGELOG = [
+  { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
+  { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
   { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
   { v: "12.55", d: "Security (Critical, audit 2026-06): fix script-context breakout in assemble.py. json.dumps(deck) was string-replaced into vela.jsx at the STARTUP_PATCH marker with no escape. The assembled .jsx is loaded inside an inline babel script block (app/local.html and the Claude.ai artifact viewer), and the HTML parser closes that block on the literal end-script token regardless of JS string quoting — so a deck whose item title contained an end-script tag followed by an attacker script tag produced an out.jsx with the verbatim closing tag, yielding full DOM and localStorage exfil plus CSRF against the artifact-proxied Anthropic endpoint on render. The local-server pipeline (serve.py) had a one-line replace since the local-sync feature landed; assemble.py was the missing twin. Fix: extracted escape_for_script_context() in assemble.py as the single source of truth, imported by serve.py. It encodes the Rails json_escape set as Unicode-escape sequences (valid both as JSON and as JS string literals): lt, gt, amp, U+2028, U+2029. Replaces the prior <\\/-only blocklist in both call sites. CI regression test asserts the assembled STARTUP_PATCH region contains zero raw lt/gt/amp/U+2028/U+2029 and all five escaped forms when the deck contains each char. Background research (5-angle audit): set matches Rails exactly, is a superset of Django (which targets inert application/json data islands), and is a subset of Go html/template (which also escapes quotes and backtick for template-literal contexts that do not apply here). No known JSON-in-script bypass primitive from the last decade of CVEs (serialize-javascript CVE-2019-16769 / CVE-2020-7660, Rails CVE-2015-3226, Go CVE-2023-24538) is unaddressed by this set in our embedding shape." },
   { v: "12.54", d: "Security (audit 2026-06, High + structural): close mutation-XSS hole in sanitizeSvgMarkup() for `<style>` children AND switch from blocklist to allowlist for SVG elements. (1) Headline bug: the v12.45 fix dropped comment/CDATA/PI nodes during the walk, but the walk early-returned on `<style>` after the isSvgStyleSafe() check, so CDATA inside `<style>` was never inspected. CDATA content serializes literally via innerHTML; the embedded `</style>` then escapes rawtext on HTML re-parse by dangerouslySetInnerHTML, yielding a live `<img onerror>` from a deck-supplied svg block / studyNotes diagram / chat-panel SVG. Walk now descends into `<style>`; isSvgStyleSafe() also rejects any `<` or `]]>` as defense-in-depth. (2) Structural: replaced SVG_BLOCKED_TAGS with SVG_ALLOWED_TAGS, mirroring DOMPurify's `svg + svgFilters` profile minus script/foreignObject/use/animate*/iframe/embed/object/link. Anything not in the allowlist — including the entire HTML rawtext-on-serialize family (xmp/noembed/noscript/noframes/plaintext/listing) and any future surprise tag — is removed. Allowlists are inherently safer than blocklists (Cure53 / OWASP best practice). (3) New CI-gated jsdom round-trip test (tests/test_svg_mxss.cjs) runs the actual sanitizer against 25 mXSS payloads — replaces the previous source-string-only checks which gave false confidence because the line was present but unreached for `<style>`. jsdom added to package.json devDependencies; CI installs it before the unit step." },
@@ -811,6 +813,28 @@ const themes = {
 let T = themes.dark;
 const statusColor = (s) => ({ todo: T.textDim, done: T.green, "signed-off": T.purple }[s]);
 const FONT = { display: "'Sora', sans-serif", body: "'DM Sans', sans-serif", mono: "'Space Mono', monospace" };
+
+// Auto-generated module title card ("present card"). Shown as a virtual slide in
+// presentation mode and exported to PDF so the deck exports exactly as presented.
+function buildTitleCardSlide(item, lane, branding) {
+  const accent = branding?.accentColor || T.accent;
+  const slideCount = (item.slides || []).length;
+  const totalTime = (item.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
+  const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
+  return {
+    _virtual: true,
+    bg: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+    color: "#0f172a", accent,
+    align: "center", verticalAlign: "center", padding: "60px 80px", gap: 20,
+    blocks: [
+      ...(lane ? [{ type: "badge", text: (lane.title || "").toUpperCase(), bg: accent + "18", color: accent, icon: "Layers" }] : []),
+      { type: "heading", text: item.title, size: "4xl", color: "#0f172a" },
+      ...(timeStr ? [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""} · ${timeStr}`, size: "lg", color: "#64748b" }] : [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""}`, size: "lg", color: "#64748b" }]),
+      { type: "spacer", h: 8 },
+    ],
+    duration: 3,
+  };
+}
 
 // ━━━ Vela Logo Icon ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function VelaIcon({ size = 18, color }) {
@@ -5227,22 +5251,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const titleCard = useMemo(() => {
     if (!concept.presentCard) return null;
     const lane = (lanes || []).find((l) => l.items.some((i) => i.id === concept.id));
-    const slideCount = (concept.slides || []).length;
-    const totalTime = (concept.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
-    const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
-    return {
-      _virtual: true,
-      bg: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
-      color: "#0f172a", accent: branding?.accentColor || T.accent,
-      align: "center", verticalAlign: "center", padding: "60px 80px", gap: 20,
-      blocks: [
-        ...(lane ? [{ type: "badge", text: lane.title.toUpperCase(), bg: (branding?.accentColor || T.accent) + "18", color: branding?.accentColor || T.accent, icon: "Layers" }] : []),
-        { type: "heading", text: concept.title, size: "4xl", color: "#0f172a" },
-        ...(timeStr ? [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""} · ${timeStr}`, size: "lg", color: "#64748b" }] : [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""}`, size: "lg", color: "#64748b" }]),
-        { type: "spacer", h: 8 },
-      ],
-      duration: 3,
-    };
+    return buildTitleCardSlide(concept, lane, branding);
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
 
@@ -10212,10 +10221,11 @@ function drawVelaWatermark(ctx, pw, ph) {
 }
 
 // ━━━ PDF Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function PdfExportModal({ slides, branding, deckTitle, onClose }) {
+function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   const [ratio, setRatio] = useState("16:9");
   const [quality, setQuality] = useState("high");
   const [useVector, setUseVector] = useState(false);
+  const [includeCards, setIncludeCards] = useState(true);
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -10232,6 +10242,11 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
   ratioRef.current = ratio;
   const qualityRef = useRef(quality);
   qualityRef.current = quality;
+
+  // Module title cards (the 🎬 "present card") are inserted by collectAllSlides as
+  // _virtual slides. Let the user opt out, and surface how many enabled cards there are.
+  const titleCardCount = useMemo(() => allSlides.filter((s) => s._virtual).length, [allSlides]);
+  const slides = useMemo(() => includeCards ? allSlides : allSlides.filter((s) => !s._virtual), [allSlides, includeCards]);
 
   const startExport = useCallback(async () => {
     setPhase("exporting");
@@ -10425,6 +10440,24 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>
+            {titleCardCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Module title cards</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>🎬 {titleCardCount} auto title slide{titleCardCount !== 1 ? "s" : ""} (enabled modules)</span>
+              </div>
+              <button onClick={() => setIncludeCards(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: includeCards ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: includeCards ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -10552,10 +10585,16 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         const slideBg = reflowed.bgGradient || reflowed.bg || T.slideBg;
+        // Match presentation numbering: title cards aren't counted, real slides
+        // keep continuous 1-based numbers (excluding any inserted title cards).
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden", background: slideBg }}>
-              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={branding} editable={false} />
+              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} editable={false} displayIndex={displayIndex} displayTotal={displayTotal} />
             </div>
           </div>
         );
@@ -12631,6 +12670,13 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
             let h = rawBgStr.match(/^#([0-9a-f]{3,8})$/i)[1];
             if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
             _compositeBg = { r: parseInt(h.substring(0,2),16)/255, g: parseInt(h.substring(2,4),16)/255, b: parseInt(h.substring(4,6),16)/255 };
+          } else if (rawBgStr && rawBgStr.match(/#([0-9a-f]{3,8})/i)) {
+            // Gradient (e.g. title-card "linear-gradient(... #f8fafc ...)") — use the
+            // first hex stop as the alpha-blend base so translucent badges/icons over
+            // a light card don't composite onto the dark #0a0f1c fallback (navy boxes).
+            let h = rawBgStr.match(/#([0-9a-f]{3,8})/i)[1];
+            if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+            _compositeBg = { r: parseInt(h.substring(0,2),16)/255, g: parseInt(h.substring(2,4),16)/255, b: parseInt(h.substring(4,6),16)/255 };
           } else {
             _compositeBg = { r: 10/255, g: 15/255, b: 28/255 }; // fallback #0a0f1c
           }
@@ -13020,11 +13066,16 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const zoom = heightRatio <= 1.05 ? 1 : Math.pow(heightRatio, 0.45);
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
+        // Match presentation numbering: title cards aren't counted toward slide numbers.
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden" }}>
-              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={branding} />
+              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} displayIndex={displayIndex} displayTotal={displayTotal} />
             </div>
           </div>
         );
@@ -13036,10 +13087,13 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
 
 
 // Helper to collect all slides flat from editor lanes
-function collectAllSlides(lanes) {
+function collectAllSlides(lanes, branding) {
   const all = [];
   for (const lane of (lanes || [])) {
     for (const item of (lane.items || [])) {
+      // Mirror presentation mode: a module with "present card" enabled shows an
+      // auto-generated title slide before its content slides.
+      if (item.presentCard) all.push(buildTitleCardSlide(item, lane, branding));
       for (const slide of (item.slides || [])) {
         all.push(slide);
       }
@@ -14708,7 +14762,7 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
-      {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
         if (result) {
