@@ -74,8 +74,8 @@ function innerReducer(state, a) {
     case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); return sl ? { ...i, slides: [...i.slides, sl] } : i; });
     case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); if (!sl) return i; const ns = [...i.slides]; ns.splice(a.index, 0, sl); return { ...i, slides: ns }; });
     // SECURITY (v12.63): UPDATE_SLIDE merges a raw patch and bypasses import sanitization.
-    // A partial color scrub (v12.62) missed two render-time auto-load sinks reachable via
-    // a patch: block/item `style` objects (non-string, so scrubColorFields skips them) and
+    // A color-only scrub is insufficient — it misses two render-time auto-load sinks reachable
+    // via a patch: block/item `style` objects (non-string, so scrubColorFields skips them) and
     // `bgImage` (key not matched by CSS_COLOR_KEY; its data:image/* clamp lives only in
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
@@ -193,7 +193,7 @@ function innerReducer(state, a) {
       })) : state.lanes;
       return { ...state, lanes: safeLanes };
     }
-    // SECURITY (v12.62): the Vera set_branding tool (and the branding modal) dispatch
+    // SECURITY (v12.63): the Vera set_branding tool (and the branding modal) dispatch
     // here, bypassing the import-time scrub in validateAndSanitizeDeck. footerBg/
     // accentColor/footerColor feed inline CSS, so scrub the merged branding too.
     case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubColorFields(b); return { ...state, branding: b }; }

@@ -463,11 +463,11 @@ def test_css_color_exfil():
     else:
         fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
 
-    # (5b) v12.62/v12.63: the in-app write paths that bypass import sanitization must
-    #      sanitize too. SET_BRANDING scrubs branding color scalars (v12.62). The slide-
-    #      mutating actions (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES)
-    #      run the full sanitizeSlide (v12.63) — partial color scrub missed style objects,
-    #      bgImage, and image src; the new-slide / startup-patch paths were uncovered.
+    # (5b) v12.63: the in-app write paths that bypass import sanitization must sanitize too.
+    #      SET_BRANDING scrubs branding color scalars. The slide-mutating actions
+    #      (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES) run the full
+    #      sanitizeSlide — a color-only scrub would miss style objects, bgImage, and image
+    #      src; the new-slide / startup-patch paths were otherwise uncovered.
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
     if "scrubColorFields(b)" in setb:
@@ -487,7 +487,7 @@ def test_css_color_exfil():
         else:
             fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
 
-    # (5c) v12.64: dormant item-insert actions that carry a slides payload must sanitize it,
+    # (5c) v12.63: dormant item-insert actions that carry a slides payload must sanitize it,
     #      so a future caller can't reintroduce the channel; IMPORT_CONCEPTS already did.
     for action, end in [('case "ADD_ITEM"', 'case "IMPORT_CONCEPTS"'),
                         ('case "BATCH_ADD"', 'case "REMOVE_ITEM"')]:
@@ -498,7 +498,7 @@ def test_css_color_exfil():
         else:
             fail(f"{name} slides sanitize", f"{name} must map its slides payload through sanitizeSlide")
 
-    # (5d) v12.64: the local live-sync LOAD must take branding from the sanitized copy,
+    # (5d) v12.63: the local live-sync LOAD must take branding from the sanitized copy,
     #      not the raw incoming deck (slide content was already sanitized; branding was missed).
     appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
     if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
