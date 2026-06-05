@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.58";
+const VELA_VERSION = "12.59";
 const VELA_CHANGELOG = [
+  { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
   { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
   { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
   { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },

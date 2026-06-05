@@ -629,6 +629,95 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(data["folder"], os.path.basename(self._tmpdir))
 
 
+# ── 5b. Cross-origin / CSRF protection on mutating requests ───────────
+class TestOriginCsrf(FolderServerTestBase):
+    """Mutating POST /save must only accept requests from the server's own
+    origin (scheme + host + port).
+
+    A page on another loopback port shares the host-scoped session cookie
+    (cookies are not port-scoped), so a host-only origin check is not
+    sufficient — the full origin must match.
+    """
+
+    def _payload(self, title="Origin Test"):
+        deck = json.loads(json.dumps(SAMPLE_DECK))
+        deck["deckTitle"] = title
+        return json.dumps({"type": "deck_save", "deck": deck})
+
+    def test_same_origin_save_accepted(self):
+        """Origin matching the server's scheme+host+port is accepted."""
+        self._write_temp_deck("origin-ok.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-ok.vela",
+                             body=self._payload(),
+                             headers={"Origin": f"http://127.0.0.1:{self._port}"})
+        self.assertEqual(status, 200)
+
+    def test_missing_origin_accepted(self):
+        """Same-origin XHR and non-browser clients omit Origin — still accepted."""
+        self._write_temp_deck("origin-none.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-none.vela",
+                             body=self._payload())
+        self.assertEqual(status, 200)
+
+    def test_different_port_origin_rejected(self):
+        """Same host, different port must be rejected (cookies are not port-scoped)."""
+        self._write_temp_deck("origin-port.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-port.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": "http://127.0.0.1:5173"})
+        self.assertEqual(status, 403)
+
+    def test_localhost_different_port_origin_rejected(self):
+        """A different loopback host/port combination must be rejected."""
+        self._write_temp_deck("origin-lh.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-lh.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": f"http://localhost:{self._port + 1}"})
+        self.assertEqual(status, 403)
+
+    def test_foreign_origin_rejected(self):
+        """A non-loopback origin must be rejected."""
+        self._write_temp_deck("origin-evil.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-evil.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": "http://evil.example"})
+        self.assertEqual(status, 403)
+
+    def test_rejected_origin_does_not_write(self):
+        """A rejected cross-origin save must leave the deck file untouched."""
+        path = self._write_temp_deck("origin-intact.vela")
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+        fetch(self._port, "POST", "/save/origin-intact.vela",
+              body=self._payload("ATTACK"),
+              headers={"Origin": "http://127.0.0.1:5173"})
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        self.assertEqual(before, after)
+
+    def test_text_plain_save_rejected(self):
+        """text/plain avoids a CORS preflight — saves must require application/json."""
+        self._write_temp_deck("origin-ct.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-ct.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": f"http://127.0.0.1:{self._port}",
+                                      "Content-Type": "text/plain"})
+        self.assertEqual(status, 415)
+
+    def test_text_plain_save_does_not_write(self):
+        """A rejected non-JSON save must leave the deck file untouched."""
+        path = self._write_temp_deck("origin-ct-intact.vela")
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+        fetch(self._port, "POST", "/save/origin-ct-intact.vela",
+              body=self._payload("ATTACK"),
+              headers={"Origin": f"http://127.0.0.1:{self._port}",
+                       "Content-Type": "text/plain"})
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        self.assertEqual(before, after)
+
+
 # ── 6. Content Types and Headers ─────────────────────────────────────
 class TestContentTypes(FolderServerTestBase):
     """Test HTTP response content types and cache headers."""

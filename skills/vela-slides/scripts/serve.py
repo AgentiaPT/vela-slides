@@ -390,12 +390,21 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         return False
 
     def _check_origin(self):
-        """Defense-in-depth: reject cross-origin POST/mutating requests."""
-        origin = self.headers.get("Origin", "")
+        """Reject cross-origin mutating requests (CSRF protection).
+
+        A same-origin request either omits Origin (same-origin XHR / non-browser
+        clients) or sends one whose scheme, host, AND port exactly match the
+        server it was sent to.  We compare Origin against this request's own Host
+        header — the target the browser actually connected to — so a page on
+        another loopback port cannot forge writes by riding the host-scoped
+        session cookie (cookies are not port-scoped, and SameSite treats
+        different ports as same-site).  Host is validated as loopback upstream by
+        _check_host(); the local server is always plain http.
+        """
+        origin = self.headers.get("Origin")
         if not origin:
-            return True  # same-origin requests omit Origin
-        host_part = origin.split("//", 1)[-1].split(":")[0].split("/")[0]
-        if host_part in ALLOWED_HOSTS:
+            return True  # same-origin requests may omit Origin
+        if origin == "http://" + (self.headers.get("Host") or ""):
             return True
         self.send_error(403, "Forbidden: invalid Origin")
         return False
@@ -573,6 +582,13 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
         if not deck_name.endswith(DECK_EXT):
             self.send_error(403, "Only .vela files can be saved")
+            return
+
+        # Require JSON: blocks "simple" cross-origin POSTs (text/plain, etc.)
+        # that skip the CORS preflight. Defense-in-depth alongside _check_origin.
+        ctype = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            self.send_error(415, "Saves require Content-Type: application/json")
             return
 
         try:
