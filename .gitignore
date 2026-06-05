@@ -58,8 +58,10 @@ tests/screenshots/
 .ripgreprc
 .mcp.json
 
-# Claude Code local config
-.claude/
+# Claude Code local config (ignore local state, but track shared skills + settings)
+.claude/*
+!.claude/settings.json
+!.claude/skills
 
 # Working decks (user-created, not shipped)
 decks/
