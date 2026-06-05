@@ -497,19 +497,20 @@ class TestSecurity(FolderServerTestBase):
                             "Double-encoded traversal must not succeed")
 
     def test_deck_unicode_slash_lookalike_rejected(self):
-        """Unicode separator lookalikes (U+2215 DIVISION SLASH) must be rejected,
-        not just the ASCII '/'.  Anti-spoofing, v12.63."""
+        """Unicode separator lookalikes (U+2215 DIVISION SLASH) must be rejected
+        at validation (400), not just resolve to a missing file (404).  The 400
+        is what distinguishes the fix from the pre-fix passthrough.  v12.64."""
         status, _, _ = fetch(self._port, "GET", "/deck/a%E2%88%95b.vela")
-        self.assertNotEqual(status, 200)
+        self.assertEqual(status, 400)
 
     def test_deck_rtlo_bidi_rejected(self):
-        """RTLO (U+202E) and other bidi/format controls must be rejected
-        (filename spoofing).  Anti-spoofing, v12.63."""
+        """RTLO (U+202E) and other bidi/format controls must be rejected at
+        validation (400).  Filename spoofing anti-spoofing.  v12.64."""
         status, _, _ = fetch(self._port, "GET", "/deck/a%E2%80%AEb.vela")
-        self.assertNotEqual(status, 200)
+        self.assertEqual(status, 400)
 
     def test_validate_deck_name_unit(self):
-        """Direct unit coverage of _validate_deck_name Unicode hardening (v12.63)."""
+        """Direct unit coverage of _validate_deck_name Unicode hardening (v12.64)."""
         v = VelaHTTPHandler._validate_deck_name
         # legitimate names (incl. accented latin used in pt-PT) still allowed
         self.assertTrue(v("My Deck.vela"))

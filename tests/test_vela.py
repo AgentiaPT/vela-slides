@@ -397,6 +397,23 @@ def test_security():
     else:
         fail("data: image sanitization suite", f"missing: {dimg_script}")
 
+    # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
+    # char-class the importer applies and run a sample through it. Removing the
+    # strip (or omitting bidi/zero-width) fails this check (red).
+    gm = re.search(r'raw\.guidelines\.replace\(/\[([^\]]*)\]/g, ""\)', all_jsx)
+    if gm:
+        strip = re.compile("[" + gm.group(1) + "]")
+        sample = "keep\nthis" + chr(0x00) + "bad" + chr(0x202e) + "spoof" + chr(0x200b) + "zw text"
+        cleaned = strip.sub("", sample)
+        removed = all(chr(cp) not in cleaned for cp in (0x00, 0x202e, 0x200b))
+        kept = "\n" in cleaned and "keep" in cleaned and "text" in cleaned
+        if removed and kept:
+            ok("guidelines strip removes control/bidi/zero-width, keeps newlines/text")
+        else:
+            fail("guidelines control-char strip behavior", f"cleaned={cleaned!r}")
+    else:
+        fail("guidelines control-char strip", "strip regex absent — prompt-injection scaffolding chars not removed")
+
     # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
     if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
         ok("SVG scheme check strips control/whitespace before scheme match")
