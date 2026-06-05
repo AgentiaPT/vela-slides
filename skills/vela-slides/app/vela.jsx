@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.63";
+const VELA_VERSION = "12.64";
 const VELA_CHANGELOG = [
+  { v: "12.64", d: "Security (audit 2026-06, follow-up to v12.63): close the remaining defense-in-depth gaps in the same CSS auto-load class. The local-file live-sync update applied branding from the unsanitized input rather than the sanitized copy it had already computed (slide content was already sanitized; only branding was missed) — now fixed. Two dormant item-insert actions that carry a slide payload, and nested data-point objects, now also run the canonical slide/style sanitizers, so no future caller or renderer change can reintroduce the channel. Tightened the regression guards to assert the wiring on every such path. No behavior change for legitimate decks." },
   { v: "12.63", d: "Security (audit 2026-06, follow-up to v12.62): make the slide-mutating reducer actions a single sanitization chokepoint. v12.62 used a partial color-only scrub on the live slide-patch path, which left two render-time auto-load sinks reachable through a patch or a freshly generated slide — a style object and a background-image field — and the new-slide and startup-patch write paths were not covered at all. These actions now run every incoming slide through the same canonical slide sanitizer the AI-commit path already uses, covering style objects, background-image, image sources and embedded vector markup in one place, regardless of which path produced the slide. Legitimate colors/gradients/data-image values are preserved; added reducer-level regression guards." },
   { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.61): extend the color-scalar CSS auto-load scrub to the two in-app write paths that bypass import sanitization — the live slide-patch update and the branding update dispatch. v12.61 scrubbed color/background scalars at deck import, but a single-slide patch or a branding change applied after load (e.g. an AI-assisted edit acting on injected deck content) could still place an auto-load value into inline CSS. Both dispatch boundaries now run the same canonical scrub, so legitimate colors/gradients are preserved and no auto-load value reaches the render sinks regardless of which path wrote it. Added reducer-level regression guards." },
   { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
@@ -657,7 +658,18 @@ function sanitizeBlock(block) {
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.title) c.title = sanitizeString(c.title, 200);
-        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => typeof pt === "string" ? sanitizeString(pt, 500) : typeof pt === "object" && pt.text ? { ...pt, text: sanitizeString(pt.text, 500) } : "");
+        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => {
+          if (typeof pt === "string") return sanitizeString(pt, 500);
+          if (pt && typeof pt === "object" && pt.text) {
+            const p2 = { ...pt, text: sanitizeString(pt.text, 500) };
+            // Defense-in-depth (v12.64): nested comparison/matrix points aren't spread into
+            // inline CSS today, but scrub style/color so a future renderer change can't leak.
+            if ("style" in p2) { const ps = sanitizeStyle(p2.style); if (ps && Object.keys(ps).length) p2.style = ps; else delete p2.style; }
+            scrubColorFields(p2);
+            return p2;
+          }
+          return "";
+        });
         return c;
       }).filter(Boolean);
     }
@@ -2764,7 +2776,7 @@ function innerReducer(state, a) {
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
-    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
+    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -2779,7 +2791,7 @@ function innerReducer(state, a) {
       lanes = lanes.map((l) => l.id === laneId ? { ...l, items: [...l.items, ...newItems] } : l);
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };
     }
-    case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = (typeof it === "object" && it.slides) || []; if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
+    case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = ((typeof it === "object" && Array.isArray(it.slides)) ? it.slides : []).map(sanitizeSlide).filter(Boolean); if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
     case "REMOVE_ITEM": _deletedMods.add(a.id); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) })), selectedId: state.selectedId === a.id ? null : state.selectedId };
     case "RENAME_ITEM": return mapItems((i) => i.id === a.id ? { ...i, title: a.title } : i);
     case "CYCLE_STATUS": return mapItems((i) => { if (i.id !== a.id) return i; const next = STATUS_META[i.status].next; if (!next) return i; return { ...i, status: next, ...(next === "signed-off" ? { signedOffAt: now() } : next === "todo" ? { signedOffAt: undefined } : {}) }; });
@@ -14311,7 +14323,7 @@ export default function App() {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
           deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
-          branding: deck.branding ? { ...defaultBranding, ...deck.branding } : cur.branding,
+          branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.64)
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
         };
         dispatch({ type: "LOAD", payload });

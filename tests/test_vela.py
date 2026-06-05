@@ -473,6 +473,25 @@ def test_css_color_exfil():
         else:
             fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
 
+    # (5c) v12.64: dormant item-insert actions that carry a slides payload must sanitize it,
+    #      so a future caller can't reintroduce the channel; IMPORT_CONCEPTS already did.
+    for action, end in [('case "ADD_ITEM"', 'case "IMPORT_CONCEPTS"'),
+                        ('case "BATCH_ADD"', 'case "REMOVE_ITEM"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:
+            ok(f"{name} sanitizes its slides payload (dormant-path defense-in-depth)")
+        else:
+            fail(f"{name} slides sanitize", f"{name} must map its slides payload through sanitizeSlide")
+
+    # (5d) v12.64: the local live-sync LOAD must take branding from the sanitized copy,
+    #      not the raw incoming deck (slide content was already sanitized; branding was missed).
+    appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
+        ok("local live-sync LOAD uses sanitized.branding (not raw deck.branding)")
+    else:
+        fail("local-sync branding", "live-sync payload must spread sanitized.branding, not raw deck.branding")
+
     # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
     css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
     if os.path.exists(css_script):
