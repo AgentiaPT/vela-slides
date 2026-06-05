@@ -60,7 +60,8 @@ The `vela server start` command starts a local HTTP server for live editing. Sec
 | Path traversal | Deck names validated: `/`, `\`, `..` rejected. Symlink escape checks via `os.path.realpath()` |
 | Payload limits | 5 MB for saves, 10 MB for uploads |
 | Upload sanitization | `os.path.basename()` strips directory components, dot-files rejected |
-| No authentication | By design — intended for single-user local use only |
+| Authentication | Per-session token + `HttpOnly`, `SameSite=Strict` session cookie |
+| Cross-origin writes | Mutating requests must match the server's full origin (scheme/host/port); saves require `application/json` |
 | Host header check | DNS rebinding protection for localhost mode |
 
 When using `--host 0.0.0.0` (LAN mode), the server is accessible to other devices on the network. Use only on trusted networks.
