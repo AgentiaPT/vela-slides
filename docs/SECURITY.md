@@ -104,13 +104,15 @@ Vela Slides is a solo-maintained open-source project. We offer **symbolic bounti
 
 | Severity | Bounty | Examples |
 |----------|--------|----------|
-| **Critical** | $50 + Hall of Fame | Remote code execution, arbitrary file read/write via serve.py |
-| **High** | $35 + Hall of Fame | Stored XSS via deck JSON that bypasses sanitization |
+| **Critical** | $100 + Hall of Fame | Remote code execution, arbitrary file read/write via serve.py |
+| **High** | $35 + Hall of Fame | Stored XSS via deck JSON that bypasses sanitization and is executed |
 | **Medium** | $25 + Hall of Fame | Path traversal, symlink escape, JS injection in serve.py |
 | **Low** | $10 + Hall of Fame | Information leakage, denial of service, header injection |
 | **Informational** | Hall of Fame | Best practice violations, defense-in-depth improvements |
 
 **Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
+
+**2026 remaining: $180 **
 
 This ceiling is non-negotiable. Reports submitted after the cap is hit are still triaged and credited — they simply do not receive cash that year. Final severity and reward are at maintainer discretion.
 
