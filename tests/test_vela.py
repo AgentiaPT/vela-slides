@@ -91,7 +91,7 @@ def test_unit():
         path = os.path.join(SCRIPTS, script)
         if os.path.exists(path):
             result = subprocess.run(
-                [sys.executable, "-c", f"import py_compile; py_compile.compile('{path}', doraise=True)"],
+                [sys.executable, "-c", f"import py_compile; py_compile.compile({path!r}, doraise=True)"],
                 capture_output=True, text=True
             )
             if result.returncode == 0:
@@ -2496,8 +2496,86 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
-# ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
+def test_pdf_title_cards():
+    print("\n── PDF Title-Card Export Tests ──")
 
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    pdf_src     = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # 1. Shared helper exists and tags its output as a virtual slide
+    bm = re.search(r"function buildTitleCardSlide\([^)]*\)\s*\{(.*?)\n\}", imports_src, re.DOTALL)
+    if bm and "_virtual: true" in bm.group(1):
+        ok("buildTitleCardSlide() exists and marks slide _virtual")
+    else:
+        fail("buildTitleCardSlide() missing or does not set _virtual: true")
+
+    # 2. Title card uses a light gradient bg (root cause of the dark-box bug was a dark bg)
+    if bm and "linear-gradient" in bm.group(1) and "#f8fafc" in bm.group(1):
+        ok("buildTitleCardSlide() uses a light gradient background")
+    else:
+        fail("buildTitleCardSlide() should use a light gradient background")
+
+    # 3. Single source of truth: presentation mode reuses buildTitleCardSlide()
+    if "buildTitleCardSlide(" in slides_src:
+        ok("part-slides.jsx presentation titleCard reuses buildTitleCardSlide()")
+    else:
+        fail("part-slides.jsx should reuse buildTitleCardSlide() (single source of truth)")
+
+    # 4. collectAllSlides inserts a title card before each presentCard module's slides
+    cm = re.search(r"function collectAllSlides\([^)]*\)\s*\{(.*?)\n\}", pdf_src, re.DOTALL)
+    if cm and "item.presentCard" in cm.group(1) and "buildTitleCardSlide(" in cm.group(1):
+        ok("collectAllSlides inserts title cards for presentCard modules")
+    else:
+        fail("collectAllSlides should insert buildTitleCardSlide() for presentCard modules")
+
+    # 5. Export dialog exposes an opt-out toggle + a live count of enabled cards
+    if "includeCards" in pdf_src and "titleCardCount" in pdf_src:
+        ok("PdfExportModal has includeCards toggle + titleCardCount")
+    else:
+        fail("PdfExportModal missing includeCards toggle or titleCardCount")
+
+    # 6. Toggling off filters the virtual cards out of the exported set
+    if re.search(r"includeCards\s*\?\s*allSlides\s*:\s*allSlides\.filter\(\s*\(s\)\s*=>\s*!s\._virtual", pdf_src):
+        ok("includeCards=false filters _virtual cards from export")
+    else:
+        fail("includeCards toggle should filter !s._virtual from export")
+
+    # 7. titleCardCount counts only the virtual (enabled) cards
+    if re.search(r"titleCardCount\s*=\s*useMemo\(\(\)\s*=>\s*allSlides\.filter\(\s*\(s\)\s*=>\s*s\._virtual", pdf_src):
+        ok("titleCardCount counts only _virtual cards")
+    else:
+        fail("titleCardCount should count allSlides.filter(s => s._virtual)")
+
+    # 8. Slide numbering excludes virtual cards in BOTH render paths (raster + vector)
+    if pdf_src.count("s._virtual ? 0 : 1") >= 2:
+        ok("Slide numbering excludes virtual cards in both render paths")
+    else:
+        fail("displayTotal should exclude _virtual cards in both render paths")
+
+    # 9. Branding overlays suppressed on virtual title cards in both render paths
+    if pdf_src.count("currentSlide._virtual ? null : branding") >= 2:
+        ok("Branding suppressed on virtual cards in both render paths")
+    else:
+        fail("branding should be null for _virtual cards in both render paths")
+
+    # 10. Vector composite-bg fix: gradient hex stop branch before the dark fallback
+    grad_branch = re.search(r"rawBgStr\.match\(/#\(\[0-9a-f\]\{3,8\}\)/i\)", pdf_src)
+    if grad_branch:
+        ok("Vector exporter derives composite bg from gradient's first hex stop")
+    else:
+        fail("Vector exporter missing gradient-hex composite-bg branch (dark-box fix)")
+
+    # 11. Root invocation passes lanes + branding so cards build with deck accent
+    if "collectAllSlides(state.lanes, state.branding)" in app_src:
+        ok("part-app.jsx passes lanes + branding to collectAllSlides")
+    else:
+        fail("part-app.jsx should call collectAllSlides(state.lanes, state.branding)")
+
+
+# ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_block_primitives():
     print("\n── Block Primitives Tests ──")
 
@@ -2750,6 +2828,7 @@ if __name__ == "__main__":
         test_server_hardening()
         test_block_primitives()
         test_study_notes()
+        test_pdf_title_cards()
     if run_integration:
         test_integration()
         test_cli_commands()

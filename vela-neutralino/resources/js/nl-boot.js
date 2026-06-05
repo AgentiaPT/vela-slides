@@ -22,6 +22,7 @@ import { deckIO } from "./deck-io.js";
 // shell exposes an AI surface that would only fail at probe time.
 import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
+import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
 
@@ -144,6 +145,7 @@ async function boot() {
     setTimeout(() => loader.remove(), 500);
   }
 
+  setTimeout(() => checkForUpdate(configStore).catch(() => {}), 5000);
 }
 
 // ---------- Deck picker ----------------------------------------------------
