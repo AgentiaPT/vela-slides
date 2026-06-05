@@ -162,4 +162,6 @@ We gratefully acknowledge the following security researchers:
 | Researcher | Contribution | Date |
 |------------|-------------|------|
 | Mirochill | XSS Vuln.| 2026-May |
+| Mirochill | Beacon Vuln.| 2026-May |
+| Mirochill | Origin Checks| 2026-May |
 
