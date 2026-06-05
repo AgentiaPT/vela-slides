@@ -82,3 +82,5 @@ tests/contact-slide.json
 
 
 _site/
+# Local security-audit PoCs — never publish to public repo (disclosure policy)
+security-audit/
