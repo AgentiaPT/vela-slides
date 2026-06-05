@@ -66,7 +66,13 @@ function innerReducer(state, a) {
     case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: a.slides } : i);
     case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: [...i.slides, a.slide] } : i);
     case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, a.slide); return { ...i, slides: ns }; });
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return updated; }) } : i);
+    // SECURITY (v12.62): UPDATE_SLIDE merges a raw patch and bypasses sanitizeSlide
+    // (unlike the LOAD_LANES ingest path). AI single-slide flows (improve/regenerate/
+    // alt) can carry prompt-injected color scalars (bg/bgGradient/…) straight into
+    // inline CSS — a render-time auto-load channel. Scrub the INCOMING patch only
+    // (existing slide state was already sanitized on its way in), so no shared-ref
+    // mutation. Reuses the canonical scrubColorFields (see part-imports.jsx).
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; scrubColorFields(p); if (Array.isArray(p.blocks)) p.blocks.forEach((bl) => { if (bl && typeof bl === "object") { scrubColorFields(bl); if (Array.isArray(bl.items)) bl.items.forEach((it) => { if (it && typeof it === "object") scrubColorFields(it); }); } }); const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return updated; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
@@ -179,7 +185,10 @@ function innerReducer(state, a) {
       })) : state.lanes;
       return { ...state, lanes: safeLanes };
     }
-    case "SET_BRANDING": return { ...state, branding: { ...state.branding, ...a.branding } };
+    // SECURITY (v12.62): the Vera set_branding tool (and the branding modal) dispatch
+    // here, bypassing the import-time scrub in validateAndSanitizeDeck. footerBg/
+    // accentColor/footerColor feed inline CSS, so scrub the merged branding too.
+    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubColorFields(b); return { ...state, branding: b }; }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
     case "SET_TITLE": return { ...state, deckTitle: a.title };

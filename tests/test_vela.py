@@ -449,6 +449,22 @@ def test_css_color_exfil():
     else:
         fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
 
+    # (5b) v12.62: the in-app write paths that bypass import sanitization must scrub too.
+    #      UPDATE_SLIDE (single-slide patch merge) and SET_BRANDING (branding dispatch)
+    #      do not route through sanitizeSlide/validateAndSanitizeDeck, so an injected
+    #      color scalar applied after load would otherwise reach inline CSS.
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    upd = reducer[reducer.index('case "UPDATE_SLIDE"'):reducer.index('case "REMOVE_SLIDE"')] if 'case "UPDATE_SLIDE"' in reducer else ""
+    if "scrubColorFields(p)" in upd:
+        ok("UPDATE_SLIDE scrubs the incoming slide patch (color scalars + blocks/items)")
+    else:
+        fail("UPDATE_SLIDE color scrub", "single-slide patch merge must scrub color scalars")
+    setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
+    if "scrubColorFields(b)" in setb:
+        ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
+    else:
+        fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+
     # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
     css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
     if os.path.exists(css_script):
