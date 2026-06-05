@@ -449,21 +449,29 @@ def test_css_color_exfil():
     else:
         fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
 
-    # (5b) v12.62: the in-app write paths that bypass import sanitization must scrub too.
-    #      UPDATE_SLIDE (single-slide patch merge) and SET_BRANDING (branding dispatch)
-    #      do not route through sanitizeSlide/validateAndSanitizeDeck, so an injected
-    #      color scalar applied after load would otherwise reach inline CSS.
+    # (5b) v12.62/v12.63: the in-app write paths that bypass import sanitization must
+    #      sanitize too. SET_BRANDING scrubs branding color scalars (v12.62). The slide-
+    #      mutating actions (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES)
+    #      run the full sanitizeSlide (v12.63) — partial color scrub missed style objects,
+    #      bgImage, and image src; the new-slide / startup-patch paths were uncovered.
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    upd = reducer[reducer.index('case "UPDATE_SLIDE"'):reducer.index('case "REMOVE_SLIDE"')] if 'case "UPDATE_SLIDE"' in reducer else ""
-    if "scrubColorFields(p)" in upd:
-        ok("UPDATE_SLIDE scrubs the incoming slide patch (color scalars + blocks/items)")
-    else:
-        fail("UPDATE_SLIDE color scrub", "single-slide patch merge must scrub color scalars")
     setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
     if "scrubColorFields(b)" in setb:
         ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
     else:
         fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+    # Each slide-mutating action must funnel its incoming slide(s) through sanitizeSlide
+    # (covers style objects + bgImage data: clamp + image src + svg markup + color scrub).
+    for action, end in [('case "SET_SLIDES"', 'case "ADD_SLIDE"'),
+                        ('case "ADD_SLIDE"', 'case "INSERT_SLIDE"'),
+                        ('case "INSERT_SLIDE"', 'case "UPDATE_SLIDE"'),
+                        ('case "UPDATE_SLIDE"', 'case "REMOVE_SLIDE"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:  # called directly or passed as a .map callback
+            ok(f"{name} sanitizes incoming slide(s) via sanitizeSlide (full render-sink coverage)")
+        else:
+            fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
 
     # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
     css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")

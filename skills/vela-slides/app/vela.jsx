@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.62";
+const VELA_VERSION = "12.63";
 const VELA_CHANGELOG = [
+  { v: "12.63", d: "Security (audit 2026-06, follow-up to v12.62): make the slide-mutating reducer actions a single sanitization chokepoint. v12.62 used a partial color-only scrub on the live slide-patch path, which left two render-time auto-load sinks reachable through a patch or a freshly generated slide — a style object and a background-image field — and the new-slide and startup-patch write paths were not covered at all. These actions now run every incoming slide through the same canonical slide sanitizer the AI-commit path already uses, covering style objects, background-image, image sources and embedded vector markup in one place, regardless of which path produced the slide. Legitimate colors/gradients/data-image values are preserved; added reducer-level regression guards." },
   { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.61): extend the color-scalar CSS auto-load scrub to the two in-app write paths that bypass import sanitization — the live slide-patch update and the branding update dispatch. v12.61 scrubbed color/background scalars at deck import, but a single-slide patch or a branding change applied after load (e.g. an AI-assisted edit acting on injected deck content) could still place an auto-load value into inline CSS. Both dispatch boundaries now run the same canonical scrub, so legitimate colors/gradients are preserved and no auto-load value reaches the render sinks regardless of which path wrote it. Added reducer-level regression guards." },
   { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
   { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
@@ -2800,16 +2801,24 @@ function innerReducer(state, a) {
         return { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) };
       }) };
     }
-    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: a.slides } : i);
-    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: [...i.slides, a.slide] } : i);
-    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, a.slide); return { ...i, slides: ns }; });
-    // SECURITY (v12.62): UPDATE_SLIDE merges a raw patch and bypasses sanitizeSlide
-    // (unlike the LOAD_LANES ingest path). AI single-slide flows (improve/regenerate/
-    // alt) can carry prompt-injected color scalars (bg/bgGradient/…) straight into
-    // inline CSS — a render-time auto-load channel. Scrub the INCOMING patch only
-    // (existing slide state was already sanitized on its way in), so no shared-ref
-    // mutation. Reuses the canonical scrubColorFields (see part-imports.jsx).
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; scrubColorFields(p); if (Array.isArray(p.blocks)) p.blocks.forEach((bl) => { if (bl && typeof bl === "object") { scrubColorFields(bl); if (Array.isArray(bl.items)) bl.items.forEach((it) => { if (it && typeof it === "object") scrubColorFields(it); }); } }); const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return updated; }) } : i);
+    // SECURITY (v12.63): slide-mutating actions are the reducer chokepoint — run every
+    // incoming slide through sanitizeSlide (the same backstop LOAD_LANES uses). This
+    // covers ALL render-time auto-load sinks, not just color scalars: block/item style
+    // objects (sanitizeStyle), bgImage data:image/* clamp, image src clamp, svg markup.
+    // Some callers (clipboard, generateAiSlide) already pre-sanitize — sanitizeSlide is
+    // idempotent, so double-coverage is harmless. Closes the generateSlide→ADD_SLIDE and
+    // STARTUP_PATCH.slides→UPDATE_SLIDE paths that bypassed import sanitization.
+    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean) } : i);
+    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); return sl ? { ...i, slides: [...i.slides, sl] } : i; });
+    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); if (!sl) return i; const ns = [...i.slides]; ns.splice(a.index, 0, sl); return { ...i, slides: ns }; });
+    // SECURITY (v12.63): UPDATE_SLIDE merges a raw patch and bypasses import sanitization.
+    // A partial color scrub (v12.62) missed two render-time auto-load sinks reachable via
+    // a patch: block/item `style` objects (non-string, so scrubColorFields skips them) and
+    // `bgImage` (key not matched by CSS_COLOR_KEY; its data:image/* clamp lives only in
+    // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
+    // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
+    // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });

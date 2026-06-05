@@ -63,16 +63,24 @@ function innerReducer(state, a) {
         return { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) };
       }) };
     }
-    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: a.slides } : i);
-    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: [...i.slides, a.slide] } : i);
-    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, a.slide); return { ...i, slides: ns }; });
-    // SECURITY (v12.62): UPDATE_SLIDE merges a raw patch and bypasses sanitizeSlide
-    // (unlike the LOAD_LANES ingest path). AI single-slide flows (improve/regenerate/
-    // alt) can carry prompt-injected color scalars (bg/bgGradient/…) straight into
-    // inline CSS — a render-time auto-load channel. Scrub the INCOMING patch only
-    // (existing slide state was already sanitized on its way in), so no shared-ref
-    // mutation. Reuses the canonical scrubColorFields (see part-imports.jsx).
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; scrubColorFields(p); if (Array.isArray(p.blocks)) p.blocks.forEach((bl) => { if (bl && typeof bl === "object") { scrubColorFields(bl); if (Array.isArray(bl.items)) bl.items.forEach((it) => { if (it && typeof it === "object") scrubColorFields(it); }); } }); const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return updated; }) } : i);
+    // SECURITY (v12.63): slide-mutating actions are the reducer chokepoint — run every
+    // incoming slide through sanitizeSlide (the same backstop LOAD_LANES uses). This
+    // covers ALL render-time auto-load sinks, not just color scalars: block/item style
+    // objects (sanitizeStyle), bgImage data:image/* clamp, image src clamp, svg markup.
+    // Some callers (clipboard, generateAiSlide) already pre-sanitize — sanitizeSlide is
+    // idempotent, so double-coverage is harmless. Closes the generateSlide→ADD_SLIDE and
+    // STARTUP_PATCH.slides→UPDATE_SLIDE paths that bypassed import sanitization.
+    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean) } : i);
+    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); return sl ? { ...i, slides: [...i.slides, sl] } : i; });
+    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); if (!sl) return i; const ns = [...i.slides]; ns.splice(a.index, 0, sl); return { ...i, slides: ns }; });
+    // SECURITY (v12.63): UPDATE_SLIDE merges a raw patch and bypasses import sanitization.
+    // A partial color scrub (v12.62) missed two render-time auto-load sinks reachable via
+    // a patch: block/item `style` objects (non-string, so scrubColorFields skips them) and
+    // `bgImage` (key not matched by CSS_COLOR_KEY; its data:image/* clamp lives only in
+    // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
+    // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
+    // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
