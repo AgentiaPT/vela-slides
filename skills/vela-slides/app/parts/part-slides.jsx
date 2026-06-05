@@ -1194,22 +1194,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const titleCard = useMemo(() => {
     if (!concept.presentCard) return null;
     const lane = (lanes || []).find((l) => l.items.some((i) => i.id === concept.id));
-    const slideCount = (concept.slides || []).length;
-    const totalTime = (concept.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
-    const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
-    return {
-      _virtual: true,
-      bg: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
-      color: "#0f172a", accent: branding?.accentColor || T.accent,
-      align: "center", verticalAlign: "center", padding: "60px 80px", gap: 20,
-      blocks: [
-        ...(lane ? [{ type: "badge", text: lane.title.toUpperCase(), bg: (branding?.accentColor || T.accent) + "18", color: branding?.accentColor || T.accent, icon: "Layers" }] : []),
-        { type: "heading", text: concept.title, size: "4xl", color: "#0f172a" },
-        ...(timeStr ? [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""} · ${timeStr}`, size: "lg", color: "#64748b" }] : [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""}`, size: "lg", color: "#64748b" }]),
-        { type: "spacer", h: 8 },
-      ],
-      duration: 3,
-    };
+    return buildTitleCardSlide(concept, lane, branding);
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
 

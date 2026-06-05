@@ -573,10 +573,11 @@ function drawVelaWatermark(ctx, pw, ph) {
 }
 
 // ━━━ PDF Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function PdfExportModal({ slides, branding, deckTitle, onClose }) {
+function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   const [ratio, setRatio] = useState("16:9");
   const [quality, setQuality] = useState("high");
   const [useVector, setUseVector] = useState(false);
+  const [includeCards, setIncludeCards] = useState(true);
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -593,6 +594,11 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
   ratioRef.current = ratio;
   const qualityRef = useRef(quality);
   qualityRef.current = quality;
+
+  // Module title cards (the 🎬 "present card") are inserted by collectAllSlides as
+  // _virtual slides. Let the user opt out, and surface how many enabled cards there are.
+  const titleCardCount = useMemo(() => allSlides.filter((s) => s._virtual).length, [allSlides]);
+  const slides = useMemo(() => includeCards ? allSlides : allSlides.filter((s) => !s._virtual), [allSlides, includeCards]);
 
   const startExport = useCallback(async () => {
     setPhase("exporting");
@@ -786,6 +792,24 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>
+            {titleCardCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Module title cards</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>🎬 {titleCardCount} auto title slide{titleCardCount !== 1 ? "s" : ""} (enabled modules)</span>
+              </div>
+              <button onClick={() => setIncludeCards(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: includeCards ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: includeCards ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -913,10 +937,16 @@ function PdfExportModal({ slides, branding, deckTitle, onClose }) {
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         const slideBg = reflowed.bgGradient || reflowed.bg || T.slideBg;
+        // Match presentation numbering: title cards aren't counted, real slides
+        // keep continuous 1-based numbers (excluding any inserted title cards).
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden", background: slideBg }}>
-              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={branding} editable={false} />
+              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} editable={false} displayIndex={displayIndex} displayTotal={displayTotal} />
             </div>
           </div>
         );
@@ -2992,6 +3022,13 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
             let h = rawBgStr.match(/^#([0-9a-f]{3,8})$/i)[1];
             if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
             _compositeBg = { r: parseInt(h.substring(0,2),16)/255, g: parseInt(h.substring(2,4),16)/255, b: parseInt(h.substring(4,6),16)/255 };
+          } else if (rawBgStr && rawBgStr.match(/#([0-9a-f]{3,8})/i)) {
+            // Gradient (e.g. title-card "linear-gradient(... #f8fafc ...)") — use the
+            // first hex stop as the alpha-blend base so translucent badges/icons over
+            // a light card don't composite onto the dark #0a0f1c fallback (navy boxes).
+            let h = rawBgStr.match(/#([0-9a-f]{3,8})/i)[1];
+            if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+            _compositeBg = { r: parseInt(h.substring(0,2),16)/255, g: parseInt(h.substring(2,4),16)/255, b: parseInt(h.substring(4,6),16)/255 };
           } else {
             _compositeBg = { r: 10/255, g: 15/255, b: 28/255 }; // fallback #0a0f1c
           }
@@ -3381,11 +3418,16 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const zoom = heightRatio <= 1.05 ? 1 : Math.pow(heightRatio, 0.45);
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
+        // Match presentation numbering: title cards aren't counted toward slide numbers.
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden" }}>
-              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={branding} />
+              <SlideContent slide={reflowed} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} displayIndex={displayIndex} displayTotal={displayTotal} />
             </div>
           </div>
         );
@@ -3397,10 +3439,13 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
 
 
 // Helper to collect all slides flat from editor lanes
-function collectAllSlides(lanes) {
+function collectAllSlides(lanes, branding) {
   const all = [];
   for (const lane of (lanes || [])) {
     for (const item of (lane.items || [])) {
+      // Mirror presentation mode: a module with "present card" enabled shows an
+      // auto-generated title slide before its content slides.
+      if (item.presentCard) all.push(buildTitleCardSlide(item, lane, branding));
       for (const slide of (item.slides || [])) {
         all.push(slide);
       }
