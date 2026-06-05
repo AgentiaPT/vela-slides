@@ -496,6 +496,37 @@ class TestSecurity(FolderServerTestBase):
         self.assertNotEqual(status, 200,
                             "Double-encoded traversal must not succeed")
 
+    def test_deck_unicode_slash_lookalike_rejected(self):
+        """Unicode separator lookalikes (U+2215 DIVISION SLASH) must be rejected
+        at validation (400), not just resolve to a missing file (404).  The 400
+        is what distinguishes the fix from the pre-fix passthrough.  v12.64."""
+        status, _, _ = fetch(self._port, "GET", "/deck/a%E2%88%95b.vela")
+        self.assertEqual(status, 400)
+
+    def test_deck_rtlo_bidi_rejected(self):
+        """RTLO (U+202E) and other bidi/format controls must be rejected at
+        validation (400).  Filename spoofing anti-spoofing.  v12.64."""
+        status, _, _ = fetch(self._port, "GET", "/deck/a%E2%80%AEb.vela")
+        self.assertEqual(status, 400)
+
+    def test_validate_deck_name_unit(self):
+        """Direct unit coverage of _validate_deck_name Unicode hardening (v12.64)."""
+        v = VelaHTTPHandler._validate_deck_name
+        # legitimate names (incl. accented latin used in pt-PT) still allowed
+        self.assertTrue(v("My Deck.vela"))
+        self.assertTrue(v("Apresentação.vela"))
+        # ASCII traversal / separators still blocked
+        self.assertFalse(v("../etc/passwd"))
+        self.assertFalse(v("a/b"))
+        # Unicode lookalikes + bidi controls blocked
+        self.assertFalse(v("a∕b.vela"))   # division slash
+        self.assertFalse(v("a⁄b.vela"))   # fraction slash
+        self.assertFalse(v("a․․b"))  # one-dot leaders
+        self.assertFalse(v("a／b"))         # fullwidth solidus (NFKC -> '/')
+        self.assertFalse(v("evil‮gnp.vela"))  # RTLO spoof
+        self.assertFalse(v(""))
+        self.assertFalse(v("   "))
+
     # -- Path traversal on /save/ --
 
     def test_save_dotdot_400(self):
