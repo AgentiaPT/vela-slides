@@ -47,6 +47,41 @@ SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")
 LOCAL_HTML_PATH = os.path.join(SKILL_DIR, "app", "local.html")
 
+# Content-Security-Policy for the local dev server. The hosted Claude.ai
+# artifact runs inside a sandboxed iframe whose CSP already blocks outbound
+# requests; the local server is a top-level page with no such backstop, so a
+# deck-supplied value that slipped any client sanitizer could fire a real
+# external request here. The key egress channels are pinned: img-src is
+# same-origin + inline data only (no external image beacons), and connect-src
+# is a closed allowlist (no fetch/XHR/beacon/WebSocket to attacker hosts).
+# script-src/style-src stay permissive enough for the in-browser toolchain the
+# app legitimately needs — every external origin below is a fixed, known
+# third-party dependency of the app, not attacker-controlled:
+#   - script: esm.sh (React/lucide via importmap), unpkg (Babel CDN fallback;
+#     /vendor → 'self' when vendored), cdnjs (html2canvas for PDF export),
+#     'unsafe-eval' for Babel's runtime JSX transpile, 'unsafe-inline' for the
+#     inline bootstrap scripts.
+#   - style: 'unsafe-inline' (all Vela styling is inline) + fonts.googleapis.com
+#     (@import of the Google Fonts stylesheet).
+#   - font: 'self' data: + fonts.gstatic.com (the actual font files).
+#   - img: 'self' data: only.
+#   - connect: 'self', api.anthropic.com (Vera engine), the localhost
+#     hot-reload/Claude channel (a separate port), and esm.sh module sourcemaps.
+# To tighten further on a machine that never uses in-browser Vera, drop
+# api.anthropic.com from connect-src.
+CSP_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://unpkg.com https://cdnjs.cloudflare.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data:",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "connect-src 'self' https://api.anthropic.com https://esm.sh http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+])
+
 
 # ── Version tracker for long-polling ──────────────────────────────────
 class DeckVersionTracker:
@@ -422,6 +457,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         """Override to inject security headers into all responses."""
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", CSP_POLICY)
         super().end_headers()
 
     # ── Routing ────────────────────────────────────────────────────
