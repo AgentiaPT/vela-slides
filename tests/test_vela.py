@@ -791,7 +791,7 @@ def test_integration():
         # inside <script type="text/babel"> by both app/local.html and the
         # Claude.ai artifact viewer. Covered chars: < > & U+2028 U+2029.
         evil_deck = {
-            "deckTitle": "Evil </script><script>x</script> & <!-- -->  ",
+            "deckTitle": "Evil </script><script>x</script> & <!-- -->    ",
             "lanes": [{
                 "title": "x",
                 "items": [{
@@ -820,7 +820,7 @@ def test_integration():
             # (The literal "const STARTUP_PATCH = {" prefix has its own = sign and
             # braces, but no < > & or U+2028/9, so the region is clean to scan.)
             json_region = patch_region[len("const STARTUP_PATCH = "):] if patch_region else ""
-            bad = [c for c in ("<", ">", "&", "", "") if c in json_region]
+            bad = [c for c in ("<", ">", "&", " ", " ") if c in json_region]
             # Good: the escaped forms must be present (proof the deck data made it through).
             need = ("\\u003c", "\\u003e", "\\u0026", "\\u2028", "\\u2029")
             missing = [e for e in need if e not in json_region]
