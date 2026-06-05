@@ -69,11 +69,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.64";
+const VELA_VERSION = "12.65";
 const VELA_CHANGELOG = [
-  { v: "12.64", d: "Security (audit 2026-06, follow-up to v12.63): close the remaining defense-in-depth gaps in the same CSS auto-load class. The local-file live-sync update applied branding from the unsanitized input rather than the sanitized copy it had already computed (slide content was already sanitized; only branding was missed) — now fixed. Two dormant item-insert actions that carry a slide payload, and nested data-point objects, now also run the canonical slide/style sanitizers, so no future caller or renderer change can reintroduce the channel. Tightened the regression guards to assert the wiring on every such path. No behavior change for legitimate decks." },
-  { v: "12.63", d: "Security (audit 2026-06, follow-up to v12.62): make the slide-mutating reducer actions a single sanitization chokepoint. v12.62 used a partial color-only scrub on the live slide-patch path, which left two render-time auto-load sinks reachable through a patch or a freshly generated slide — a style object and a background-image field — and the new-slide and startup-patch write paths were not covered at all. These actions now run every incoming slide through the same canonical slide sanitizer the AI-commit path already uses, covering style objects, background-image, image sources and embedded vector markup in one place, regardless of which path produced the slide. Legitimate colors/gradients/data-image values are preserved; added reducer-level regression guards." },
-  { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.61): extend the color-scalar CSS auto-load scrub to the two in-app write paths that bypass import sanitization — the live slide-patch update and the branding update dispatch. v12.61 scrubbed color/background scalars at deck import, but a single-slide patch or a branding change applied after load (e.g. an AI-assisted edit acting on injected deck content) could still place an auto-load value into inline CSS. Both dispatch boundaries now run the same canonical scrub, so legitimate colors/gradients are preserved and no auto-load value reaches the render sinks regardless of which path wrote it. Added reducer-level regression guards." },
+  { v: "12.65", d: "Security (audit 2026-06, follow-up to v12.64): close the remaining defense-in-depth gaps in the same CSS auto-load class. The local-file live-sync update applied branding from the unsanitized input rather than the sanitized copy it had already computed (slide content was already sanitized; only branding was missed) — now fixed. Two dormant item-insert actions that carry a slide payload, and nested data-point objects, now also run the canonical slide/style sanitizers, so no future caller or renderer change can reintroduce the channel. Tightened the regression guards to assert the wiring on every such path. No behavior change for legitimate decks." },
+  { v: "12.64", d: "Security (audit 2026-06, follow-up to v12.63): make the slide-mutating reducer actions a single sanitization chokepoint. v12.63 used a partial color-only scrub on the live slide-patch path, which left two render-time auto-load sinks reachable through a patch or a freshly generated slide — a style object and a background-image field — and the new-slide and startup-patch write paths were not covered at all. These actions now run every incoming slide through the same canonical slide sanitizer the AI-commit path already uses, covering style objects, background-image, image sources and embedded vector markup in one place, regardless of which path produced the slide. Legitimate colors/gradients/data-image values are preserved; added reducer-level regression guards." },
+  { v: "12.63", d: "Security (audit 2026-06, follow-up to v12.61): extend the color-scalar CSS auto-load scrub to the two in-app write paths that bypass import sanitization — the live slide-patch update and the branding update dispatch. v12.61 scrubbed color/background scalars at deck import, but a single-slide patch or a branding change applied after load (e.g. an AI-assisted edit acting on injected deck content) could still place an auto-load value into inline CSS. Both dispatch boundaries now run the same canonical scrub, so legitimate colors/gradients are preserved and no auto-load value reaches the render sinks regardless of which path wrote it. Added reducer-level regression guards." },
+  { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual zero-click outbound-fetch channel in the SVG sanitizer. Deck-supplied SVG markup is sanitized as SVG but later rendered into an HTML context, where a sanitized fragment could be re-parsed under HTML rules and an image element treated as an HTML image with a fetching attribute — a different surface from the href/CSS holes already closed. The sanitizer now strips the relevant image-source attributes and guarantees the output stays in SVG scope, so the same content can never be reinterpreted as a network-loading HTML element. Decks still load nothing external. Added a jsdom round-trip regression battery and a CI source guard." },
   { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
   { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
   { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
@@ -475,6 +476,12 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // src/srcset never appear on legitimate SVG elements (SVG uses href/
+            // xlink:href), so they survive the SVG parse inert — but the sanitized
+            // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
+            // <div>), where <image> is the HTML alias for <img> and src/srcset become a
+            // zero-click external fetch on render. Strip them outright. (v12.62)
+            if (name === "src" || name === "srcset") { child.removeAttribute(a.name); continue; }
             // SECURITY: href/xlink:href are ALLOWLIST after DOMParser normalization.
             // Entities (&#x3a;, &#58;, &#115;) are already decoded by the parser; we strip
             // ASCII control/whitespace (browsers ignore them inside a scheme — "java\tscript:"
@@ -514,7 +521,20 @@ function sanitizeSvgMarkup(raw) {
     };
     const root = doc.documentElement;
     walk(root);
-    return root.innerHTML;
+    // The sanitized markup is injected via dangerouslySetInnerHTML into an HTML
+    // <div>. If the returned string is not SVG-scoped at the top level, the HTML
+    // parser runs in HTML insertion mode, where <image> is the spec alias for <img>
+    // (and other SVG tags can HTML-alias) — turning deck-supplied content into a
+    // zero-click outbound fetch even after attribute filtering. A deck that supplied
+    // its own single <svg> root is returned verbatim (renders unchanged); anything
+    // else keeps our <svg> wrapper so the sink always parses it in SVG foreign-content
+    // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
+    if (!root.innerHTML.trim()) return "";
+    const top = Array.from(root.children);
+    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
+      return top[0].outerHTML;
+    }
+    return root.outerHTML;
   } catch (_) { return ""; }
 }
 
