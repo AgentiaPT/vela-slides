@@ -397,6 +397,77 @@ def test_security():
         fail("item-level link sanitization", "icon-row/flow/etc. item links must be sanitizeUrl'd")
 
 
+def test_css_color_exfil():
+    """v12.61: close the CSS auto-load exfil channel on the slide/block color
+    scalar surface (bg/bgGradient/color/accent, per-block *Bg/*Color, grid
+    cell.bg, branding footerBg/accentColor). These feed inline CSS directly and
+    previously bypassed sanitizeStyle. Source guards pin the wiring; the jsdom-free
+    behavioral round-trip (test_css_exfil.cjs) executes the real predicate."""
+    print("\n🎨 CSS color/background exfil (v12.61)")
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+
+    # (1) one canonical filter — no duplicate reject regex that could drift.
+    if "CSS_LOAD_REJECT" not in imports:
+        ok("single canonical CSS reject filter (no duplicate CSS_LOAD_REJECT)")
+    else:
+        fail("duplicate CSS reject regex", "fold CSS_LOAD_REJECT into STYLE_VALUE_REJECT")
+
+    # (2) STYLE_VALUE_REJECT is function-name-agnostic (catches image()/cross-fade()/
+    #     src(), not just image-set()) — the v12.59 bypass class, on this surface too.
+    rej = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^\n]+?)/[a-z]*;', imports)
+    if rej and "[a-z]" in rej.group(1) and "['\"]" in rej.group(1):
+        ok("STYLE_VALUE_REJECT rejects any string-source CSS function (name-agnostic)")
+    else:
+        fail("STYLE_VALUE_REJECT name-agnostic", "must reject `funcname('...')`, not only image-set(")
+
+    # (3) scrubColorFields exists and is wired into both sanitize entry points.
+    if "function scrubColorFields(" in imports:
+        ok("scrubColorFields helper defined")
+    else:
+        fail("scrubColorFields missing", "color scalars need a shared scrub helper")
+    sslide = imports[imports.index("function sanitizeSlide("):imports.index("function sanitizeItem(")] if "function sanitizeSlide(" in imports else ""
+    if "scrubColorFields(clean)" in sslide:
+        ok("sanitizeSlide scrubs slide color scalars (bg/bgGradient/color/accent)")
+    else:
+        fail("sanitizeSlide color scrub", "slide bg/bgGradient/color must be scrubbed")
+    sblock = imports[imports.index("function sanitizeBlock("):imports.index("const VALID_COMMENT_STATUSES")] if "function sanitizeBlock(" in imports else ""
+    if "scrubColorFields(clean)" in sblock and "scrubColorFields(it)" in sblock:
+        ok("sanitizeBlock scrubs block + item/cell color scalars")
+    else:
+        fail("sanitizeBlock color scrub", "block + items (grid cell.bg/dotColor/…) must be scrubbed")
+
+    # (4) slide bgImage (a background *image*) clamped to inline data:image/* — no network.
+    if 'sanitizeUrl(clean.bgImage, ["data:"])' in imports and 'clean.bgImage = s' in imports \
+       and 'data:image' in sslide:
+        ok("slide bgImage restricted to inline data:image/* (no network)")
+    else:
+        fail("bgImage data:image-only", "bgImage must clamp to data:image/* like the image block")
+
+    # (5) branding color scalars routed through the scrub (sanitizeString alone passes a short url()).
+    if 'scrubColorFields(importedBranding)' in imports:
+        ok("branding accentColor/footerBg/footerColor scrubbed")
+    else:
+        fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
+
+    # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
+    css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
+    if os.path.exists(css_script):
+        try:
+            r = subprocess.run(["node", css_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                ok(f"CSS exfil behavioral round-trip ({m.group(1) if m else '?'} checks)")
+            else:
+                fail("CSS exfil behavioral round-trip",
+                     f"node tests/test_css_exfil.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("CSS exfil behavioral round-trip", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("CSS exfil behavioral round-trip", "timeout after 60s")
+    else:
+        fail("CSS exfil behavioral round-trip", f"missing: {css_script}")
+
+
 # ━━━ Audit 2025-05 hardening fixes (CRITICAL/HIGH from security audit) ━
 # Covers: shell-injection in release-preview workflow (C1), github-script
 # JS-injection via test stdout (C2), LOAD_LANES sanitization (H1),
@@ -2853,6 +2924,7 @@ if __name__ == "__main__":
     if run_unit:
         test_unit()
         test_security()
+        test_css_color_exfil()
         test_audit_2025_05_fixes()
         test_known_bugs()
         test_ip_hygiene()

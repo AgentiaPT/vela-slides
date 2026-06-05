@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.60";
+const VELA_VERSION = "12.61";
 const VELA_CHANGELOG = [
+  { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
   { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
   { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
   { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
@@ -520,8 +521,14 @@ function sanitizeSvgMarkup(raw) {
 // fire an outbound GET on every render with no CSP backstop inside the
 // artifact srcdoc — a zero-click data-exfil channel. We now apply both an
 // allowlist of safe CSS keys (text/layout/color, no image-loading) AND a
-// value filter that rejects url() / expression() / image-set() / CSS
-// escapes / angle brackets, even on allowlisted keys.
+// value filter that rejects url() / expression() / any string-source CSS
+// function (image-set()/image()/cross-fade()/src(), name-agnostic) / bare
+// scheme / @import / CSS escapes / angle brackets, even on allowlisted keys.
+// This is the single canonical CSS external-load/breakout value filter — it is
+// reused by scrubColorFields() for the slide/block color scalars, so the two
+// surfaces can never drift apart. (SVG CSS uses isSvgStyleSafe() instead, which
+// is deliberately distinct: it must ALLOW same-document url(#fragment) paint
+// servers, which have no meaning — and so stay rejected — here.)
 const SAFE_STYLE_KEYS = new Set([
   // text
   "color", "fontWeight", "fontStyle", "fontSize", "fontFamily",
@@ -540,7 +547,7 @@ const SAFE_STYLE_KEYS = new Set([
   "borderColor", "borderStyle", "borderWidth",
   "boxShadow", "opacity",
 ]);
-const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|image-set\s*\(|<|\\/i;
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\/i;
 function sanitizeStyle(style) {
   if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
   const out = {};
@@ -555,6 +562,28 @@ function sanitizeStyle(style) {
     }
   }
   return out;
+}
+
+// Slide- and block-level color/background scalars (bg, color, accent, border,
+// dotColor, headerBg, trackColor, cell.bg …) are written straight into inline
+// CSS — `background`, `background-image`, `color`, `border`, `fill` — at render
+// (e.g. backgroundImage = `url(${slide.bgImage})`). Unlike block.style they never
+// passed through sanitizeStyle, so a value like `url(https://x)` fired a
+// zero-click outbound GET on render (CSS auto-load exfil beacon — same class as
+// the SVG/img holes closed in v12.59, different surface). Vela decks load NOTHING
+// external: legit values here are colors and gradients, which need no url(), no
+// quoted string-source function (image()/image-set()/cross-fade()/src()), and no
+// bare URL. Reuse the canonical STYLE_VALUE_REJECT (defined above) so this surface
+// and block.style share ONE filter and can't drift apart. bgImage (a background
+// *image*) is clamped to data:image/* separately, like the image block / logo.
+const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
+function scrubColorFields(obj) {
+  if (!obj || typeof obj !== "object") return;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
+    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
+  }
 }
 
 function sanitizeBlock(block) {
@@ -662,6 +691,13 @@ function sanitizeBlock(block) {
       return it;
     });
   }
+  // Strip CSS auto-load values from color/background scalars on the block and on
+  // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
+  // item.color, dotColor …). See scrubColorFields above. (v12.61)
+  scrubColorFields(clean);
+  if (Array.isArray(clean.items)) {
+    for (const it of clean.items) scrubColorFields(it);
+  }
   return clean;
 }
 
@@ -743,6 +779,15 @@ function sanitizeSlide(slide) {
     const sn = sanitizeStudyNotes(clean.studyNotes);
     if (sn) clean.studyNotes = sn; else delete clean.studyNotes;
   }
+  // Slide background/color scalars (bg, bgGradient, color, accent, mutedColor)
+  // feed inline CSS directly — scrub CSS auto-load values. See scrubColorFields. (v12.61)
+  scrubColorFields(clean);
+  // bgImage is a background *image* (auto-fetches on render). Restrict to inline
+  // data:image/* — no network — matching the image block / branding-logo rule.
+  if ("bgImage" in clean) {
+    const s = typeof clean.bgImage === "string" ? sanitizeUrl(clean.bgImage, ["data:"]) : "";
+    if (/^data:image\//i.test(s)) clean.bgImage = s; else delete clean.bgImage;
+  }
   return clean;
 }
 
@@ -796,6 +841,10 @@ function validateAndSanitizeDeck(raw) {
     imgMaxWidth: typeof rawBranding.imgMaxWidth === "number" ? Math.max(300, Math.min(rawBranding.imgMaxWidth, 960)) : 600,
     imgQuality: typeof rawBranding.imgQuality === "number" ? Math.max(0.15, Math.min(rawBranding.imgQuality, 0.85)) : 0.45,
   };
+  // Branding color scalars (accentColor, footerBg, footerColor) feed inline CSS;
+  // sanitizeString only strips tags/truncates and would pass a short url(...) —
+  // scrub them like every other color field. logo is already data:-only. (v12.61)
+  scrubColorFields(importedBranding);
   const importedGuidelines = typeof raw.guidelines === "string" ? raw.guidelines.slice(0, 2000) : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
