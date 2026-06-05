@@ -499,9 +499,12 @@ def test_audit_2025_05_fixes():
         fail("H2 sanitizeStyle helper missing")
     # Dangerous CSS values (url(), expression(), <, javascript:) must be
     # rejected even when the key is allowlisted (e.g. a future addition
-    # could expose content: which accepts url()).
-    if re.search(r'sanitizeStyle[\s\S]{0,800}?url\s*\(', imports):
-        ok("H2 sanitizeStyle rejects values containing url(")
+    # could expose content: which accepts url()). Assert the real mechanism
+    # — the STYLE_VALUE_REJECT regex and its use in the style sanitizer —
+    # rather than proximity to prose, so changelog wording can't affect it.
+    reject_def = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^/]+)/', imports)
+    if reject_def and 'url' in reject_def.group(1) and 'STYLE_VALUE_REJECT.test(' in imports:
+        ok("H2 sanitizeStyle rejects values containing url( (via STYLE_VALUE_REJECT)")
     else:
         fail("H2 sanitizeStyle url() guard",
              "must reject any value containing url( to prevent CSS exfil")
