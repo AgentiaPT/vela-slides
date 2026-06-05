@@ -367,6 +367,36 @@ def test_security():
     else:
         fail("SVG mXSS jsdom round-trip suite", f"missing: {mxss_script}")
 
+    # 9b. Inline data: image sanitization — sanitizeImageDataUri (v12.63).
+    # data:image/svg+xml is live SVG reaching <img src>; this asserts it is
+    # routed through sanitizeSvgMarkup and non-image data: types are dropped.
+    dimg_script = os.path.join(REPO_ROOT, "tests", "test_data_image_uri.cjs")
+    if os.path.exists(dimg_script):
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""),
+            os.path.join(REPO_ROOT, "node_modules"),
+            "/tmp/node_modules",
+        ]))
+        try:
+            r = subprocess.run(
+                ["node", dimg_script],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"data: image sanitization suite ({count} cases)")
+            else:
+                fail("data: image sanitization suite",
+                     f"node tests/test_data_image_uri.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("data: image sanitization suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("data: image sanitization suite", "timeout after 60s")
+    else:
+        fail("data: image sanitization suite", f"missing: {dimg_script}")
+
     # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
     if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
         ok("SVG scheme check strips control/whitespace before scheme match")

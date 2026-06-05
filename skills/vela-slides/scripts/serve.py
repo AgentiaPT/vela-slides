@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.parse
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -341,10 +342,23 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _validate_deck_name(name):
         """Return True if deck name is safe (no traversal, no slashes, no null bytes,
         no characters that could break JS/HTML string contexts)."""
+        if not isinstance(name, str) or not name.strip():
+            return False
+        # NFKC-fold first so fullwidth separators/dots (／ ＼ ．) collapse to ASCII
+        # and get caught by the checks below; then reject bidi/format controls
+        # (e.g. RTLO U+202E filename spoofing) and the Unicode separator/dot
+        # lookalikes NFKC does NOT fold (division/fraction slash, set-minus, dot
+        # leaders). The realpath check in _safe_deck_path() is the containment
+        # guarantee; this prevents deceptive names slipping into the listing.
+        name = unicodedata.normalize("NFKC", name)
+        if any(unicodedata.category(c) == "Cf" for c in name):
+            return False
+        if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
+            return False
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
-                and name.strip())
+                and bool(name.strip()))
 
     @staticmethod
     def _safe_deck_path(folder, name):
