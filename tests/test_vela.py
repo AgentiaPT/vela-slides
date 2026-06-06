@@ -481,6 +481,20 @@ def test_css_color_exfil():
     else:
         fail("STYLE_VALUE_REJECT name-agnostic", "must reject `funcname('...')`, not only image-set(")
 
+    # (2b) v12.66: both CSS value filters reject the CSS-comment token-splitting
+    #      primitive (`funcname(/**/"…")` / `url/**/(…)`). CSS allows a comment —
+    #      not just whitespace — between a function name and its '('/quoted arg, so
+    #      without this a string-source URL slips past the fnStr/`://` checks. The
+    #      behavioral round-trip (test_css_exfil.cjs §5/§7) executes the predicate.
+    if rej and r"\/\*" in rej.group(1):
+        ok("STYLE_VALUE_REJECT rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("STYLE_VALUE_REJECT comment reject", r"must include \/\* so `image-set(/**/\"…\")` can't split the token")
+    if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("/\*"\)\s*!==\s*-1\s*\)\s*return\s+false', imports):
+        ok("isSvgStyleSafe rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("isSvgStyleSafe comment reject", 'must reject css.indexOf("/*") so the SVG <style> surface matches')
+
     # (3) scrubColorFields exists and is wired into both sanitize entry points.
     if "function scrubColorFields(" in imports:
         ok("scrubColorFields helper defined")

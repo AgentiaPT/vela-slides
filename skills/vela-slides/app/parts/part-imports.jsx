@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.65";
+const VELA_VERSION = "12.66";
 const VELA_CHANGELOG = [
+  { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
   { v: "12.65", d: "Security (defense-in-depth, audit follow-up): the local dev server (serve.py) live-reload watcher now re-validates folder containment every time it re-reads a deck, using the same realpath guard as the HTTP read/write paths instead of a bare open(). This makes every server-side file read consistent and keeps reloads scoped to the served folder. Local-server hardening only; no deck or engine behavior change. Added a regression test." },
   { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
   { v: "12.63", d: "Security (defense-in-depth): the local dev server (serve.py) now sends a Content-Security-Policy header. The hosted artifact runs sandboxed with its own CSP; the local server had none, leaving the client sanitizer as the only egress control. The policy constrains image and connection egress to same-origin and inline data (no external network requests on render) while still permitting the in-browser build toolchain. No deck or engine behavior change." },
@@ -425,6 +426,13 @@ function isSvgStyleSafe(css) {
   if (css.indexOf("\\") !== -1) return false;
   if (css.indexOf("<") !== -1) return false;
   if (css.indexOf("]]>") !== -1) return false;
+  // Reject any CSS comment. CSS permits a comment (not just whitespace) as a token
+  // separator between a function name and its '('/quoted argument; the fnStr/url()
+  // checks below assume only whitespace, so a comment could split the token and let
+  // a string-source URL through — a zero-click exfil beacon on render. Legit Vela
+  // paint CSS never needs comments; reject outright, mirroring the backslash reject
+  // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
+  if (css.indexOf("/*") !== -1) return false;
   if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   const urls = css.match(/url\s*\([^)]*\)/gi);
   if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
@@ -594,7 +602,13 @@ const SAFE_STYLE_KEYS = new Set([
   "borderColor", "borderStyle", "borderWidth",
   "boxShadow", "opacity",
 ]);
-const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\/i;
+// Trailing `\/\*` rejects any CSS comment: CSS allows a comment (not just the
+// `\s*` whitespace this regex's fnStr clause assumes) as a token separator between
+// a function name and its '('/quoted argument, which could otherwise split the
+// token and let a string-source URL slip past the function-string and `://` checks
+// — a zero-click exfil beacon on render. Color/gradient/layout values never contain
+// a comment; reject outright (pairs with the same reject in isSvgStyleSafe).
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*/i;
 function sanitizeStyle(style) {
   if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
   const out = {};
