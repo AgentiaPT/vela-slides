@@ -597,6 +597,50 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 403, "Symlink escaping folder must return 403")
         self.assertNotIn(b"Escaped!", body)
 
+    def test_watcher_reread_enforces_folder_containment(self):
+        """The live-reload file-watcher re-reads a deck after it changes. That
+        re-read must enforce the same folder containment as the HTTP read/write
+        paths: if the watched path comes to resolve outside the served folder,
+        its contents must not be cached or pushed to clients."""
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
+        outside_file = os.path.join(outside_dir, "outside.json")
+        sentinel = "OUTSIDE_FOLDER_SENTINEL_DATA"
+        with open(outside_file, "w", encoding="utf-8") as f:
+            json.dump({"secret": sentinel}, f)
+
+        name = "watched-containment.vela"
+        deck_path = os.path.join(self._tmpdir, name)
+        with open(deck_path, "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        self.addCleanup(lambda: os.unlink(deck_path) if os.path.exists(deck_path) else None)
+
+        # Arm the watcher on the legitimate in-folder file, as a real deck open does.
+        self._server._ensure_watcher(name)
+        watcher = self._server.get_watcher(name)
+        # Keep the shared class-scoped server clean for other tests.
+        self.addCleanup(lambda: self._server._deck_trackers.pop(name, None))
+        self.addCleanup(lambda: self._server._deck_cache.pop(name, None))
+        self.addCleanup(lambda: self._server._deck_watchers.pop(name, None))
+        if watcher is None:
+            self.skipTest("watcher not started on this platform")
+        self.addCleanup(watcher.stop)
+
+        # Replace the watched path so it now resolves outside the served folder.
+        os.unlink(deck_path)
+        try:
+            os.symlink(outside_file, deck_path)
+        except OSError:
+            self.skipTest("Cannot create symlinks on this filesystem")
+
+        # Drive the production re-read callback directly (deterministic, no thread timing).
+        watcher.callback()
+
+        cached = self._server.get_deck_data(name)
+        leaked = json.dumps(cached) if cached is not None else ""
+        self.assertNotIn(sentinel, leaked,
+                         "Watcher re-read must not cache contents resolving outside the folder")
+
     # -- Payload limits --
 
     def test_save_oversized_413(self):
