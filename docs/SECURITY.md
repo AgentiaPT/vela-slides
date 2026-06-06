@@ -4,6 +4,48 @@
 
 Vela Slides runs entirely inside Claude.ai's sandboxed artifact environment. There are no backend servers, no databases, no authentication flows. All data stays in the conversation and the artifact's local storage.
 
+### Runtime Threat Model — Blast Radius by Execution Context
+
+The same deck-JSON sanitizers run in three very different runtimes. The stakes
+of a sanitizer bypass are **not** equal across them — they scale with what the
+host page is allowed to do. Ranked highest-stakes first:
+
+| Runtime | Host capabilities | Worst case if a deck-JSON sanitizer is bypassed | Backstop |
+|---|---|---|---|
+| **Neutralino desktop** | Native `filesystem.*` (read/write decks on disk) | Read/overwrite files inside the two allowed roots (`<decks>`, `~/.vela`). No host RCE — `os.spawnProcess` is **not** granted | `<meta>` CSP, minimal `nativeAllowList`, `fs-guard` path containment, deck-open warning |
+| **Local `serve.py`** | Top-level browser page on `localhost` — real network egress, reads loopback ports | Zero-click **outbound exfil** of deck/host data (no artifact-iframe CSP to fall back on) | HTTP-header CSP (`img-src 'self' data:`, closed `connect-src`), origin/CSRF/auth, path containment |
+| **Claude.ai artifact** | Sandboxed iframe; outbound network already blocked by Anthropic's CSP | Contained DOM XSS; exfil still blocked by the iframe CSP | Anthropic sandbox CSP (defense-in-depth on top of our sanitizers) |
+
+**Priority order for this threat model: Neutralino desktop and local `serve.py`,
+because they execute on the user's host with capabilities the artifact sandbox
+denies.** The artifact's own CSP must never be treated as the primary control —
+the sanitizers are, and they are what these two host runtimes rely on.
+
+The central invariant the sanitizers protect, stated runtime-independently:
+**no deck-supplied value may reach a sink that auto-fetches an external
+resource on render, executes script, or reaches the native bridge.** Every
+"image-loading" CSS/SVG/HTML construct is the regulated surface.
+
+### Actively-Monitored Exfil / Leak Vector Classes
+
+Tracked because they are the live edge of CSS/SVG/HTML-injection research and
+map directly onto the `serve.py` / desktop "render fires a network request"
+threat. Each is a **class to keep tested against the real code**, not a claim
+that a hole exists — Vela's history (v12.52–v12.63) is a sequence of closing
+exactly these as they emerged:
+
+- **CSS auto-load beacons** — `url()`, `image-set()` / `image()` / `cross-fade()` / `src()` string sources, and any future string-taking CSS function in inline `style`, color/background scalars, or SVG `<style>`/presentation attributes. A render-time outbound GET = zero-click exfil.
+- **Inline-style-only exfil primitives** — newer research chains CSS custom properties, `attr()`, and CSS `if()` conditionals to leak same-element data through a single style attribute with no selector or external sheet. Keep the style-key allowlist (no custom properties, no `attr()`/`if()`-bearing values) verified empirically.
+- **Font-driven character exfil** — `@font-face` / `unicode-range` / `local()`+`src:url()` combinations that fetch a glyph file per leaked character.
+- **Namespace-confusion / mutation XSS** — SVG↔HTML (and MathML) re-parse divergence where a node the sanitizer reads as inert text the browser re-parses as live markup (the `dangerouslySetInnerHTML` round-trip). Guarded by SVG-scope wrapping + CDATA/comment/PI stripping; must stay regression-tested.
+- **Script-context breakout at injection** — deck JSON is embedded inline in `<script type="text/babel">` by `assemble.py` / `serve.py`; `<`, `>`, `&`, U+2028/2029 are escaped so a deck string cannot close the script element or terminate the JS literal.
+- **`serve.py` server surface** — path traversal / symlink escape on deck names, auth-token / session handling, cross-origin write (CSRF) and Host-header (DNS-rebinding) checks, and the script-context escaping above.
+
+A defense in any of these classes is considered proven **only** when a payload
+is fed through the real sanitizers and the real browser sink and observed to be
+neutralized (see `.claude/skills/vela-browser-test/`) — never from source
+review alone.
+
 ### Threat Surface
 
 | Vector | Mitigation |

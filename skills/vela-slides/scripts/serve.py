@@ -870,7 +870,16 @@ class VelaLocalServer:
 
             def on_change(name=deck_name):
                 try:
-                    fpath = os.path.join(self.folder_path, name)
+                    # Re-validate folder containment on every re-read. The watched
+                    # path may resolve differently than when the watcher was armed,
+                    # so apply the same realpath guard the HTTP read/write paths use
+                    # (_safe_deck_path) instead of a bare open() — keeps this read
+                    # path consistent with the rest of the server.
+                    try:
+                        fpath = VelaHTTPHandler._safe_deck_path(self.folder_path, name)
+                    except ValueError:
+                        print(f"[sync] {name} no longer resolves inside the folder — skipping")
+                        return
                     with open(fpath, "r", encoding="utf-8") as f:
                         new_data = json.load(f)
                     self.set_deck_data(name, new_data)
