@@ -163,7 +163,9 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
   const breakout = 'data:image/png;base64,AAAA) , url(https://evil.example)';
   const u = cssUrl(breakout);
   const innerQuotesEscaped = /^url\("(?:[^"\\]|\\.)*"\)$/.test(u);
-  if (innerQuotesEscaped && u.includes(breakout.replace(/"/g, '\\"'))) ok("cssUrl wraps value in one escaped quoted url()");
+  // Reconstruct cssUrl's escaping the same way it does (backslash first, then quote)
+  // so the comparison is correct for any input — incl. backslashes.
+  if (innerQuotesEscaped && u.includes(breakout.replace(/\\/g, "\\\\").replace(/"/g, '\\"'))) ok("cssUrl wraps value in one escaped quoted url()");
   else bad("cssUrl did not safely encode", JSON.stringify(u));
   if (cssUrl('a"b\\c') === 'url("a\\"b\\\\c")') ok("cssUrl escapes embedded quote and backslash");
   else bad("cssUrl escaping wrong", JSON.stringify(cssUrl('a"b\\c')));
