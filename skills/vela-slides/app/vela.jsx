@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.64";
+const VELA_VERSION = "12.65";
 const VELA_CHANGELOG = [
+  { v: "12.65", d: "Security (defense-in-depth, audit follow-up to v12.61/12.63): close two residual CSS auto-load paths where a deck-supplied value written into inline CSS at render — the slide background image and a block-level color field that bypassed the import-time color scrub — could otherwise fire a zero-click outbound request. The inline data:image validation now anchors on the full encoded payload (no trailing content), the color scrub now also covers the remaining block color array, and deck values placed into a CSS url()/color position are output-encoded so they cannot break out of that position. Decks still load nothing external; the local-server CSP (v12.63) remains a second backstop. Added regression coverage." },
   { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
   { v: "12.63", d: "Security (defense-in-depth): the local dev server (serve.py) now sends a Content-Security-Policy header. The hosted artifact runs sandboxed with its own CSP; the local server had none, leaving the client sanitizer as the only egress control. The policy constrains image and connection egress to same-origin and inline data (no external network requests on render) while still permitting the in-browser build toolchain. No deck or engine behavior change." },
   { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual zero-click outbound-fetch channel in the SVG sanitizer. Deck-supplied SVG markup is sanitized as SVG but later rendered into an HTML context, where a sanitized fragment could be re-parsed under HTML rules and an image element treated as an HTML image with a fetching attribute — a different surface from the href/CSS holes already closed. The sanitizer now strips the relevant image-source attributes and guarantees the output stays in SVG scope, so the same content can never be reinterpreted as a network-loading HTML element. Decks still load nothing external. Added a jsdom round-trip regression battery and a CI source guard." },
@@ -545,7 +546,13 @@ function sanitizeSvgMarkup(raw) {
 // SVG's external <image>/<style url()> from firing in a non-sandboxed context
 // such as the local dev server / a desktop webview). Non-image data: types are
 // dropped (a stricter, consistent allowlist than the prior data:-only logo rule).
-const SAFE_RASTER_DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|avif|bmp)[;,]/i;
+// Raster branch is END-ANCHORED to a pure base64 payload: a prefix-only test let
+// arbitrary trailing bytes ride along on the value, which then broke out of an
+// unquoted CSS url() at a background sink. Anchoring to `;base64,<base64>$` means
+// nothing can follow the image data, so the validated string is safe to return
+// as-is. (The bare `data:image/<t>,<raw>` form is intentionally no longer accepted
+// here — real decks always use base64; the raw form was the risky path.)
+const SAFE_RASTER_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/i;
 function sanitizeImageDataUri(s) {
   if (typeof s !== "string" || !s) return "";
   if (SAFE_RASTER_DATA_IMAGE.test(s)) return s;
@@ -630,6 +637,22 @@ function scrubColorFields(obj) {
     if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
+}
+
+// CSS-context output encoders for deck values interpolated into inline CSS at
+// render (a `url(...)` position or a bare color token). The value-level allowlists
+// above decide WHAT is allowed; these ensure a value cannot break out of its CSS
+// context — defense-in-depth so any future/missed value still can't append a second
+// (external) background layer. cssUrl quotes + escapes so the value stays a single
+// url() string; cssColor passes only a strict color token (else empty, caller falls
+// back to a default). Neither permits a bare external URL on its own.
+function cssUrl(u) {
+  return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
+}
+const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+function cssColor(c) {
+  const v = String(c == null ? "" : c).trim();
+  return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
 
 function sanitizeBlock(block) {
@@ -742,6 +765,12 @@ function sanitizeBlock(block) {
   scrubColorFields(clean);
   if (Array.isArray(clean.items)) {
     for (const it of clean.items) scrubColorFields(it);
+  }
+  // The matrix block renders from a separate `quadrants` array (not `items`),
+  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
+  // class as items; quadrants was previously never visited.)
+  if (Array.isArray(clean.quadrants)) {
+    for (const q of clean.quadrants) scrubColorFields(q);
   }
   return clean;
 }
@@ -2461,7 +2490,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
               const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
+              const qc = cssColor(qd.color) || defaultQColors[qi];
               return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
@@ -2583,7 +2612,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
   if (slide.bg) bgStyle.background = slide.bg;
-  if (slide.bgImage) { bgStyle.backgroundImage = `url(${slide.bgImage})`; bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
+  if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
   if (slide.bgGradient) bgStyle.background = slide.bgGradient;
 
   const outerRef = useRef(null);

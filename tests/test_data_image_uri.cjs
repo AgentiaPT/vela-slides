@@ -118,5 +118,14 @@ const benign = "data:image/svg+xml," + encodeURIComponent(
 const r6 = sanitizeImageDataUri(benign);
 check("benign svg survives", r6.startsWith("data:image/svg+xml,") && decoded(r6).includes("rect"));
 
+// v12.65: raster branch is END-ANCHORED. A value with a valid raster prefix but
+// trailing bytes (previously returned verbatim, then broke out of an unquoted CSS
+// url() at a background sink) must now be dropped; clean base64 still passes.
+check("raster prefix + trailing suffix dropped", sanitizeImageDataUri(PNG + ") , url(https://evil.example/x)") === "");
+check("raster prefix + style-injection suffix dropped", sanitizeImageDataUri(PNG + ";background:url(https://evil.example)") === "");
+check("raster prefix + 2nd-layer suffix (gif) dropped", sanitizeImageDataUri("data:image/gif;base64,R0lGODlhAQABAAAAACw=) , url(https://evil.example)") === "");
+check("non-base64 bare-comma raster form dropped", sanitizeImageDataUri("data:image/png,whatever") === "");
+check("clean raster still passes unchanged (end-anchored)", sanitizeImageDataUri(PNG) === PNG);
+
 console.log(`  ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
