@@ -1056,7 +1056,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
               const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
+              const qc = cssColor(qd.color) || defaultQColors[qi];
               return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
@@ -1178,7 +1178,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
   if (slide.bg) bgStyle.background = slide.bg;
-  if (slide.bgImage) { bgStyle.backgroundImage = `url(${slide.bgImage})`; bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
+  if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
   if (slide.bgGradient) bgStyle.background = slide.bgGradient;
 
   const outerRef = useRef(null);

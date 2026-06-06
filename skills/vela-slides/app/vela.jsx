@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.67";
+const VELA_VERSION = "12.68";
 const VELA_CHANGELOG = [
+  { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
   { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
   { v: "12.65", d: "Security (defense-in-depth, audit follow-up): the local dev server (serve.py) live-reload watcher now re-validates folder containment every time it re-reads a deck, using the same realpath guard as the HTTP read/write paths instead of a bare open(). This makes every server-side file read consistent and keeps reloads scoped to the served folder. Local-server hardening only; no deck or engine behavior change. Added a regression test." },
@@ -555,7 +556,13 @@ function sanitizeSvgMarkup(raw) {
 // SVG's external <image>/<style url()> from firing in a non-sandboxed context
 // such as the local dev server / a desktop webview). Non-image data: types are
 // dropped (a stricter, consistent allowlist than the prior data:-only logo rule).
-const SAFE_RASTER_DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|avif|bmp)[;,]/i;
+// Raster branch is END-ANCHORED to a pure base64 payload: a prefix-only test let
+// arbitrary trailing bytes ride along on the value, which then broke out of an
+// unquoted CSS url() at a background sink. Anchoring to `;base64,<base64>$` means
+// nothing can follow the image data, so the validated string is safe to return
+// as-is. (The bare `data:image/<t>,<raw>` form is intentionally no longer accepted
+// here — real decks always use base64; the raw form was the risky path.)
+const SAFE_RASTER_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/i;
 function sanitizeImageDataUri(s) {
   if (typeof s !== "string" || !s) return "";
   if (SAFE_RASTER_DATA_IMAGE.test(s)) return s;
@@ -646,6 +653,22 @@ function scrubColorFields(obj) {
     if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
+}
+
+// CSS-context output encoders for deck values interpolated into inline CSS at
+// render (a `url(...)` position or a bare color token). The value-level allowlists
+// above decide WHAT is allowed; these ensure a value cannot break out of its CSS
+// context — defense-in-depth so any future/missed value still can't append a second
+// (external) background layer. cssUrl quotes + escapes so the value stays a single
+// url() string; cssColor passes only a strict color token (else empty, caller falls
+// back to a default). Neither permits a bare external URL on its own.
+function cssUrl(u) {
+  return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
+}
+const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+function cssColor(c) {
+  const v = String(c == null ? "" : c).trim();
+  return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
 
 function sanitizeBlock(block) {
@@ -769,6 +792,12 @@ function sanitizeBlock(block) {
   scrubColorFields(clean);
   if (Array.isArray(clean.items)) {
     for (const it of clean.items) scrubColorFields(it);
+  }
+  // The matrix block renders from a separate `quadrants` array (not `items`),
+  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
+  // class as items; quadrants was previously never visited.)
+  if (Array.isArray(clean.quadrants)) {
+    for (const q of clean.quadrants) scrubColorFields(q);
   }
   return clean;
 }
@@ -2488,7 +2517,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
               const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
+              const qc = cssColor(qd.color) || defaultQColors[qi];
               return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
@@ -2610,7 +2639,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
   if (slide.bg) bgStyle.background = slide.bg;
-  if (slide.bgImage) { bgStyle.backgroundImage = `url(${slide.bgImage})`; bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
+  if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
   if (slide.bgGradient) bgStyle.background = slide.bgGradient;
 
   const outerRef = useRef(null);
