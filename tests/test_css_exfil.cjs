@@ -20,6 +20,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const IMPORTS = path.join(__dirname, "..", "skills", "vela-slides", "app", "parts", "part-imports.jsx");
 const src = fs.readFileSync(IMPORTS, "utf8");
@@ -34,18 +35,29 @@ function grab(re, label) {
   if (!m) { bad("extract " + label, "not found in part-imports.jsx (fix missing?)"); throw new Error("missing " + label); }
   return m[0];
 }
-let scrub;
+// Load the REAL shipped predicates into an isolated vm context (same approach as
+// tests/test_data_image_uri.cjs — no eval/new Function; the slice is repo source,
+// not external input). cssUrl/cssColor/CSS_COLOR_OK are loaded here too (v12.66).
+let api;
 try {
   const reject = grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
   const key = grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY");
   const fn = grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields");
-  // eslint-disable-next-line no-new-func
-  scrub = new Function(reject + "\n" + key + "\n" + fn + "\nreturn { scrubColorFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY };")();
+  const ckey = grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK");
+  const cu = grab(/function cssUrl\(u\)\s*\{[\s\S]*?\n\}/, "cssUrl");
+  const cc = grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor");
+  const ctx = { module: { exports: {} } };
+  vm.createContext(ctx);
+  vm.runInContext(
+    [reject, key, fn, ckey, cu, cc,
+      "module.exports = { scrubColorFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, cssUrl, cssColor };"].join("\n"),
+    ctx, { filename: "part-imports-slice.js" });
+  api = ctx.module.exports;
 } catch (e) {
   console.log("\n  " + pass + " passed, " + failCount + " failed");
   process.exit(1);
 }
-const { scrubColorFields, STYLE_VALUE_REJECT } = scrub;
+const { scrubColorFields, STYLE_VALUE_REJECT, cssUrl, cssColor } = api;
 
 // Every color/background scalar field reported across slide/block/item/cell/branding.
 const COLOR_FIELDS = [
@@ -140,23 +152,14 @@ for (const f of COLOR_FIELDS) {
 if (!/CSS_LOAD_REJECT/.test(src)) ok("no duplicate CSS reject regex (single canonical STYLE_VALUE_REJECT)");
 else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded into STYLE_VALUE_REJECT");
 
-// ── v12.65: CSS-context output encoders + matrix-quadrant scrub ──────────────
+// ── v12.66: CSS-context output encoders + matrix-quadrant scrub ──────────────
 // Defense-in-depth: deck values placed into an inline CSS url()/color position are
 // output-encoded so they cannot break out of that position even if a value-level
 // guard is missed; and the matrix block's separate `quadrants` color array (which
 // the import scrub previously never visited) is now scrubbed like `items`.
-let enc;
-try {
-  const ckey = grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK");
-  const cu = grab(/function cssUrl\(u\)\s*\{[\s\S]*?\n\}/, "cssUrl");
-  const cc = grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor");
-  // eslint-disable-next-line no-new-func
-  enc = new Function(ckey + "\n" + cu + "\n" + cc + "\nreturn { cssUrl, cssColor };")();
-} catch (e) { /* grab() already recorded the failure */ }
-if (enc) {
-  const { cssUrl, cssColor } = enc;
-  // cssUrl: result is always a single quoted url(); embedded quotes/backslashes are
-  // escaped and newlines removed, so a value can't terminate the string early.
+// cssUrl: result is always a single quoted url(); embedded quotes/backslashes are
+// escaped and newlines removed, so a value can't terminate the string early.
+{
   const breakout = 'data:image/png;base64,AAAA) , url(https://evil.example)';
   const u = cssUrl(breakout);
   const innerQuotesEscaped = /^url\("(?:[^"\\]|\\.)*"\)$/.test(u);
