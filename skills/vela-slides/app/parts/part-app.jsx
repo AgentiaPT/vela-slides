@@ -874,7 +874,7 @@ export default function App() {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
           deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
-          branding: deck.branding ? { ...defaultBranding, ...deck.branding } : cur.branding,
+          branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
         };
         dispatch({ type: "LOAD", payload });

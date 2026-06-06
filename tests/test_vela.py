@@ -524,6 +524,49 @@ def test_css_color_exfil():
     else:
         fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
 
+    # (5b) v12.67: the in-app write paths that bypass import sanitization must sanitize too.
+    #      SET_BRANDING scrubs branding color scalars. The slide-mutating actions
+    #      (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES) run the full
+    #      sanitizeSlide — a color-only scrub would miss style objects, bgImage, and image
+    #      src; the new-slide / startup-patch paths were otherwise uncovered.
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
+    if "scrubColorFields(b)" in setb:
+        ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
+    else:
+        fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+    # Each slide-mutating action must funnel its incoming slide(s) through sanitizeSlide
+    # (covers style objects + bgImage data: clamp + image src + svg markup + color scrub).
+    for action, end in [('case "SET_SLIDES"', 'case "ADD_SLIDE"'),
+                        ('case "ADD_SLIDE"', 'case "INSERT_SLIDE"'),
+                        ('case "INSERT_SLIDE"', 'case "UPDATE_SLIDE"'),
+                        ('case "UPDATE_SLIDE"', 'case "REMOVE_SLIDE"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:  # called directly or passed as a .map callback
+            ok(f"{name} sanitizes incoming slide(s) via sanitizeSlide (full render-sink coverage)")
+        else:
+            fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
+
+    # (5c) v12.67: dormant item-insert actions that carry a slides payload must sanitize it,
+    #      so a future caller can't reintroduce the channel; IMPORT_CONCEPTS already did.
+    for action, end in [('case "ADD_ITEM"', 'case "IMPORT_CONCEPTS"'),
+                        ('case "BATCH_ADD"', 'case "REMOVE_ITEM"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:
+            ok(f"{name} sanitizes its slides payload (dormant-path defense-in-depth)")
+        else:
+            fail(f"{name} slides sanitize", f"{name} must map its slides payload through sanitizeSlide")
+
+    # (5d) v12.67: the local live-sync LOAD must take branding from the sanitized copy,
+    #      not the raw incoming deck (slide content was already sanitized; branding was missed).
+    appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
+        ok("local live-sync LOAD uses sanitized.branding (not raw deck.branding)")
+    else:
+        fail("local-sync branding", "live-sync payload must spread sanitized.branding, not raw deck.branding")
+
     # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
     css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
     if os.path.exists(css_script):

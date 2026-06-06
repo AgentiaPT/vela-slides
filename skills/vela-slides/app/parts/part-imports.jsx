@@ -69,8 +69,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.66";
+const VELA_VERSION = "12.67";
 const VELA_CHANGELOG = [
+  { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
   { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
   { v: "12.65", d: "Security (defense-in-depth, audit follow-up): the local dev server (serve.py) live-reload watcher now re-validates folder containment every time it re-reads a deck, using the same realpath guard as the HTTP read/write paths instead of a bare open(). This makes every server-side file read consistent and keeps reloads scoped to the served folder. Local-server hardening only; no deck or engine behavior change. Added a regression test." },
   { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
@@ -715,7 +716,18 @@ function sanitizeBlock(block) {
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.title) c.title = sanitizeString(c.title, 200);
-        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => typeof pt === "string" ? sanitizeString(pt, 500) : typeof pt === "object" && pt.text ? { ...pt, text: sanitizeString(pt.text, 500) } : "");
+        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => {
+          if (typeof pt === "string") return sanitizeString(pt, 500);
+          if (pt && typeof pt === "object" && pt.text) {
+            const p2 = { ...pt, text: sanitizeString(pt.text, 500) };
+            // Defense-in-depth (v12.67): nested comparison/matrix points aren't spread into
+            // inline CSS today, but scrub style/color so a future renderer change can't leak.
+            if ("style" in p2) { const ps = sanitizeStyle(p2.style); if (ps && Object.keys(ps).length) p2.style = ps; else delete p2.style; }
+            scrubColorFields(p2);
+            return p2;
+          }
+          return "";
+        });
         return c;
       }).filter(Boolean);
     }
