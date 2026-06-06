@@ -367,6 +367,53 @@ def test_security():
     else:
         fail("SVG mXSS jsdom round-trip suite", f"missing: {mxss_script}")
 
+    # 9b. Inline data: image sanitization — sanitizeImageDataUri (v12.63).
+    # data:image/svg+xml is live SVG reaching <img src>; this asserts it is
+    # routed through sanitizeSvgMarkup and non-image data: types are dropped.
+    dimg_script = os.path.join(REPO_ROOT, "tests", "test_data_image_uri.cjs")
+    if os.path.exists(dimg_script):
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""),
+            os.path.join(REPO_ROOT, "node_modules"),
+            "/tmp/node_modules",
+        ]))
+        try:
+            r = subprocess.run(
+                ["node", dimg_script],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"data: image sanitization suite ({count} cases)")
+            else:
+                fail("data: image sanitization suite",
+                     f"node tests/test_data_image_uri.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("data: image sanitization suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("data: image sanitization suite", "timeout after 60s")
+    else:
+        fail("data: image sanitization suite", f"missing: {dimg_script}")
+
+    # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
+    # char-class the importer applies and run a sample through it. Removing the
+    # strip (or omitting bidi/zero-width) fails this check (red).
+    gm = re.search(r'raw\.guidelines\.replace\(/\[([^\]]*)\]/g, ""\)', all_jsx)
+    if gm:
+        strip = re.compile("[" + gm.group(1) + "]")
+        sample = "keep\nthis" + chr(0x00) + "bad" + chr(0x202e) + "spoof" + chr(0x200b) + "zw text"
+        cleaned = strip.sub("", sample)
+        removed = all(chr(cp) not in cleaned for cp in (0x00, 0x202e, 0x200b))
+        kept = "\n" in cleaned and "keep" in cleaned and "text" in cleaned
+        if removed and kept:
+            ok("guidelines strip removes control/bidi/zero-width, keeps newlines/text")
+        else:
+            fail("guidelines control-char strip behavior", f"cleaned={cleaned!r}")
+    else:
+        fail("guidelines control-char strip", "strip regex absent — prompt-injection scaffolding chars not removed")
+
     # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
     if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
         ok("SVG scheme check strips control/whitespace before scheme match")
@@ -434,6 +481,20 @@ def test_css_color_exfil():
     else:
         fail("STYLE_VALUE_REJECT name-agnostic", "must reject `funcname('...')`, not only image-set(")
 
+    # (2b) v12.66: both CSS value filters reject the CSS-comment token-splitting
+    #      primitive (`funcname(/**/"…")` / `url/**/(…)`). CSS allows a comment —
+    #      not just whitespace — between a function name and its '('/quoted arg, so
+    #      without this a string-source URL slips past the fnStr/`://` checks. The
+    #      behavioral round-trip (test_css_exfil.cjs §5/§7) executes the predicate.
+    if rej and r"\/\*" in rej.group(1):
+        ok("STYLE_VALUE_REJECT rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("STYLE_VALUE_REJECT comment reject", r"must include \/\* so `image-set(/**/\"…\")` can't split the token")
+    if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("/\*"\)\s*!==\s*-1\s*\)\s*return\s+false', imports):
+        ok("isSvgStyleSafe rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("isSvgStyleSafe comment reject", 'must reject css.indexOf("/*") so the SVG <style> surface matches')
+
     # (3) scrubColorFields exists and is wired into both sanitize entry points.
     if "function scrubColorFields(" in imports:
         ok("scrubColorFields helper defined")
@@ -463,7 +524,7 @@ def test_css_color_exfil():
     else:
         fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
 
-    # (5b) v12.63: the in-app write paths that bypass import sanitization must sanitize too.
+    # (5b) v12.67: the in-app write paths that bypass import sanitization must sanitize too.
     #      SET_BRANDING scrubs branding color scalars. The slide-mutating actions
     #      (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES) run the full
     #      sanitizeSlide — a color-only scrub would miss style objects, bgImage, and image
@@ -487,7 +548,7 @@ def test_css_color_exfil():
         else:
             fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
 
-    # (5c) v12.63: dormant item-insert actions that carry a slides payload must sanitize it,
+    # (5c) v12.67: dormant item-insert actions that carry a slides payload must sanitize it,
     #      so a future caller can't reintroduce the channel; IMPORT_CONCEPTS already did.
     for action, end in [('case "ADD_ITEM"', 'case "IMPORT_CONCEPTS"'),
                         ('case "BATCH_ADD"', 'case "REMOVE_ITEM"')]:
@@ -498,7 +559,7 @@ def test_css_color_exfil():
         else:
             fail(f"{name} slides sanitize", f"{name} must map its slides payload through sanitizeSlide")
 
-    # (5d) v12.63: the local live-sync LOAD must take branding from the sanitized copy,
+    # (5d) v12.67: the local live-sync LOAD must take branding from the sanitized copy,
     #      not the raw incoming deck (slide content was already sanitized; branding was missed).
     appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
     if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
