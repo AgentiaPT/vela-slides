@@ -84,6 +84,16 @@ const MALICIOUS = [
   "https://a.invalid/beacon",
   'expression(alert(1))',
   '@import "https://a.invalid"',
+  // v12.66: CSS-comment token-splitting — a comment (not just whitespace) between
+  // the function name and its '('/quoted arg slips a string-source URL past the
+  // fnStr/`://` checks (protocol-relative `//host` carries no `://`).
+  'image-set(/**/"//a.invalid" 1x)',
+  'image(/**/"//a.invalid")',
+  'src(/* */"//a.invalid")',
+  'cross-fade(/**/"//a.invalid", red)',
+  '-webkit-image-set(/**/"//a.invalid" 1x)',
+  'url/**/("//a.invalid")',
+  "url/**/(//a.invalid)",
 ];
 
 // Values that MUST survive untouched (legitimate colors / gradients).
@@ -138,7 +148,9 @@ for (const f of COLOR_FIELDS) {
 // 5. Canonical filter is function-name-agnostic (the v12.59 image-set bypass class)
 //    AND does not regress legitimate quoted block.style values (fontFamily).
 {
-  const mustReject = ['image-set("x")', 'image("x")', 'cross-fade("x")', 'src("x")', "url(x)", "EXPRESSION(1)"];
+  const mustReject = ['image-set("x")', 'image("x")', 'cross-fade("x")', 'src("x")', "url(x)", "EXPRESSION(1)",
+    // v12.66: comment token-splitting must be rejected on the style/color surface.
+    'image-set(/**/"//x" 1x)', 'image(/**/"//x")', 'src(/* */"//x")', 'url/**/("//x")', "url/**/(//x)"];
   const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc"];
   const r1 = mustReject.filter((v) => !STYLE_VALUE_REJECT.test(v));
   const r2 = mustAllow.filter((v) => STYLE_VALUE_REJECT.test(v));
@@ -202,6 +214,44 @@ else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
   else bad("bgImage sink not routed through cssUrl (wiring missing)");
   if (/cssColor\(qd\.color\)/.test(bsrc)) ok("matrix quadrant color sink uses cssColor()");
   else bad("matrix color sink not routed through cssColor (wiring missing)");
+}
+// 7. v12.66: the SVG <style>/presentation-attr filter (isSvgStyleSafe) shares the
+//    comment-smuggle defense. Extract the REAL predicate and assert it rejects the
+//    token-split image-set/url comment payloads while preserving legit url(#fragment)
+//    paint-server refs and plain colors. (Same root-cause bug as the color surface;
+//    both surfaces fixed together so they can't drift.)
+{
+  let isSvgStyleSafe;
+  try {
+    const fn = grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe");
+    // eslint-disable-next-line no-new-func
+    isSvgStyleSafe = new Function(fn + "\nreturn isSvgStyleSafe;")();
+  } catch (e) { isSvgStyleSafe = null; }
+  if (typeof isSvgStyleSafe !== "function") {
+    bad("extract isSvgStyleSafe", "not found in part-imports.jsx");
+  } else {
+    const svgReject = [
+      'background-image:image-set(/**/"//a.invalid" 1x)',
+      'fill:image(/**/"//a.invalid")',
+      'background:src(/* */"//a.invalid")',
+      'background:url/**/("//a.invalid")',
+      "background:url/**/(//a.invalid)",
+      'background:cross-fade(/**/"//a.invalid", red)',
+    ];
+    const svgAllow = [
+      "fill:url(#grad)", "fill:#3b82f6", "stroke:rgb(1,2,3)",
+      "fill:url( #grad )", "stop-color:red",
+    ];
+    const sr = svgReject.filter((v) => isSvgStyleSafe(v));      // should all be false
+    const sa = svgAllow.filter((v) => !isSvgStyleSafe(v));      // should all be true
+    if (sr.length === 0) ok("isSvgStyleSafe rejects CSS-comment token-split string-source URLs");
+    else bad("isSvgStyleSafe accepted a comment-smuggle payload", JSON.stringify(sr));
+    if (sa.length === 0) ok("isSvgStyleSafe preserves legit url(#fragment) paint servers + colors");
+    else bad("isSvgStyleSafe dropped a legit value", JSON.stringify(sa));
+    // Any CSS comment is rejected outright (the token-splitting primitive).
+    if (!isSvgStyleSafe("fill:/**/red")) ok("isSvgStyleSafe rejects any CSS comment outright");
+    else bad("isSvgStyleSafe allowed a CSS comment");
+  }
 }
 
 console.log("\n  " + pass + " passed, " + failCount + " failed");
