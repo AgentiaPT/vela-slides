@@ -2,7 +2,7 @@
 
 ## Overview
 
-Vela Slides is a **single-file React application** (12,650 lines, ~963 KB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
+Vela Slides is a **single-file React application** (15,033 lines, ~1.1 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
 
 ```
 Source (13 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx

@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~963KB, 12,650 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 21 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,033 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 21 semantic block types.
 
 ## Architecture
 
@@ -85,7 +85,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (198 tests)
+# 1. Run full test suite (349 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
@@ -134,7 +134,7 @@ examples/              ← vela-demo.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
 evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
-tests/                 ← test_vela.py (198 tests), test_serve.py (72 tests)
+tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
 ```
 
 ## AI Features (Vera Engine)
