@@ -292,9 +292,11 @@ function buildPdfFromImages(jpegDataArrays, pageW, pageH, perPageLinks) {
       const uriObjId = base + 3 + li * 2;
       const annotObjId = base + 4 + li * 2;
 
-      // URI action
+      // URI action — escape PDF literal-string delimiters so a URL containing
+      // unescaped parentheses cannot break the string boundary or inject PDF operators.
+      const _pdfUri = link.url.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
       startObj(uriObjId);
-      write(`<< /Type /Action /S /URI /URI (${link.url}) >>\n`);
+      write(`<< /Type /Action /S /URI /URI (${_pdfUri}) >>\n`);
       endObj();
 
       // Link annotation
