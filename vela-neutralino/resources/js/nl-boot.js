@@ -10,16 +10,15 @@
 //      load it as a separate static file instead so the build pipeline is
 //      plain `cp` and the dev loop is a file-watcher refresh away.
 //
-// The AI path (agents bridge) is intentionally disabled in this build for
-// security reasons — see SECURITY.md. We hardcode `__velaAgentReady = false`
-// so the monolith's velaAIAvailable() cleanly returns false and AI UI
-// renders as unavailable. `agents-bridge.js` is not imported.
+// The AI path runs through a hardened gatekeeper extension — see SECURITY.md.
+// `os.spawnProcess` is still NOT in the nativeAllowList; the webview only talks
+// to the gatekeeper over loopback HTTP (agents-bridge.js), and the gatekeeper
+// is the sole process allowed to launch a child, limited to the two
+// whitelisted agent binaries. We detect installed agents at boot and publish
+// __velaAgentReady / __velaAgentInfo accordingly.
 
 import { deckIO } from "./deck-io.js";
-// Agents bridge intentionally NOT imported. `os.spawnProcess` is not in the
-// nativeAllowList (see neutralino.config.json + SECURITY.md), so the CLI agent
-// path cannot run. We also avoid loading agents-bridge.js so nothing in the
-// shell exposes an AI surface that would only fail at probe time.
+import { agents } from "./agents-bridge.js";
 import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
@@ -69,10 +68,10 @@ async function boot() {
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
   installTrustBridge();
-  // AI features disabled in the desktop build — see SECURITY.md. Publish the
-  // ready flag as false so the monolith's velaAIAvailable() renders AI UI as
-  // unavailable instead of probing for a CLI we cannot spawn.
-  window.__velaAgentReady = false;
+  // Wire the AI bridge. Synchronous hooks (sender + default info) are set
+  // immediately so velaAIAvailable() resolves before Vela mounts; provider
+  // detection runs in the background and updates the UI via vela-agent-update.
+  installAgentsBridge();
 
   // Global Ctrl+O / Cmd+O opens the picker. Attached before Vela mounts so
   // the shortcut is available even if Vela never finishes loading.
@@ -356,9 +355,73 @@ function installTrustBridge() {
   };
   window.__velaConfig = {
     get: () => configStore.get(),
-    // setAgent intentionally removed — AI is disabled in the desktop build
-    // (os.spawnProcess not granted, see SECURITY.md).
+    setAgent: (id) => selectProvider(id),
   };
+}
+
+// ---------- Agents bridge -------------------------------------------------
+//
+// Installs window.__velaAgentSend (consumed by part-engine.jsx's
+// callClaudeAPI) plus the provider-selection surface used by the trust modal
+// and the Agent settings dialog. The webview spawns nothing — every call is a
+// loopback request to the gatekeeper extension (see agents-bridge.js).
+
+// Switch the active provider, persist it, and refresh the UI snapshot.
+async function selectProvider(id) {
+  await agents.pick(id);
+  window.__velaAgentInfo = agents.info();
+  window.__velaAgentReady = agents.available();
+  window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+  window.dispatchEvent(new Event("vela-agent-update"));
+}
+
+function installAgentsBridge() {
+  // Default to unavailable until detection completes.
+  window.__velaAgentReady = false;
+  window.__velaAgentInfo = { id: null, label: "—", available: false, version: null, model: null, providers: [] };
+
+  // Session-confirm-gated sender. part-engine.jsx calls window.__velaTrustGate()
+  // (trust.js) before this — that prompts once per session and lets the user
+  // pick a provider when more than one agent is installed.
+  window.__velaAgentSend = async (payload) => {
+    const res = await agents.send(payload);
+    if (res?.stats?.model) {
+      window.__velaAgentInfo = agents.info();
+      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+      window.dispatchEvent(new Event("vela-agent-update"));
+    }
+    return res.text;
+  };
+
+  // Provider surface for the Settings dialog picker.
+  window.__velaAgents = {
+    list: () => agents.list(),
+    activeId: () => agents.activeId(),
+    pick: (id) => selectProvider(id),
+    refresh: async () => {
+      await agents.detect();
+      window.__velaAgentInfo = agents.info();
+      window.__velaAgentReady = agents.available();
+      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+      window.dispatchEvent(new Event("vela-agent-update"));
+    },
+  };
+  // Consumed by trust.js to render the provider choice in the confirm modal.
+  window.__velaSelectProvider = selectProvider;
+
+  // Detect installed agents in the background — the gatekeeper may still be
+  // starting, so this polls briefly (agents-bridge.js) and updates when ready.
+  (async () => {
+    try {
+      await agents.detect();
+      window.__velaAgentInfo = agents.info();
+      window.__velaAgentReady = agents.available();
+      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+    } catch {
+      window.__velaAgentReady = false;
+    }
+    window.dispatchEvent(new Event("vela-agent-update"));
+  })();
 }
 
 // ---------- Fullscreen bridge ---------------------------------------------

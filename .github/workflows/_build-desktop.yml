@@ -82,34 +82,67 @@ jobs:
         working-directory: vela-neutralino
         run: ./node_modules/.bin/neu build --release --embed-resources
 
+      - name: Build agent gatekeeper (test + cross-compile)
+        # Node-free hardened gatekeeper — the only process allowed to spawn the
+        # whitelisted agent CLIs (see vela-neutralino/SECURITY.md). Uses the Go
+        # toolchain preinstalled on ubuntu-latest (mirrors the golang:1.22 stage
+        # in vela-neutralino/Dockerfile). Unit tests gate the build.
+        working-directory: vela-neutralino/extensions/agent
+        run: |
+          set -euo pipefail
+          go version
+          go test ./...
+          for t in "linux amd64 linux_x64 vela-agent" \
+                   "linux arm64 linux_arm64 vela-agent" \
+                   "darwin amd64 mac_x64 vela-agent" \
+                   "darwin arm64 mac_arm64 vela-agent" \
+                   "windows amd64 win_x64 vela-agent.exe"; do
+            set -- $t
+            mkdir -p "$GITHUB_WORKSPACE/gatekeepers/$3"
+            CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -ldflags="-s -w" \
+              -o "$GITHUB_WORKSPACE/gatekeepers/$3/$4" .
+          done
+          # mac_universal: Apple-Silicon binary (Intel-mac users use mac_x64).
+          mkdir -p "$GITHUB_WORKSPACE/gatekeepers/mac_universal"
+          cp "$GITHUB_WORKSPACE/gatekeepers/mac_arm64/vela-agent" \
+             "$GITHUB_WORKSPACE/gatekeepers/mac_universal/vela-agent"
+
       - name: Package per-OS ZIPs
         working-directory: vela-neutralino/dist/vela
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # Single-file binary — resources.neu is now embedded by postject.
+          # Single-file binary — resources.neu is now embedded by postject. Each
+          # ZIP carries the platform binary at the root plus the arch-matched
+          # gatekeeper at extensions/agent/ (resolved at runtime via
+          # ${NL_PATH}/extensions/agent/vela-agent[.exe]).
           package() {
-            local os="$1"; local bin="$2"; shift 2
-            local zip="../../vela-desktop-${TAG}-${os}.zip"
-            zip -j "$zip" "$bin" "$@"
+            local os="$1"; local bin="$2"; local gk="$3"; shift 3
+            local stage; stage="$(mktemp -d)"
+            mkdir -p "$stage/extensions/agent"
+            cp "$bin" "$stage/$bin"
+            cp "$GITHUB_WORKSPACE/gatekeepers/$os/$gk" "$stage/extensions/agent/$gk"
+            for extra in "$@"; do cp "$extra" "$stage/$extra"; done
+            local zip="$GITHUB_WORKSPACE/vela-neutralino/vela-desktop-${TAG}-${os}.zip"
+            ( cd "$stage" && zip -r "$zip" . )
             echo "  → $(basename "$zip")"
           }
-          package linux_x64      vela-linux_x64
-          package linux_arm64    vela-linux_arm64
-          package mac_x64        vela-mac_x64
-          package mac_arm64      vela-mac_arm64
-          package mac_universal  vela-mac_universal
+          package linux_x64      vela-linux_x64     vela-agent
+          package linux_arm64    vela-linux_arm64   vela-agent
+          package mac_x64        vela-mac_x64       vela-agent
+          package mac_arm64      vela-mac_arm64     vela-agent
+          package mac_universal  vela-mac_universal vela-agent
           # Neutralino 6.x links against the system-installed WebView2
           # runtime (shipped in Windows 10 1809+ / Windows 11), so we no
           # longer need to bundle WebView2Loader.dll alongside the exe.
           # If a future pin regresses this, fail loudly.
           if [ -f WebView2Loader.dll ]; then
-            package win_x64      vela-win_x64.exe WebView2Loader.dll
+            package win_x64      vela-win_x64.exe   vela-agent.exe WebView2Loader.dll
           else
-            package win_x64      vela-win_x64.exe
+            package win_x64      vela-win_x64.exe   vela-agent.exe
           fi
-          ls -lh ../../vela-desktop-*.zip
+          ls -lh "$GITHUB_WORKSPACE"/vela-neutralino/vela-desktop-*.zip
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

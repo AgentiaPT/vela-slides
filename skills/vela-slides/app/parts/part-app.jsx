@@ -536,10 +536,13 @@ function AgentSettingsDialog({ onClose }) {
 
   return (
     <ModalBackdrop onClose={onClose}>
-      <div style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, width: "min(560px, 92vw)", maxHeight: "80vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
+      <div style={{ maxHeight: "70vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
 
-        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active agent</div>
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Active agent</span>
+          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+        </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
           <div style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono, marginTop: 4 }}>
@@ -547,6 +550,21 @@ function AgentSettingsDialog({ onClose }) {
             {info?.model ? ` · last model ${info.model}` : ""}
           </div>
         </div>
+
+        {Array.isArray(info?.providers) && info.providers.length > 1 && (
+          <>
+            <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Switch agent</div>
+            <div style={{ marginBottom: 18 }}>
+              {info.providers.map((p) => (
+                <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: p.id === info.id ? T.bgInput : "transparent", border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="radio" name="vela-agent-switch" checked={p.id === info.id} onChange={() => { try { window.__velaConfig?.setAgent?.(p.id); } catch {} }} />
+                  <span style={{ fontWeight: 600 }}>{p.label}</span>
+                  {p.version && <span style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono }}>v{p.version}</span>}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Trusted decks in this folder</span>

@@ -22,14 +22,21 @@ function computeVirtualDims(ratioId) {
 function loadHtml2Canvas() {
   return new Promise((resolve) => {
     if (window.html2canvas) { resolve(window.html2canvas); return; }
+    // Fail-safe: the desktop (Neutralino) webview blocks this CDN via CSP and
+    // has no network, so onload may never fire. Resolve null on error/timeout
+    // instead of hanging — callers fall back to layout-stats-only (no thumbnail).
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    setTimeout(() => done(window.html2canvas || null), 4000);
     if (!window._h2cLoading) {
       window._h2cLoading = true;
       const s = document.createElement("script");
       s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload = () => { window._h2cLoaded = true; resolve(window.html2canvas); };
+      s.onload = () => { window._h2cLoaded = true; done(window.html2canvas || null); };
+      s.onerror = () => { window._h2cLoading = false; done(null); };
       document.head.appendChild(s);
     } else {
-      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); resolve(window.html2canvas); } }, 50);
+      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); done(window.html2canvas); } }, 50);
     }
   });
 }
@@ -1761,7 +1768,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (jobs.length === 0) return;
 
     try {
-      const h2c = await loadHtml2Canvas();
+      // Improve uses computeSlideLayoutStats (not a screenshot), so html2canvas
+      // is not needed here — loading it would hang the desktop (CDN blocked).
       // Snapshot all slides being improved for before/after comparison
       const snapshots = {};
       jobs.forEach((j) => { snapshots[`${j.itemId}-${j.slideIdx}`] = JSON.parse(JSON.stringify(j.slideData)); });
@@ -1840,9 +1848,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try {
       const el = slideRef.current;
       if (!el) { setAltLoading(false); return; }
-      if (!window._h2cLoaded) { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"; document.head.appendChild(s); await new Promise((r) => { s.onload = r; }); window._h2cLoaded = true; }
-      const h2c = window.html2canvas;
-      const base64 = await captureSlide(el, h2c);
+      // Use the fail-safe loader so the desktop (CDN-blocked) doesn't hang;
+      // without html2canvas we send no screenshot and rely on layout stats.
+      const h2c = await loadHtml2Canvas();
+      const base64 = h2c ? await captureSlide(el, h2c) : null;
       if (altCancelRef.current) { setAltLoading(false); return; }
 
       const slideJson = slides[slideIndex];

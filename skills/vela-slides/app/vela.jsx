@@ -70,8 +70,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.69";
+const VELA_VERSION = "12.71";
 const VELA_CHANGELOG = [
+  { v: "12.71", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
+  { v: "12.70", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
   { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
   { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
@@ -4297,14 +4299,21 @@ function computeVirtualDims(ratioId) {
 function loadHtml2Canvas() {
   return new Promise((resolve) => {
     if (window.html2canvas) { resolve(window.html2canvas); return; }
+    // Fail-safe: the desktop (Neutralino) webview blocks this CDN via CSP and
+    // has no network, so onload may never fire. Resolve null on error/timeout
+    // instead of hanging — callers fall back to layout-stats-only (no thumbnail).
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    setTimeout(() => done(window.html2canvas || null), 4000);
     if (!window._h2cLoading) {
       window._h2cLoading = true;
       const s = document.createElement("script");
       s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload = () => { window._h2cLoaded = true; resolve(window.html2canvas); };
+      s.onload = () => { window._h2cLoaded = true; done(window.html2canvas || null); };
+      s.onerror = () => { window._h2cLoading = false; done(null); };
       document.head.appendChild(s);
     } else {
-      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); resolve(window.html2canvas); } }, 50);
+      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); done(window.html2canvas); } }, 50);
     }
   });
 }
@@ -6036,7 +6045,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (jobs.length === 0) return;
 
     try {
-      const h2c = await loadHtml2Canvas();
+      // Improve uses computeSlideLayoutStats (not a screenshot), so html2canvas
+      // is not needed here — loading it would hang the desktop (CDN blocked).
       // Snapshot all slides being improved for before/after comparison
       const snapshots = {};
       jobs.forEach((j) => { snapshots[`${j.itemId}-${j.slideIdx}`] = JSON.parse(JSON.stringify(j.slideData)); });
@@ -6115,9 +6125,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try {
       const el = slideRef.current;
       if (!el) { setAltLoading(false); return; }
-      if (!window._h2cLoaded) { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"; document.head.appendChild(s); await new Promise((r) => { s.onload = r; }); window._h2cLoaded = true; }
-      const h2c = window.html2canvas;
-      const base64 = await captureSlide(el, h2c);
+      // Use the fail-safe loader so the desktop (CDN-blocked) doesn't hang;
+      // without html2canvas we send no screenshot and rely on layout stats.
+      const h2c = await loadHtml2Canvas();
+      const base64 = h2c ? await captureSlide(el, h2c) : null;
       if (altCancelRef.current) { setAltLoading(false); return; }
 
       const slideJson = slides[slideIndex];
@@ -14081,10 +14092,13 @@ function AgentSettingsDialog({ onClose }) {
 
   return (
     <ModalBackdrop onClose={onClose}>
-      <div style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, width: "min(560px, 92vw)", maxHeight: "80vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
+      <div style={{ maxHeight: "70vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
 
-        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active agent</div>
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Active agent</span>
+          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+        </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
           <div style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono, marginTop: 4 }}>
@@ -14092,6 +14106,21 @@ function AgentSettingsDialog({ onClose }) {
             {info?.model ? ` · last model ${info.model}` : ""}
           </div>
         </div>
+
+        {Array.isArray(info?.providers) && info.providers.length > 1 && (
+          <>
+            <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Switch agent</div>
+            <div style={{ marginBottom: 18 }}>
+              {info.providers.map((p) => (
+                <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: p.id === info.id ? T.bgInput : "transparent", border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="radio" name="vela-agent-switch" checked={p.id === info.id} onChange={() => { try { window.__velaConfig?.setAgent?.(p.id); } catch {} }} />
+                  <span style={{ fontWeight: 600 }}>{p.label}</span>
+                  {p.version && <span style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono }}>v{p.version}</span>}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Trusted decks in this folder</span>

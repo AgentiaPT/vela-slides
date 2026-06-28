@@ -10,6 +10,15 @@
   "url": "/index.html",
   "enableServer": true,
   "enableNativeAPI": true,
+  "enableExtensions": true,
+  "extensions": [
+    {
+      "id": "ai.vela.agent",
+      "commandLinux": "${NL_PATH}/extensions/agent/vela-agent",
+      "commandDarwin": "${NL_PATH}/extensions/agent/vela-agent",
+      "commandWindows": "${NL_PATH}/extensions/agent/vela-agent.exe"
+    }
+  ],
   "tokenSecurity": "one-time",
   "logging": {
     "enabled": true,
@@ -31,7 +40,8 @@
     "filesystem.remove",
     "filesystem.move",
     "storage.*",
-    "events.*"
+    "events.*",
+    "extensions.getStats"
   ],
   "modes": {
     "window": {
