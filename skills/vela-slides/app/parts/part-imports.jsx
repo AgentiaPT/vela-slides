@@ -70,10 +70,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.71";
+const VELA_VERSION = "12.73";
 const VELA_CHANGELOG = [
-  { v: "12.71", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
-  { v: "12.70", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
+  { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
+  { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
+  { v: "12.71", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
+  { v: "12.70", d: "Quality: remove three fail-soft/no-op patterns surfaced by a code audit. (1) Timing estimation now propagates an error and the UI reports it, instead of silently overwriting every slide with a fabricated uniform duration when the request or parse fails. (2) The Navigation/Presenter in-browser UI tests now assert the slide position actually changes on arrow-key nav (via the local test hook or the on-slide counter) instead of only checking that no exception was thrown. (3) validate.py warns when a compact/turbo deck can't be expanded instead of silently validating the un-expanded form." },
   { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
   { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
@@ -659,6 +661,24 @@ function scrubColorFields(obj) {
   }
 }
 
+// Companion to scrubColorFields for the non-color LAYOUT/SIZING scalars that a
+// few block renderers spread raw into inline style (e.g. grid cell padding /
+// borderRadius, svg/heading/text maxWidth, gap, spacing). These reach CSS
+// properties that don't accept a url()/image source, so they are not a live
+// auto-load sink today — but scrub the same primitives anyway so a future
+// renderer change can't promote one into a leak. Legitimate values ("12px",
+// "100%", "16px 20px", "calc(100% - 8px)") never match STYLE_VALUE_REJECT, so
+// this is feature-transparent. (v12.71)
+const CSS_LAYOUT_KEY = /^(padding|margin|gap|spacing|borderRadius|borderWidth|maxWidth|maxHeight|minWidth|minHeight|width|height|inset|top|left|right|bottom)$/;
+function scrubLayoutFields(obj) {
+  if (!obj || typeof obj !== "object") return;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v !== "string" || !CSS_LAYOUT_KEY.test(k)) continue;
+    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
+  }
+}
+
 // CSS-context output encoders for deck values interpolated into inline CSS at
 // render (a `url(...)` position or a bare color token). The value-level allowlists
 // above decide WHAT is allowed; these ensure a value cannot break out of its CSS
@@ -751,6 +771,7 @@ function sanitizeBlock(block) {
             // inline CSS today, but scrub style/color so a future renderer change can't leak.
             if ("style" in p2) { const ps = sanitizeStyle(p2.style); if (ps && Object.keys(ps).length) p2.style = ps; else delete p2.style; }
             scrubColorFields(p2);
+            scrubLayoutFields(p2);
             return p2;
           }
           return "";
@@ -794,14 +815,15 @@ function sanitizeBlock(block) {
   // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
   // item.color, dotColor …). See scrubColorFields above. (v12.61)
   scrubColorFields(clean);
+  scrubLayoutFields(clean);
   if (Array.isArray(clean.items)) {
-    for (const it of clean.items) scrubColorFields(it);
+    for (const it of clean.items) { scrubColorFields(it); scrubLayoutFields(it); }
   }
   // The matrix block renders from a separate `quadrants` array (not `items`),
   // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
   // class as items; quadrants was previously never visited.)
   if (Array.isArray(clean.quadrants)) {
-    for (const q of clean.quadrants) scrubColorFields(q);
+    for (const q of clean.quadrants) { scrubColorFields(q); scrubLayoutFields(q); }
   }
   return clean;
 }

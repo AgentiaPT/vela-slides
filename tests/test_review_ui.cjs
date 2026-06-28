@@ -68,13 +68,31 @@ function buildTestHTML() {
   const deps = {
     'react.js': 'react/umd/react.production.min.js',
     'react-dom.js': 'react-dom/umd/react-dom.production.min.js',
-    'lucide.js': 'lucide-react/dist/umd/lucide-react.js',
   };
   for (const [dest, src] of Object.entries(deps)) {
     const full = path.join(ROOT, 'node_modules', src);
     if (!fs.existsSync(full)) throw new Error(`Missing dep: npm install ${src.split('/')[0]}`);
     fs.copyFileSync(full, path.join(SERVE_DIR, dest));
   }
+
+  // lucide-react dropped its prebuilt UMD bundle in v1.x — it now ships only
+  // CJS + ESM. The page loads icons as a plain <script> global, so wrap the CJS
+  // build in a minimal UMD shim. Its only `require` is 'react', already present
+  // on the page as the global `React` (copied above), so no bundler is needed.
+  const lucideCjs = path.join(ROOT, 'node_modules', 'lucide-react', 'dist', 'cjs', 'lucide-react.js');
+  if (!fs.existsSync(lucideCjs)) throw new Error('Missing dep: npm install lucide-react');
+  const lucideShim = [
+    '(function (root) {',
+    '  var module = { exports: {} }, exports = module.exports;',
+    '  function require(name) {',
+    '    if (name === "react") return root.React;',
+    '    throw new Error("lucide-react shim: unexpected require(" + name + ")");',
+    '  }',
+    fs.readFileSync(lucideCjs, 'utf8'),
+    '  root.LucideReact = module.exports;',
+    '})(typeof window !== "undefined" ? window : this);',
+  ].join('\n');
+  fs.writeFileSync(path.join(SERVE_DIR, 'lucide.js'), lucideShim);
 
   // Transform JSX imports → globals, build HTML
   const jsx = fs.readFileSync(ASSEMBLED, 'utf8')

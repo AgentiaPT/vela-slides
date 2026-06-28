@@ -1337,7 +1337,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "UPDATE_SLIDE", id: chunk[i].itemId, index: chunk[i].slideIdx, patch: { duration: durations[i] }, merge: true });
         }
       }
-    } catch (e) { dbg("Estimate error:", e); }
+    } catch (e) {
+      dbg("Estimate error:", e);
+      // Surface the failure instead of silently leaving partial/unchanged
+      // timings — any chunks that succeeded before the error keep their values.
+      setEstimating({ current: 1, total: 1, status: "Timing estimation failed — try again", error: true });
+      setTimeout(() => setEstimating(null), 2800);
+      return;
+    }
     setEstimating(null);
   };
   const [navToast, setNavToast] = useState(null); // { module, section, phase }
@@ -2115,10 +2122,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>}
           {/* Estimating progress */}
           {estimating && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>⏱</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
-            <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>
-            <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>
+            <span style={{ fontSize: 14, animation: estimating.error ? "none" : "spin 1.5s linear infinite", display: "inline-block" }}>{estimating.error ? "⚠️" : "⏱"}</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 13, color: estimating.error ? T.red : T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
+            {!estimating.error && <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>}
+            {!estimating.error && <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
           </div>}
           {/* Generating spinner */}
           {(quickEditing || newSlideGenerating) && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>

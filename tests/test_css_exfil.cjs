@@ -43,21 +43,23 @@ try {
   const reject = grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
   const key = grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY");
   const fn = grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields");
+  const lkey = grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY");
+  const lfn = grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields");
   const ckey = grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK");
   const cu = grab(/function cssUrl\(u\)\s*\{[\s\S]*?\n\}/, "cssUrl");
   const cc = grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor");
   const ctx = { module: { exports: {} } };
   vm.createContext(ctx);
   vm.runInContext(
-    [reject, key, fn, ckey, cu, cc,
-      "module.exports = { scrubColorFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, cssUrl, cssColor };"].join("\n"),
+    [reject, key, fn, lkey, lfn, ckey, cu, cc,
+      "module.exports = { scrubColorFields, scrubLayoutFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, cssUrl, cssColor };"].join("\n"),
     ctx, { filename: "part-imports-slice.js" });
   api = ctx.module.exports;
 } catch (e) {
   console.log("\n  " + pass + " passed, " + failCount + " failed");
   process.exit(1);
 }
-const { scrubColorFields, STYLE_VALUE_REJECT, cssUrl, cssColor } = api;
+const { scrubColorFields, scrubLayoutFields, STYLE_VALUE_REJECT, cssUrl, cssColor } = api;
 
 // Every color/background scalar field reported across slide/block/item/cell/branding.
 const COLOR_FIELDS = [
@@ -203,9 +205,37 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
   else bad("quadrant color not scrubbed", JSON.stringify(q));
 }
 
+// v12.71: scrubLayoutFields strips CSS auto-load / context-break primitives from
+// the non-color layout scalars (padding/borderRadius/maxWidth/gap/…) that some
+// block renderers spread raw into inline style, while preserving legit values.
+{
+  const cell = {
+    padding: "0;background:url('https://evil.example/p')",
+    borderRadius: "8px;background:url(https://evil.example/b)",
+    maxWidth: "url('https://evil.example/m')",
+    gap: "12px",                 // legit — must survive
+    borderRadius2: "ignored",    // non-layout key — untouched
+  };
+  scrubLayoutFields(cell);
+  if (!("padding" in cell) && !("borderRadius" in cell) && !("maxWidth" in cell)
+      && cell.gap === "12px" && cell.borderRadius2 === "ignored")
+    ok("scrubLayoutFields strips url()/injection in layout scalars, keeps legit + non-layout keys");
+  else bad("scrubLayoutFields wrong", JSON.stringify(cell));
+
+  // feature transparency: common legitimate length values are never dropped
+  const legit = { padding: "16px 20px", borderRadius: "12px", maxWidth: "calc(100% - 8px)", margin: "0 auto", height: "100%" };
+  const before = JSON.stringify(legit);
+  scrubLayoutFields(legit);
+  if (JSON.stringify(legit) === before) ok("scrubLayoutFields preserves all legitimate layout values");
+  else bad("scrubLayoutFields dropped a legit value", JSON.stringify(legit));
+}
+
 // Wiring guards: the sinks/import path actually route through the new guards.
-if (/Array\.isArray\(clean\.quadrants\)/.test(src) && /for \(const q of clean\.quadrants\) scrubColorFields\(q\)/.test(src))
-  ok("sanitizeBlock scrubs block.quadrants");
+if (/scrubLayoutFields\(clean\)/.test(src) && /for \(const it of clean\.items\) \{ scrubColorFields\(it\); scrubLayoutFields\(it\); \}/.test(src))
+  ok("sanitizeBlock wires scrubLayoutFields on block + items");
+else bad("sanitizeBlock does not wire scrubLayoutFields on block/items");
+if (/Array\.isArray\(clean\.quadrants\)/.test(src) && /for \(const q of clean\.quadrants\) \{ scrubColorFields\(q\); scrubLayoutFields\(q\); \}/.test(src))
+  ok("sanitizeBlock scrubs block.quadrants (color + layout)");
 else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
 {
   const BLOCKS = path.join(__dirname, "..", "skills", "vela-slides", "app", "parts", "part-blocks.jsx");

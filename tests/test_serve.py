@@ -469,6 +469,32 @@ class TestSecurity(FolderServerTestBase):
                              headers={"Host": "rebind.attacker.com:3030"})
         self.assertEqual(status, 403)
 
+    def test_empty_host_rejected(self):
+        """An empty Host header is rejected (v12.71: closes the falsy-host gap
+        in the DNS-rebind guard; a real browser always sends one)."""
+        status, _, _ = fetch(self._port, "GET", "/", headers={"Host": ""})
+        self.assertEqual(status, 403)
+
+    def test_missing_host_rejected(self):
+        """A request with NO Host header at all (skip_host) is rejected too --
+        http.client auto-adds Host unless skip_host is set, so this exercises the
+        genuinely-missing case the empty-string test cannot."""
+        conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=10)
+        conn.putrequest("GET", "/", skip_host=True)
+        conn.endheaders()
+        resp = conn.getresponse()
+        status = resp.status
+        resp.read()
+        conn.close()
+        self.assertEqual(status, 403)
+
+    def test_ipv6_loopback_host_allowed(self):
+        """IPv6 loopback Host "[::1]:port" is parsed correctly (brackets kept) and
+        allowed -- a naive split(':') would mangle it to "[" and wrongly 403."""
+        status, _, _ = fetch(self._port, "GET", "/",
+                             headers={"Host": f"[::1]:{self._port}"})
+        self.assertEqual(status, 200)
+
     # -- Path traversal on /deck/ --
 
     def test_deck_dotdot_400(self):
