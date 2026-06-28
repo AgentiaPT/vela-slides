@@ -235,8 +235,8 @@ vela-slides/
 │   └── *.vela                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/
-│   ├── test_vela.py           ← Core engine tests (198 tests)
-│   └── test_serve.py          ← Server endpoint & security tests (72 tests)
+│   ├── test_vela.py           ← Core engine tests (349 tests)
+│   └── test_serve.py          ← Server endpoint & security tests (84 tests)
 ├── LICENSE                    ← Elastic License v2
 ├── CONTRIBUTING.md
 └── README.md
