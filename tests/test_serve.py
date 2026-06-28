@@ -470,7 +470,7 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 403)
 
     def test_empty_host_rejected(self):
-        """An empty Host header is rejected (v12.70: closes the falsy-host gap
+        """An empty Host header is rejected (v12.71: closes the falsy-host gap
         in the DNS-rebind guard; a real browser always sends one)."""
         status, _, _ = fetch(self._port, "GET", "/", headers={"Host": ""})
         self.assertEqual(status, 403)

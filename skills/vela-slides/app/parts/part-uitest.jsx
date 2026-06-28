@@ -30,6 +30,24 @@ const _key = (key, opts = {}) => {
   const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts });
   target.dispatchEvent(ev);
 };
+// Current global slide position (1-based) and total. Prefers the serve.py /
+// desktop test hook (window.__velaGetCurrentSlide); falls back to the padded
+// "NN / NN" counter SlideContent renders on the displayed slide. The thumbnail
+// rail uses an unpadded "N/total" with no surrounding spaces, so the spaced
+// regex below won't match it. Returns null when no slide is on screen.
+const _slideCounterEl = () => _$$("*").find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+const _slidePos = () => {
+  try {
+    const hook = typeof window !== "undefined" && window.__velaGetCurrentSlide;
+    if (typeof hook === "function") { const r = hook(); if (r && r.slide_number) return r.slide_number; }
+  } catch {}
+  const el = _slideCounterEl();
+  return el ? parseInt(el.textContent.trim(), 10) : null;
+};
+const _slideTotal = () => {
+  const el = _slideCounterEl();
+  return el ? parseInt(el.textContent.trim().split("/")[1], 10) : null;
+};
 const _type = (el, text) => {
   const target = typeof el === "string" ? _$(el) : el;
   if (!target) throw new Error(`type: element not found`);
@@ -116,22 +134,35 @@ uiSuite("Render", [
 // ── Navigation Suite ─────────────────────────────────────────────────
 uiSuite("Navigation", [
   { name: "Arrow right advances slide", fn: async () => {
-    // Go to first slide first (press Home or multiple ArrowLeft)
-    for (let i = 0; i < 5; i++) { _key("ArrowLeft"); await _wait(50); }
-    await _wait(100);
-    // Now advance — just verify no crash and key is processed
+    // Rewind toward the start so there's room to advance.
+    for (let i = 0; i < 8; i++) { _key("ArrowLeft"); await _wait(40); }
+    await _wait(150);
+    const before = _slidePos();
+    if (before == null) throw new Error("No slide on screen to navigate");
+    const total = _slideTotal();
+    if (total != null && total <= 1) return; // single-slide deck: nothing to advance
     _key("ArrowRight");
-    await _wait(200);
+    // The slide index must actually move forward, not just "not crash".
+    await _waitFor(() => { const p = _slidePos(); return p != null && p > before; });
   }},
   { name: "Arrow left goes back", fn: async () => {
-    // We're on slide 2 from previous test — go back
+    const before = _slidePos();
+    if (before == null) throw new Error("No slide on screen to navigate");
+    if (before <= 1) { // already at the first slide — assert we can still advance
+      _key("ArrowRight");
+      await _waitFor(() => { const p = _slidePos(); return p != null && p > before; });
+      return;
+    }
     _key("ArrowLeft");
-    await _wait(200);
-    // No crash = pass
+    await _waitFor(() => { const p = _slidePos(); return p != null && p < before; });
   }},
-  { name: "Multiple navigation doesn't crash", fn: async () => {
+  { name: "Multiple navigation round-trips to start", fn: async () => {
+    const start = _slidePos();
     for (let i = 0; i < 3; i++) { _key("ArrowRight"); await _wait(100); }
     for (let i = 0; i < 3; i++) { _key("ArrowLeft"); await _wait(100); }
+    await _wait(150);
+    // Equal forward/back steps must land back where we started.
+    if (start != null) await _waitFor(() => _slidePos() === start);
   }},
 ]);
 
@@ -150,11 +181,19 @@ uiSuite("Presenter", [
     });
   }},
   { name: "Arrow navigation works in fullscreen", fn: async () => {
+    const a = _slidePos();
     _key("ArrowRight");
-    await _wait(200);
+    await _wait(250);
+    const b = _slidePos();
     _key("ArrowLeft");
-    await _wait(200);
-    // No crash = pass
+    await _wait(250);
+    const c = _slidePos();
+    // Assert real movement (changed then restored), not just absence of a crash.
+    // Tolerant of virtual section-divider cards: checks change + return, not +1.
+    if (a != null && b != null) {
+      if (b === a) throw new Error("ArrowRight did not change slide in fullscreen");
+      if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
+    }
   }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");

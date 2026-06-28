@@ -70,9 +70,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.70";
+const VELA_VERSION = "12.71";
 const VELA_CHANGELOG = [
-  { v: "12.70", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
+  { v: "12.71", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
+  { v: "12.70", d: "Quality: remove three fail-soft/no-op patterns surfaced by a code audit. (1) Timing estimation now propagates an error and the UI reports it, instead of silently overwriting every slide with a fabricated uniform duration when the request or parse fails. (2) The Navigation/Presenter in-browser UI tests now assert the slide position actually changes on arrow-key nav (via the local test hook or the on-slide counter) instead of only checking that no exception was thrown. (3) validate.py warns when a compact/turbo deck can't be expanded instead of silently validating the un-expanded form." },
   { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
   { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
@@ -665,7 +666,7 @@ function scrubColorFields(obj) {
 // auto-load sink today — but scrub the same primitives anyway so a future
 // renderer change can't promote one into a leak. Legitimate values ("12px",
 // "100%", "16px 20px", "calc(100% - 8px)") never match STYLE_VALUE_REJECT, so
-// this is feature-transparent. (v12.70)
+// this is feature-transparent. (v12.71)
 const CSS_LAYOUT_KEY = /^(padding|margin|gap|spacing|borderRadius|borderWidth|maxWidth|maxHeight|minWidth|minHeight|width|height|inset|top|left|right|bottom)$/;
 function scrubLayoutFields(obj) {
   if (!obj || typeof obj !== "object") return;
@@ -4002,13 +4003,28 @@ Rules:
 - Icon-row feature lists: 60-120s depending on count
 - Consider text density and complexity
 - Return ONLY a JSON array of integers (seconds per slide). No explanation, no markdown.`;
+  // Fail loud: a request/parse failure must NOT be papered over with a
+  // fabricated uniform duration written onto every slide. Throw so the caller
+  // can leave existing durations untouched and tell the user it failed.
+  let text;
   try {
-    const text = await callClaudeAPI(sysPrompt, [{ role: "user", content: `Estimate seconds for ${jobs.length} slides:\n\n${summaries}` }], { temperature: 0, maxTokens: 500, timeoutMs: 15000, _callType: "estimate" });
-    const clean = text.replace(/```json\s*|```\s*/g, "").trim();
-    const arr = JSON.parse(clean);
-    if (Array.isArray(arr) && arr.length === jobs.length) return arr.map((v) => typeof v === "number" ? Math.max(10, Math.min(3600, Math.round(v))) : 60);
-  } catch (e) { dbg("Timing estimation error:", e); }
-  return jobs.map(() => 60);
+    text = await callClaudeAPI(sysPrompt, [{ role: "user", content: `Estimate seconds for ${jobs.length} slides:\n\n${summaries}` }], { temperature: 0, maxTokens: 500, timeoutMs: 15000, _callType: "estimate" });
+  } catch (e) {
+    dbg("Timing estimation request failed:", e);
+    throw new Error(`Timing estimation request failed: ${e?.message || e}`);
+  }
+  let arr;
+  try {
+    arr = JSON.parse(text.replace(/```json\s*|```\s*/g, "").trim());
+  } catch (e) {
+    throw new Error("Timing estimation returned non-JSON output");
+  }
+  if (!Array.isArray(arr) || arr.length !== jobs.length) {
+    throw new Error(`Timing estimation returned ${Array.isArray(arr) ? arr.length : "non-array"} values for ${jobs.length} slides`);
+  }
+  // A single malformed entry is clamped to a sane default; the batch as a whole
+  // is known-valid (correct length), so this is not masking a request failure.
+  return arr.map((v) => typeof v === "number" ? Math.max(10, Math.min(3600, Math.round(v))) : 60);
 }
 
 async function generateAlternative(screenshotBase64, slideJson, conceptTitle, slideNum, totalSlides, direction, branding, guidelines, layoutStats) {
@@ -5626,7 +5642,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "UPDATE_SLIDE", id: chunk[i].itemId, index: chunk[i].slideIdx, patch: { duration: durations[i] }, merge: true });
         }
       }
-    } catch (e) { dbg("Estimate error:", e); }
+    } catch (e) {
+      dbg("Estimate error:", e);
+      // Surface the failure instead of silently leaving partial/unchanged
+      // timings — any chunks that succeeded before the error keep their values.
+      setEstimating({ current: 1, total: 1, status: "Timing estimation failed — try again", error: true });
+      setTimeout(() => setEstimating(null), 2800);
+      return;
+    }
     setEstimating(null);
   };
   const [navToast, setNavToast] = useState(null); // { module, section, phase }
@@ -6402,10 +6425,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>}
           {/* Estimating progress */}
           {estimating && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>⏱</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
-            <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>
-            <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>
+            <span style={{ fontSize: 14, animation: estimating.error ? "none" : "spin 1.5s linear infinite", display: "inline-block" }}>{estimating.error ? "⚠️" : "⏱"}</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 13, color: estimating.error ? T.red : T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
+            {!estimating.error && <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>}
+            {!estimating.error && <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
           </div>}
           {/* Generating spinner */}
           {(quickEditing || newSlideGenerating) && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
@@ -7585,6 +7608,24 @@ const _key = (key, opts = {}) => {
   const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts });
   target.dispatchEvent(ev);
 };
+// Current global slide position (1-based) and total. Prefers the serve.py /
+// desktop test hook (window.__velaGetCurrentSlide); falls back to the padded
+// "NN / NN" counter SlideContent renders on the displayed slide. The thumbnail
+// rail uses an unpadded "N/total" with no surrounding spaces, so the spaced
+// regex below won't match it. Returns null when no slide is on screen.
+const _slideCounterEl = () => _$$("*").find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+const _slidePos = () => {
+  try {
+    const hook = typeof window !== "undefined" && window.__velaGetCurrentSlide;
+    if (typeof hook === "function") { const r = hook(); if (r && r.slide_number) return r.slide_number; }
+  } catch {}
+  const el = _slideCounterEl();
+  return el ? parseInt(el.textContent.trim(), 10) : null;
+};
+const _slideTotal = () => {
+  const el = _slideCounterEl();
+  return el ? parseInt(el.textContent.trim().split("/")[1], 10) : null;
+};
 const _type = (el, text) => {
   const target = typeof el === "string" ? _$(el) : el;
   if (!target) throw new Error(`type: element not found`);
@@ -7671,22 +7712,35 @@ uiSuite("Render", [
 // ── Navigation Suite ─────────────────────────────────────────────────
 uiSuite("Navigation", [
   { name: "Arrow right advances slide", fn: async () => {
-    // Go to first slide first (press Home or multiple ArrowLeft)
-    for (let i = 0; i < 5; i++) { _key("ArrowLeft"); await _wait(50); }
-    await _wait(100);
-    // Now advance — just verify no crash and key is processed
+    // Rewind toward the start so there's room to advance.
+    for (let i = 0; i < 8; i++) { _key("ArrowLeft"); await _wait(40); }
+    await _wait(150);
+    const before = _slidePos();
+    if (before == null) throw new Error("No slide on screen to navigate");
+    const total = _slideTotal();
+    if (total != null && total <= 1) return; // single-slide deck: nothing to advance
     _key("ArrowRight");
-    await _wait(200);
+    // The slide index must actually move forward, not just "not crash".
+    await _waitFor(() => { const p = _slidePos(); return p != null && p > before; });
   }},
   { name: "Arrow left goes back", fn: async () => {
-    // We're on slide 2 from previous test — go back
+    const before = _slidePos();
+    if (before == null) throw new Error("No slide on screen to navigate");
+    if (before <= 1) { // already at the first slide — assert we can still advance
+      _key("ArrowRight");
+      await _waitFor(() => { const p = _slidePos(); return p != null && p > before; });
+      return;
+    }
     _key("ArrowLeft");
-    await _wait(200);
-    // No crash = pass
+    await _waitFor(() => { const p = _slidePos(); return p != null && p < before; });
   }},
-  { name: "Multiple navigation doesn't crash", fn: async () => {
+  { name: "Multiple navigation round-trips to start", fn: async () => {
+    const start = _slidePos();
     for (let i = 0; i < 3; i++) { _key("ArrowRight"); await _wait(100); }
     for (let i = 0; i < 3; i++) { _key("ArrowLeft"); await _wait(100); }
+    await _wait(150);
+    // Equal forward/back steps must land back where we started.
+    if (start != null) await _waitFor(() => _slidePos() === start);
   }},
 ]);
 
@@ -7705,11 +7759,19 @@ uiSuite("Presenter", [
     });
   }},
   { name: "Arrow navigation works in fullscreen", fn: async () => {
+    const a = _slidePos();
     _key("ArrowRight");
-    await _wait(200);
+    await _wait(250);
+    const b = _slidePos();
     _key("ArrowLeft");
-    await _wait(200);
-    // No crash = pass
+    await _wait(250);
+    const c = _slidePos();
+    // Assert real movement (changed then restored), not just absence of a crash.
+    // Tolerant of virtual section-divider cards: checks change + return, not +1.
+    if (a != null && b != null) {
+      if (b === a) throw new Error("ArrowRight did not change slide in fullscreen");
+      if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
+    }
   }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");

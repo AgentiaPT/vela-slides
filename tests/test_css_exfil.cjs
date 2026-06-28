@@ -205,7 +205,7 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
   else bad("quadrant color not scrubbed", JSON.stringify(q));
 }
 
-// v12.70: scrubLayoutFields strips CSS auto-load / context-break primitives from
+// v12.71: scrubLayoutFields strips CSS auto-load / context-break primitives from
 // the non-color layout scalars (padding/borderRadius/maxWidth/gap/…) that some
 // block renderers spread raw into inline style, while preserving legit values.
 {

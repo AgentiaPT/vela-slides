@@ -345,7 +345,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # Reject a missing/empty Host too: a real browser always sends one, so an
         # empty Host can only come from a hand-crafted client (which gains nothing
         # cross-origin here), and rejecting it closes the falsy-host gap in the
-        # DNS-rebind guard. (v12.70)
+        # DNS-rebind guard. (v12.71)
         if host not in ALLOWED_HOSTS:
             self.send_error(403, "Forbidden: invalid Host header")
             return False
