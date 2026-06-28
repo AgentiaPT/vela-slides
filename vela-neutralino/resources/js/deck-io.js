@@ -15,6 +15,8 @@
 // All disk writes are debounced and tagged so the watcher callback can skip
 // our own echoes (otherwise a save → watcher-event → reload cycle loops).
 
+import { fsGuard } from "./fs-guard.js";
+
 const FOLDER_KEY = "nl-deck-folder";
 const LAST_DECK_KEY = "nl-last-deck";
 const SAVE_DEBOUNCE_MS = 200;
@@ -38,6 +40,8 @@ async function getStoredFolder() {
     if (!keys.includes(FOLDER_KEY)) return null;
     const val = await Neutralino.storage.getData(FOLDER_KEY);
     if (!val) return null;
+    // Allow the candidate root before the guarded getStats below.
+    fsGuard.allow(val);
     // Verify it still exists — user might have moved or deleted it.
     try { await Neutralino.filesystem.getStats(val); return val; }
     catch { return null; }
@@ -47,6 +51,8 @@ async function getStoredFolder() {
 async function pickFolder() {
   const path = await Neutralino.os.showFolderDialog("Choose your Vela decks folder");
   if (!path) throw new Error("no folder selected");
+  // The user just chose this folder — register it as an allowed FS root.
+  fsGuard.allow(path);
   await Neutralino.storage.setData(FOLDER_KEY, path);
   return path;
 }

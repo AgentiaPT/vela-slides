@@ -2,6 +2,17 @@
 // ━━━ Vera Agentic Engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tool-use ReAct loop with shared API helpers
 
+// SECURITY (audit 2025-05, H5 cost-amplification DoS): the ReAct loop must
+// cap not just iteration count, but also tool-calls per turn, total tool
+// calls across the session, and the cumulative messages-payload size. A
+// prompt-injected deck can otherwise instruct Vera to emit thousands of
+// tool calls per turn (e.g. "verify each slide with find_slides 200 times"),
+// blowing up output tokens × 12 iterations. With max_tokens=16000 and
+// Sonnet-4 pricing, this is a real money/latency DoS vector.
+const MAX_TOOLS_PER_TURN = 16;
+const MAX_TOTAL_TOOLS = 40;
+const MAX_MESSAGES_BYTES = 200 * 1024;
+
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
 async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
   if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
@@ -1002,13 +1013,28 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
 
     if (onToolCall) onToolCall({ type: "thinking" });
 
+    let capHit = "";
     for (let iter = 0; iter < 12; iter++) {
       const parsed = await callVeraStep(sysPrompt, messages);
       const calls = parsed.tool_calls || [];
       if (calls.length === 0) { finalText = parsed.message || finalText || "Done. 🖖"; break; }
 
+      // SECURITY (H5): cap tool_calls per turn to limit cost-amplification
+      // via prompt injection. Excess calls are dropped this turn; the loop
+      // continues so legitimate progress isn't blocked.
+      const safeCalls = calls.slice(0, MAX_TOOLS_PER_TURN);
+      if (calls.length > MAX_TOOLS_PER_TURN) {
+        dbg(`[⚠️ cap] tool_calls/turn ${calls.length} > ${MAX_TOOLS_PER_TURN}; truncating`);
+        capHit = `tool_calls/turn cap (${MAX_TOOLS_PER_TURN})`;
+      }
+
       const results = [];
-      for (const tc of calls) {
+      for (const tc of safeCalls) {
+        if (totalTools >= MAX_TOTAL_TOOLS) {
+          dbg(`[⚠️ cap] total tools >= ${MAX_TOTAL_TOOLS}; stopping`);
+          capHit = `total tools cap (${MAX_TOTAL_TOOLS})`;
+          break;
+        }
         totalTools++;
         const toolName = tc.tool || tc.name;
         const toolInput = tc.input || tc.params || tc;
@@ -1037,8 +1063,20 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
       const boardSummary = boardMatch ? boardMatch[0].slice(0, 2000) : "";
       messages.push({ role: "user", content: `Tool results:\n${results.map((r) => `${r.tool}: ${r.result}`).join("\n")}\n\n${boardSummary ? `Updated board state (after your changes):\n${boardSummary}\n\n` : ""}Evaluate: did your tool calls achieve the user's goal? If not, continue with more tool_calls. If YES, respond with {"message": "summary of what you did"}. Do NOT stop halfway — if the user asked to change 10 things and you've done 3, keep going.` });
 
+      // SECURITY (H5): bound cumulative messages payload to prevent unbounded
+      // input-token growth across iterations.
+      let msgBytes = 0;
+      for (const m of messages) { const c = m.content; msgBytes += typeof c === "string" ? c.length : JSON.stringify(c || "").length; }
+      if (msgBytes > MAX_MESSAGES_BYTES) {
+        dbg(`[⚠️ cap] messages bytes ${msgBytes} > ${MAX_MESSAGES_BYTES}; stopping ReAct loop`);
+        capHit = `messages-bytes cap (${MAX_MESSAGES_BYTES})`;
+        break;
+      }
+      if (totalTools >= MAX_TOTAL_TOOLS) break;
+
       if (onToolCall) onToolCall({ type: "thinking" });
     }
+    if (capHit && !finalText) finalText = `Stopped at ${capHit}. Run again to continue. 🖖`;
 
     if (!finalText && totalTools > 0) finalText = `Applied ${totalTools} tool calls across ${Math.ceil(messages.length / 2)} turns. 🖖`;
 

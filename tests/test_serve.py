@@ -496,6 +496,37 @@ class TestSecurity(FolderServerTestBase):
         self.assertNotEqual(status, 200,
                             "Double-encoded traversal must not succeed")
 
+    def test_deck_unicode_slash_lookalike_rejected(self):
+        """Unicode separator lookalikes (U+2215 DIVISION SLASH) must be rejected
+        at validation (400), not just resolve to a missing file (404).  The 400
+        is what distinguishes the fix from the pre-fix passthrough.  v12.64."""
+        status, _, _ = fetch(self._port, "GET", "/deck/a%E2%88%95b.vela")
+        self.assertEqual(status, 400)
+
+    def test_deck_rtlo_bidi_rejected(self):
+        """RTLO (U+202E) and other bidi/format controls must be rejected at
+        validation (400).  Filename spoofing anti-spoofing.  v12.64."""
+        status, _, _ = fetch(self._port, "GET", "/deck/a%E2%80%AEb.vela")
+        self.assertEqual(status, 400)
+
+    def test_validate_deck_name_unit(self):
+        """Direct unit coverage of _validate_deck_name Unicode hardening (v12.64)."""
+        v = VelaHTTPHandler._validate_deck_name
+        # legitimate names (incl. accented latin used in pt-PT) still allowed
+        self.assertTrue(v("My Deck.vela"))
+        self.assertTrue(v("Apresentação.vela"))
+        # ASCII traversal / separators still blocked
+        self.assertFalse(v("../etc/passwd"))
+        self.assertFalse(v("a/b"))
+        # Unicode lookalikes + bidi controls blocked
+        self.assertFalse(v("a∕b.vela"))   # division slash
+        self.assertFalse(v("a⁄b.vela"))   # fraction slash
+        self.assertFalse(v("a․․b"))  # one-dot leaders
+        self.assertFalse(v("a／b"))         # fullwidth solidus (NFKC -> '/')
+        self.assertFalse(v("evil‮gnp.vela"))  # RTLO spoof
+        self.assertFalse(v(""))
+        self.assertFalse(v("   "))
+
     # -- Path traversal on /save/ --
 
     def test_save_dotdot_400(self):
@@ -566,6 +597,50 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 403, "Symlink escaping folder must return 403")
         self.assertNotIn(b"Escaped!", body)
 
+    def test_watcher_reread_enforces_folder_containment(self):
+        """The live-reload file-watcher re-reads a deck after it changes. That
+        re-read must enforce the same folder containment as the HTTP read/write
+        paths: if the watched path comes to resolve outside the served folder,
+        its contents must not be cached or pushed to clients."""
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
+        outside_file = os.path.join(outside_dir, "outside.json")
+        sentinel = "OUTSIDE_FOLDER_SENTINEL_DATA"
+        with open(outside_file, "w", encoding="utf-8") as f:
+            json.dump({"secret": sentinel}, f)
+
+        name = "watched-containment.vela"
+        deck_path = os.path.join(self._tmpdir, name)
+        with open(deck_path, "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        self.addCleanup(lambda: os.unlink(deck_path) if os.path.exists(deck_path) else None)
+
+        # Arm the watcher on the legitimate in-folder file, as a real deck open does.
+        self._server._ensure_watcher(name)
+        watcher = self._server.get_watcher(name)
+        # Keep the shared class-scoped server clean for other tests.
+        self.addCleanup(lambda: self._server._deck_trackers.pop(name, None))
+        self.addCleanup(lambda: self._server._deck_cache.pop(name, None))
+        self.addCleanup(lambda: self._server._deck_watchers.pop(name, None))
+        if watcher is None:
+            self.skipTest("watcher not started on this platform")
+        self.addCleanup(watcher.stop)
+
+        # Replace the watched path so it now resolves outside the served folder.
+        os.unlink(deck_path)
+        try:
+            os.symlink(outside_file, deck_path)
+        except OSError:
+            self.skipTest("Cannot create symlinks on this filesystem")
+
+        # Drive the production re-read callback directly (deterministic, no thread timing).
+        watcher.callback()
+
+        cached = self._server.get_deck_data(name)
+        leaked = json.dumps(cached) if cached is not None else ""
+        self.assertNotIn(sentinel, leaked,
+                         "Watcher re-read must not cache contents resolving outside the folder")
+
     # -- Payload limits --
 
     def test_save_oversized_413(self):
@@ -627,6 +702,95 @@ class TestSecurity(FolderServerTestBase):
                             "Must not leak absolute folder path")
         # Should return only the basename
         self.assertEqual(data["folder"], os.path.basename(self._tmpdir))
+
+
+# ── 5b. Cross-origin / CSRF protection on mutating requests ───────────
+class TestOriginCsrf(FolderServerTestBase):
+    """Mutating POST /save must only accept requests from the server's own
+    origin (scheme + host + port).
+
+    A page on another loopback port shares the host-scoped session cookie
+    (cookies are not port-scoped), so a host-only origin check is not
+    sufficient — the full origin must match.
+    """
+
+    def _payload(self, title="Origin Test"):
+        deck = json.loads(json.dumps(SAMPLE_DECK))
+        deck["deckTitle"] = title
+        return json.dumps({"type": "deck_save", "deck": deck})
+
+    def test_same_origin_save_accepted(self):
+        """Origin matching the server's scheme+host+port is accepted."""
+        self._write_temp_deck("origin-ok.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-ok.vela",
+                             body=self._payload(),
+                             headers={"Origin": f"http://127.0.0.1:{self._port}"})
+        self.assertEqual(status, 200)
+
+    def test_missing_origin_accepted(self):
+        """Same-origin XHR and non-browser clients omit Origin — still accepted."""
+        self._write_temp_deck("origin-none.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-none.vela",
+                             body=self._payload())
+        self.assertEqual(status, 200)
+
+    def test_different_port_origin_rejected(self):
+        """Same host, different port must be rejected (cookies are not port-scoped)."""
+        self._write_temp_deck("origin-port.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-port.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": "http://127.0.0.1:5173"})
+        self.assertEqual(status, 403)
+
+    def test_localhost_different_port_origin_rejected(self):
+        """A different loopback host/port combination must be rejected."""
+        self._write_temp_deck("origin-lh.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-lh.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": f"http://localhost:{self._port + 1}"})
+        self.assertEqual(status, 403)
+
+    def test_foreign_origin_rejected(self):
+        """A non-loopback origin must be rejected."""
+        self._write_temp_deck("origin-evil.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-evil.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": "http://evil.example"})
+        self.assertEqual(status, 403)
+
+    def test_rejected_origin_does_not_write(self):
+        """A rejected cross-origin save must leave the deck file untouched."""
+        path = self._write_temp_deck("origin-intact.vela")
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+        fetch(self._port, "POST", "/save/origin-intact.vela",
+              body=self._payload("ATTACK"),
+              headers={"Origin": "http://127.0.0.1:5173"})
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        self.assertEqual(before, after)
+
+    def test_text_plain_save_rejected(self):
+        """text/plain avoids a CORS preflight — saves must require application/json."""
+        self._write_temp_deck("origin-ct.vela")
+        status, _, _ = fetch(self._port, "POST", "/save/origin-ct.vela",
+                             body=self._payload("ATTACK"),
+                             headers={"Origin": f"http://127.0.0.1:{self._port}",
+                                      "Content-Type": "text/plain"})
+        self.assertEqual(status, 415)
+
+    def test_text_plain_save_does_not_write(self):
+        """A rejected non-JSON save must leave the deck file untouched."""
+        path = self._write_temp_deck("origin-ct-intact.vela")
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+        fetch(self._port, "POST", "/save/origin-ct-intact.vela",
+              body=self._payload("ATTACK"),
+              headers={"Origin": f"http://127.0.0.1:{self._port}",
+                       "Content-Type": "text/plain"})
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        self.assertEqual(before, after)
 
 
 # ── 6. Content Types and Headers ─────────────────────────────────────

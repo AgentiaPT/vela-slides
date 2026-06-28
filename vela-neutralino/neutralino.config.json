@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "ai.vela.desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "applicationName": "Vela Slides",
   "description": "Vela Slides",
   "author": "Vela",
@@ -20,23 +20,18 @@
     "window.*",
     "debug.log",
     "os.showFolderDialog",
-    "os.showOpenDialog",
-    "os.showMessageBox",
-    "os.spawnProcess",
-    "os.updateSpawnedProcess",
     "os.getEnv",
-    "os.getPath",
     "filesystem.readFile",
     "filesystem.writeFile",
-    "filesystem.appendFile",
     "filesystem.readDirectory",
     "filesystem.createDirectory",
     "filesystem.getStats",
     "filesystem.createWatcher",
     "filesystem.removeWatcher",
+    "filesystem.remove",
+    "filesystem.move",
     "storage.*",
-    "events.*",
-    "clipboard.*"
+    "events.*"
   ],
   "modes": {
     "window": {

@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -73,17 +73,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
+
+      - name: Install npm devDependencies (locked)
+        # Uses `npm ci` so the install is driven by package-lock.json — exact
+        # versions + sha512 integrity hashes, no registry re-resolution. This
+        # is what gates jsdom (used by tests/test_svg_mxss.cjs to load the
+        # sanitizer source under a fake DOM) to a known-good version. The
+        # `--ignore-scripts` flag is belt-and-suspenders alongside
+        # `ignore-scripts=true` in .npmrc — blocks any pre/post-install hook
+        # from a future compromised transitive dep.
+        run: npm ci --ignore-scripts
+
+      - name: npm audit (high+ fails the build)
+        # Surfaces newly-disclosed advisories in our pinned tree before they
+        # silently ride along in a release. Dev-only deps, so any high or
+        # critical is worth investigating immediately.
+        run: npm audit --audit-level=high
 
       - name: Run unit tests
         id: unit
@@ -188,11 +204,14 @@ jobs:
           echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
           exit $exit_code
 
-      - name: Install e2e dependencies
+      - name: Install Playwright browser
         if: always()
-        run: |
-          npm install react@18.3.1 react-dom@18.3.1 @babel/standalone@7.26.10 lucide-react@0.344.0 playwright@1.55.1
-          npx playwright install --with-deps chromium
+        # npm packages (react, react-dom, @babel/standalone, lucide-react,
+        # playwright) are already installed by the locked `npm ci` step at
+        # the top of the job. Only the Chromium binary still needs fetching
+        # — Playwright's npm package is just the driver, the browser is a
+        # separate download.
+        run: npx playwright install --with-deps chromium
 
       - name: Run e2e UI tests
         id: e2e
@@ -220,36 +239,67 @@ jobs:
 
       - name: Post test status comment on PR
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        # SECURITY: test stdout is attacker-controlled (a PR can introduce a
+        # fixture whose name contains backticks or ${...}). Interpolating
+        # step outputs via ${{ }} inlines them into the JS source before the
+        # script runs — a single backtick in test output breaks out of the
+        # template literal and executes arbitrary JS with the workflow's
+        # GITHUB_TOKEN. Pass everything via env: + process.env instead.
+        env:
+          UNIT_EXIT: ${{ steps.unit.outputs.exit_code }}
+          INT_EXIT: ${{ steps.integration.outputs.exit_code }}
+          SRV_EXIT: ${{ steps.server.outputs.exit_code }}
+          CONCAT_EXIT: ${{ steps.concat.outputs.exit_code }}
+          E2E_EXIT: ${{ steps.e2e.outputs.exit_code }}
+          UNIT_OUTPUT: ${{ steps.unit.outputs.output }}
+          INT_OUTPUT: ${{ steps.integration.outputs.output }}
+          SRV_OUTPUT: ${{ steps.server.outputs.output }}
+          CONCAT_OUTPUT: ${{ steps.concat.outputs.output }}
+          E2E_OUTPUT: ${{ steps.e2e.outputs.output }}
+          UNIT_PASSED: ${{ steps.unit.outputs.passed }}
+          UNIT_FAILED: ${{ steps.unit.outputs.failed }}
+          UNIT_TIME: ${{ steps.unit.outputs.elapsed }}
+          INT_PASSED: ${{ steps.integration.outputs.passed }}
+          INT_FAILED: ${{ steps.integration.outputs.failed }}
+          INT_TIME: ${{ steps.integration.outputs.elapsed }}
+          SRV_PASSED: ${{ steps.server.outputs.passed }}
+          SRV_FAILED: ${{ steps.server.outputs.failed }}
+          SRV_TIME: ${{ steps.server.outputs.elapsed }}
+          CONCAT_TIME: ${{ steps.concat.outputs.elapsed }}
+          E2E_PASSED: ${{ steps.e2e.outputs.passed }}
+          E2E_FAILED: ${{ steps.e2e.outputs.failed }}
+          E2E_TIME: ${{ steps.e2e.outputs.elapsed }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
-            const unitExit = '${{ steps.unit.outputs.exit_code }}';
-            const integrationExit = '${{ steps.integration.outputs.exit_code }}';
-            const serverExit = '${{ steps.server.outputs.exit_code }}';
-            const concatExit = '${{ steps.concat.outputs.exit_code }}';
-            const e2eExit = '${{ steps.e2e.outputs.exit_code }}';
+            const unitExit = process.env.UNIT_EXIT || '';
+            const integrationExit = process.env.INT_EXIT || '';
+            const serverExit = process.env.SRV_EXIT || '';
+            const concatExit = process.env.CONCAT_EXIT || '';
+            const e2eExit = process.env.E2E_EXIT || '';
 
-            const unitOutput = `${{ steps.unit.outputs.output }}`;
-            const integrationOutput = `${{ steps.integration.outputs.output }}`;
-            const serverOutput = `${{ steps.server.outputs.output }}`;
-            const concatOutput = `${{ steps.concat.outputs.output }}`;
-            const e2eOutput = `${{ steps.e2e.outputs.output }}`;
+            const unitOutput = process.env.UNIT_OUTPUT || '';
+            const integrationOutput = process.env.INT_OUTPUT || '';
+            const serverOutput = process.env.SRV_OUTPUT || '';
+            const concatOutput = process.env.CONCAT_OUTPUT || '';
+            const e2eOutput = process.env.E2E_OUTPUT || '';
 
-            const unitPassed = '${{ steps.unit.outputs.passed }}' || '0';
-            const unitFailed = '${{ steps.unit.outputs.failed }}' || '0';
-            const unitTime = '${{ steps.unit.outputs.elapsed }}' || '?';
-            const intPassed = '${{ steps.integration.outputs.passed }}' || '0';
-            const intFailed = '${{ steps.integration.outputs.failed }}' || '0';
-            const intTime = '${{ steps.integration.outputs.elapsed }}' || '?';
-            const srvPassed = '${{ steps.server.outputs.passed }}' || '0';
-            const srvFailed = '${{ steps.server.outputs.failed }}' || '0';
-            const srvTime = '${{ steps.server.outputs.elapsed }}' || '?';
-            const concatTime = '${{ steps.concat.outputs.elapsed }}' || '?';
-            const e2ePassed = '${{ steps.e2e.outputs.passed }}' || '0';
-            const e2eFailed = '${{ steps.e2e.outputs.failed }}' || '0';
-            const e2eTime = '${{ steps.e2e.outputs.elapsed }}' || '?';
+            const unitPassed = process.env.UNIT_PASSED || '0';
+            const unitFailed = process.env.UNIT_FAILED || '0';
+            const unitTime = process.env.UNIT_TIME || '?';
+            const intPassed = process.env.INT_PASSED || '0';
+            const intFailed = process.env.INT_FAILED || '0';
+            const intTime = process.env.INT_TIME || '?';
+            const srvPassed = process.env.SRV_PASSED || '0';
+            const srvFailed = process.env.SRV_FAILED || '0';
+            const srvTime = process.env.SRV_TIME || '?';
+            const concatTime = process.env.CONCAT_TIME || '?';
+            const e2ePassed = process.env.E2E_PASSED || '0';
+            const e2eFailed = process.env.E2E_FAILED || '0';
+            const e2eTime = process.env.E2E_TIME || '?';
 
-            const sha = '${{ github.event.pull_request.head.sha }}'.slice(0, 7);
+            const sha = (process.env.HEAD_SHA || '').slice(0, 7);
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';

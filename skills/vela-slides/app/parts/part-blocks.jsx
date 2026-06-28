@@ -186,8 +186,8 @@ function GlossaryLink({ label, term, entry }) {
         }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{term}</div>
           <div>{entry && entry.definition}</div>
-          {entry && entry.url && (
-            <a href={entry.url} target="_blank" rel="noopener noreferrer"
+          {entry && entry.url && sanitizeUrl(entry.url) && (
+            <a href={sanitizeUrl(entry.url)} target="_blank" rel="noopener noreferrer"
                onClick={(e) => e.stopPropagation()}
                style={{ display: "inline-block", marginTop: 6, color: T.accent, fontSize: 11, textDecoration: "underline" }}>
               Learn more →
@@ -337,7 +337,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
     <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, item.title) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       <div style={{ flex: 1 }}>
@@ -345,7 +345,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
       {/* Presenter mode: subtle link badge */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Link badge (not hovered, edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -32, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode) */}
@@ -387,7 +387,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
     <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", gap: 12, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, text) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span>
         : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />}
@@ -429,12 +429,12 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
     <div style={{ position: "relative", ...(link ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, block.text || block.value || block.title) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link ? (e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={link ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); window.open(link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Link badge (not hovered, edit mode) */}
       {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
       {/* Hover chrome (edit mode) */}
@@ -605,7 +605,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         if (cell.border) cellStyle.border = cell.border;
         const safeStyle = cell.style && typeof cell.style === "object" && !Array.isArray(cell.style) ? cell.style : {};
         const cellLink = (cell.blocks || []).find(b => b.link)?.link;
-        return <div key={ci} style={{ ...cellStyle, ...safeStyle, ...(cellLink ? { cursor: "pointer" } : {}) }} data-pdf-link={cellLink || undefined} onClick={cellLink ? (e) => { e.stopPropagation(); window.open(cellLink, "_blank", "noopener,noreferrer"); } : undefined}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
+        return <div key={ci} style={{ ...cellStyle, ...safeStyle, ...(cellLink ? { cursor: "pointer" } : {}) }} data-pdf-link={cellLink || undefined} onClick={cellLink ? (e) => { e.stopPropagation(); openExternalLink(cellLink); } : undefined}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
         onChange={onChange ? (patch) => {
           const newItems = (block.items || []).map((c, i) => i === ci
@@ -641,21 +641,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // Theme token injection
       const tokens = { "{{color}}": st.text || "#e2e8f0", "{{accent}}": st.accent || "#3b82f6", "{{bg}}": st.bg || "#0f172a", "{{muted}}": (st.muted || "#94a3b8") };
       for (const [tok, val] of Object.entries(tokens)) { while (processed.includes(tok)) processed = processed.replace(tok, val); }
-      // Sanitize — defense-in-depth against SVG XSS vectors
-      processed = processed
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+      // Sanitize — defense-in-depth against SVG XSS vectors. Runs AFTER theme-token injection
+      // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
+      // the prior regex chain let unquoted/obfuscated javascript: URIs through.
+      processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
@@ -1067,7 +1056,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
               const qd = q(qi);
-              const qc = qd.color || defaultQColors[qi];
+              const qc = cssColor(qd.color) || defaultQColors[qi];
               return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
@@ -1189,7 +1178,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
   if (slide.bg) bgStyle.background = slide.bg;
-  if (slide.bgImage) { bgStyle.backgroundImage = `url(${slide.bgImage})`; bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
+  if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
   if (slide.bgGradient) bgStyle.background = slide.bgGradient;
 
   const outerRef = useRef(null);
@@ -1269,7 +1258,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
-      onClick={b.link ? (e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); } : undefined}
+      onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); }}>
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
@@ -1309,13 +1298,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
       {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
   ) : (
-    <div key={i} data-block-type={b.type} title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined} data-pdf-link={b.link || undefined} onClick={b.link ? (e) => { e.stopPropagation(); window.open(b.link, "_blank", "noopener,noreferrer"); } : undefined} style={b.link ? { cursor: "pointer" } : undefined}>
+    <div key={i} data-block-type={b.type} title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined} data-pdf-link={b.link || undefined} onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined} style={b.link ? { cursor: "pointer" } : undefined}>
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>

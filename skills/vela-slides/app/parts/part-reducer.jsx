@@ -26,20 +26,22 @@ function innerReducer(state, a) {
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
-    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: a.slides || [], createdAt: now() }] } : l) }; }
+    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
       const newItems = (a.concepts || []).map((c) => {
         const nid = uid();
-        if (c.slides?.length) _dirtyMods.add(nid);
-        return { id: nid, title: c.title || "Imported", status: "todo", importance: "should",
-        order: lanes[0].items.length + 1, slides: Array.isArray(c.slides) ? c.slides : [], createdAt: now() };
+        // Sanitize pasted/imported slides here — IMPORT_CONCEPTS bypasses validateAndSanitizeDeck.
+        const slides = Array.isArray(c.slides) ? c.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [];
+        if (slides.length) _dirtyMods.add(nid);
+        return { id: nid, title: sanitizeString(c.title || "Imported", 200), status: "todo", importance: "should",
+        order: lanes[0].items.length + 1, slides, createdAt: now() };
       });
       lanes = lanes.map((l) => l.id === laneId ? { ...l, items: [...l.items, ...newItems] } : l);
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };
     }
-    case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = (typeof it === "object" && it.slides) || []; if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
+    case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = ((typeof it === "object" && Array.isArray(it.slides)) ? it.slides : []).map(sanitizeSlide).filter(Boolean); if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
     case "REMOVE_ITEM": _deletedMods.add(a.id); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) })), selectedId: state.selectedId === a.id ? null : state.selectedId };
     case "RENAME_ITEM": return mapItems((i) => i.id === a.id ? { ...i, title: a.title } : i);
     case "CYCLE_STATUS": return mapItems((i) => { if (i.id !== a.id) return i; const next = STATUS_META[i.status].next; if (!next) return i; return { ...i, status: next, ...(next === "signed-off" ? { signedOffAt: now() } : next === "todo" ? { signedOffAt: undefined } : {}) }; });
@@ -61,10 +63,24 @@ function innerReducer(state, a) {
         return { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) };
       }) };
     }
-    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: a.slides } : i);
-    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: [...i.slides, a.slide] } : i);
-    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, a.slide); return { ...i, slides: ns }; });
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return updated; }) } : i);
+    // SECURITY (v12.67): slide-mutating actions are the reducer chokepoint — run every
+    // incoming slide through sanitizeSlide (the same backstop LOAD_LANES uses). This
+    // covers ALL render-time auto-load sinks, not just color scalars: block/item style
+    // objects (sanitizeStyle), bgImage data:image/* clamp, image src clamp, svg markup.
+    // Some callers (clipboard, generateAiSlide) already pre-sanitize — sanitizeSlide is
+    // idempotent, so double-coverage is harmless. Closes the generateSlide→ADD_SLIDE and
+    // STARTUP_PATCH.slides→UPDATE_SLIDE paths that bypassed import sanitization.
+    case "SET_SLIDES": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean) } : i);
+    case "ADD_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); return sl ? { ...i, slides: [...i.slides, sl] } : i; });
+    case "INSERT_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const sl = sanitizeSlide(a.slide); if (!sl) return i; const ns = [...i.slides]; ns.splice(a.index, 0, sl); return { ...i, slides: ns }; });
+    // SECURITY (v12.67): UPDATE_SLIDE merges a raw patch and bypasses import sanitization.
+    // A color-only scrub is insufficient — it misses two render-time auto-load sinks reachable
+    // via a patch: block/item `style` objects (non-string, so scrubColorFields skips them) and
+    // `bgImage` (key not matched by CSS_COLOR_KEY; its data:image/* clamp lives only in
+    // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
+    // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
+    // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
@@ -161,8 +177,26 @@ function innerReducer(state, a) {
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
-    case "LOAD_LANES": return { ...state, lanes: a.lanes };
-    case "SET_BRANDING": return { ...state, branding: { ...state.branding, ...a.branding } };
+    case "LOAD_LANES": {
+      // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
+      // edit_slide / clear_all) dispatch through LOAD_LANES — the only ingest
+      // path that previously skipped sanitizeSlide. Prompt-injected blocks
+      // could write SVG markup with <script>, dangerous CSS in block.style,
+      // or attacker-host image src. Re-sanitize defensively on every Vera
+      // write so the SVG/render sinks aren't the only backstop.
+      const safeLanes = Array.isArray(a.lanes) ? a.lanes.map((l) => ({
+        ...l,
+        items: Array.isArray(l?.items) ? l.items.map((it) => ({
+          ...it,
+          slides: Array.isArray(it?.slides) ? it.slides.map(sanitizeSlide).filter(Boolean) : [],
+        })) : [],
+      })) : state.lanes;
+      return { ...state, lanes: safeLanes };
+    }
+    // SECURITY (v12.67): the Vera set_branding tool (and the branding modal) dispatch
+    // here, bypassing the import-time scrub in validateAndSanitizeDeck. footerBg/
+    // accentColor/footerColor feed inline CSS, so scrub the merged branding too.
+    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubColorFields(b); return { ...state, branding: b }; }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
