@@ -183,7 +183,7 @@ print(f'Recorded: $VERSION / $RUN_ID — {total_tokens:,} tokens, {tool_uses} to
             # Validate directly from bash (no Python subprocess needed)
             # 1. Check JSON valid + count slides
             VALIDATE_JSON=$(python3 -c "
-import json, sys
+import json, sys, os
 try:
     with open('$DECK_FILE') as f: d = json.load(f)
     slides = []
@@ -202,7 +202,8 @@ try:
         if '\"type\":\"'+bt+'\"' in raw or '\"_\":\"'+bt+'\"' in raw:
             types_found.add(bt)
     # Check scenario assertions
-    scenario_assertions = {}
+    scenario_assertions = []
+    config_error = None
     try:
         with open('$SCENARIOS') as sf:
             sc = json.load(sf)
@@ -210,13 +211,19 @@ try:
             if s['id'] == '$SCENARIO':
                 scenario_assertions = s.get('assertions', [])
                 break
-    except: pass
+    except Exception as e:
+        config_error = str(e)
     passed = 0; total = 0; results = []
     for a in scenario_assertions:
         total += 1
         ok = False
-        if a['type'] == 'file_exists': ok = True
-        elif a['type'] == 'json_valid': ok = True
+        if a['type'] == 'file_exists': ok = os.path.isfile(a.get('path', '$DECK_FILE'))
+        elif a['type'] == 'json_valid':
+            try:
+                with open(a.get('path', '$DECK_FILE')) as jf: json.load(jf)
+                ok = True
+            except Exception:
+                ok = False
         elif a['type'] == 'slide_count': ok = len(slides) == a['expected']
         elif a['type'] == 'block_type_present': ok = a['block_type'] in types_found
         elif a['type'] == 'text_present': ok = a['text'] in raw
@@ -226,8 +233,11 @@ try:
             ok = len(slides) > 0
         if ok: passed += 1
         results.append({'type': a['type'], 'passed': ok})
-    if total == 0:
-        passed = 1; total = 1; results = [{'type': 'json_valid', 'passed': True}]
+    # No fabricated green: a missing scenario config or a scenario with zero
+    # assertions is reported honestly, not as a synthetic passing check.
+    if config_error is not None:
+        total = max(total, 1)
+        results.append({'type': 'config_load', 'passed': False, 'error': config_error})
     print(json.dumps({'passed': passed, 'total': total, 'slides': len(slides), 'types': list(types_found), 'results': results}))
 except Exception as e:
     print(json.dumps({'passed': 0, 'total': 1, 'results': [{'type': 'error', 'passed': False}]}))

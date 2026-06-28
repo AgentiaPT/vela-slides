@@ -867,13 +867,28 @@ Rules:
 - Icon-row feature lists: 60-120s depending on count
 - Consider text density and complexity
 - Return ONLY a JSON array of integers (seconds per slide). No explanation, no markdown.`;
+  // Fail loud: a request/parse failure must NOT be papered over with a
+  // fabricated uniform duration written onto every slide. Throw so the caller
+  // can leave existing durations untouched and tell the user it failed.
+  let text;
   try {
-    const text = await callClaudeAPI(sysPrompt, [{ role: "user", content: `Estimate seconds for ${jobs.length} slides:\n\n${summaries}` }], { temperature: 0, maxTokens: 500, timeoutMs: 15000, _callType: "estimate" });
-    const clean = text.replace(/```json\s*|```\s*/g, "").trim();
-    const arr = JSON.parse(clean);
-    if (Array.isArray(arr) && arr.length === jobs.length) return arr.map((v) => typeof v === "number" ? Math.max(10, Math.min(3600, Math.round(v))) : 60);
-  } catch (e) { dbg("Timing estimation error:", e); }
-  return jobs.map(() => 60);
+    text = await callClaudeAPI(sysPrompt, [{ role: "user", content: `Estimate seconds for ${jobs.length} slides:\n\n${summaries}` }], { temperature: 0, maxTokens: 500, timeoutMs: 15000, _callType: "estimate" });
+  } catch (e) {
+    dbg("Timing estimation request failed:", e);
+    throw new Error(`Timing estimation request failed: ${e?.message || e}`);
+  }
+  let arr;
+  try {
+    arr = JSON.parse(text.replace(/```json\s*|```\s*/g, "").trim());
+  } catch (e) {
+    throw new Error("Timing estimation returned non-JSON output");
+  }
+  if (!Array.isArray(arr) || arr.length !== jobs.length) {
+    throw new Error(`Timing estimation returned ${Array.isArray(arr) ? arr.length : "non-array"} values for ${jobs.length} slides`);
+  }
+  // A single malformed entry is clamped to a sane default; the batch as a whole
+  // is known-valid (correct length), so this is not masking a request failure.
+  return arr.map((v) => typeof v === "number" ? Math.max(10, Math.min(3600, Math.round(v))) : 60);
 }
 
 async function generateAlternative(screenshotBase64, slideJson, conceptTitle, slideNum, totalSlides, direction, branding, guidelines, layoutStats) {
