@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~963KB, 12,650 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 21 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,061 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -23,15 +23,15 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 |------|---------|
 | `part-imports.jsx` | Constants, sanitizers, helpers, storage API, startup patch system |
 | `part-icons.jsx` | 270+ Lucide icon resolver |
-| `part-blocks.jsx` | 21 block renderers (heading, flow, grid, metric, timeline, etc.) |
+| `part-blocks.jsx` | 27 block renderers (heading, flow, grid, metric, timeline, etc.) |
 | `part-reducer.jsx` | useReducer state + dispatch actions |
-| `part-engine.jsx` | Vera AI engine — callClaudeAPI(), 20 tools, ReAct loop |
+| `part-engine.jsx` | Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop |
 | `part-slides.jsx` | SlidePanel rendering, fullscreen, thumbnails |
 | `part-list.jsx` | Lane/module list, drag-and-drop |
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 95 UI tests in 22 suites |
+| `part-uitest.jsx` | 159 UI tests in 25 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
 
@@ -85,7 +85,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (198 tests)
+# 1. Run full test suite (349 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
@@ -134,13 +134,13 @@ examples/              ← vela-demo.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
 evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
-tests/                 ← test_vela.py (198 tests), test_serve.py (72 tests)
+tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
 ```
 
 ## AI Features (Vera Engine)
 
 - Direct HTTP to Anthropic API from artifact (no client key — uses artifact proxy)
-- ReAct loop with 20 tools (set_slides, edit_slide, add_slide, batch ops, etc.)
+- ReAct loop with 22 tools (set_slides, edit_slide, add_slide, batch ops, etc.)
 - Model: claude-sonnet-4-20250514, temp=0, max 16K tokens
 - Session cost tracking built-in
 

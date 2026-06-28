@@ -21,7 +21,7 @@ Several block types had hardcoded sizes that ignored the `size` property entirel
 - **Flow**: icon always `20px`, arrows always `24x12px`, sublabel always `xs` — fixed in v12.22
 - **Table**: cell padding always `9px 14px` — **still unfixed**
 
-The root cause is the same: each block renderer hardcodes its sub-element sizes instead of deriving them from the block's `size` property. A unified approach (e.g. a scale factor per size tier applied to all sub-elements) would prevent this class of bug across all 21 block types.
+The root cause is the same: each block renderer hardcodes its sub-element sizes instead of deriving them from the block's `size` property. A unified approach (e.g. a scale factor per size tier applied to all sub-elements) would prevent this class of bug across all 27 block types.
 
 ### Flow block scaling (partially fixed in v12.22)
 Flow block icons, arrows, and sublabels were hardcoded at fixed sizes (icon 20px, arrow 24x12px, sublabel always `xs`). Fixed in v12.22 to scale with `labelSize` using a multiplier. However, the approach uses a manual scale map — ideally the block system should have a unified sizing strategy where all sub-elements scale proportionally from the block's `size` property, not just specific blocks.

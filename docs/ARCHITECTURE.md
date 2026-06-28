@@ -30,14 +30,14 @@ The dependency graph is fixed and acyclic. Concatenation is the simplest correct
 ```
 part-imports    → Constants, sanitizers, helpers, storage
 part-icons      → Icon resolution system (270+ icons)
-part-blocks     → All 21 block renderers
+part-blocks     → All 27 block renderers
 part-reducer    → State management, dispatch actions
 part-engine     → Vera AI engine, system prompts, API calls
 part-slides     → Slide panel, fullscreen, branding overlay
 part-list       → Lane/module list, drag & drop
 part-chat       → Chat panel, tool trace cards
 part-test       → Battery tests
-part-uitest     → UI integration tests (95 tests in 22 suites)
+part-uitest     → UI integration tests (159 tests in 25 suites)
 part-demo       → Cinematic demo mode (18 scenes)
 part-pdf        → PDF export, markdown export
 part-app        → Top-level shell, modals, shortcuts
@@ -64,7 +64,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-list.jsx` | ~380 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
 | `part-chat.jsx` | ~430 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
 | `part-test.jsx` | ~240 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~1,100 | 95 UI integration tests in 22 suites — comprehensive coverage of block rendering, themes, edge cases |
+| `part-uitest.jsx` | ~1,100 | 159 UI integration tests in 25 suites — comprehensive coverage of block rendering, themes, edge cases |
 | `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
 | `part-pdf.jsx` | ~3,510 | Canvas-based PDF renderer, watermark system, link annotations, markdown export |
 | `part-app.jsx` | ~1,220 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
@@ -106,7 +106,7 @@ User message → System prompt + deck state + tool definitions
 
 ### Available Tools
 
-Vera has 20 tools for deck manipulation: `add_lane`, `add_item`, `batch_add_items`, `remove_item`, `remove_lane`, `rename_item`, `rename_lane`, `move_item`, `update_status`, `set_importance`, `set_slides`, `add_slide`, `edit_slide`, `add_image_to_slide`, `clear_all`, `set_branding`, `find_slides`, `find_replace`, `deck_stats`, and `batch_restyle`. Each tool modifies the React state directly, with results visible immediately in the slide panel.
+Vera has 22 tools for deck manipulation: `add_lane`, `add_item`, `batch_add_items`, `remove_item`, `remove_lane`, `rename_item`, `rename_lane`, `move_item`, `update_status`, `set_importance`, `set_slides`, `add_slide`, `edit_slide`, `add_image_to_slide`, `clear_all`, `set_branding`, `find_slides`, `find_replace`, `deck_stats`, `batch_restyle`, `list_comments`, and `resolve_comment`. Each tool modifies the React state directly, with results visible immediately in the slide panel.
 
 ## Rendering Pipeline
 
