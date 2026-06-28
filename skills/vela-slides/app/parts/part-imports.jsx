@@ -20,6 +20,7 @@ const __DEBUG = false;
 const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
+const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer (agentia-learn)
 
 // ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
@@ -69,8 +70,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.68";
+const VELA_VERSION = "12.69";
 const VELA_CHANGELOG = [
+  { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
   { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
   { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
@@ -954,7 +956,7 @@ function validateAndSanitizeDeck(raw) {
   const importedGuidelines = typeof raw.guidelines === "string"
     ? raw.guidelines.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g, "").slice(0, 2000)
     : "";
-  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
+  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };
 }

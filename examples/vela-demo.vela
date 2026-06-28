@@ -2,12 +2,12 @@
   "deckTitle": "Vela Slides — Live Demo",
   "lanes": [
     {
-      "id": "2c0639b3",
+      "id": "3275f63b",
       "title": "Introduction",
       "collapsed": false,
       "items": [
         {
-          "id": "badac887",
+          "id": "ea774b27",
           "title": "Title",
           "notes": "",
           "comments": [],
@@ -44,7 +44,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
                   "align": "center",
                   "maxWidth": "48px"
                 },
@@ -268,12 +268,12 @@
       ]
     },
     {
-      "id": "4a33b9e0",
+      "id": "a4846798",
       "title": "What's New — v12",
       "collapsed": false,
       "items": [
         {
-          "id": "7e937d4e",
+          "id": "0d2a97d8",
           "title": "v12 Features",
           "notes": "Student mode, studyNotes, copy & reveal features",
           "comments": [
@@ -600,12 +600,12 @@
       ]
     },
     {
-      "id": "08a25b3c",
+      "id": "24107813",
       "title": "Block Showcase",
       "collapsed": false,
       "items": [
         {
-          "id": "ae2e2c23",
+          "id": "bffabe58",
           "title": "Text & Typography",
           "notes": "",
           "comments": [],
@@ -712,7 +712,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "20cacaee",
+          "id": "7b075467",
           "title": "Process & Flow",
           "notes": "",
           "comments": [],
@@ -867,7 +867,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "3e647b23",
+          "id": "77c8b556",
           "title": "Data & Metrics",
           "notes": "",
           "comments": [],
@@ -1091,7 +1091,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "6fa2fbc4",
+          "id": "ab6f73bf",
           "title": "Code & Visual",
           "notes": "",
           "comments": [],
@@ -1181,7 +1181,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox='0 0 500 140' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='60' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Skill</text><rect x='150' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='200' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Claude</text><rect x='290' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='340' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Artifact</text><rect x='430' y='40' width='60' height='60' rx='8' fill='{{accent}}' fill-opacity='0.15' stroke='{{accent}}' stroke-width='2'/><text x='460' y='75' text-anchor='middle' fill='{{accent}}' font-size='13' font-family='monospace'>You</text><line x1='110' y1='70' x2='150' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='250' y1='70' x2='290' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='390' y1='70' x2='430' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='6' markerHeight='6' orient='auto'><path d='M 0 0 L 10 5 L 0 10 z' fill='{{muted}}'/></marker></defs></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 500 140\"><rect x=\"10\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"60\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Skill</text><rect x=\"150\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"200\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Claude</text><rect x=\"290\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"340\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Artifact</text><rect x=\"430\" y=\"40\" width=\"60\" height=\"60\" rx=\"8\" fill=\"{{accent}}\" fill-opacity=\"0.15\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"460\" y=\"75\" text-anchor=\"middle\" fill=\"{{accent}}\" font-size=\"13\" font-family=\"monospace\">You</text><line x1=\"110\" y1=\"70\" x2=\"150\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><line x1=\"250\" y1=\"70\" x2=\"290\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><line x1=\"390\" y1=\"70\" x2=\"430\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><defs><marker id=\"arr\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"{{muted}}\"/></marker></defs></svg>",
                   "align": "center",
                   "caption": "Vela pipeline: Skill → Claude → Artifact → You",
                   "captionSize": "sm",
@@ -1285,10 +1285,20 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "b1d93a7f",
+          "id": "16a98546",
           "title": "New Primitives",
           "notes": "Showcases the 6 new block types added in v12.25",
-          "comments": [],
+          "comments": [
+            {
+              "id": "c_78130dca",
+              "text": "Showcases the 6 new block types added in v12.25",
+              "anchor": null,
+              "blockIndex": null,
+              "status": "open",
+              "createdAt": "2026-06-01T00:30:48.654Z",
+              "resolvedAt": null
+            }
+          ],
           "status": "done",
           "importance": "must",
           "order": 4,
@@ -1554,7 +1564,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "cols-showcase",
+          "id": "8c64e170",
           "title": "Layout: Columns",
           "notes": "",
           "comments": [],
@@ -1738,17 +1748,18 @@
                 }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T00:30:48.654Z"
         }
       ]
     },
     {
-      "id": "cd9b460f",
+      "id": "f89ccd5c",
       "title": "AI & Platform",
       "collapsed": false,
       "items": [
         {
-          "id": "7468c4f2",
+          "id": "9471c8e9",
           "title": "Vera AI",
           "notes": "",
           "comments": [],
@@ -1997,7 +2008,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "08ff0305",
+          "id": "8a0f618f",
           "title": "CLI & Skill",
           "notes": "",
           "comments": [],
@@ -2087,8 +2098,13 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
+          "id": "5bae7e89",
           "title": "Runtimes & Desktop",
+          "notes": "",
+          "comments": [],
           "status": "todo",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Three Runtimes, One Engine",
@@ -2347,7 +2363,7 @@
                           "type": "bullets",
                           "items": [
                             "First AI action prompts for consent",
-                            "Trust stored at <folder>/.vela/trust.json",
+                            "Trust stored at /.vela/trust.json",
                             "Footer chip shows agent + trust state"
                           ],
                           "size": "sm",
@@ -2377,10 +2393,10 @@
               "comments": []
             }
           ],
-          "id": "ebd7ef5b"
+          "createdAt": "2026-06-01T00:30:48.654Z"
         },
         {
-          "id": "1a262244",
+          "id": "06df897c",
           "title": "Platform Features",
           "notes": "",
           "comments": [],
@@ -2705,12 +2721,12 @@
       ]
     },
     {
-      "id": "7a832f02",
+      "id": "27bec4a5",
       "title": "Closing",
       "collapsed": false,
       "items": [
         {
-          "id": "a3a2b412",
+          "id": "1274eada",
           "title": "Get Started",
           "notes": "",
           "comments": [],
@@ -2734,7 +2750,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
                   "align": "center",
                   "maxWidth": "48px"
                 },
@@ -3038,7 +3054,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
                   "align": "center",
                   "maxWidth": "48px"
                 },
@@ -3118,6 +3134,12 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         }
       ]
+    },
+    {
+      "id": "c1ec05c3",
+      "title": "Main",
+      "collapsed": false,
+      "items": []
     }
   ],
   "branding": {

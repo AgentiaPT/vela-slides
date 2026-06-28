@@ -115,11 +115,11 @@ python3 tests/test_vela.py
 Reproducible cross-OS binaries via `vela-neutralino/Dockerfile` (context = repo root):
 
 ```bash
-DOCKER_BUILDKIT=1 docker build -f vela-neutralino/Dockerfile --target export \
-  --output type=local,dest=vela-neutralino/dist-docker .
+DOCKER_BUILDKIT=1 docker build -f vela-neutralino/Dockerfile \
+  -o type=local,dest=vela-neutralino/dist .
 ```
 
-Single Linux build emits all win/linux/mac binaries (`neu build` bundles prebuilt runtimes). Runs `concat.py` → `neu update` → `verify-runtime.py` (SHA256 pins) → `sync-vela.py` → `neu build --embed-resources`. Output `dist-docker/vela/` is gitignored — never commit binaries.
+Single Linux build emits all win/linux/mac binaries (`neu build` bundles prebuilt runtimes). Runs `concat.py` → `neu update` → `verify-runtime.py` (SHA256 pins) → `sync-vela.py` → `neu build --embed-resources`. Output lands in `dist/vela/` (gitignored — never commit binaries). CI does **not** use Docker; this is a local convenience only.
 
 ## Key Directories
 

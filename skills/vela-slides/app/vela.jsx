@@ -20,6 +20,7 @@ const __DEBUG = false;
 const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
+const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer (agentia-learn)
 
 // ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
@@ -69,8 +70,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.68";
+const VELA_VERSION = "12.69";
 const VELA_CHANGELOG = [
+  { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
   { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
   { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
   { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
@@ -954,7 +956,7 @@ function validateAndSanitizeDeck(raw) {
   const importedGuidelines = typeof raw.guidelines === "string"
     ? raw.guidelines.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g, "").slice(0, 2000)
     : "";
-  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
+  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };
 }
@@ -2844,7 +2846,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
 
 const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
@@ -14379,11 +14381,18 @@ export default function App() {
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
-    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;
+    // Always cancel pending sync-out timers first — a stale timer captures
+    // the OLD deck via closure and would write it to the NEW file path after
+    // a deck switch (the _localSyncIncoming guard skips setting a new timer
+    // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;
     localSyncTimer.current = setTimeout(() => {
       if (window.__velaSendDeckUpdate) {
         const save = extractSave(state);
+        // Safety: never write an empty deck to disk — this would wipe a real file.
+        const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
+        if (!save.lanes?.length || !totalSlides) return;
         delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
         delete save.lastDebug; delete save._bootstrap; delete save._version;
         window.__velaSendDeckUpdate({ deckTitle: state.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
@@ -14412,6 +14421,9 @@ export default function App() {
             }
           }
         }
+        // Check if this is a different deck (picker switch) vs same-deck external edit
+        const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
+          sanitized.lanes.some((sl, li) => sl.items?.length !== cur.lanes[li]?.items?.length);
         // Only update CONTENT fields — preserve ALL UI state
         const payload = {
           ...cur,                                                    // keep everything
@@ -14419,6 +14431,8 @@ export default function App() {
           deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Reset selection when switching to a different deck so auto-select picks the first module
+          ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
         dispatch({ type: "LOAD", payload });
       } catch (e) {
@@ -14541,6 +14555,11 @@ export default function App() {
   useEffect(() => {
     (async () => {
       let loadedDeck = null;
+      // In LOCAL_MODE the file on disk (via STARTUP_PATCH) is authoritative.
+      // Skip localStorage entirely — it may contain a stale deck from a
+      // previous session/file and would cause a flash of old content or,
+      // worse, get synced back to disk overwriting the new file.
+      if (!VELA_LOCAL_MODE) {
       try {
         let data = null;
         // Try v3 monolithic format (single key, includes slides)
@@ -14587,6 +14606,7 @@ export default function App() {
           loadedDeck = data;
         }
       } catch (err) { dbg("Load error:", err); }
+      } // end !VELA_LOCAL_MODE
       // ━━━ Startup Patch: first run OR new version merge ━━━━━━━━━
       if (STARTUP_PATCH) {
         if (VELA_LOCAL_MODE) {
@@ -14673,9 +14693,12 @@ export default function App() {
   }, [state.lanes.length]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
+  // In LOCAL_MODE the file on disk is the source of truth (synced via
+  // __velaSendDeckUpdate). Skip localStorage saves to avoid stale data
+  // persisting across deck switches and app restarts.
   const saveTimer = useRef(null);
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!loaded.current || VELA_LOCAL_MODE) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
@@ -14783,6 +14806,11 @@ export default function App() {
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
   const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
   const slideCount = selectedConcept?.slides?.length || 0;
+
+  // Presentation mode: show nothing until deck is loaded and first module selected
+  if (VELA_PRESENTATION_MODE && (!state.selectedId || !state.lanes.length)) {
+    return <div style={{ width: "100vw", height: "100vh", background: T.bg }} />;
+  }
 
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
@@ -15023,9 +15051,9 @@ export default function App() {
           }
         }
       }} />}
-      <VelaBatteryTest />
-      <VelaUITestRunner />
-      <VelaDemoRunner />
+      {!VELA_PRESENTATION_MODE && <VelaBatteryTest />}
+      {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
+      {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
   );
 }

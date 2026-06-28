@@ -83,15 +83,48 @@ async function boot() {
     }
   });
 
-  setMsg("Choosing decks folder…");
+  // Check CLI args for a file path (double-click / file association).
+  // NL_ARGS: [binary, "--url=...", ...userArgs]. User args come after the
+  // Neutralino flags. We look for a .vela or .json path.
+  let cliFile = null;
   try {
-    await deckIO.init();
-  } catch (e) {
-    return showError("No folder selected. Relaunch Vela and pick a folder containing .vela decks.");
+    const args = typeof NL_ARGS !== "undefined" ? NL_ARGS : [];
+    for (const arg of args) {
+      if (/\.(vela|json)$/i.test(arg) && !arg.startsWith("--")) {
+        // Normalise to forward slashes for consistency with deck-io.
+        cliFile = arg.replace(/\\/g, "/");
+        break;
+      }
+    }
+    if (cliFile) {
+      // Register the file's containing folder as an allowed FS root BEFORE the
+      // guarded getStats below. fsGuard.install() ran with an empty root list,
+      // so without this the existence check throws and the file is silently
+      // dropped (the whole feature is dead). The user explicitly opened this
+      // file, so its folder is the trust root — same model as a folder-dialog
+      // pick; underRoot() still blocks "..". We only allow + probe here;
+      // initWithFile() commits state/persistence once existence is confirmed,
+      // so a missing file leaves the remembered folder untouched.
+      fsGuard.allow(cliFile.replace(/\/[^/]+$/, ""));
+      try { await Neutralino.filesystem.getStats(cliFile); }
+      catch { cliFile = null; } // missing / unreadable — fall through to picker
+    }
+  } catch { /* NL_ARGS unavailable — ignore */ }
+
+  if (cliFile) {
+    setMsg("Opening file…");
+    await deckIO.initWithFile(cliFile);
+  } else {
+    setMsg("Choosing decks folder…");
+    try {
+      await deckIO.init();
+    } catch (e) {
+      return showError("No folder selected. Relaunch Vela and pick a folder containing .vela decks.");
+    }
   }
 
   setMsg("Locating a deck…");
-  let deckPath = await deckIO.lastDeckPath();
+  let deckPath = cliFile || await deckIO.lastDeckPath();
   if (deckPath) {
     try { await Neutralino.filesystem.getStats(deckPath); }
     catch { deckPath = null; }

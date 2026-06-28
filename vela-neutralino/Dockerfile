@@ -1,64 +1,69 @@
-# Reproducible Neutralino release build for Vela desktop.
+# Reproducible Neutralino desktop build — mirrors .github/workflows/_build-desktop.yml.
 #
-# A single Linux build emits per-OS binaries: `neu build --release` bundles the
-# prebuilt Neutralino runtimes that `neu update` downloaded, so dist/vela/ ends
-# up with the win/linux/mac executables regardless of build host.
+# Produces the same single-file per-OS binaries CI ships, but locally via Docker
+# so a workstation needs neither Node/pnpm nor the `neu` CLI on PATH.
 #
-# Build context MUST be the repo root (this stage reads ../skills via the
-# checked-in tree), e.g.:
-#   docker build -f vela-neutralino/Dockerfile --target export \
-#     --output type=local,dest=vela-neutralino/dist-docker .
+# Run from the REPO ROOT (build context must include skills/ for concat + sync):
 #
-# The `export` target writes only dist/vela to the host — nothing is run as a
-# privileged container and no host paths are mounted.
+#   docker build -f vela-neutralino/Dockerfile -o type=local,dest=vela-neutralino/dist .
+#
+# Output lands in vela-neutralino/dist/:
+#   vela/vela-{linux_x64,linux_arm64,mac_x64,mac_arm64,mac_universal,win_x64.exe}
+#   vela-desktop-local-*.zip
+#
+# Versions pinned to match CI: Node 22, pnpm 9, Python 3, neu exact-pinned in package.json.
 
-# ── build stage ───────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS build
+# ── Build stage ────────────────────────────────────────────────────────────
+FROM node:22-bookworm AS build
 
-# Toolchain: python3 (concat/sync/verify), bash (build scripts), unzip (neu
-# update extracts runtime archives), ca-certificates (TLS for downloads).
+# python3 (concat/sync/verify scripts) + zip (packaging) + ca-certs (neu update).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      python3 bash unzip ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends python3 zip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+# pnpm 9 via corepack (must run as root before dropping privileges).
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
-# Install the `neu` CLI off-tree (mirrors scripts/setup.sh) so the project dir
-# stays free of node_modules and the parent pnpm workspace is ignored. Pin must
-# match vela-neutralino/package.json devDependencies["@neutralinojs/neu"].
-ENV NEU_TOOLS=/opt/neu-tools
-ENV PATH=$NEU_TOOLS/node_modules/.bin:$PATH
-COPY vela-neutralino/.npmrc $NEU_TOOLS/.npmrc
-RUN printf '%s\n' \
-      '{' \
-      '  "name": "vela-neutralino-tools",' \
-      '  "version": "0.0.0",' \
-      '  "private": true,' \
-      '  "devDependencies": { "@neutralinojs/neu": "11.7.1" }' \
-      '}' > $NEU_TOOLS/package.json \
- && cd $NEU_TOOLS \
- && CI=true pnpm install --ignore-scripts --ignore-workspace \
- && chmod -R a+rX $NEU_TOOLS
-
-# Non-root build user (node uid 1000 ships with the base image).
-WORKDIR /work
-COPY --chown=node:node . /work
+# Run the build as the unprivileged `node` user the base image ships (policy:
+# never build as root). Own the workdir so pnpm/neu/python can write into it.
+WORKDIR /repo
+COPY --chown=node:node . .
 USER node
 
-# 1. Rebuild the monolith from parts so resources track the latest source.
-# 2. neu update → bin/ runtime + client lib (network).
-# 3. verify-runtime → SHA256 pins must match the committed checksums.
-# 4. sync-vela → resources/vela.jsx.
-# 5. neu build → dist/vela/ per-OS, resources embedded.
-RUN python3 skills/vela-slides/scripts/concat.py \
- && cd vela-neutralino \
- && neu update \
- && python3 scripts/verify-runtime.py \
- && python3 scripts/sync-vela.py \
- && neu build --release --embed-resources
+# Install the exact-pinned neu CLI. Flags mirror CI:
+#   --ignore-workspace   repo root has pnpm-workspace.yaml we must not pull in
+#   --ignore-scripts     no lifecycle scripts (CLAUDE.md policy)
+#   --no-frozen-lockfile vela-neutralino has no checked-in lockfile
+RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
-# ── export stage ──────────────────────────────────────────────────────────
-# `--output type=local` copies just the artefacts to the host.
+# Regenerate the monolith from parts, then preprocess it for the Neutralino shell.
+RUN python3 skills/vela-slides/scripts/concat.py \
+    && python3 vela-neutralino/scripts/sync-vela.py
+
+# Fetch the pinned Neutralino runtime, verify it against committed SHA256 pins,
+# then build single-file binaries (--embed-resources injects resources.neu via
+# postject so each platform binary is self-contained).
+RUN cd vela-neutralino \
+    && ./node_modules/.bin/neu update \
+    && python3 scripts/verify-runtime.py \
+    && ./node_modules/.bin/neu build --release --embed-resources
+
+# Package per-OS ZIPs the same way CI does.
+RUN cd vela-neutralino/dist/vela \
+    && for entry in \
+        "linux_x64 vela-linux_x64" \
+        "linux_arm64 vela-linux_arm64" \
+        "mac_x64 vela-mac_x64" \
+        "mac_arm64 vela-mac_arm64" \
+        "mac_universal vela-mac_universal" \
+        "win_x64 vela-win_x64.exe"; do \
+        set -- $entry; \
+        zip -j "../vela-desktop-local-$1.zip" "$2"; \
+    done
+
+# ── Export stage ───────────────────────────────────────────────────────────
+# `docker build -o` copies just these artifacts to the host — no container runs,
+# nothing is mounted, host node_modules stays clean.
 FROM scratch AS export
-COPY --from=build /work/vela-neutralino/dist/ /
+COPY --from=build /repo/vela-neutralino/dist/vela/ /vela/
+COPY --from=build /repo/vela-neutralino/dist/vela-desktop-local-*.zip /
