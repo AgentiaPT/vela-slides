@@ -11,4 +11,4 @@ For the full security model, threat surface analysis, and bounty program, see **
 
 ## Bounty Program
 
-We offer symbolic bounties ($10-$50) for valid security findings. See [docs/SECURITY.md](docs/SECURITY.md#security-bounty-program) for tiers, rules, and scope.
+We offer symbolic bounties ($10-$100) for valid security findings. See [docs/SECURITY.md](docs/SECURITY.md#security-bounty-program) for tiers, rules, and scope.
