@@ -332,8 +332,21 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _check_host(self):
         """DNS rebinding protection: reject requests from non-localhost Host."""
-        host = (self.headers.get("Host") or "").split(":")[0].strip()
-        if host and host not in ALLOWED_HOSTS:
+        raw = (self.headers.get("Host") or "").strip()
+        # Parse the hostname while preserving a bracketed IPv6 literal and its
+        # brackets (so "[::1]:port" matches the "[::1]" entry in ALLOWED_HOSTS
+        # instead of collapsing to "[" under a naive split on ":"); for ordinary
+        # host:port forms, drop the :port suffix. Compare case-insensitively.
+        if raw.startswith("["):
+            host = raw[:raw.index("]") + 1] if "]" in raw else raw
+        else:
+            host = raw.split(":")[0]
+        host = host.strip().lower()
+        # Reject a missing/empty Host too: a real browser always sends one, so an
+        # empty Host can only come from a hand-crafted client (which gains nothing
+        # cross-origin here), and rejecting it closes the falsy-host gap in the
+        # DNS-rebind guard. (v12.71)
+        if host not in ALLOWED_HOSTS:
             self.send_error(403, "Forbidden: invalid Host header")
             return False
         return True
