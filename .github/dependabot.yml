@@ -10,6 +10,15 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Supply-chain "cooldown": don't open a PR until a release has been public
+    # for N days, so a compromised/yanked version is caught upstream before it
+    # ever reaches us. Larger jumps wait longer. Security (CVE) updates are
+    # exempt and still open immediately.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
     groups:
       dev-minor-patch:
         dependency-type: "development"
@@ -28,6 +37,11 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Same supply-chain cooldown for Actions: wait out the window in which a
+    # poisoned tag/release is typically detected and pulled. Security updates
+    # are exempt.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "github-actions"
