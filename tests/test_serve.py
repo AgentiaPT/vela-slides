@@ -469,6 +469,12 @@ class TestSecurity(FolderServerTestBase):
                              headers={"Host": "rebind.attacker.com:3030"})
         self.assertEqual(status, 403)
 
+    def test_empty_host_rejected(self):
+        """An empty/missing Host header is rejected (v12.70: closes the
+        falsy-host gap in the DNS-rebind guard; a real browser always sends one)."""
+        status, _, _ = fetch(self._port, "GET", "/", headers={"Host": ""})
+        self.assertEqual(status, 403)
+
     # -- Path traversal on /deck/ --
 
     def test_deck_dotdot_400(self):
