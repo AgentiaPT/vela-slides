@@ -69,6 +69,7 @@ const w = dom.window;
 const sandbox = {
   DOMParser: w.DOMParser, document: w.document, window: w, URL: w.URL,
   crypto: w.crypto || { randomUUID: () => "x".repeat(8) }, Image: w.Image, console,
+  VELA_PRESENTATION_MODE: false,
   module: { exports: {} },
 };
 vm.createContext(sandbox);
