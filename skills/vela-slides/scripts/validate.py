@@ -37,8 +37,9 @@ def validate(path):
             else:
                 with open(real_path, 'w', encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False)
-        except ImportError:
-            pass
+        except ImportError as e:
+            print(f"WARNING: could not expand compact/turbo deck ({e}); "
+                  f"validating the un-expanded form", file=sys.stderr)
 
     errors = []
     warnings = []
