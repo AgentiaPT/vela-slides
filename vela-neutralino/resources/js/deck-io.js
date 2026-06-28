@@ -172,8 +172,16 @@ export const deckIO = {
     return folder;
   },
   async initWithFile(filePath) {
-    // Derive folder from file path and store it so the picker works.
+    // Derive folder from file path and store it so the picker works. The user
+    // explicitly opened this file (double-click / file association / CLI arg),
+    // so its containing folder is the trust root — register it with fsGuard
+    // exactly as pickFolder() does for a dialog choice. Without this every
+    // subsequent guarded op (getStats, openDeck/readFile, listDecks, the
+    // watcher) is blocked because fsGuard.install() ran with an empty root
+    // list. underRoot() still rejects any ".." traversal, so the blast radius
+    // stays this one folder.
     const folder = filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+    fsGuard.allow(folder);
     state.folder = folder;
     await Neutralino.storage.setData(FOLDER_KEY, folder);
   },

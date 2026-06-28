@@ -97,8 +97,17 @@ async function boot() {
       }
     }
     if (cliFile) {
+      // Register the file's containing folder as an allowed FS root BEFORE the
+      // guarded getStats below. fsGuard.install() ran with an empty root list,
+      // so without this the existence check throws and the file is silently
+      // dropped (the whole feature is dead). The user explicitly opened this
+      // file, so its folder is the trust root — same model as a folder-dialog
+      // pick; underRoot() still blocks "..". We only allow + probe here;
+      // initWithFile() commits state/persistence once existence is confirmed,
+      // so a missing file leaves the remembered folder untouched.
+      fsGuard.allow(cliFile.replace(/\/[^/]+$/, ""));
       try { await Neutralino.filesystem.getStats(cliFile); }
-      catch { cliFile = null; } // file doesn't exist — fall through
+      catch { cliFile = null; } // missing / unreadable — fall through to picker
     }
   } catch { /* NL_ARGS unavailable — ignore */ }
 

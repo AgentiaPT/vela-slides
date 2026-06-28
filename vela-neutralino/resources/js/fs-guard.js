@@ -22,6 +22,17 @@ function norm(p) {
   return String(p == null ? "" : p).replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+// A normalized path with no segment beyond the volume root would grant an
+// entire drive/volume if registered as a root. POSIX "/" already normalizes
+// to "" (and is rejected by the empty check); this also catches a bare Windows
+// drive spec ("C:", "z:") and a UNC host with no share ("//server"). Real
+// decks and ~/.vela always live in a nested folder, so refusing these costs
+// nothing and stops either entry point (folder dialog or direct file open)
+// from ever widening the guard to a whole volume.
+function isVolumeRoot(n) {
+  return n === "" || /^[a-zA-Z]:$/.test(n) || /^\/\/[^/]+$/.test(n);
+}
+
 function underRoot(p) {
   const n = norm(p);
   if (!n) return false;
@@ -47,10 +58,17 @@ const ARG0 = [
 const ARG01 = ["move", "copy"];
 
 export const fsGuard = {
-  // Register an absolute directory as an allowed root. Idempotent.
+  // Register an absolute directory as an allowed root. Idempotent. Refuses a
+  // whole-volume root (see isVolumeRoot) so the guard can never be widened to a
+  // full drive — the caller then fails closed (its later reads/writes are
+  // blocked) rather than fanning out across the volume.
   allow(root) {
     const n = norm(root);
-    if (n && !roots.includes(n)) roots.push(n);
+    if (isVolumeRoot(n)) {
+      if (n) console.warn(`[fs-guard] refusing whole-volume root: ${n}`);
+      return;
+    }
+    if (!roots.includes(n)) roots.push(n);
   },
   roots() { return [...roots]; },
   // Wrap Neutralino.filesystem.* in place. Idempotent and safe to call before

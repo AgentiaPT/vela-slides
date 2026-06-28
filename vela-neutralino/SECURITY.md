@@ -68,9 +68,12 @@ acknowledgment before the deck mounts.
    path argument(s) must resolve inside an explicitly-allowed root. Only
    two roots are ever registered:
 
-   - The **user's decks folder** — registered by `deck-io.js` after the
-     user picks it via `os.showFolderDialog`. **This is the only location
-     deck saves can write to.** All in-app edits flow through
+   - The **user's decks folder** — registered by `deck-io.js` when the user
+     picks it via `os.showFolderDialog`, **or** when the user opens a specific
+     deck file directly (double-click / file association / CLI argument), in
+     which case the file's containing folder becomes the root. Both are
+     explicit user choices, so the trust model is identical. **This is the
+     only location deck saves can write to.** All in-app edits flow through
      `deckIO.saveCurrent` → `Neutralino.filesystem.writeFile` with a path
      under this root.
    - **`~/.vela`** — registered by `config-store.js` for the global app
@@ -78,7 +81,11 @@ acknowledgment before the deck mounts.
      (`<folder>/.vela/trust.json`). Holds no deck content.
 
    Traversal (`..`) segments and prefix-sibling paths (`/Decks` vs
-   `/DecksEvil`) are rejected. Re-audit allowed roots with:
+   `/DecksEvil`) are rejected. `fsGuard.allow` additionally refuses a
+   whole-volume root (a bare drive `C:`, POSIX `/`, or a share-less UNC host
+   `//server`), so neither the folder dialog nor the direct file-open path can
+   ever widen the guard to an entire drive — the caller fails closed instead.
+   Re-audit allowed roots with:
    ```
    grep -n "fsGuard.allow" resources/js/*.js
    ```
