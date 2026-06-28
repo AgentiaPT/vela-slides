@@ -2,11 +2,18 @@
   "deckTitle": "Q1 2026 — Product & Engineering Review",
   "lanes": [
     {
+      "id": "bcb1e403",
       "title": "Business Review",
+      "collapsed": false,
       "items": [
         {
+          "id": "0073fd5b",
           "title": "Q1 Overview",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Title",
@@ -18,19 +25,51 @@
               "duration": 60,
               "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "CONFIDENTIAL", "icon": "Lock", "color": "#c4b5fd", "bg": "#a78bfa20", "border": "#a78bfa50" },
-                { "type": "spacer", "h": 12 },
-                { "type": "heading", "text": "Q1 2026 Review", "size": "3xl", "weight": "bold" },
-                { "type": "text", "text": "Product & Engineering — Quarterly Business Review", "size": "lg", "color": "#a5b4fc" },
-                { "type": "spacer", "h": 20 },
+                {
+                  "type": "badge",
+                  "text": "CONFIDENTIAL",
+                  "icon": "Lock",
+                  "color": "#c4b5fd",
+                  "bg": "#a78bfa20",
+                  "border": "#a78bfa50"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "heading",
+                  "text": "Q1 2026 Review",
+                  "size": "3xl",
+                  "weight": "bold"
+                },
+                {
+                  "type": "text",
+                  "text": "Product & Engineering — Quarterly Business Review",
+                  "size": "lg",
+                  "color": "#a5b4fc"
+                },
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
                 {
                   "type": "icon-row",
                   "iconColor": "#c4b5fd",
                   "iconBg": "#a78bfa20",
                   "items": [
-                    { "icon": "Rocket", "text": "12 Releases" },
-                    { "icon": "Server", "text": "99.7% Uptime" },
-                    { "icon": "TrendingUp", "text": "+18% ARR" }
+                    {
+                      "icon": "Rocket",
+                      "text": "12 Releases"
+                    },
+                    {
+                      "icon": "Server",
+                      "text": "99.7% Uptime"
+                    },
+                    {
+                      "icon": "TrendingUp",
+                      "text": "+18% ARR"
+                    }
                   ]
                 }
               ]
@@ -43,19 +82,38 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Key Metrics", "size": "lg" },
+                {
+                  "type": "heading",
+                  "text": "Key Metrics",
+                  "size": "lg"
+                },
                 {
                   "type": "number-row",
                   "items": [
-                    { "value": "$4.2M", "label": "Annual Recurring Revenue", "icon": "DollarSign", "color": "#a78bfa" },
-                    { "value": "52K", "label": "Monthly Active Users", "icon": "Users", "color": "#818cf8" },
-                    { "value": "72", "label": "Net Promoter Score", "icon": "ThumbsUp", "color": "#34d399" }
+                    {
+                      "value": "$4.2M",
+                      "label": "Annual Recurring Revenue",
+                      "icon": "DollarSign",
+                      "color": "#a78bfa"
+                    },
+                    {
+                      "value": "52K",
+                      "label": "Monthly Active Users",
+                      "icon": "Users",
+                      "color": "#818cf8"
+                    },
+                    {
+                      "value": "72",
+                      "label": "Net Promoter Score",
+                      "icon": "ThumbsUp",
+                      "color": "#34d399"
+                    }
                   ]
                 },
                 {
                   "type": "progress",
                   "label": "OKR Completion — Q1 2026",
-                  "value": 78,
+                  "value": "78",
                   "max": 100
                 }
               ]
@@ -68,14 +126,34 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Roadmap Progress", "size": "lg" },
+                {
+                  "type": "heading",
+                  "text": "Roadmap Progress",
+                  "size": "lg"
+                },
                 {
                   "type": "timeline",
                   "items": [
-                    { "date": "Jan 15", "title": "v3.0 Platform Launch", "text": "New API gateway and dashboard shipped to GA" },
-                    { "date": "Feb 3", "title": "SSO & RBAC", "text": "Enterprise auth rolled out to all paid tiers" },
-                    { "date": "Feb 28", "title": "Mobile SDK Beta", "text": "iOS and Android SDKs released to design partners" },
-                    { "date": "Mar 20", "title": "Data Pipeline v2", "text": "Real-time analytics pipeline in staging" }
+                    {
+                      "date": "Jan 15",
+                      "title": "v3.0 Platform Launch",
+                      "text": "New API gateway and dashboard shipped to GA"
+                    },
+                    {
+                      "date": "Feb 3",
+                      "title": "SSO & RBAC",
+                      "text": "Enterprise auth rolled out to all paid tiers"
+                    },
+                    {
+                      "date": "Feb 28",
+                      "title": "Mobile SDK Beta",
+                      "text": "iOS and Android SDKs released to design partners"
+                    },
+                    {
+                      "date": "Mar 20",
+                      "title": "Data Pipeline v2",
+                      "text": "Real-time analytics pipeline in staging"
+                    }
                   ]
                 },
                 {
@@ -119,35 +197,82 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Team & Resources", "size": "lg" },
+                {
+                  "type": "heading",
+                  "text": "Team & Resources",
+                  "size": "lg"
+                },
                 {
                   "type": "grid",
                   "columns": 2,
                   "gap": 16,
                   "items": [
-                    { "blocks": [
-                      {
-                        "type": "table",
-                        "headers": ["Team", "HC", "Velocity", "Status"],
-                        "rows": [
-                          ["Platform", "14", "68 pts", "On Track"],
-                          ["Growth", "8", "42 pts", "On Track"],
-                          ["Mobile", "6", "31 pts", "At Risk"],
-                          ["Data / ML", "5", "24 pts", "Behind"]
-                        ]
-                      }
-                    ]},
-                    { "blocks": [
-                      {
-                        "type": "funnel",
-                        "items": [
-                          { "label": "Leads", "value": "3,200" },
-                          { "label": "Qualified", "value": "1,100" },
-                          { "label": "Trial", "value": "420", "drop": "−62%" },
-                          { "label": "Paid", "value": "86", "highlight": true }
-                        ]
-                      }
-                    ]}
+                    {
+                      "blocks": [
+                        {
+                          "type": "table",
+                          "headers": [
+                            "Team",
+                            "HC",
+                            "Velocity",
+                            "Status"
+                          ],
+                          "rows": [
+                            [
+                              "Platform",
+                              "14",
+                              "68 pts",
+                              "On Track"
+                            ],
+                            [
+                              "Growth",
+                              "8",
+                              "42 pts",
+                              "On Track"
+                            ],
+                            [
+                              "Mobile",
+                              "6",
+                              "31 pts",
+                              "At Risk"
+                            ],
+                            [
+                              "Data / ML",
+                              "5",
+                              "24 pts",
+                              "Behind"
+                            ]
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "funnel",
+                          "items": [
+                            {
+                              "label": "Leads",
+                              "value": "3,200"
+                            },
+                            {
+                              "label": "Qualified",
+                              "value": "1,100"
+                            },
+                            {
+                              "label": "Trial",
+                              "value": "420",
+                              "drop": "−62%"
+                            },
+                            {
+                              "label": "Paid",
+                              "value": "86",
+                              "highlight": true
+                            }
+                          ]
+                        }
+                      ]
+                    }
                   ]
                 },
                 {
@@ -156,12 +281,17 @@
                     {
                       "title": "On Track + Full Staff",
                       "color": "#818cf8",
-                      "items": ["Platform (14 HC, 68 pts)", "Growth (8 HC, 42 pts)"]
+                      "items": [
+                        "Platform (14 HC, 68 pts)",
+                        "Growth (8 HC, 42 pts)"
+                      ]
                     },
                     {
                       "title": "At Risk + Full Staff",
                       "color": "#f87171",
-                      "items": ["Mobile (6 HC, 31 pts)"]
+                      "items": [
+                        "Mobile (6 HC, 31 pts)"
+                      ]
                     },
                     {
                       "title": "On Track + Understaffed",
@@ -171,7 +301,9 @@
                     {
                       "title": "Behind + Understaffed",
                       "color": "#f87171",
-                      "items": ["Data/ML (5 HC, 24 pts)"]
+                      "items": [
+                        "Data/ML (5 HC, 24 pts)"
+                      ]
                     }
                   ],
                   "xLeft": "ON TRACK",
@@ -194,23 +326,51 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Q2 Priorities", "size": "lg" },
+                {
+                  "type": "heading",
+                  "text": "Q2 Priorities",
+                  "size": "lg"
+                },
                 {
                   "type": "steps",
                   "items": [
-                    { "title": "Ship Data Pipeline v2 to GA", "text": "Complete migration, onboard top-10 accounts by April 30" },
-                    { "title": "Launch Self-Serve Enterprise Tier", "text": "Automated provisioning, billing integration, SOC 2 compliance" },
-                    { "title": "Expand Mobile to Android GA", "text": "Feature parity with iOS, target 5K beta users by end of Q2" }
+                    {
+                      "title": "Ship Data Pipeline v2 to GA",
+                      "text": "Complete migration, onboard top-10 accounts by April 30"
+                    },
+                    {
+                      "title": "Launch Self-Serve Enterprise Tier",
+                      "text": "Automated provisioning, billing integration, SOC 2 compliance"
+                    },
+                    {
+                      "title": "Expand Mobile to Android GA",
+                      "text": "Feature parity with iOS, target 5K beta users by end of Q2"
+                    }
                   ]
                 },
                 {
                   "type": "checklist",
                   "items": [
-                    { "text": "Ship Data Pipeline v2 to GA", "status": "partial" },
-                    { "text": "Launch Self-Serve Enterprise Tier", "status": "pending" },
-                    { "text": "Expand Mobile to Android GA", "status": "pending" },
-                    { "text": "Kafka vendor contract renewal (May 1)", "status": "blocked" },
-                    { "text": "SOC 2 audit — depends on infra remediation", "status": "pending" }
+                    {
+                      "text": "Ship Data Pipeline v2 to GA",
+                      "status": "partial"
+                    },
+                    {
+                      "text": "Launch Self-Serve Enterprise Tier",
+                      "status": "pending"
+                    },
+                    {
+                      "text": "Expand Mobile to Android GA",
+                      "status": "pending"
+                    },
+                    {
+                      "text": "Kafka vendor contract renewal (May 1)",
+                      "status": "blocked"
+                    },
+                    {
+                      "text": "SOC 2 audit — depends on infra remediation",
+                      "status": "pending"
+                    }
                   ],
                   "showLabels": true
                 },
@@ -221,9 +381,34 @@
                 }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:24.399Z"
         }
       ]
+    },
+    {
+      "id": "47a52e73",
+      "title": "Main",
+      "collapsed": false,
+      "items": []
     }
-  ]
+  ],
+  "branding": {
+    "enabled": false,
+    "accentBar": true,
+    "accentColor": "#3B82F6",
+    "accentHeight": 4,
+    "logo": null,
+    "logoPosition": "top-left",
+    "logoSize": 56,
+    "footerLeft": "",
+    "footerCenter": "",
+    "footerRight": "auto",
+    "footerBg": "rgba(0,0,0,0.35)",
+    "footerColor": "#94a3b8",
+    "footerSize": 9,
+    "imgMaxWidth": 600,
+    "imgQuality": 0.45
+  },
+  "guidelines": ""
 }

@@ -2,11 +2,18 @@
   "deckTitle": "Building Resilient APIs with Edge Computing",
   "lanes": [
     {
+      "id": "ff9e9def",
       "title": "Main Talk",
+      "collapsed": false,
       "items": [
         {
+          "id": "9af73e65",
           "title": "Introduction",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Title",
@@ -19,24 +26,69 @@
               "align": "left",
               "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "TECHCONF 2026", "icon": "Radio", "color": "#0c4a6e", "bg": "#22d3ee", "border": "#22d3ee" },
-                { "type": "spacer", "h": 16 },
-                { "type": "heading", "text": "Building Resilient APIs with Edge Computing", "size": "3xl" },
-                { "type": "spacer", "h": 8 },
-                { "type": "text", "text": "Sarah Chen — Principal Engineer, Cloudfront Systems", "size": "lg", "color": "#a5f3fc" },
-                { "type": "spacer", "h": 24 },
-                { "type": "icon-row", "iconColor": "#67e8f9", "iconBg": "#22d3ee25", "items": [
-                  { "icon": "Clock", "text": "45 min" },
-                  { "icon": "Signal", "text": "Intermediate" },
-                  { "icon": "Play", "text": "Live Demo" }
-                ]}
+                {
+                  "type": "badge",
+                  "text": "TECHCONF 2026",
+                  "icon": "Radio",
+                  "color": "#0c4a6e",
+                  "bg": "#22d3ee",
+                  "border": "#22d3ee"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "heading",
+                  "text": "Building Resilient APIs with Edge Computing",
+                  "size": "3xl"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "text",
+                  "text": "Sarah Chen — Principal Engineer, Cloudfront Systems",
+                  "size": "lg",
+                  "color": "#a5f3fc"
+                },
+                {
+                  "type": "spacer",
+                  "h": 24
+                },
+                {
+                  "type": "icon-row",
+                  "iconColor": "#67e8f9",
+                  "iconBg": "#22d3ee25",
+                  "items": [
+                    {
+                      "icon": "Clock",
+                      "text": "45 min"
+                    },
+                    {
+                      "icon": "Signal",
+                      "text": "Intermediate"
+                    },
+                    {
+                      "icon": "Play",
+                      "text": "Live Demo"
+                    }
+                  ]
+                }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:11.742Z"
         },
         {
+          "id": "5615eb27",
           "title": "Architecture",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "The Architecture",
@@ -47,41 +99,99 @@
               "padding": "36px 48px",
               "duration": 90,
               "blocks": [
-                { "type": "heading", "text": "Edge-First Request Architecture", "size": "2xl", "icon": "Network" },
-                { "type": "spacer", "h": 8 },
                 {
-                  "type": "grid", "columns": 2, "gap": 16, "items": [
-                    { "blocks": [
-                      { "type": "flow", "items": [
-                        { "icon": "Smartphone", "text": "Client" },
-                        { "icon": "Server", "text": "Edge Node" },
-                        { "icon": "Database", "text": "Cache / Origin" },
-                        { "icon": "ArrowLeft", "text": "Response" }
-                      ], "connector": "arrow" }
-                    ]},
-                    { "blocks": [
-                      {
-                        "type": "cycle",
-                        "items": [
-                          { "label": "Request", "icon": "📡" },
-                          { "label": "Cache", "icon": "💾" },
-                          { "label": "Validate", "icon": "✅" },
-                          { "label": "Replicate", "icon": "🔄" }
-                        ],
-                        "centerLabel": "Edge"
-                      }
-                    ]}
+                  "type": "heading",
+                  "text": "Edge-First Request Architecture",
+                  "size": "2xl",
+                  "icon": "Network"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "flow",
+                          "items": [
+                            {
+                              "icon": "Smartphone",
+                              "text": "Client"
+                            },
+                            {
+                              "icon": "Server",
+                              "text": "Edge Node"
+                            },
+                            {
+                              "icon": "Database",
+                              "text": "Cache / Origin"
+                            },
+                            {
+                              "icon": "ArrowLeft",
+                              "text": "Response"
+                            }
+                          ],
+                          "connector": "arrow"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "cycle",
+                          "items": [
+                            {
+                              "label": "Request",
+                              "icon": "📡"
+                            },
+                            {
+                              "label": "Cache",
+                              "icon": "💾"
+                            },
+                            {
+                              "label": "Validate",
+                              "icon": "✅"
+                            },
+                            {
+                              "label": "Replicate",
+                              "icon": "🔄"
+                            }
+                          ],
+                          "centerLabel": "Edge"
+                        }
+                      ]
+                    }
                   ]
                 },
-                { "type": "spacer", "h": 8 },
-                { "type": "callout", "text": "Edge nodes intercept requests within 50ms of the user. Cache hits bypass origin entirely — reducing P99 latency from 820ms to 47ms in production.", "icon": "Zap", "bg": "#06b6d415", "border": "#06b6d440" }
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "callout",
+                  "text": "Edge nodes intercept requests within 50ms of the user. Cache hits bypass origin entirely — reducing P99 latency from 820ms to 47ms in production.",
+                  "icon": "Zap",
+                  "bg": "#06b6d415",
+                  "border": "#06b6d440"
+                }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:11.742Z"
         },
         {
+          "id": "7e474243",
           "title": "Implementation",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Code Example",
@@ -92,18 +202,44 @@
               "padding": "36px 48px",
               "duration": 90,
               "blocks": [
-                { "type": "heading", "text": "Edge Function Handler", "size": "2xl", "icon": "Code" },
-                { "type": "spacer", "h": 8 },
-                { "type": "code", "language": "typescript", "text": "export default async function handler(req: Request) {\n  const cacheKey = `edge:${req.url}`;\n  const cached = await kv.get(cacheKey);\n\n  if (cached && !isStale(cached.timestamp)) {\n    return new Response(cached.body, {\n      headers: { 'X-Edge-Cache': 'HIT' }\n    });\n  }\n\n  const origin = await fetch(req.url, { cf: { cacheTtl: 300 } });\n  await kv.put(cacheKey, await origin.clone().text());\n  return origin;\n}" },
-                { "type": "spacer", "h": 8 },
-                { "type": "text", "text": "Each edge function runs in an isolated V8 runtime with <5ms cold start. The KV store replicates across all 280+ edge locations within seconds.", "size": "md", "color": "#94a3b8" }
+                {
+                  "type": "heading",
+                  "text": "Edge Function Handler",
+                  "size": "2xl",
+                  "icon": "Code"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "code",
+                  "language": "typescript",
+                  "text": "export default async function handler(req: Request) {\n  const cacheKey = `edge:${req.url}`;\n  const cached = await kv.get(cacheKey);\n\n  if (cached && !isStale(cached.timestamp)) {\n    return new Response(cached.body, {\n      headers: { 'X-Edge-Cache': 'HIT' }\n    });\n  }\n\n  const origin = await fetch(req.url, { cf: { cacheTtl: 300 } });\n  await kv.put(cacheKey, await origin.clone().text());\n  return origin;\n}"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "text",
+                  "text": "Each edge function runs in an isolated V8 runtime with <5ms cold start. The KV store replicates across all 280+ edge locations within seconds.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:11.742Z"
         },
         {
+          "id": "1a3d46a6",
           "title": "Results",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Benchmarks",
@@ -114,40 +250,115 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Performance Benchmarks", "size": "2xl", "icon": "BarChart3" },
-                { "type": "spacer", "h": 8 },
-                { "type": "table", "headers": ["Metric", "Origin-Only", "Edge-First", "Improvement"],
+                {
+                  "type": "heading",
+                  "text": "Performance Benchmarks",
+                  "size": "2xl",
+                  "icon": "BarChart3"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "table",
+                  "headers": [
+                    "Metric",
+                    "Origin-Only",
+                    "Edge-First",
+                    "Improvement"
+                  ],
                   "rows": [
-                    ["P99 Latency", "820 ms", "47 ms", "94% faster"],
-                    ["Throughput", "1.2K rps", "18K rps", "15x higher"],
-                    ["Error Rate", "0.8%", "0.02%", "40x lower"]
+                    [
+                      "P99 Latency",
+                      "820 ms",
+                      "47 ms",
+                      "94% faster"
+                    ],
+                    [
+                      "Throughput",
+                      "1.2K rps",
+                      "18K rps",
+                      "15x higher"
+                    ],
+                    [
+                      "Error Rate",
+                      "0.8%",
+                      "0.02%",
+                      "40x lower"
+                    ]
                   ]
                 },
-                { "type": "spacer", "h": 12 },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
                 {
                   "type": "number-row",
                   "items": [
-                    { "value": "47ms", "label": "P99 Latency", "icon": "Timer", "color": "#22d3ee" },
-                    { "value": "99.98%", "label": "Availability", "icon": "Shield", "color": "#06b6d4" },
-                    { "value": "280+", "label": "Edge Locations", "icon": "Globe", "color": "#22d3ee" }
+                    {
+                      "value": "47ms",
+                      "label": "P99 Latency",
+                      "icon": "Timer",
+                      "color": "#22d3ee"
+                    },
+                    {
+                      "value": "99.98%",
+                      "label": "Availability",
+                      "icon": "Shield",
+                      "color": "#06b6d4"
+                    },
+                    {
+                      "value": "280+",
+                      "label": "Edge Locations",
+                      "icon": "Globe",
+                      "color": "#22d3ee"
+                    }
                   ]
                 },
-                { "type": "spacer", "h": 12 },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
                 {
                   "type": "comparison",
                   "items": [
-                    { "title": "Origin-Only", "icon": "Server", "color": "#94a3b8", "items": ["P99: 820ms", "1.2K rps", "0.8% errors"] },
-                    { "title": "Edge-First", "icon": "Zap", "color": "#22d3ee", "items": ["P99: 47ms", "18K rps", "0.02% errors"] }
+                    {
+                      "title": "Origin-Only",
+                      "icon": "Server",
+                      "color": "#94a3b8",
+                      "items": [
+                        "P99: 820ms",
+                        "1.2K rps",
+                        "0.8% errors"
+                      ]
+                    },
+                    {
+                      "title": "Edge-First",
+                      "icon": "Zap",
+                      "color": "#22d3ee",
+                      "items": [
+                        "P99: 47ms",
+                        "18K rps",
+                        "0.02% errors"
+                      ]
+                    }
                   ],
                   "dividerLabel": "VS"
                 }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:11.742Z"
         },
         {
+          "id": "0c11716b",
           "title": "Closing",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Key Takeaways",
@@ -158,41 +369,142 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Key Takeaways", "size": "2xl", "icon": "Lightbulb" },
-                { "type": "spacer", "h": 8 },
+                {
+                  "type": "heading",
+                  "text": "Key Takeaways",
+                  "size": "2xl",
+                  "icon": "Lightbulb"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
                 {
                   "type": "checklist",
                   "items": [
-                    { "text": "Edge computing eliminates the latency tax — serve from where your users are", "status": "done" },
-                    { "text": "Cache-first architecture reduces origin load by 90%+ and improves resilience", "status": "done" },
-                    { "text": "Isolated V8 runtimes give you full programmability without cold start penalties", "status": "done" },
-                    { "text": "Graceful fallback patterns ensure availability even when origin is unreachable", "status": "partial" }
+                    {
+                      "text": "Edge computing eliminates the latency tax — serve from where your users are",
+                      "status": "done"
+                    },
+                    {
+                      "text": "Cache-first architecture reduces origin load by 90%+ and improves resilience",
+                      "status": "done"
+                    },
+                    {
+                      "text": "Isolated V8 runtimes give you full programmability without cold start penalties",
+                      "status": "done"
+                    },
+                    {
+                      "text": "Graceful fallback patterns ensure availability even when origin is unreachable",
+                      "status": "partial"
+                    }
                   ],
                   "showLabels": true
                 },
-                { "type": "spacer", "h": 12 },
-                { "type": "steps", "items": [
-                  { "title": "Identify Hot Paths", "text": "Profile your API to find cacheable, latency-sensitive endpoints" },
-                  { "title": "Deploy Edge Functions", "text": "Start with read-heavy routes — cache invalidation is simpler there" },
-                  { "title": "Measure and Iterate", "text": "Track cache hit rates, tail latencies, and error budgets per region" }
-                ]},
-                { "type": "spacer", "h": 10 },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Identify Hot Paths",
+                      "text": "Profile your API to find cacheable, latency-sensitive endpoints"
+                    },
+                    {
+                      "title": "Deploy Edge Functions",
+                      "text": "Start with read-heavy routes — cache invalidation is simpler there"
+                    },
+                    {
+                      "title": "Measure and Iterate",
+                      "text": "Track cache hit rates, tail latencies, and error budgets per region"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
                 {
                   "type": "matrix",
                   "quadrants": [
-                    { "title": "Design", "color": "#22d3ee", "items": ["Cache-first architecture", "Edge eliminates latency"] },
-                    { "title": "Implementation", "color": "#06b6d4", "items": ["Isolated V8 runtimes", "Graceful fallback patterns"] },
-                    { "title": "Operations", "color": "#22d3ee", "items": ["Multi-region deploy", "Real-time monitoring"] },
-                    { "title": "Trade-offs", "color": "#94a3b8", "items": ["Consistency challenges", "Debug complexity"] }
+                    {
+                      "title": "Design",
+                      "color": "#22d3ee",
+                      "items": [
+                        "Cache-first architecture",
+                        "Edge eliminates latency"
+                      ]
+                    },
+                    {
+                      "title": "Implementation",
+                      "color": "#06b6d4",
+                      "items": [
+                        "Isolated V8 runtimes",
+                        "Graceful fallback patterns"
+                      ]
+                    },
+                    {
+                      "title": "Operations",
+                      "color": "#22d3ee",
+                      "items": [
+                        "Multi-region deploy",
+                        "Real-time monitoring"
+                      ]
+                    },
+                    {
+                      "title": "Trade-offs",
+                      "color": "#94a3b8",
+                      "items": [
+                        "Consistency challenges",
+                        "Debug complexity"
+                      ]
+                    }
                   ]
                 },
-                { "type": "spacer", "h": 10 },
-                { "type": "badge", "text": "github.com/example/edge-api", "icon": "Github", "color": "#22d3ee", "bg": "#22d3ee15", "border": "#22d3ee40" }
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "badge",
+                  "text": "github.com/example/edge-api",
+                  "icon": "Github",
+                  "color": "#22d3ee",
+                  "bg": "#22d3ee15",
+                  "border": "#22d3ee40"
+                }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:11.742Z"
         }
       ]
+    },
+    {
+      "id": "0b5f9847",
+      "title": "Main",
+      "collapsed": false,
+      "items": []
     }
-  ]
+  ],
+  "branding": {
+    "enabled": false,
+    "accentBar": true,
+    "accentColor": "#3B82F6",
+    "accentHeight": 4,
+    "logo": null,
+    "logoPosition": "top-left",
+    "logoSize": 56,
+    "footerLeft": "",
+    "footerCenter": "",
+    "footerRight": "auto",
+    "footerBg": "rgba(0,0,0,0.35)",
+    "footerColor": "#94a3b8",
+    "footerSize": 9,
+    "imgMaxWidth": 600,
+    "imgQuality": 0.45
+  },
+  "guidelines": ""
 }

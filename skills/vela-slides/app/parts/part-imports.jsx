@@ -20,6 +20,7 @@ const __DEBUG = false;
 const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
+const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer (agentia-learn)
 
 // ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
@@ -586,7 +587,7 @@ function validateAndSanitizeDeck(raw) {
     imgQuality: typeof rawBranding.imgQuality === "number" ? Math.max(0.15, Math.min(rawBranding.imgQuality, 0.85)) : 0.45,
   };
   const importedGuidelines = typeof raw.guidelines === "string" ? raw.guidelines.slice(0, 2000) : "";
-  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
+  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };
 }

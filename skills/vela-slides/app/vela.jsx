@@ -20,6 +20,7 @@ const __DEBUG = false;
 const dbg = __DEBUG ? console.log.bind(console) : () => {};
 const VELA_LOCAL_MODE = false; // overridden to true by serve.py for local preview
 const VELA_CHANNEL_PORT = 0; // overridden by serve.py with channel server port
+const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer (agentia-learn)
 
 // ━━━ AI Capability Detection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Centralized flag: true when an AI backend is reachable (artifact proxy or channel).
@@ -586,7 +587,7 @@ function validateAndSanitizeDeck(raw) {
     imgQuality: typeof rawBranding.imgQuality === "number" ? Math.max(0.15, Math.min(rawBranding.imgQuality, 0.85)) : 0.45,
   };
   const importedGuidelines = typeof raw.guidelines === "string" ? raw.guidelines.slice(0, 2000) : "";
-  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: false, chatOpen: false,
+  return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
     chatLoading: false, lastDebug: "", branding: importedBranding };
 }
@@ -2465,7 +2466,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
 
 const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
@@ -13682,11 +13683,18 @@ export default function App() {
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
-    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;
+    // Always cancel pending sync-out timers first — a stale timer captures
+    // the OLD deck via closure and would write it to the NEW file path after
+    // a deck switch (the _localSyncIncoming guard skips setting a new timer
+    // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;
     localSyncTimer.current = setTimeout(() => {
       if (window.__velaSendDeckUpdate) {
         const save = extractSave(state);
+        // Safety: never write an empty deck to disk — this would wipe a real file.
+        const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
+        if (!save.lanes?.length || !totalSlides) return;
         delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
         delete save.lastDebug; delete save._bootstrap; delete save._version;
         window.__velaSendDeckUpdate({ deckTitle: state.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
@@ -13715,6 +13723,9 @@ export default function App() {
             }
           }
         }
+        // Check if this is a different deck (picker switch) vs same-deck external edit
+        const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
+          sanitized.lanes.some((sl, li) => sl.items?.length !== cur.lanes[li]?.items?.length);
         // Only update CONTENT fields — preserve ALL UI state
         const payload = {
           ...cur,                                                    // keep everything
@@ -13722,6 +13733,8 @@ export default function App() {
           deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...deck.branding } : cur.branding,
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Reset selection when switching to a different deck so auto-select picks the first module
+          ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
         dispatch({ type: "LOAD", payload });
       } catch (e) {
@@ -13843,6 +13856,11 @@ export default function App() {
   useEffect(() => {
     (async () => {
       let loadedDeck = null;
+      // In LOCAL_MODE the file on disk (via STARTUP_PATCH) is authoritative.
+      // Skip localStorage entirely — it may contain a stale deck from a
+      // previous session/file and would cause a flash of old content or,
+      // worse, get synced back to disk overwriting the new file.
+      if (!VELA_LOCAL_MODE) {
       try {
         let data = null;
         // Try v3 monolithic format (single key, includes slides)
@@ -13889,6 +13907,7 @@ export default function App() {
           loadedDeck = data;
         }
       } catch (err) { dbg("Load error:", err); }
+      } // end !VELA_LOCAL_MODE
       // ━━━ Startup Patch: first run OR new version merge ━━━━━━━━━
       if (STARTUP_PATCH) {
         if (VELA_LOCAL_MODE) {
@@ -13975,9 +13994,12 @@ export default function App() {
   }, [state.lanes.length]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
+  // In LOCAL_MODE the file on disk is the source of truth (synced via
+  // __velaSendDeckUpdate). Skip localStorage saves to avoid stale data
+  // persisting across deck switches and app restarts.
   const saveTimer = useRef(null);
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!loaded.current || VELA_LOCAL_MODE) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
@@ -14085,6 +14107,11 @@ export default function App() {
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
   const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
   const slideCount = selectedConcept?.slides?.length || 0;
+
+  // Presentation mode: show nothing until deck is loaded and first module selected
+  if (VELA_PRESENTATION_MODE && (!state.selectedId || !state.lanes.length)) {
+    return <div style={{ width: "100vw", height: "100vh", background: T.bg }} />;
+  }
 
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
@@ -14325,9 +14352,9 @@ export default function App() {
           }
         }
       }} />}
-      <VelaBatteryTest />
-      <VelaUITestRunner />
-      <VelaDemoRunner />
+      {!VELA_PRESENTATION_MODE && <VelaBatteryTest />}
+      {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
+      {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
   );
 }

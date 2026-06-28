@@ -27,6 +27,8 @@ const state = {
   saveTimer: null,
   lastWriteAt: 0,
   pendingDeck: null,
+  pendingPath: null,  // path captured at saveCurrent time, not flush time
+  switching: false,   // true while openDeck/reselectFolder is in flight
   onDeckLoaded: null, // set by nl-boot
 };
 
@@ -67,27 +69,49 @@ async function readDeck(path) {
 }
 
 async function openDeck(path) {
-  await stopWatcher();
-  const deck = await readDeck(path);
-  state.currentPath = path;
-  await Neutralino.storage.setData(LAST_DECK_KEY, path);
-  if (state.onDeckLoaded) state.onDeckLoaded(deck, path);
-  startWatcher();
-  return deck;
+  // Cancel any pending save from the previous deck BEFORE changing
+  // currentPath — otherwise flushSave() writes old data to the new file.
+  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+  state.pendingDeck = null;
+  state.pendingPath = null;
+  // Reject saves for the duration of the switch. The React app still holds the
+  // PREVIOUS deck and its debounced autosave (__velaSendDeckUpdate) can fire
+  // during the awaits below — after currentPath has advanced to `path`. Without
+  // this guard that stale save captures the NEW path and writes the OLD deck's
+  // content into the file we just opened (data loss). saveCurrent() drops while
+  // switching is true; the app's own _localSyncIncoming guard covers the
+  // post-load settle once the new deck is pushed in.
+  state.switching = true;
+  try {
+    await stopWatcher();
+    const deck = await readDeck(path);
+    state.currentPath = path;
+    await Neutralino.storage.setData(LAST_DECK_KEY, path);
+    if (state.onDeckLoaded) state.onDeckLoaded(deck, path);
+    startWatcher();
+    return deck;
+  } finally {
+    state.switching = false;
+  }
 }
 
 function saveCurrent(deckObject) {
-  if (!state.currentPath) return;
+  if (!state.currentPath || state.switching) return;
   state.pendingDeck = deckObject;
+  // Capture path NOW — flushSave must write to the file that was active
+  // when the save was requested, not whatever currentPath points to later
+  // (it may have changed due to a deck switch during the debounce window).
+  state.pendingPath = state.currentPath;
   if (state.saveTimer) clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
 }
 
 async function flushSave() {
   const deck = state.pendingDeck;
-  const path = state.currentPath;
+  const path = state.pendingPath;
   if (!deck || !path) return;
   state.pendingDeck = null;
+  state.pendingPath = null;
   try {
     state.lastWriteAt = Date.now();
     const json = JSON.stringify(deck, null, 2);
@@ -141,7 +165,16 @@ export const deckIO = {
     state.folder = folder;
     return folder;
   },
+  async initWithFile(filePath) {
+    // Derive folder from file path and store it so the picker works.
+    const folder = filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+    state.folder = folder;
+    await Neutralino.storage.setData(FOLDER_KEY, folder);
+  },
   async reselectFolder() {
+    if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+    state.pendingDeck = null;
+    state.pendingPath = null;
     await stopWatcher();
     state.folder = await pickFolder();
     state.currentPath = null;

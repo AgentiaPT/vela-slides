@@ -71,15 +71,39 @@ async function boot() {
     }
   });
 
-  setMsg("Choosing decks folder…");
+  // Check CLI args for a file path (double-click / file association).
+  // NL_ARGS: [binary, "--url=...", ...userArgs]. User args come after the
+  // Neutralino flags. We look for a .vela or .json path.
+  let cliFile = null;
   try {
-    await deckIO.init();
-  } catch (e) {
-    return showError("No folder selected. Relaunch Vela and pick a folder containing .vela decks.");
+    const args = typeof NL_ARGS !== "undefined" ? NL_ARGS : [];
+    for (const arg of args) {
+      if (/\.(vela|json)$/i.test(arg) && !arg.startsWith("--")) {
+        // Normalise to forward slashes for consistency with deck-io.
+        cliFile = arg.replace(/\\/g, "/");
+        break;
+      }
+    }
+    if (cliFile) {
+      try { await Neutralino.filesystem.getStats(cliFile); }
+      catch { cliFile = null; } // file doesn't exist — fall through
+    }
+  } catch { /* NL_ARGS unavailable — ignore */ }
+
+  if (cliFile) {
+    setMsg("Opening file…");
+    await deckIO.initWithFile(cliFile);
+  } else {
+    setMsg("Choosing decks folder…");
+    try {
+      await deckIO.init();
+    } catch (e) {
+      return showError("No folder selected. Relaunch Vela and pick a folder containing .vela decks.");
+    }
   }
 
   setMsg("Locating a deck…");
-  let deckPath = await deckIO.lastDeckPath();
+  let deckPath = cliFile || await deckIO.lastDeckPath();
   if (deckPath) {
     try { await Neutralino.filesystem.getStats(deckPath); }
     catch { deckPath = null; }

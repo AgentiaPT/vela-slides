@@ -2,11 +2,18 @@
   "deckTitle": "Introduction to Prompt Engineering",
   "lanes": [
     {
+      "id": "d27a01ae",
       "title": "Core Module",
+      "collapsed": false,
       "items": [
         {
+          "id": "8c6d029d",
           "title": "Prompt Engineering Fundamentals",
+          "notes": "",
+          "comments": [],
           "status": "done",
+          "importance": "should",
+          "order": 0,
           "slides": [
             {
               "title": "Title Slide",
@@ -19,24 +26,89 @@
               "align": "left",
               "verticalAlign": "center",
               "blocks": [
-                { "type": "badge", "text": "MODULE 3", "icon": "BookOpen", "color": "#022c22", "bg": "#34d399", "border": "#34d399" },
-                { "type": "spacer", "h": 16 },
-                { "type": "heading", "text": "Introduction to Prompt Engineering", "size": "3xl" },
-                { "type": "spacer", "h": 4 },
-                { "type": "text", "text": "AI Foundations Course — Spring 2026", "size": "lg", "color": "#6ee7b7" },
-                { "type": "spacer", "h": 24 },
-                { "type": "icon-row", "iconColor": "#34d399", "iconBg": "#34d39920", "items": [
-                  { "icon": "Clock", "text": "90 Minutes" },
-                  { "icon": "Wrench", "text": "Hands-on" },
-                  { "icon": "Award", "text": "Certificate" }
-                ]},
-                { "type": "spacer", "h": 16 },
-                { "type": "number-row", "items": [
-                  { "value": "90", "label": "Minutes", "icon": "Clock", "color": "#34d399" },
-                  { "value": "4", "label": "Objectives", "icon": "Target", "color": "#6ee7b7" },
-                  { "value": "5", "label": "Slides", "icon": "Layers", "color": "#34d399" },
-                  { "value": "1", "label": "Certificate", "icon": "Award", "color": "#6ee7b7" }
-                ]}
+                {
+                  "type": "badge",
+                  "text": "MODULE 3",
+                  "icon": "BookOpen",
+                  "color": "#022c22",
+                  "bg": "#34d399",
+                  "border": "#34d399"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "heading",
+                  "text": "Introduction to Prompt Engineering",
+                  "size": "3xl"
+                },
+                {
+                  "type": "spacer",
+                  "h": 4
+                },
+                {
+                  "type": "text",
+                  "text": "AI Foundations Course — Spring 2026",
+                  "size": "lg",
+                  "color": "#6ee7b7"
+                },
+                {
+                  "type": "spacer",
+                  "h": 24
+                },
+                {
+                  "type": "icon-row",
+                  "iconColor": "#34d399",
+                  "iconBg": "#34d39920",
+                  "items": [
+                    {
+                      "icon": "Clock",
+                      "text": "90 Minutes"
+                    },
+                    {
+                      "icon": "Wrench",
+                      "text": "Hands-on"
+                    },
+                    {
+                      "icon": "Award",
+                      "text": "Certificate"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "number-row",
+                  "items": [
+                    {
+                      "value": "90",
+                      "label": "Minutes",
+                      "icon": "Clock",
+                      "color": "#34d399"
+                    },
+                    {
+                      "value": "4",
+                      "label": "Objectives",
+                      "icon": "Target",
+                      "color": "#6ee7b7"
+                    },
+                    {
+                      "value": "5",
+                      "label": "Slides",
+                      "icon": "Layers",
+                      "color": "#34d399"
+                    },
+                    {
+                      "value": "1",
+                      "label": "Certificate",
+                      "icon": "Award",
+                      "color": "#6ee7b7"
+                    }
+                  ]
+                }
               ]
             },
             {
@@ -48,20 +120,49 @@
               "padding": "36px 48px",
               "duration": 60,
               "blocks": [
-                { "type": "heading", "text": "Learning Objectives", "size": "2xl", "icon": "Target" },
-                { "type": "spacer", "h": 10 },
+                {
+                  "type": "heading",
+                  "text": "Learning Objectives",
+                  "size": "2xl",
+                  "icon": "Target"
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
                 {
                   "type": "checklist",
                   "items": [
-                    { "text": "Distinguish between zero-shot, few-shot, and chain-of-thought prompting strategies", "status": "pending" },
-                    { "text": "Construct structured prompts using the CIEC framework", "status": "pending" },
-                    { "text": "Evaluate prompt quality by analyzing output relevance, accuracy, and consistency", "status": "pending" },
-                    { "text": "Refactor underperforming prompts through systematic iteration and testing", "status": "pending" }
+                    {
+                      "text": "Distinguish between zero-shot, few-shot, and chain-of-thought prompting strategies",
+                      "status": "pending"
+                    },
+                    {
+                      "text": "Construct structured prompts using the CIEC framework",
+                      "status": "pending"
+                    },
+                    {
+                      "text": "Evaluate prompt quality by analyzing output relevance, accuracy, and consistency",
+                      "status": "pending"
+                    },
+                    {
+                      "text": "Refactor underperforming prompts through systematic iteration and testing",
+                      "status": "pending"
+                    }
                   ],
                   "showLabels": false
                 },
-                { "type": "spacer", "h": 12 },
-                { "type": "callout", "text": "Prerequisites: Completion of Module 1 (AI Overview) and Module 2 (Language Models). Familiarity with at least one LLM interface (Claude, ChatGPT, etc.).", "icon": "Info", "bg": "#10b98115", "border": "#10b98140" }
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "callout",
+                  "text": "Prerequisites: Completion of Module 1 (AI Overview) and Module 2 (Language Models). Familiarity with at least one LLM interface (Claude, ChatGPT, etc.).",
+                  "icon": "Info",
+                  "bg": "#10b98115",
+                  "border": "#10b98140"
+                }
               ],
               "studyNotes": {
                 "text": "This module covers the four major [prompting strategies](#prompting-strategy) you'll encounter in practice. By the end, you should be able to pick the right strategy for any task.\n\nThe checklist on screen maps to the four objectives that will be assessed in your final project. You don't need to memorize every technique — the goal is to build a **mental model** for when to reach for each one.\n\nNote: the [CIEC framework](#ciec) will be introduced on slide 4. It's the structured approach we use to actually *write* prompts once you've chosen a strategy.",
@@ -70,8 +171,12 @@
                   "Which objective do you think will be hardest to demonstrate in a project?"
                 ],
                 "glossary": {
-                  "prompting-strategy": { "definition": "A systematic approach to crafting LLM inputs. The four main strategies are zero-shot, few-shot, chain-of-thought, and direct instruction." },
-                  "ciec": { "definition": "Context, Instruction, Examples, Constraints — a four-step framework for writing structured prompts that consistently produce high-quality outputs." }
+                  "prompting-strategy": {
+                    "definition": "A systematic approach to crafting LLM inputs. The four main strategies are zero-shot, few-shot, chain-of-thought, and direct instruction."
+                  },
+                  "ciec": {
+                    "definition": "Context, Instruction, Examples, Constraints — a four-step framework for writing structured prompts that consistently produce high-quality outputs."
+                  }
                 }
               }
             },
@@ -84,8 +189,16 @@
               "padding": "36px 48px",
               "duration": 90,
               "blocks": [
-                { "type": "heading", "text": "Core Prompting Strategies", "size": "2xl", "icon": "Lightbulb" },
-                { "type": "spacer", "h": 8 },
+                {
+                  "type": "heading",
+                  "text": "Core Prompting Strategies",
+                  "size": "2xl",
+                  "icon": "Lightbulb"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
                 {
                   "type": "matrix",
                   "xLeft": "Simple Tasks",
@@ -93,27 +206,73 @@
                   "yTop": "High Accuracy",
                   "yBottom": "Low Cost",
                   "quadrants": [
-                    { "title": "Few-Shot", "icon": "Layers", "color": "#34d399", "items": ["2-5 examples", "+15-30% accuracy"] },
-                    { "title": "Chain-of-Thought", "icon": "Link", "color": "#3b82f6", "items": ["Step-by-step reasoning", "Best for multi-step"] },
-                    { "title": "Zero-Shot", "icon": "Zap", "color": "#f59e0b", "items": ["No examples needed", "Lowest token cost"] },
-                    { "title": "Direct Instruction", "icon": "MessageSquare", "color": "#a78bfa", "items": ["Clear task statement", "Good baseline"] }
+                    {
+                      "title": "Few-Shot",
+                      "icon": "Layers",
+                      "color": "#34d399",
+                      "items": [
+                        "2-5 examples",
+                        "+15-30% accuracy"
+                      ]
+                    },
+                    {
+                      "title": "Chain-of-Thought",
+                      "icon": "Link",
+                      "color": "#3b82f6",
+                      "items": [
+                        "Step-by-step reasoning",
+                        "Best for multi-step"
+                      ]
+                    },
+                    {
+                      "title": "Zero-Shot",
+                      "icon": "Zap",
+                      "color": "#f59e0b",
+                      "items": [
+                        "No examples needed",
+                        "Lowest token cost"
+                      ]
+                    },
+                    {
+                      "title": "Direct Instruction",
+                      "icon": "MessageSquare",
+                      "color": "#a78bfa",
+                      "items": [
+                        "Clear task statement",
+                        "Good baseline"
+                      ]
+                    }
                   ]
                 },
-                { "type": "text", "text": "Key insight: Few-shot prompting improves accuracy by 15-30% on classification tasks, but adds token cost. Choose based on your accuracy-cost tradeoff.", "size": "sm", "color": "#6ee7b7" }
+                {
+                  "type": "text",
+                  "text": "Key insight: Few-shot prompting improves accuracy by 15-30% on classification tasks, but adds token cost. Choose based on your accuracy-cost tradeoff.",
+                  "size": "sm",
+                  "color": "#6ee7b7"
+                }
               ],
               "studyNotes": {
                 "text": "The matrix maps the four main [prompting strategies](#prompting-strategy) along two axes: task complexity (horizontal) and the accuracy-vs-cost tradeoff (vertical).\n\n**[Zero-shot](#zero-shot)** is the default starting point — no examples, lowest token cost, and works well for simple tasks where the LLM already 'knows' the domain. Move to **[few-shot](#few-shot)** when accuracy matters more than cost: providing 2-5 input/output pairs typically boosts classification accuracy by 15-30%.\n\nFor multi-step reasoning (math, logic chains, planning), **[chain-of-thought](#chain-of-thought)** prompting asks the model to show its work. This dramatically improves accuracy on problems with intermediate steps, but increases output length.\n\n**Direct instruction** is a strong baseline for tasks that don't fit the other categories — clear imperative sentences like 'Rewrite this paragraph at a 6th-grade reading level.'",
-                "diagram": "<svg viewBox='0 0 300 80' xmlns='http://www.w3.org/2000/svg'><text x='10' y='18' font-size='10' fill='#6ee7b7' font-family='monospace'>Prompt selection flow:</text><rect x='10' y='28' width='60' height='28' rx='4' fill='#064e3b' stroke='#34d399' stroke-width='1'/><text x='40' y='46' text-anchor='middle' font-size='9' fill='#d1fae5' font-family='monospace'>Simple?</text><line x1='70' y1='42' x2='100' y2='32' stroke='#34d399' stroke-width='1'/><text x='76' y='30' font-size='7' fill='#6ee7b7'>yes</text><line x1='70' y1='42' x2='100' y2='56' stroke='#f59e0b' stroke-width='1'/><text x='76' y='58' font-size='7' fill='#f59e0b'>no</text><rect x='100' y='20' width='65' height='24' rx='4' fill='#064e3b' stroke='#34d399'/><text x='132' y='36' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Zero-shot</text><rect x='100' y='44' width='65' height='24' rx='4' fill='#064e3b' stroke='#f59e0b'/><text x='132' y='60' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Multi-step?</text><line x1='165' y1='56' x2='195' y2='46' stroke='#3b82f6' stroke-width='1'/><text x='172' y='44' font-size='7' fill='#3b82f6'>yes</text><line x1='165' y1='56' x2='195' y2='66' stroke='#34d399' stroke-width='1'/><text x='172' y='70' font-size='7' fill='#34d399'>no</text><rect x='195' y='34' width='65' height='24' rx='4' fill='#064e3b' stroke='#3b82f6'/><text x='228' y='50' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>CoT</text><rect x='195' y='60' width='65' height='18' rx='4' fill='#064e3b' stroke='#34d399'/><text x='228' y='73' text-anchor='middle' font-size='8' fill='#d1fae5' font-family='monospace'>Few-shot</text></svg>",
+                "diagram": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 80\"><text x=\"10\" y=\"18\" font-size=\"10\" fill=\"#6ee7b7\" font-family=\"monospace\">Prompt selection flow:</text><rect x=\"10\" y=\"28\" width=\"60\" height=\"28\" rx=\"4\" fill=\"#064e3b\" stroke=\"#34d399\" stroke-width=\"1\"/><text x=\"40\" y=\"46\" text-anchor=\"middle\" font-size=\"9\" fill=\"#d1fae5\" font-family=\"monospace\">Simple?</text><line x1=\"70\" y1=\"42\" x2=\"100\" y2=\"32\" stroke=\"#34d399\" stroke-width=\"1\"/><text x=\"76\" y=\"30\" font-size=\"7\" fill=\"#6ee7b7\">yes</text><line x1=\"70\" y1=\"42\" x2=\"100\" y2=\"56\" stroke=\"#f59e0b\" stroke-width=\"1\"/><text x=\"76\" y=\"58\" font-size=\"7\" fill=\"#f59e0b\">no</text><rect x=\"100\" y=\"20\" width=\"65\" height=\"24\" rx=\"4\" fill=\"#064e3b\" stroke=\"#34d399\"/><text x=\"132\" y=\"36\" text-anchor=\"middle\" font-size=\"8\" fill=\"#d1fae5\" font-family=\"monospace\">Zero-shot</text><rect x=\"100\" y=\"44\" width=\"65\" height=\"24\" rx=\"4\" fill=\"#064e3b\" stroke=\"#f59e0b\"/><text x=\"132\" y=\"60\" text-anchor=\"middle\" font-size=\"8\" fill=\"#d1fae5\" font-family=\"monospace\">Multi-step?</text><line x1=\"165\" y1=\"56\" x2=\"195\" y2=\"46\" stroke=\"#3b82f6\" stroke-width=\"1\"/><text x=\"172\" y=\"44\" font-size=\"7\" fill=\"#3b82f6\">yes</text><line x1=\"165\" y1=\"56\" x2=\"195\" y2=\"66\" stroke=\"#34d399\" stroke-width=\"1\"/><text x=\"172\" y=\"70\" font-size=\"7\" fill=\"#34d399\">no</text><rect x=\"195\" y=\"34\" width=\"65\" height=\"24\" rx=\"4\" fill=\"#064e3b\" stroke=\"#3b82f6\"/><text x=\"228\" y=\"50\" text-anchor=\"middle\" font-size=\"8\" fill=\"#d1fae5\" font-family=\"monospace\">CoT</text><rect x=\"195\" y=\"60\" width=\"65\" height=\"18\" rx=\"4\" fill=\"#064e3b\" stroke=\"#34d399\"/><text x=\"228\" y=\"73\" text-anchor=\"middle\" font-size=\"8\" fill=\"#d1fae5\" font-family=\"monospace\">Few-shot</text></svg>",
                 "questions": [
                   "When would few-shot prompting actually hurt performance compared to zero-shot?",
                   "Why does chain-of-thought work for math but less well for creative writing?",
                   "How would you decide between zero-shot and direct instruction for a new task?"
                 ],
                 "glossary": {
-                  "prompting-strategy": { "definition": "A systematic approach to crafting LLM inputs — zero-shot, few-shot, chain-of-thought, or direct instruction — chosen based on task complexity and accuracy requirements." },
-                  "zero-shot": { "definition": "Asking the model to perform a task with no examples. Relies entirely on pre-training knowledge. Lowest token cost, works best for well-understood tasks." },
-                  "few-shot": { "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%." },
-                  "chain-of-thought": { "definition": "Prompting the model to reason step-by-step ('think out loud') before giving a final answer. Critical for multi-step problems like math, logic, and planning.", "url": "https://arxiv.org/abs/2201.11903" }
+                  "prompting-strategy": {
+                    "definition": "A systematic approach to crafting LLM inputs — zero-shot, few-shot, chain-of-thought, or direct instruction — chosen based on task complexity and accuracy requirements."
+                  },
+                  "zero-shot": {
+                    "definition": "Asking the model to perform a task with no examples. Relies entirely on pre-training knowledge. Lowest token cost, works best for well-understood tasks."
+                  },
+                  "few-shot": {
+                    "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%."
+                  },
+                  "chain-of-thought": {
+                    "definition": "Prompting the model to reason step-by-step ('think out loud') before giving a final answer. Critical for multi-step problems like math, logic, and planning.",
+                    "url": "https://arxiv.org/abs/2201.11903"
+                  }
                 }
               }
             },
@@ -126,22 +285,60 @@
               "padding": "36px 48px",
               "duration": 90,
               "blocks": [
-                { "type": "heading", "text": "The CIEC Framework", "size": "2xl", "icon": "Layout" },
-                { "type": "spacer", "h": 8 },
-                { "type": "steps", "items": [
-                  { "title": "Context", "text": "Define the role, audience, and domain the model should operate in" },
-                  { "title": "Instruction", "text": "State the specific task clearly — what output you need and in what format" },
-                  { "title": "Examples", "text": "Provide sample inputs and ideal outputs to anchor the model's behavior" },
-                  { "title": "Constraints", "text": "Set boundaries: length limits, tone, forbidden topics, output schema" }
-                ]},
-                { "type": "spacer", "h": 10 },
+                {
+                  "type": "heading",
+                  "text": "The CIEC Framework",
+                  "size": "2xl",
+                  "icon": "Layout"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Context",
+                      "text": "Define the role, audience, and domain the model should operate in"
+                    },
+                    {
+                      "title": "Instruction",
+                      "text": "State the specific task clearly — what output you need and in what format"
+                    },
+                    {
+                      "title": "Examples",
+                      "text": "Provide sample inputs and ideal outputs to anchor the model's behavior"
+                    },
+                    {
+                      "title": "Constraints",
+                      "text": "Set boundaries: length limits, tone, forbidden topics, output schema"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
                 {
                   "type": "cycle",
                   "items": [
-                    { "label": "Draft", "icon": "✏️" },
-                    { "label": "Test", "icon": "▶️" },
-                    { "label": "Evaluate", "icon": "📊" },
-                    { "label": "Refine", "icon": "🔄" }
+                    {
+                      "label": "Draft",
+                      "icon": "✏️"
+                    },
+                    {
+                      "label": "Test",
+                      "icon": "▶️"
+                    },
+                    {
+                      "label": "Evaluate",
+                      "icon": "📊"
+                    },
+                    {
+                      "label": "Refine",
+                      "icon": "🔄"
+                    }
                   ],
                   "centerLabel": "CIEC",
                   "centerSub": "iterate"
@@ -154,9 +351,15 @@
                   "How would you apply CIEC to a task where you need code generation, not text?"
                 ],
                 "glossary": {
-                  "ciec": { "definition": "Context, Instruction, Examples, Constraints — a four-step framework for structured prompt writing that consistently produces higher-quality LLM outputs." },
-                  "few-shot": { "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%." },
-                  "iteration": { "definition": "The cycle of drafting, testing, evaluating, and refining a prompt. Like code review, each pass tightens quality — most production prompts go through 3-5 iterations." }
+                  "ciec": {
+                    "definition": "Context, Instruction, Examples, Constraints — a four-step framework for structured prompt writing that consistently produces higher-quality LLM outputs."
+                  },
+                  "few-shot": {
+                    "definition": "Providing 2-5 input/output examples before the actual task. Anchors the model's behavior and typically improves classification accuracy by 15-30%."
+                  },
+                  "iteration": {
+                    "definition": "The cycle of drafting, testing, evaluating, and refining a prompt. Like code review, each pass tightens quality — most production prompts go through 3-5 iterations."
+                  }
                 }
               }
             },
@@ -169,25 +372,95 @@
               "padding": "36px 48px",
               "duration": 120,
               "blocks": [
-                { "type": "heading", "text": "Practice Exercise", "size": "2xl", "icon": "Edit" },
-                { "type": "spacer", "h": 6 },
-                { "type": "callout", "text": "Write a prompt that asks an LLM to summarize a research paper into a 3-bullet executive brief for a non-technical CEO. Apply all four CIEC steps. Test with at least two different papers and compare outputs.", "icon": "FileQuestion", "bg": "#34d39915", "border": "#34d39940" },
-                { "type": "spacer", "h": 8 },
+                {
+                  "type": "heading",
+                  "text": "Practice Exercise",
+                  "size": "2xl",
+                  "icon": "Edit"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "callout",
+                  "text": "Write a prompt that asks an LLM to summarize a research paper into a 3-bullet executive brief for a non-technical CEO. Apply all four CIEC steps. Test with at least two different papers and compare outputs.",
+                  "icon": "FileQuestion",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
                 {
                   "type": "comparison",
                   "items": [
-                    { "title": "Weak Prompt", "icon": "AlertTriangle", "color": "#ef4444", "items": ["\"Summarize this paper\"", "\"Make it short\"", "No format specified"] },
-                    { "title": "Strong Prompt", "icon": "CheckCircle", "color": "#22c55e", "items": ["\"You are a research analyst for a non-technical exec\"", "\"Exactly 3 bullet points, each under 20 words\"", "\"Markdown list with bold key findings\""] }
+                    {
+                      "title": "Weak Prompt",
+                      "icon": "AlertTriangle",
+                      "color": "#ef4444",
+                      "items": [
+                        "\"Summarize this paper\"",
+                        "\"Make it short\"",
+                        "No format specified"
+                      ]
+                    },
+                    {
+                      "title": "Strong Prompt",
+                      "icon": "CheckCircle",
+                      "color": "#22c55e",
+                      "items": [
+                        "\"You are a research analyst for a non-technical exec\"",
+                        "\"Exactly 3 bullet points, each under 20 words\"",
+                        "\"Markdown list with bold key findings\""
+                      ]
+                    }
                   ],
                   "dividerLabel": "VS"
                 },
-                { "type": "spacer", "h": 8 },
-                { "type": "badge", "text": "Due: Next Session", "icon": "Calendar", "color": "#fbbf24", "bg": "#fbbf2415", "border": "#fbbf2440" }
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "badge",
+                  "text": "Due: Next Session",
+                  "icon": "Calendar",
+                  "color": "#fbbf24",
+                  "bg": "#fbbf2415",
+                  "border": "#fbbf2440"
+                }
               ]
             }
-          ]
+          ],
+          "createdAt": "2026-06-01T01:08:35.817Z"
         }
       ]
+    },
+    {
+      "id": "582f9b0a",
+      "title": "Main",
+      "collapsed": false,
+      "items": []
     }
-  ]
+  ],
+  "branding": {
+    "enabled": false,
+    "accentBar": true,
+    "accentColor": "#3B82F6",
+    "accentHeight": 4,
+    "logo": null,
+    "logoPosition": "top-left",
+    "logoSize": 56,
+    "footerLeft": "",
+    "footerCenter": "",
+    "footerRight": "auto",
+    "footerBg": "rgba(0,0,0,0.35)",
+    "footerColor": "#94a3b8",
+    "footerSize": 9,
+    "imgMaxWidth": 600,
+    "imgQuality": 0.45
+  },
+  "guidelines": ""
 }

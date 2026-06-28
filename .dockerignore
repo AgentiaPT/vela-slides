@@ -1,0 +1,11 @@
+# Keep the Docker build context small and force a clean runtime fetch
+# (the desktop Dockerfile re-runs `neu update` + verify-runtime.py).
+.git
+.pnpm-store
+**/node_modules
+vela-neutralino/bin
+vela-neutralino/dist
+evals/results
+decks
+**/__pycache__
+**/.pytest_cache
