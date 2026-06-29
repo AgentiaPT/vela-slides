@@ -863,8 +863,9 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   const messages = teacherHistory[slideKey] || [];
   const sn = slide && slide.studyNotes ? slide.studyNotes : null;
 
-  // Centralized AI availability check (v12.36)
-  const apiAvailable = velaAIAvailable();
+  // Centralized AI availability check (v12.36) — reactive so the panel re-renders
+  // when the desktop shell finishes agent detection (v12.74).
+  const apiAvailable = useAIAvailable();
 
   useEffect(() => {
     activeKeyRef.current = slideKey;
@@ -1194,7 +1195,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
   const presOffset = fullscreen && concept.presentCard ? 1 : 0;

@@ -34,6 +34,24 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// React hook: re-renders the caller when AI availability changes. velaAIAvailable()
+// is a plain read of window.__velaAgentReady, which the Neutralino shell flips
+// asynchronously once agent detection finishes and announces via a
+// "vela-agent-update" event. Components that gate buttons on AI must subscribe,
+// or they keep a stale disabled state until some unrelated re-render (e.g. the
+// first Vera message) happens to refresh them. Artifact / serve.py runtimes never
+// dispatch the event, so this simply returns the initial value there.
+const useAIAvailable = () => {
+  const [ok, setOk] = useState(velaAIAvailable);
+  useEffect(() => {
+    const sync = () => setOk(velaAIAvailable());
+    sync(); // catch a flip between first render and effect mount
+    window.addEventListener("vela-agent-update", sync);
+    return () => window.removeEventListener("vela-agent-update", sync);
+  }, []);
+  return ok;
+};
+
 // Clipboard helper — Clipboard API is blocked in Claude.ai artifact iframes
 // Uses execCommand('copy') fallback with a temporary textarea
 const velaClipboard = (text) => {
@@ -70,8 +88,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.73";
+const VELA_VERSION = "12.74";
 const VELA_CHANGELOG = [
+  { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
   { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
   { v: "12.71", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
@@ -5177,8 +5196,9 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   const messages = teacherHistory[slideKey] || [];
   const sn = slide && slide.studyNotes ? slide.studyNotes : null;
 
-  // Centralized AI availability check (v12.36)
-  const apiAvailable = velaAIAvailable();
+  // Centralized AI availability check (v12.36) — reactive so the panel re-renders
+  // when the desktop shell finishes agent detection (v12.74).
+  const apiAvailable = useAIAvailable();
 
   useEffect(() => {
     activeKeyRef.current = slideKey;
@@ -5508,7 +5528,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
   const presOffset = fullscreen && concept.presentCard ? 1 : 0;
@@ -7003,7 +7023,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [state.chatMessages]);
   // Auto-focus input when chat panel opens
   useEffect(() => { setTimeout(() => textareaRef.current?.focus(), 50); }, []);
@@ -14423,7 +14443,7 @@ export default function App() {
   T = dark ? themes.dark : themes.light;
   const [hist, dispatch] = useReducer(reducer, historyInit);
   const state = hist.present;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
   const loaded = useRef(false);

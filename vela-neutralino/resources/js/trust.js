@@ -122,7 +122,7 @@ function agentLabel() {
   return parts.join(" · ");
 }
 
-function showModal({ filename, folder, includeIntro }) {
+function showModal({ filename, folder, includeIntro, alreadyTrusted }) {
   installStyles();
   return new Promise((resolve) => {
     // Backdrop
@@ -139,7 +139,9 @@ function showModal({ filename, folder, includeIntro }) {
     const h2 = document.createElement("h2");
     h2.textContent = includeIntro
       ? "Enable AI for this deck?"
-      : `Enable AI for "${filename}"?`;
+      : alreadyTrusted
+        ? "Enable AI for this session?"
+        : `Enable AI for "${filename}"?`;
     box.appendChild(h2);
 
     const sub = document.createElement("div");
@@ -169,11 +171,13 @@ function showModal({ filename, folder, includeIntro }) {
     });
     box.appendChild(ul);
 
-    const note = document.createElement("div");
-    note.className = "note";
-    note.textContent =
-      "If you didn't create this deck or don't recognise where it came from, decline for now — you can always trust it later from Settings.";
-    box.appendChild(note);
+    if (!alreadyTrusted) {
+      const note = document.createElement("div");
+      note.className = "note";
+      note.textContent =
+        "If you didn't create this deck or don't recognise where it came from, decline for now — you can always trust it later from Settings.";
+      box.appendChild(note);
+    }
 
     const providers = Array.isArray(info.providers) ? info.providers : [];
     const ag = document.createElement("div");
@@ -266,18 +270,23 @@ function showModal({ filename, folder, includeIntro }) {
 let pending = null; // serialise concurrent gate calls so we only show one modal
 async function gate(folder, absolutePath) {
   if (!folder || !absolutePath) return "allow"; // no deck context, nothing to gate
-  // Confirmed once already this session → no further prompts.
+  // Confirmed once already this session → no further prompts (the user picked
+  // "once per session": one confirm per app launch, then AI stays enabled).
   if (sessionConfirmed) return "allow";
   // Session-level short-circuits.
   if (session.allow.has(absolutePath)) return "allow";
   if (session.deny.has(absolutePath))  return "deny";
-  // Persistent trust (the user opted out of future prompts for this deck).
-  const data = await loadTrust(folder);
-  const rel = relPath(folder, absolutePath);
-  if (rel && data.decks[rel]) { sessionConfirmed = true; return "allow"; }
 
   // Serialise: if another AI action is already prompting, wait for it.
   if (pending) return pending;
+
+  const data = await loadTrust(folder);
+  const rel = relPath(folder, absolutePath);
+  // A persisted trust.json entry no longer silently enables AI. The user asked
+  // to confirm AI use once per app launch *always*, so we still prompt once per
+  // session even for a trusted deck — the persisted flag only softens the modal
+  // (skips the "did you make this deck?" warning for a deck already trusted).
+  const alreadyTrusted = !!(rel && data.decks[rel]);
 
   pending = (async () => {
     const includeIntro = !(await configStore.hasSeenIntro());
@@ -285,6 +294,7 @@ async function gate(folder, absolutePath) {
       filename: rel || absolutePath.split(/[\\/]/).pop(),
       folder: folder,
       includeIntro,
+      alreadyTrusted,
     });
     if (includeIntro) await configStore.markIntroSeen();
 

@@ -784,7 +784,7 @@ export default function App() {
   T = dark ? themes.dark : themes.light;
   const [hist, dispatch] = useReducer(reducer, historyInit);
   const state = hist.present;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
   const loaded = useRef(false);

@@ -109,5 +109,25 @@ class GatekeeperInvariants(unittest.TestCase):
         self.assertIn("portOpen(", self.go)            # port-watch fallback retained
 
 
+class TrustGateInvariants(unittest.TestCase):
+    """The desktop AI confirm must fire once per app launch — always."""
+
+    def setUp(self):
+        self.js = read("vela-neutralino", "resources", "js", "trust.js")
+
+    def test_confirms_once_per_session(self):
+        # A single in-memory flag gates the whole session: prompt once, then
+        # AI stays enabled until the app restarts.
+        self.assertIn("sessionConfirmed", self.js)
+        self.assertIn('if (sessionConfirmed) return "allow"', self.js)
+
+    def test_persisted_trust_does_not_bypass_prompt(self):
+        # A persisted trust.json entry must NOT silently enable AI without a
+        # prompt — the user asked to confirm AI use once per session always.
+        # Guard against the old bypass (set the session flag + allow inline on
+        # a persisted-deck hit) ever returning.
+        self.assertNotIn('{ sessionConfirmed = true; return "allow"; }', self.js)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
