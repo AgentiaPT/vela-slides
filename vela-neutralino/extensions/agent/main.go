@@ -418,11 +418,20 @@ func parsePort(raw json.RawMessage) string {
 }
 
 // readNlPort reads the Neutralino handshake from stdin and returns its nlPort
-// (empty if not received within the timeout / unparseable). It keeps draining
-// stdin afterwards so the pipe never blocks the parent. We use nlPort to key
-// our handshake files per window and to detect when this window exits.
-func readNlPort(dir string) string {
+// (empty if not received within the timeout / unparseable) together with a
+// channel that is closed when stdin reaches EOF.
+//
+// Neutralino never sends a kill signal to extension processes — they must self
+// terminate (see SECURITY.md / upstream issue #1299). It feeds the handshake
+// JSON to the extension's stdin and keeps that pipe open for the life of the
+// app, closing the write end only when the app exits. So stdin EOF is a
+// reliable "parent is gone" signal that — unlike the loopback port watch below
+// — is immune to ephemeral-port reuse (the pipe is bound to the actual parent
+// process, not a port another window might later grab). It is the primary
+// orphan-cleanup trigger; the port watch remains as a fallback.
+func readNlPort(dir string) (string, <-chan struct{}) {
 	ch := make(chan string, 1)
+	stdinClosed := make(chan struct{})
 	go func() {
 		r := bufio.NewReader(os.Stdin)
 		line, _ := r.ReadString('\n')
@@ -433,13 +442,14 @@ func readNlPort(dir string) string {
 			port = parsePort(h.NlPort)
 		}
 		ch <- port
-		_, _ = io.Copy(io.Discard, r) // drain remainder for the process lifetime
+		_, _ = io.Copy(io.Discard, r) // blocks until stdin EOF (app exit)
+		close(stdinClosed)
 	}()
 	select {
 	case p := <-ch:
-		return p
+		return p, stdinClosed
 	case <-time.After(3 * time.Second):
-		return ""
+		return "", stdinClosed
 	}
 }
 
@@ -461,10 +471,12 @@ func main() {
 		os.Exit(1)
 	}
 	_ = os.MkdirAll(dir, 0o700)
+	startedAt := time.Now()
 
 	// Read this window's Neutralino port from the stdin handshake and key our
 	// handshake files by it, so multiple Vela windows never collide on one file.
-	nlPort := readNlPort(dir)
+	// stdinClosed fires on stdin EOF — the primary "Neutralino exited" signal.
+	nlPort, stdinClosed := readNlPort(dir)
 	suffix := ""
 	if nlPort != "" {
 		suffix = "-" + nlPort
@@ -508,11 +520,27 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
-	// Exit when this window's Neutralino process goes away. Preferred signal:
-	// its NL_PORT stops accepting TCP connections (reliable, PID-independent).
-	// Fallback when nlPort is unknown: the parent PID. Two consecutive misses
-	// (~8s) before exiting, to ride out a transient probe failure. stdin is
-	// already being drained by readNlPort.
+	// Primary orphan-cleanup signal: stdin EOF. Neutralino keeps the
+	// extension's stdin open for the life of the app and closes it on exit, so
+	// EOF means "parent is gone" — and unlike the port watch it cannot be fooled
+	// by another window reusing this one's old ephemeral nlPort. Guarded by a
+	// startup grace window: if stdin closes almost immediately (a platform that
+	// hands off the handshake and then closes stdin rather than holding it open),
+	// we ignore it and lean on the port watch instead of exiting at launch.
+	go func() {
+		<-stdinClosed
+		if up := time.Since(startedAt); up < 5*time.Second {
+			logf(dir, "stdin closed early (%.1fs) — ignoring, relying on port watch", up.Seconds())
+			return
+		}
+		logf(dir, "stdin EOF (neutralino exit), exiting nlPort=%s", nlPort)
+		sig <- syscall.SIGTERM
+	}()
+
+	// Fallback signal: this window's Neutralino NL_PORT stops accepting TCP
+	// connections (PID-independent). When nlPort is unknown, fall back further to
+	// the parent PID. Two consecutive misses (~8s) before exiting, to ride out a
+	// transient probe failure.
 	ppid := os.Getppid()
 	go func() {
 		misses := 0

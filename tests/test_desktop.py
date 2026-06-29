@@ -98,6 +98,16 @@ class GatekeeperInvariants(unittest.TestCase):
     def test_binds_loopback_only(self):
         self.assertIn('"127.0.0.1:0"', self.go)
 
+    def test_self_terminates_on_parent_exit(self):
+        # Neutralino never kills extension processes (upstream #1299) — the
+        # gatekeeper must self-terminate or it orphans. Two independent signals
+        # must remain: stdin EOF (primary, immune to ephemeral-port reuse) and
+        # the loopback port watch (fallback). Dropping either re-opens the
+        # orphan-process leak.
+        self.assertIn("close(stdinClosed)", self.go)   # stdin EOF closes the channel
+        self.assertIn("<-stdinClosed", self.go)        # a watcher waits on it
+        self.assertIn("portOpen(", self.go)            # port-watch fallback retained
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
