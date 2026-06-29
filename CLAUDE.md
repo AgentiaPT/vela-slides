@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,061 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.2MB, 15,144 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 159 UI tests in 25 suites |
+| `part-uitest.jsx` | 159 UI tests in 26 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
 

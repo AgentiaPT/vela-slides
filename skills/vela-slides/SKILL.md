@@ -92,8 +92,51 @@ Done. Do not speak before, between, or after tool calls. NEVER read or print `.v
 
 ## CLI
 
+<!-- BEGIN AUTO-GENERATED CLI REFERENCE -->
+
+### CLI Quick Reference (v2.6.0)
+
+**`vela deck`** — Deck-level operations (auto-detects full/compact/turbo format)
+
 ```
-vela deck ship|validate|list|stats|replace-text|extract|extract-text|patch-text
-vela server start [--port N] [--replace] [--no-auth]
-vela slide edit|view|remove|move|duplicate|insert|remove-block
+vela deck list <deck.vela> — TOC with slide#, title, blocks, duration
+vela deck validate <deck.vela> — check deck JSON integrity
+vela deck split <deck.vela> --sections "Title:N,..." | --flat | --size N — regroup slides into sections (--flat to merge all into one)
+vela deck assemble <deck.vela> [--output <path>] — inject deck into JSX artifact
+vela deck ship <deck.vela> [--output <path>] — validate + assemble in one call
+vela deck replace-text <deck.vela> "old" "new" — find/replace across all slides (hex colors auto-cascade to rgba)
+vela deck stats <deck.vela> — health audit: block distribution, missing durations, overflow, monotony issues
+vela deck find <deck.vela> --query "text" | --type flow | --missing duration — search slides by content, block type, or missing props
+vela deck dump <deck.vela> [--full] — compact text-only view of all slides (--full for all text fields)
+vela deck extract-text <deck.vela> [output.json] — extract all translatable text as key-value map
+vela deck patch-text <deck.vela> <texts.json> — apply translated text map back into deck
+vela deck expand <compact.vela> <full.vela> — compact/turbo → full format
+vela deck compact <full.vela> <compact.vela> — full → compact format
+vela deck turbo <deck.vela> <turbo.vela> — any → turbo format
+vela deck zip [--output <path>] — build clean skill ZIP for Claude.ai upload
 ```
+
+**`vela server`** — Local server operations
+
+```
+vela server start <folder-or-file> [--port N] [--replace] — Jupyter-style deck browser with live sync
+vela server stop [--port N] — stop a running Vela server
+```
+
+**`vela slide`** — Slide-level operations (1-indexed slide numbers)
+
+```
+vela slide view <deck.vela> <N> — show slide content summary
+vela slide edit <deck.vela> <N> <key> <value> — edit slide/block property (block.I.key for blocks)
+vela slide remove <deck.vela> <N> — remove a slide
+vela slide move <deck.vela> <from> <to> — reorder a slide
+vela slide duplicate <deck.vela> <N> — copy a slide
+vela slide insert <deck.vela> <N> <slide.json> — insert slide from file
+vela slide remove-block <deck.vela> <N> <block#> — remove a block from a slide
+```
+
+**Global flags:** `--json (structured output)`, `--dry-run (preview without writing)`, `--help`
+
+**Exit codes:** 0=success, 1=failure, 2=usage error, 3=not found, 4=validation error, 5=conflict
+
+<!-- END AUTO-GENERATED CLI REFERENCE -->
