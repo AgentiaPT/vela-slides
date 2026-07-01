@@ -233,8 +233,13 @@ uiSuite("Toolbar", [
   { name: "New slide button exists (+)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("New slide") || b.textContent?.includes("New")));
   }},
-  { name: "Cost badge visible (💲)", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("💲")));
+  { name: "Cost badge visible only in artifact mode (💲)", fn: async () => {
+    // Token/cost stats render only as a Claude.ai artifact (metered proxy). In
+    // desktop / local-serve / test runtimes the badge is intentionally absent.
+    const artifact = typeof velaIsArtifactMode === "function" && velaIsArtifactMode();
+    const present = () => !!_$$("button").find((b) => (b.textContent || "").includes("💲"));
+    if (artifact) { await _waitFor(present); }
+    else if (present()) throw new Error("cost badge should be hidden outside artifact mode");
   }},
   { name: "Delete button exists (🗑)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Delete") || b.textContent?.includes("🗑")));
@@ -1329,6 +1334,102 @@ uiSuite("Review", [
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
+  }},
+]);
+
+// ── Sprint 7-1 UX batch ──────────────────────────────────────────────
+// Header slide count parsed from the header stat pill ("⏱24m · 28sl · 13§").
+const _headerSlideCount = () => {
+  const hdr = _$("header");
+  if (!hdr) return null;
+  const el = _$$("span", hdr).find((e) => /\d+sl\b/.test(e.textContent || ""));
+  const m = el && (el.textContent || "").match(/(\d+)sl/);
+  return m ? parseInt(m[1], 10) : null;
+};
+
+uiSuite("Header & Stats (7-1)", [
+  { name: "Header shows minutes + slide count", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+m\b/.test(e.textContent || "") && /\d+sl\b/.test(e.textContent || "")); });
+    if (/\d+m\s*\d+s/.test(pill.textContent)) throw new Error("header still shows seconds: " + pill.textContent);
+  }},
+  { name: "Header pill opens the Deck stats dialog", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+sl\b/.test(e.textContent || "") && /§/.test(e.textContent || "")); });
+    _click(pill);
+    await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /Deck stats/i.test(e.textContent || "")));
+    _key("Escape");
+    await _wait(150);
+  }},
+]);
+
+uiSuite("Hide slides (7-1)", [
+  { name: "Eye toggle hides a slide and updates the count", fn: async () => {
+    const eye = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hide slide")));
+    const before = _headerSlideCount();
+    if (before == null) throw new Error("no header slide count");
+    _click(eye);
+    await _waitFor(() => _headerSlideCount() === before - 1, 2000);
+    // restore
+    const unhide = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hidden")));
+    _click(unhide);
+    await _waitFor(() => _headerSlideCount() === before, 2000);
+  }},
+]);
+
+uiSuite("Add menu (7-1)", [
+  { name: "Add affordance offers Blank / AI / Section", fn: async () => {
+    const add = await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /＋\s*add|＋\s*Add slide/.test(e.textContent || "")));
+    _click(add);
+    await _waitFor(() => {
+      const btns = _$$("button").map((b) => (b.textContent || "").trim());
+      return btns.some((t) => /Blank/.test(t)) && btns.some((t) => /Section/.test(t)) && btns.some((t) => /AI/.test(t));
+    }, 2000);
+    // close the menu
+    const x = _$$("button").find((b) => (b.textContent || "").trim() === "✕");
+    if (x) _click(x);
+    await _wait(120);
+  }},
+]);
+
+uiSuite("Section drag reorder (7-1)", [
+  { name: "Dragging a section changes the order", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    const titleOf = (r) => { const s = _$$("span", r).find((x) => parseInt(x.style.fontWeight) >= 600); return (s ? s.textContent : r.textContent || "").trim().slice(0, 30); };
+    const before = rows().map(titleOf);
+    if (before.length < 3) throw new Error("need >=3 sections");
+    const src = rows()[0], dst = rows()[2];
+    const dt = new DataTransfer();
+    const fire = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra)));
+    const db = dst.getBoundingClientRect();
+    fire(src, "dragstart");
+    fire(dst, "dragover", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(dst, "drop", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(src, "dragend");
+    await _waitFor(() => JSON.stringify(rows().map(titleOf)) !== JSON.stringify(before), 2000);
+    // drag it back to restore original order
+    const r2 = rows(); const s2 = r2.find((r) => titleOf(r) === before[0]); const d2 = r2[0];
+    if (s2 && d2 && s2 !== d2) {
+      const dt2 = new DataTransfer();
+      const fire2 = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt2 }, extra)));
+      const b2 = d2.getBoundingClientRect();
+      fire2(s2, "dragstart"); fire2(d2, "dragover", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(d2, "drop", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(s2, "dragend");
+      await _wait(150);
+    }
+  }},
+]);
+
+uiSuite("Presenter Ctrl+E (7-1)", [
+  { name: "Ctrl+E toggles the TOC search pane", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const isFs = () => !!_$("[style*='position: fixed']");
+    // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
+    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _wait(400); }
+    if (!isFs()) throw new Error("could not enter fullscreen");
+    const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
+    _key("e", { ctrlKey: true });
+    await _waitFor(tocOpen, 2500);
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocOpen(), 2500);
+    _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
 ]);
 

@@ -98,8 +98,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.75";
+const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
+  { v: "12.76", d: "Sprint 7-1 UX batch. Section reorder by mouse drag-and-drop now works (and slides can be dropped into an empty section); the drag payload is tracked reliably so drops no longer silently fail. The slide '+ add' affordance became a clear Blank / AI / Section menu — a blank slide inherits the previous slide's styling, and sections can be inserted anywhere, not only at the end. Slides and individual elements can be hidden (eye toggle): hidden items are excluded from the deck's time and slide-count totals, skipped in presentation and exports, and kept out of the presenter table-of-contents, while a new stats dialog (click the header pill) breaks down visible vs hidden. The top header rounds duration to whole minutes so the slide count always fits. Presenter table-of-contents/search moved to Ctrl+E as a toggle, with Enter jumping to the first match and any jump closing the pane. AI edits no longer drop existing images — image blocks are always preserved (repositioned/resized around, never deleted). Export produces a proper .vela deck file ('Export Vela'). Token/cost stats show only in Claude.ai artifact mode. Desktop: creating a new deck writes a fresh file in the same folder instead of overwriting the open deck; the About dialog gained a 'Check for updates' button; the AI-agent Re-scan button now shows progress and responds; window title is 'Vela Slides'. Confirm dialogs have a clear default button and confirm on Enter." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -8602,8 +8603,13 @@ uiSuite("Toolbar", [
   { name: "New slide button exists (+)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("New slide") || b.textContent?.includes("New")));
   }},
-  { name: "Cost badge visible (💲)", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("💲")));
+  { name: "Cost badge visible only in artifact mode (💲)", fn: async () => {
+    // Token/cost stats render only as a Claude.ai artifact (metered proxy). In
+    // desktop / local-serve / test runtimes the badge is intentionally absent.
+    const artifact = typeof velaIsArtifactMode === "function" && velaIsArtifactMode();
+    const present = () => !!_$$("button").find((b) => (b.textContent || "").includes("💲"));
+    if (artifact) { await _waitFor(present); }
+    else if (present()) throw new Error("cost badge should be hidden outside artifact mode");
   }},
   { name: "Delete button exists (🗑)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Delete") || b.textContent?.includes("🗑")));
@@ -9698,6 +9704,102 @@ uiSuite("Review", [
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
+  }},
+]);
+
+// ── Sprint 7-1 UX batch ──────────────────────────────────────────────
+// Header slide count parsed from the header stat pill ("⏱24m · 28sl · 13§").
+const _headerSlideCount = () => {
+  const hdr = _$("header");
+  if (!hdr) return null;
+  const el = _$$("span", hdr).find((e) => /\d+sl\b/.test(e.textContent || ""));
+  const m = el && (el.textContent || "").match(/(\d+)sl/);
+  return m ? parseInt(m[1], 10) : null;
+};
+
+uiSuite("Header & Stats (7-1)", [
+  { name: "Header shows minutes + slide count", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+m\b/.test(e.textContent || "") && /\d+sl\b/.test(e.textContent || "")); });
+    if (/\d+m\s*\d+s/.test(pill.textContent)) throw new Error("header still shows seconds: " + pill.textContent);
+  }},
+  { name: "Header pill opens the Deck stats dialog", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+sl\b/.test(e.textContent || "") && /§/.test(e.textContent || "")); });
+    _click(pill);
+    await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /Deck stats/i.test(e.textContent || "")));
+    _key("Escape");
+    await _wait(150);
+  }},
+]);
+
+uiSuite("Hide slides (7-1)", [
+  { name: "Eye toggle hides a slide and updates the count", fn: async () => {
+    const eye = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hide slide")));
+    const before = _headerSlideCount();
+    if (before == null) throw new Error("no header slide count");
+    _click(eye);
+    await _waitFor(() => _headerSlideCount() === before - 1, 2000);
+    // restore
+    const unhide = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hidden")));
+    _click(unhide);
+    await _waitFor(() => _headerSlideCount() === before, 2000);
+  }},
+]);
+
+uiSuite("Add menu (7-1)", [
+  { name: "Add affordance offers Blank / AI / Section", fn: async () => {
+    const add = await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /＋\s*add|＋\s*Add slide/.test(e.textContent || "")));
+    _click(add);
+    await _waitFor(() => {
+      const btns = _$$("button").map((b) => (b.textContent || "").trim());
+      return btns.some((t) => /Blank/.test(t)) && btns.some((t) => /Section/.test(t)) && btns.some((t) => /AI/.test(t));
+    }, 2000);
+    // close the menu
+    const x = _$$("button").find((b) => (b.textContent || "").trim() === "✕");
+    if (x) _click(x);
+    await _wait(120);
+  }},
+]);
+
+uiSuite("Section drag reorder (7-1)", [
+  { name: "Dragging a section changes the order", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    const titleOf = (r) => { const s = _$$("span", r).find((x) => parseInt(x.style.fontWeight) >= 600); return (s ? s.textContent : r.textContent || "").trim().slice(0, 30); };
+    const before = rows().map(titleOf);
+    if (before.length < 3) throw new Error("need >=3 sections");
+    const src = rows()[0], dst = rows()[2];
+    const dt = new DataTransfer();
+    const fire = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra)));
+    const db = dst.getBoundingClientRect();
+    fire(src, "dragstart");
+    fire(dst, "dragover", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(dst, "drop", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(src, "dragend");
+    await _waitFor(() => JSON.stringify(rows().map(titleOf)) !== JSON.stringify(before), 2000);
+    // drag it back to restore original order
+    const r2 = rows(); const s2 = r2.find((r) => titleOf(r) === before[0]); const d2 = r2[0];
+    if (s2 && d2 && s2 !== d2) {
+      const dt2 = new DataTransfer();
+      const fire2 = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt2 }, extra)));
+      const b2 = d2.getBoundingClientRect();
+      fire2(s2, "dragstart"); fire2(d2, "dragover", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(d2, "drop", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(s2, "dragend");
+      await _wait(150);
+    }
+  }},
+]);
+
+uiSuite("Presenter Ctrl+E (7-1)", [
+  { name: "Ctrl+E toggles the TOC search pane", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const isFs = () => !!_$("[style*='position: fixed']");
+    // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
+    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _wait(400); }
+    if (!isFs()) throw new Error("could not enter fullscreen");
+    const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
+    _key("e", { ctrlKey: true });
+    await _waitFor(tocOpen, 2500);
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocOpen(), 2500);
+    _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
 ]);
 

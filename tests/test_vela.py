@@ -418,6 +418,26 @@ def test_security():
     else:
         fail("AI image preservation suite", f"missing: {imgpres_script}")
 
+    # 9d. Sprint 7-1 UX logic: minutes formatting, slide-visibility helpers,
+    # blank-slide derivation, and the new reducer actions.
+    uxlogic_script = os.path.join(REPO_ROOT, "tests", "test_ux_logic.cjs")
+    if os.path.exists(uxlogic_script):
+        try:
+            r = subprocess.run(["node", uxlogic_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"Sprint 7-1 UX logic suite ({count} cases)")
+            else:
+                fail("Sprint 7-1 UX logic suite",
+                     f"node tests/test_ux_logic.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("Sprint 7-1 UX logic suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("Sprint 7-1 UX logic suite", "timeout after 60s")
+    else:
+        fail("Sprint 7-1 UX logic suite", f"missing: {uxlogic_script}")
+
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the
     # strip (or omitting bidi/zero-width) fails this check (red).
