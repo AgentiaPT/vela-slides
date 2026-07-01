@@ -31,7 +31,7 @@ resource on render, executes script, or reaches the native bridge.** Every
 Tracked because they are the live edge of CSS/SVG/HTML-injection research and
 map directly onto the `serve.py` / desktop "render fires a network request"
 threat. Each is a **class to keep tested against the real code**, not a claim
-that a hole exists — Vela's history (v12.52–v12.66) is a sequence of closing
+that a hole exists — Vela's history (v12.52–v12.79) is a sequence of closing
 exactly these as they emerged:
 
 - **CSS auto-load beacons** — `url()`, `image-set()` / `image()` / `cross-fade()` / `src()` string sources, and any future string-taking CSS function in inline `style`, color/background scalars, or SVG `<style>`/presentation attributes. A render-time outbound GET = zero-click exfil.
@@ -42,6 +42,8 @@ exactly these as they emerged:
 - **`serve.py` server surface** — path traversal / symlink escape on deck names, auth-token / session handling, cross-origin write (CSRF) and Host-header (DNS-rebinding) checks, and the script-context escaping above.
 - **Neutralino native-bridge reachability** — the desktop webview is granted `filesystem.*` + `os.getEnv`. A deck value that achieves script execution in this realm could call `Neutralino.filesystem.*`/`os.getEnv` directly. `fs-guard.js` caps file blast radius to the two allowed roots (traversal-segment reject + prefix containment); `nativeAllowList` withholds `os.spawnProcess`/`os.execCommand` (no RCE). The invariant to keep tested: **no deck-supplied value reaches an active script context** (only inert/static SVG sinks), and `fs-guard` containment holds against path-normalization tricks (`..`, symlink, UNC/`\\`, drive-relative, URL-encoded separators).
 - **Desktop CSP image/font egress asymmetry** — because the desktop `<meta>` CSP permits `img-src/font-src https:`, *any* deck-controlled value that survives sanitization into an `<img src>`, CSS `background-image`/`url()`, `image-set()`, or `@font-face src:url()` is a live render-time beacon on desktop even though the identical payload is CSP-blocked under `serve.py`. Test image/font/CSS-url sinks against the desktop CSP, not just the server CSP.
+- **Plain-text field sanitization completeness** — the generic string sanitizer that strips HTML tags from non-SVG text fields must fully neutralize nested/malformed markup, not just a single stripping pass; verify it against layered and incomplete-tag inputs, not just well-formed ones.
+- **PDF export link-scheme validation** — link URLs pulled from deck blocks and embedded as PDF annotations must be routed through the same URL-scheme allowlist (http/https/mailto) used elsewhere, so a non-navigational scheme cannot become a clickable PDF link.
 
 A defense in any of these classes is considered proven **only** when a payload
 is fed through the real sanitizers and the real browser sink and observed to be
@@ -55,6 +57,7 @@ review alone.
 | Malicious JSON import | Block-type whitelisting, string sanitization, structure validation |
 | SVG injection (XSS) | Multi-layer sanitization: script, foreignObject, use, animate, event handler, javascript: URI, xlink:href, CSS expression stripping |
 | Oversized payloads | String length limits on all fields (200-50000 chars), block count limits (30/slide), row/column limits |
+| Malicious link scheme in PDF export | Every link is routed through the URL-scheme allowlist (http/https/mailto) before being embedded as a PDF annotation |
 | CDN compromise (html2canvas) | Loaded from cdnjs.cloudflare.com with integrity checks — standard risk for client-side apps |
 | Credential leakage | No API keys, tokens, or secrets in the codebase. Anthropic API calls use Claude.ai's built-in proxy |
 
@@ -80,7 +83,7 @@ Both layers strip:
 
 All imported deck JSON passes through `validateAndSanitizeDeck()` which enforces:
 - Whitelisted block types only (`SAFE_BLOCK_TYPES`)
-- String fields stripped of HTML tags and truncated
+- String fields stripped of HTML tags (to a fixpoint, so incomplete/nested markup can't survive a single pass) and truncated
 - Nested structures (grid cells, timeline entries) recursively sanitized
 - Style objects validated as plain objects (no arrays, no primitives)
 - SVG markup sanitized with the full pipeline above

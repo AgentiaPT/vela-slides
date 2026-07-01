@@ -2,7 +2,7 @@
 
 ## Overview
 
-Vela Slides is a **single-file React application** (12,650 lines, ~963 KB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
+Vela Slides is a **single-file React application** (16,374 lines, ~1.2 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
 
 ```
 Source (13 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
@@ -37,7 +37,7 @@ part-slides     → Slide panel, fullscreen, branding overlay
 part-list       → Lane/module list, drag & drop
 part-chat       → Chat panel, tool trace cards
 part-test       → Battery tests
-part-uitest     → UI integration tests (159 tests in 25 suites)
+part-uitest     → UI integration tests (166 tests in 30 suites)
 part-demo       → Cinematic demo mode (18 scenes)
 part-pdf        → PDF export, markdown export
 part-app        → Top-level shell, modals, shortcuts
@@ -55,19 +55,19 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 
 | Part | Lines | What it owns |
 |---|---|---|
-| `part-imports.jsx` | ~660 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
-| `part-icons.jsx` | ~190 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
-| `part-blocks.jsx` | ~910 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon-row, tag-group, progress, code, image, divider, spacer. Plus `EditableText` for WYSIWYG. |
-| `part-reducer.jsx` | ~180 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
-| `part-engine.jsx` | ~1,040 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
-| `part-slides.jsx` | ~1,930 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |
-| `part-list.jsx` | ~380 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
-| `part-chat.jsx` | ~430 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
-| `part-test.jsx` | ~240 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~1,100 | 159 UI integration tests in 25 suites — comprehensive coverage of block rendering, themes, edge cases |
+| `part-imports.jsx` | ~1,380 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
+| `part-icons.jsx` | ~290 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
+| `part-blocks.jsx` | ~1,700 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon-row, tag-group, progress, code, image, divider, spacer, comparison, funnel, cycle, number-row, matrix, checklist, icon. Plus `EditableText` for WYSIWYG. |
+| `part-reducer.jsx` | ~290 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
+| `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
+| `part-slides.jsx` | ~2,350 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |
+| `part-list.jsx` | ~530 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
+| `part-chat.jsx` | ~440 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
+| `part-test.jsx` | ~330 | `VelaBatteryTest` — automated render tests for block types |
+| `part-uitest.jsx` | ~1,660 | 166 UI integration tests in 30 suites — comprehensive coverage of block rendering, themes, edge cases |
 | `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
-| `part-pdf.jsx` | ~3,510 | Canvas-based PDF renderer, watermark system, link annotations, markdown export |
-| `part-app.jsx` | ~1,220 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
+| `part-pdf.jsx` | ~3,670 | Canvas-based PDF renderer, watermark system, link annotations, markdown export |
+| `part-app.jsx` | ~1,640 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
 
 ## Assembly Pipeline
 

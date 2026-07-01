@@ -45,7 +45,7 @@ node skills/vela-slides/scripts/vela-drive.js video /tmp/vout/render.html /tmp/v
 ```
 
 ## Gotchas already solved (don't rediscover)
-- **Never inline the 1.1MB monolith as `<script type="text/babel">`** — it contains
+- **Never inline the 1.2MB monolith as `<script type="text/babel">`** — it contains
   literal `</script>` inside XSS-test string payloads, which truncates the block
   ("Unterminated string constant"). `render-offline.js` transpiles in Node and
   loads an **external** `app.js` instead.

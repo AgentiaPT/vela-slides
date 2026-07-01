@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,061 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.2MB, 16,374 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 159 UI tests in 25 suites |
+| `part-uitest.jsx` | 166 UI tests in 30 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
 
@@ -63,11 +63,11 @@ Virtual canvas: **960×540px** (16:9).
 }
 ```
 
-### Block Types (21)
-Text: heading, text, quote, badge, callout
-Lists: bullets, icon-row, tag-group
-Data: grid, table, metric, progress, timeline
-Flow: flow (gates & loops), steps
+### Block Types (27)
+Text: heading, text, quote, badge, callout, icon
+Lists: bullets, icon-row, tag-group, checklist
+Data: grid, table, metric, progress, timeline, comparison, matrix, number-row
+Flow: flow (gates & loops), steps, funnel, cycle
 Media: image, code, svg
 Layout: spacer, divider
 
@@ -85,7 +85,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (349 tests)
+# 1. Run full test suite (353 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
@@ -134,7 +134,7 @@ examples/              ← vela-demo.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
 evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
-tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
+tests/                 ← test_vela.py (353 tests), test_serve.py (88 tests)
 ```
 
 ## AI Features (Vera Engine)
@@ -233,7 +233,7 @@ Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/ch
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;
 `npm i jsdom` once for the two Node security suites; `ERR_INVALID_URL`/`ERR_CONNECTION_CLOSED`
 console errors are harmless font fetches. In-app UI battery is invokable headless via
-`window.__velaRunUITests()`. Never inline the 1.1MB monolith as `text/babel` (its XSS-test
+`window.__velaRunUITests()`. Never inline the 1.2MB monolith as `text/babel` (its XSS-test
 strings contain `</script>` and truncate the block) — the harness loads an external `app.js`.
 
 ## License

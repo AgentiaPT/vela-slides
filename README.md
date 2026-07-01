@@ -19,7 +19,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 > **No human has reviewed the source code.**
 >
-> Every line of Vela — 14,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
+> Every line of Vela — 16,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 440+ automated tests, and static analysis, but no human has ever read or audited the code.
 >
 > **You are responsible for your own review before using this in any production or sensitive context.**
 >
@@ -129,7 +129,7 @@ Vela ships as a **skill** — a structured prompt + reference architecture (mark
 └──────────────────────────────────────────────────┘
 ```
 
-The Vela engine is a **14,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
+The Vela engine is a **16,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
 
 ---
 
@@ -235,8 +235,8 @@ vela-slides/
 │   └── *.vela                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/
-│   ├── test_vela.py           ← Core engine tests (349 tests)
-│   └── test_serve.py          ← Server endpoint & security tests (84 tests)
+│   ├── test_vela.py           ← Core engine tests (353 tests)
+│   └── test_serve.py          ← Server endpoint & security tests (88 tests)
 ├── LICENSE                    ← Elastic License v2
 ├── CONTRIBUTING.md
 └── README.md
