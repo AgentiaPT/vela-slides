@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -393,10 +394,38 @@ func TestExecAgentBinaryNotFound(t *testing.T) {
 	}
 }
 
+// trustedGoBinary copies the real `go` toolchain into a fresh t.TempDir() and
+// returns the copy's absolute path. The exec tests need a genuine executable
+// that ALSO passes checkBinaryTrusted, but the `go` on PATH frequently lives
+// under a world-writable install root (CI's /opt/hostedtoolcache/go/.../x64),
+// which the guard correctly rejects. t.TempDir() is created 0700 under sticky
+// /tmp, so the copy resolves cleanly — exercising the real spawn + guard path
+// without depending on where the toolchain happens to be installed.
+func trustedGoBinary(t *testing.T) string {
+	t.Helper()
+	src, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("go not found on PATH: %v", err)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name = "go.exe"
+	}
+	dst := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		t.Fatalf("write %s: %v", dst, err)
+	}
+	return dst
+}
+
 func TestExecAgentRealSubprocess(t *testing.T) {
-	// "go" is guaranteed on PATH wherever `go test` runs — exercises the real
-	// spawn path, not just the LookPath check.
-	out, err := execAgent(context.Background(), "go", []string{"version"}, "")
+	// A trusted copy of `go` exercises the real spawn path, not just LookPath.
+	bin := trustedGoBinary(t)
+	out, err := execAgent(context.Background(), bin, []string{"version"}, "")
 	if err != nil {
 		t.Fatalf("execAgent(go version) failed: %v", err)
 	}
@@ -406,10 +435,11 @@ func TestExecAgentRealSubprocess(t *testing.T) {
 }
 
 func TestExecAgentTimeout(t *testing.T) {
+	bin := trustedGoBinary(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	time.Sleep(2 * time.Millisecond) // guarantee the deadline has passed
-	_, err := execAgent(ctx, "go", []string{"version"}, "")
+	_, err := execAgent(ctx, bin, []string{"version"}, "")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("expected timeout error, got %v", err)
 	}
