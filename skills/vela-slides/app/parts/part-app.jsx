@@ -1245,14 +1245,18 @@ export default function App() {
 
   // Export
   const exportDeck = () => {
+    // Export the canonical Vela deck format (.vela) \u2014 the same shape as
+    // examples/*.vela and what the `vela` CLI reads: deckTitle + lanes (+ branding
+    // + guidelines). No app-state wrapper (chat/selection are not part of a deck).
     const save = extractSave(state);
-    const cleaned = { ...save, chatMessages: save.chatMessages.map((m) => m.images ? { ...m, images: [] } : m) };
     const title = state.deckTitle || "Untitled";
-    const payload = { _vela: 1, name: title, exportedAt: now(), data: cleaned };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const deck = { deckTitle: title, lanes: save.lanes || [] };
+    if (save.branding) deck.branding = save.branding;
+    if (save.guidelines) deck.guidelines = save.guidelines;
+    const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.vela`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     takeSnapshot(state);
@@ -1411,7 +1415,7 @@ export default function App() {
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
-                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export JSON {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
+                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
@@ -1420,8 +1424,8 @@ export default function App() {
               </div>
             </>}
           </div>
-          <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <CostBadge />
+          {velaIsArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
+          <CostBadge /></>}
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
@@ -1460,7 +1464,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
-            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
+            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
@@ -1566,7 +1570,15 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
-      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
+      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
+        // Desktop: allocate a NEW file in the same folder first, so creating a
+        // deck never overwrites the one currently open (CR). No-op elsewhere.
+        if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
+          try { await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+        }
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);

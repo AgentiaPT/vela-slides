@@ -34,6 +34,16 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// True only when running as a Claude.ai artifact (the Anthropic proxy that meters
+// tokens). Desktop (Neutralino agent) and local serve.py bill nothing through the
+// artifact proxy, so token/cost stats are meaningless there and are hidden. (CR)
+const velaIsArtifactMode = () => {
+  if (typeof window === "undefined") return false;
+  if (window.__velaAgentReady != null || window.__velaAgentInfo != null) return false; // Neutralino desktop
+  if (VELA_LOCAL_MODE) return false; // serve.py local preview
+  return window.self !== window.top; // Claude.ai renders artifacts inside an iframe
+};
+
 // React hook: re-renders the caller when AI availability changes. velaAIAvailable()
 // is a plain read of window.__velaAgentReady, which the Neutralino shell flips
 // asynchronously once agent detection finishes and announces via a

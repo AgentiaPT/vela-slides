@@ -167,6 +167,11 @@ async function boot() {
   // Save hook: Vela calls this on every state change. deck-io debounces.
   window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
 
+  // New-deck hook: Vela calls this (desktop only) BEFORE creating a blank deck so
+  // it lands in a fresh file in the same folder instead of overwriting the deck
+  // the user currently has open (CR). Returns the new path (or null).
+  window.__velaNewDeckFile = (title) => deckIO.newDeck(title);
+
   setMsg("Transpiling Vela…");
   await loadVela();
 
