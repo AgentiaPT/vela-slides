@@ -58,6 +58,12 @@ func processName(pid int) string {
 	return full
 }
 
+// checkBinaryTrusted is a no-op on Windows: os.FileMode does not represent NTFS
+// ACLs, so the Unix world-writable permission test (procwatch_unix.go) would be
+// meaningless here. On Windows the integrity guarantee rests on the
+// absolute-path pin in resolveAgentBin plus standard install-directory ACLs.
+func checkBinaryTrusted(string) error { return nil }
+
 // parentAlive reports whether pid is still running. On Windows we open the
 // process and ask whether its handle has become signaled: a 0ms wait returning
 // WAIT_TIMEOUT means the process is still running; WAIT_OBJECT_0 means it has
