@@ -186,4 +186,106 @@ function getIcon(name, props = {}) {
 }
 ensureIcons(() => {});
 
+// ━━━ Icon Picker (searchable, click-to-change in edit mode) ━━━━━━━
+// Context: opener function injected by App() so the modal is hosted at the
+// app root, OUTSIDE any slide CSS transform (a position:fixed element inside a
+// transformed ancestor is positioned relative to that ancestor, not the viewport).
+const IconPickerContext = React.createContext(null);
+
+// Sorted PascalCase Lucide names (skip the kebab-case dupes). Memoized.
+let _iconNamesCache = null;
+function allIconNames() {
+  if (_iconNamesCache) return _iconNamesCache;
+  if (!_iconsMap) return [];
+  _iconNamesCache = Object.keys(_iconsMap).filter(k => /^[A-Z]/.test(k)).sort();
+  return _iconNamesCache;
+}
+
+// Curated default set for the empty-query view — reuse the AI's "Common:" list.
+const COMMON_ICON_NAMES = ((typeof ICON_LIST === "string" ? ICON_LIST : "").split("Common:")[1] || "")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
+// Search by name substring + alias words (e.g. "rocket"→Rocket, "warning"→AlertTriangle).
+// Prefix matches first; capped so a keystroke never renders thousands of icons.
+function searchIconNames(q) {
+  const query = (q || "").trim().toLowerCase();
+  if (!query) return COMMON_ICON_NAMES;
+  const all = allIconNames();
+  const aliasHits = Object.keys(ICON_ALIASES)
+    .filter(k => k.toLowerCase().includes(query))
+    .map(k => ICON_ALIASES[k]);
+  const seen = new Set();
+  const out = [];
+  for (const n of [...all.filter(n => n.toLowerCase().startsWith(query)),
+                   ...all.filter(n => n.toLowerCase().includes(query) && !n.toLowerCase().startsWith(query)),
+                   ...aliasHits]) {
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= 120) break;
+  }
+  return out;
+}
+
+function IconPicker({ value, onPick, onClose }) {
+  const [q, setQ] = useState("");
+  const [ready, setReady] = useState(!!_iconsMap);
+  const [raw, setRaw] = useState("");
+  useEffect(() => { ensureIcons(() => setReady(true)); }, []);
+  const results = ready ? searchIconNames(q) : [];
+  const swatch = (name) => (
+    <button key={name} onClick={() => onPick(name)} title={name}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, padding: "6px 4px", height: 58, borderRadius: 8,
+        background: name === value ? T.accent + "22" : "transparent", border: `1px solid ${name === value ? T.accent : "transparent"}`,
+        color: T.text, cursor: "pointer" }}
+      onMouseEnter={(e) => { if (name !== value) e.currentTarget.style.background = T.bgInput; }}
+      onMouseLeave={(e) => { if (name !== value) e.currentTarget.style.background = "transparent"; }}>
+      <span style={{ width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{getIcon(name, { size: 22, color: T.text, strokeWidth: 1.75 })}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: 8, color: T.textDim, maxWidth: 56, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+    </button>
+  );
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", maxHeight: "76vh" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexShrink: 0 }}>
+          <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>Pick an icon</span>
+          {value && <button onClick={() => onPick(null)} style={{ fontFamily: FONT.mono, fontSize: 11, color: T.red, background: "none", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>Clear</button>}
+        </div>
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search icons (e.g. rocket, shield, chart)…"
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const r = searchIconNames(q); if (r[0]) onPick(r[0]); } }}
+          style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", fontFamily: FONT.body, fontSize: 14, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", marginBottom: 12, flexShrink: 0 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 4, flex: 1, minHeight: 0, overflowY: "auto", marginBottom: 12 }}>
+          {!ready && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: T.textDim, padding: 8 }}>Loading icons…</span>}
+          {ready && results.length === 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: T.textDim, padding: 8 }}>No matches — try the emoji/name field below.</span>}
+          {results.map(swatch)}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", borderTop: `1px solid ${T.border}`, paddingTop: 12, flexShrink: 0 }}>
+          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, flexShrink: 0 }}>Emoji / name:</span>
+          <input value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="🚀 or AlertTriangle"
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && raw.trim()) onPick(raw.trim()); }}
+            style={{ flex: 1, padding: "6px 10px", fontFamily: FONT.mono, fontSize: 13, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, outline: "none" }} />
+          <button onClick={() => { if (raw.trim()) onPick(raw.trim()); }} style={{ padding: "6px 12px", fontFamily: FONT.body, fontSize: 13, background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Set</button>
+        </div>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+// Wraps an icon in edit mode: click to open the picker. When there is no icon
+// yet it renders a subtle ghost "+" so an icon can be added. Outside edit mode
+// (or with no provider) it renders children untouched — zero render-path impact.
+function EditableIcon({ value, onPick, editable, size = 20, children }) {
+  const openPicker = React.useContext(IconPickerContext);
+  const [hover, setHover] = useState(false);
+  if (!editable || !openPicker) return children || null;
+  const click = (e) => { e.stopPropagation(); e.preventDefault(); openPicker(value, onPick); };
+  if (value) {
+    return <span onClick={click} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      title="Change icon" style={{ display: "inline-flex", cursor: "pointer", borderRadius: 6, transition: "box-shadow 0.15s", boxShadow: hover ? `0 0 0 2px ${T.accent}` : "none" }}>{children}</span>;
+  }
+  const d = Math.round(size * 1.6);
+  return <span onClick={click} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+    title="Add icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: d, height: d, borderRadius: "50%", border: `1px dashed ${T.accent}`, color: T.accent, fontSize: Math.round(size * 0.9), lineHeight: 1, cursor: "pointer", flexShrink: 0, opacity: hover ? 0.85 : 0.25, transition: "opacity 0.15s" }}>+</span>;
+}
+
 

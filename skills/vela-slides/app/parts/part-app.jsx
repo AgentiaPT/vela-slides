@@ -295,10 +295,10 @@ function ShortcutHelp({ onClose }) {
       ["Shift+I", "Quick improve slide via Vera"],
       ["E", "Quick edit slide by prompt"],
       ["N", "New slide by prompt"],
-      ["1 – 4", "Preview variant"],
+      ["1 – 4", "Apply variant (preview stays open)"],
       ["0", "Back to original"],
-      ["Enter", "Accept previewed variant"],
-      ["Esc", "Dismiss alternatives"],
+      ["Enter", "Done — close variants, keep applied"],
+      ["Esc", "Close variants"],
     ]},
   ];
   return (
@@ -799,6 +799,8 @@ export default function App() {
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
+  const [iconPicker, setIconPicker] = useState(null); // { value, onPick } — searchable icon picker
+  const openIconPicker = useCallback((value, onPick) => setIconPicker({ value, onPick }), []);
   const fileInputRef = useRef(null);
 
   // ━━━ Local mode: two-way sync with serve.py ━━━━━━━━━━━━━━━━━━━━
@@ -1286,6 +1288,7 @@ export default function App() {
   }
 
   return (
+    <IconPickerContext.Provider value={openIconPicker}>
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
@@ -1504,6 +1507,7 @@ export default function App() {
       </div>}
 
       {jsonModal && <JsonClipboardModal mode={jsonModal} setMode={setJsonModal} state={state} dispatch={dispatch} />}
+      {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
@@ -1528,6 +1532,7 @@ export default function App() {
       {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
       {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
+    </IconPickerContext.Provider>
   );
 }
 

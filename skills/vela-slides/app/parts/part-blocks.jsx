@@ -303,6 +303,141 @@ function patchItemAt(block, onChange, idx, patch) {
   onChange?.({ items: ni });
 }
 
+// Remove block.items[idx] and call onChange
+function removeItemAt(block, onChange, idx) {
+  onChange?.({ items: (block.items || []).filter((_, j) => j !== idx) });
+}
+
+// Set/clear .link on block.items[idx], upgrading a bare-string item to an object
+function setItemLink(block, onChange, idx, url) {
+  const ni = [...(block.items || [])];
+  const cur = ni[idx];
+  const base = typeof cur === "string" ? { text: cur } : { ...cur };
+  if (url) base.link = url; else delete base.link;
+  ni[idx] = base;
+  onChange?.({ items: ni });
+}
+
+// Read the per-item link regardless of whether the item is a bare string or an object
+const itemLinkOf = (item) => (item && typeof item === "object" ? item.link : undefined);
+
+// Append newItem to block.items and call onChange
+function addItemAt(block, onChange, newItem) {
+  onChange?.({ items: [...(block.items || []), newItem] });
+}
+
+// Placeholder item factory for the "+ add" affordance on multi-item blocks.
+// Returns a blank item with neutral placeholder text/icon matching each block
+// type's item shape — so a fresh item is editable inline without resorting to AI.
+function blankItemFor(type) {
+  switch (type) {
+    case "bullets": return "New point";
+    case "icon-row": return { icon: "Circle", title: "Title", text: "Description" };
+    case "flow": return { icon: "Circle", label: "Step" };
+    case "steps": return { title: "Step title", text: "Description" };
+    case "tag-group": return { text: "Tag" };
+    case "timeline": return { date: "2025", title: "Milestone", text: "Description" };
+    case "progress": return { label: "Metric", value: 50 };
+    case "number-row": return { value: "00", label: "Label", icon: "Circle" };
+    case "checklist": return { text: "New task", status: "pending" };
+    case "funnel": return { label: "Stage", value: "0" };
+    case "cycle": return { label: "Step" };
+    case "grid": return { blocks: [{ type: "heading", text: "Title", size: "md" }, { type: "text", text: "Description" }] };
+    default: return { text: "New item" };
+  }
+}
+
+// Content fields to reset to placeholders when cloning a sibling item. Everything
+// NOT listed here (colors, icon, iconColor/iconBg, padding, status, variant, style…)
+// is inherited from the last item so the new one matches its neighbours.
+const PLACEHOLDER_FIELDS = {
+  bullets: { text: "New point" },
+  "icon-row": { title: "Title", text: "Description" },
+  flow: { label: "Step" },
+  steps: { title: "Step title", text: "Description" },
+  "tag-group": { text: "Tag" },
+  timeline: { date: "2025", title: "Milestone", text: "Description" },
+  progress: { label: "Metric", value: 50 },
+  "number-row": { value: "00", label: "Label" },
+  checklist: { text: "New task" },
+  funnel: { label: "Stage", value: "0" },
+  cycle: { label: "Step" },
+};
+
+// Deep-clone a grid cell, keeping its style (padding/background) and inner block
+// structure (icon, sizes, colors) so the new card looks identical to its siblings —
+// only the textual block content is reset to placeholders.
+function cloneGridCell(cell) {
+  let c;
+  try { c = JSON.parse(JSON.stringify(cell)); } catch { return blankItemFor("grid"); }
+  if (!c || typeof c !== "object") return blankItemFor("grid");
+  delete c.link;
+  if (Array.isArray(c.blocks) && c.blocks.length) {
+    c.blocks.forEach((b) => {
+      if (!b || typeof b !== "object") return;
+      delete b.link;
+      if (typeof b.text === "string") b.text = b.type === "text" ? "Description" : "Title";
+      if (typeof b.value === "string") b.value = "00";
+      if (typeof b.label === "string") b.label = "Label";
+      if (typeof b.caption === "string") b.caption = "Caption";
+    });
+    return c;
+  }
+  return blankItemFor("grid");
+}
+
+// Reset a comparison/matrix point (string or {text,link}) to a placeholder,
+// preserving any other styling the sibling point carried.
+function clonePoint(pt) {
+  if (pt && typeof pt === "object") { const x = { ...pt, text: "New point" }; delete x.link; return x; }
+  return "New point";
+}
+
+// Build the item appended by "+ add": clone the last sibling's style and reset
+// only its content fields to placeholders. Falls back to a generic blank when the
+// list is empty (or the sibling is a bare string with no style to inherit).
+function newItemFor(block, type) {
+  const items = block.items || [];
+  const last = items.length ? items[items.length - 1] : undefined;
+  if (type === "grid") return last ? cloneGridCell(last) : blankItemFor("grid");
+  if (last && typeof last === "object" && !Array.isArray(last)) {
+    const next = { ...last };
+    delete next.link;
+    const ph = PLACEHOLDER_FIELDS[type] || { text: "New item" };
+    for (const k in ph) next[k] = ph[k];
+    return next;
+  }
+  return blankItemFor(type);
+}
+
+// ━━━ Add-Item Affordance — "+ add" button shown only in edit mode ━━━━━━━━━━━━━
+// Lets the user append a placeholder item to a multi-item block without AI.
+// variant: "row" full-width dashed bar (column lists) · "chip" compact inline
+// (wrap/horizontal layouts) · "cell" grid-cell-sized dashed box.
+function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
+  const [hover, setHover] = useState(false);
+  const ac = accent || T.accent;
+  const base = {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+    cursor: "pointer", fontFamily: FONT.mono, fontSize: variant === "chip" ? 10 : 11,
+    fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1,
+    color: hover ? ac : T.textDim,
+    border: `1px dashed ${hover ? ac : T.border}`,
+    borderRadius: variant === "cell" ? 10 : 6,
+    background: hover ? `${ac}12` : "transparent",
+    transition: "color .15s, border-color .15s, background .15s",
+    boxSizing: "border-box", userSelect: "none",
+    padding: variant === "chip" ? "4px 10px" : variant === "cell" ? 16 : "6px 12px",
+    width: variant === "chip" ? "fit-content" : "100%",
+    minHeight: variant === "cell" ? 56 : undefined,
+    ...style,
+  };
+  return <button type="button" title={label}
+    onClick={(e) => { e.stopPropagation(); onAdd(); }}
+    onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+    style={base}>+ {label}</button>;
+}
+
 // Editable text wired to patch an item property
 function ItemText({ block, onChange, editable, idx, prop, style }) {
   const items = block.items || [];
@@ -319,100 +454,112 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
-// ━━━ Icon Row Item (with per-item link) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+// ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
+// In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
+// Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
+// Pass onDelete/onSetLink to enable each action; omit one to hide that button.
+//
+// Overlap handling: the toolbar anchors INSIDE the item's top-right corner so it never
+// pokes into a neighbouring item or past the slide edge. Hovering an item also notifies
+// ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
+// the item toolbar and the block toolbar are never shown stacked on the same corner.
+const ItemHoverContext = React.createContext(null);
+const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
+
+// noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
+// — used by grid, where the inner block already owns the link-editing chrome.
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
-  const link = item.link;
+  const notifyHover = React.useContext(ItemHoverContext);
   const editMode = editable && !presenting;
-
-  const updateItem = (patch) => {
-    const ni = [...(block.items || [])];
-    ni[index] = { ...ni[index], ...patch };
-    if (ni[index].link === undefined) delete ni[index].link;
-    onChange?.({ items: ni });
-  };
-
+  const linkable = typeof onSetLink === "function";
+  const showLinkUI = linkable && !noLinkBadge;
+  const deletable = typeof onDelete === "function";
+  const clickable = link && !editMode;
+  const a = anchor || { top: 2, right: 2 };
+  const ba = badgeAnchor || { top: 2, right: 2 };
+  const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
+  const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
   return (
-    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
-      title={link ? linkPreview(link, item.title) : undefined}
+    <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
+      title={link ? linkPreview(link, linkLabel) : undefined}
       data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
-      <div style={{ flex: 1 }}>
-        <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
-        {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
-      </div>
-      {/* Presenter mode: subtle link badge */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -2, right: -32, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
-      {/* Link badge (not hovered, edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -32, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
-      {/* Hover chrome (edit mode) */}
-      {hovered && editMode && <div style={{ position: "absolute", top: -6, right: -32, display: "flex", gap: 3, zIndex: 11 }}>
-        <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>
+      onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
+      onMouseEnter={enter} onMouseLeave={leave}>
+      {children}
+      {/* Idle link badge — edit mode, not hovered */}
+      {link && showLinkUI && !hovered && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {/* Idle link badge — presenter */}
+      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {/* Hover cluster — edit mode */}
+      {hovered && editMode && (showLinkUI || deletable) && <div style={{ position: "absolute", ...a, display: "flex", gap: 3, zIndex: 11 }}>
+        {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
+        {deletable && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ ...itemChromeBtn(T.red, T.red, "#fff"), fontWeight: 700 }} title="Delete item">✕</button>}
       </div>}
       {/* Link editor popup */}
-      {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink && editMode && showLinkUI && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { updateItem({ link: e.target.value.trim() || undefined }); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { updateItem({ link: e.target.value.trim() || undefined }); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
-        {link && <button onClick={() => { updateItem({ link: undefined }); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        {link && <button onClick={() => { onSetLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
   );
 }
 
-// ━━━ Bullet Item (with per-item link editing) ━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Icon Row Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━━━━━
+function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+  const link = item.link;
+  const editMode = editable && !presenting;
+  return (
+    <ItemChrome editable={editable} presenting={presenting}
+      className={stg(staggerIdx, index)}
+      wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
+      link={link} linkLabel={item.title}
+      onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
+      onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
+      <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
+        <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
+      </EditableIcon>
+      <div style={{ flex: 1 }}>
+        <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
+        {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
+      </div>
+    </ItemChrome>
+  );
+}
+
+// ━━━ Bullet Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━
 function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false }) {
-  const [hovered, setHovered] = useState(false);
-  const [editingLink, setEditingLink] = useState(false);
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
-  const link = typeof item === "object" ? item.link : null;
+  const link = itemLinkOf(item);
   const editMode = editable && !presenting;
-
-  const updateItem = (patch) => {
+  const pickIcon = onChange ? (name) => {
     const ni = [...(block.items || [])];
     const cur = ni[index];
-    if (typeof cur === "string") {
-      ni[index] = { text: cur, ...patch };
-    } else {
-      ni[index] = { ...cur, ...patch };
-    }
-    if (ni[index].link === undefined) delete ni[index].link;
-    onChange?.({ items: ni });
-  };
-
+    ni[index] = typeof cur === "string" ? { text: cur, icon: name } : { ...cur, icon: name };
+    if (!name) delete ni[index].icon;
+    onChange({ items: ni });
+  } : undefined;
   return (
-    <div className={stg(staggerIdx, index)} style={{ position: "relative", display: "flex", gap: 12, alignItems: "center", ...(link && (presenting || !editable) ? { cursor: "pointer" } : {}) }}
-      title={link ? linkPreview(link, text) : undefined}
-      data-pdf-link={link || undefined}
-      onClick={link && (presenting || !editable) ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      {icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span>
-        : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />}
+    <ItemChrome editable={editable} presenting={presenting}
+      className={stg(staggerIdx, index)}
+      wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
+      link={link} linkLabel={text}
+      onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
+      onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
+      {icon
+        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span></EditableIcon>
+        : (editMode
+          ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
+          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />)}
       <EditableText text={text} editable={editMode} onSave={(v) => {
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
         onChange?.({ items: ni });
       }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
-      {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div style={{ padding: "2px 8px", borderRadius: 4, background: T.accent, fontSize: 10, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, opacity: hovered ? 1 : 0.35, transition: "opacity 0.2s", boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0, pointerEvents: "none" }}>🔗</div>}
-      {/* Non-presenting, non-editable: small arrow */}
-      {link && !presenting && !editable && <span style={{ flexShrink: 0, fontSize: 10, opacity: 0.5 }}>↗</span>}
-      {/* Link badge (when not hovered, in edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
-      {/* Hover chrome (edit mode only) */}
-      {hovered && editMode && <div style={{ position: "absolute", top: -6, right: -6, display: "flex", gap: 3, zIndex: 11 }}>
-        <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>
-      </div>}
-      {/* Link editor popup */}
-      {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
-        <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); updateItem({ link: url || undefined }); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { const url = e.target.value.trim(); updateItem({ link: url || undefined }); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
-        {link && <button onClick={() => { updateItem({ link: undefined }); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
-      </div>}
-    </div>
+    </ItemChrome>
   );
 }
 
@@ -452,7 +599,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled }) {
+function ZoomWrap({ children, enabled, link }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -486,12 +633,19 @@ function ZoomWrap({ children, enabled }) {
 
   if (!enabled) return children;
 
+  // When the block carries a link, the link takes precedence: a plain click
+  // bubbles to the wrapper's openExternalLink handler instead of zooming. Zoom
+  // stays reachable via the explicit badge (clickable only while visible/hovered
+  // so the invisible badge never steals clicks aimed at the link).
+  const hasLink = !!link;
+  const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
+
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: "zoom-in" }}
-      onClick={(e) => { e.stopPropagation(); setZoomed(true); }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+      onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
-      <div data-zoom-badge="" style={{ position: "absolute", top: 4, right: 4, padding: "2px 6px", borderRadius: 4, background: "rgba(15,23,42,0.7)", color: "#e2e8f0", fontSize: 10, fontFamily: "monospace", opacity: hovered ? 0.8 : 0, transition: "opacity 0.2s", pointerEvents: "none", display: "flex", alignItems: "center", gap: 3 }}>
+      <div data-zoom-badge="" onClick={hasLink ? triggerZoom : undefined} style={{ position: "absolute", top: 4, right: 4, padding: "2px 6px", borderRadius: 4, background: "rgba(15,23,42,0.7)", color: "#e2e8f0", fontSize: 10, fontFamily: "monospace", opacity: hovered ? 0.8 : 0, transition: "opacity 0.2s", pointerEvents: (hasLink && hovered) ? "auto" : "none", cursor: "zoom-in", display: "flex", alignItems: "center", gap: 3 }}>
         {getIcon("Maximize2", { size: 10, color: "#e2e8f0" })} zoom
       </div>
     </div>
@@ -534,7 +688,9 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
   return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
-    {block.icon && <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...(isReveal ? { cursor: "pointer" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span>}
+    <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
+      {block.icon ? <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...((isReveal && !editable) ? { cursor: "pointer" } : {}) }} onClick={(isReveal && !editable) ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span> : null}
+    </EditableIcon>
     <div style={{ flex: 1 }}>
       {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
         {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
@@ -563,15 +719,21 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   }, [fontScale]);
   const st = slideTheme;
   const cls = stg(staggerIdx);
+  // Show the "+ add item" affordance only in the live editable panel
+  // (never in present/thumbnail/PDF, and only when an onChange sink exists).
+  const canEdit = editable && !presenting && typeof onChange === "function";
   switch (block.type) {
 
     case "heading": {
       const headingText = (block.text || "").replace(/^\*\*\s*|\s*\*\*$/g, "").replace(/\*\*/g, "");
-      const hs = { fontFamily: FONT.display, fontSize: SIZES[block.size || "2xl"], fontWeight: block.weight || 700, color: block.color || st.text, lineHeight: 1.2, letterSpacing: "-0.02em", textAlign: block.icon ? undefined : block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, ...block.style };
-      const wrapS = block.icon ? { display: "flex", alignItems: "center", gap: 10, justifyContent: block.align === "center" ? "center" : block.align === "right" ? "flex-end" : undefined } : {};
+      const headingIconSlot = block.icon || editable;
+      const hs = { fontFamily: FONT.display, fontSize: SIZES[block.size || "2xl"], fontWeight: block.weight || 700, color: block.color || st.text, lineHeight: 1.2, letterSpacing: "-0.02em", textAlign: headingIconSlot ? undefined : block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, ...block.style };
+      const wrapS = headingIconSlot ? { display: "flex", alignItems: "center", gap: 10, justifyContent: block.align === "center" ? "center" : block.align === "right" ? "flex-end" : undefined } : {};
       return <div className={cls} style={{ ...wrapS, ...hs }}>
-        {block.icon && <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span>}
-        <EditableText text={headingText} editable={editable} onSave={(v) => onChange?.({ text: v })} style={block.icon ? { flex: 1 } : undefined} />
+        <EditableIcon editable={editable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
+          {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
+        </EditableIcon>
+        <EditableText text={headingText} editable={editable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
       </div>;
     }
 
@@ -582,10 +744,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "bullets":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 8, ...block.style }}>{(block.items || []).map((item, i) =>
         <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} />
-      )}</div>;
+      )}
+      {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
+      </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
@@ -605,7 +769,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         if (cell.border) cellStyle.border = cell.border;
         const safeStyle = cell.style && typeof cell.style === "object" && !Array.isArray(cell.style) ? cell.style : {};
         const cellLink = (cell.blocks || []).find(b => b.link)?.link;
-        return <div key={ci} style={{ ...cellStyle, ...safeStyle, ...(cellLink ? { cursor: "pointer" } : {}) }} data-pdf-link={cellLink || undefined} onClick={cellLink ? (e) => { e.stopPropagation(); openExternalLink(cellLink); } : undefined}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
+        return <ItemChrome key={ci} editable={editable} presenting={presenting}
+          wrapStyle={{ ...cellStyle, ...safeStyle }}
+          link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
+          onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
+          anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
         onChange={onChange ? (patch) => {
           const newItems = (block.items || []).map((c, i) => i === ci
@@ -613,14 +781,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             : c);
           onChange({ items: newItems });
         } : undefined}
-      />)}</div>; })}</div>;
+      />)}</ItemChrome>; })}
+      {canEdit && <AddItem variant="cell" label="Add card" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"grid"))} />}
+      </div>;
 
     case "callout":
       return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
-        {block.icon && <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div>}
+        <EditableIcon editable={editable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
+          {block.icon ? <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div> : null}
+        </EditableIcon>
         <EditableText text={block.value} editable={editable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
         {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
       </div>;
@@ -645,7 +817,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
-      return <ZoomWrap enabled={!!block.markup}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
+      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
@@ -657,7 +829,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgePadV = Math.max(3, Math.round(badgeFontSize * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontSize * 0.8));
       return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontSize * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
-        {block.icon && <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span>}
+        <EditableIcon editable={editable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
+          {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
+        </EditableIcon>
         <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} />
       </div>;
     }
@@ -665,11 +839,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "icon": {
       const sz = { sm: 20, md: 28, lg: 40, xl: 56 }[block.size || "md"] || 28;
       const iconEl = getIcon(block.name, { size: sz, color: block.color || st.accent, strokeWidth: block.strokeWidth || 1.5 });
-      if (!iconEl) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
+      if (!iconEl && !editable) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", gap: 6, ...block.style }}>
-        {block.circle !== false
-          ? <IconBubble icon={block.name} size={sz} color={block.color || st.accent} bg={block.bg || `${block.color || st.accent}15`} strokeWidth={block.strokeWidth || 1.5} />
-          : iconEl}
+        <EditableIcon editable={editable} value={block.name} size={sz} onPick={(name) => onChange?.({ name })}>
+          {iconEl
+            ? (block.circle !== false
+              ? <IconBubble icon={block.name} size={sz} color={block.color || st.accent} bg={block.bg || `${block.color || st.accent}15`} strokeWidth={block.strokeWidth || 1.5} />
+              : iconEl)
+            : (block.name ? <div style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div> : null)}
+        </EditableIcon>
         {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, letterSpacing: "0.03em", textAlign: "center" }} />}
       </div>;
     }
@@ -681,7 +859,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         : { display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style };
       return <div className={cls} style={containerStyle}>{(block.items || []).map((item, i) => (
         <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} />
-      ))}</div>;
+      ))}
+      {canEdit && <AddItem label="Add item" accent={st.accent} style={cols > 1 ? { gridColumn: "1 / -1" } : undefined} onAdd={() => addItemAt(block, onChange, newItemFor(block,"icon-row"))} />}
+      </div>;
     }
 
     case "flow": {
@@ -707,11 +887,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const els = [];
       items.forEach((item, i) => {
         els.push(
-          <div key={`item-${i}`} className={stg(staggerIdx, i)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}>
-            {item.icon && <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} />}
+          <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+            wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
+            link={itemLinkOf(item)} linkLabel={item.label}
+            onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+            onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
+            <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
+              {item.icon ? <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} /> : null}
+            </EditableIcon>
             <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
             {item.sublabel && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
-          </div>
+          </ItemChrome>
         );
         if (i < items.length - 1) {
           const hasGate = item.gate;
@@ -733,7 +919,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       if (block.loop) { flowStyle.position = "relative"; flowStyle.paddingBottom = isVert ? 0 : 36; if (isVert) flowStyle.paddingRight = 36; }
       const loopCol = block.loopColor || `${arrowCol}80`;
       const loopDash = block.loopStyle === "dotted" ? "2,4" : block.loopStyle === "solid" ? "none" : "6,4";
-      return <ZoomWrap enabled={items.length > 0}><div className={cls} style={flowStyle}>
+      return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={flowStyle}>
         {els}
         {block.loop && !isVert && <svg style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 36, width: "100%", overflow: "visible" }}>
           <defs><marker id={`loopArr-${staggerIdx}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={loopCol} /></marker></defs>
@@ -749,7 +935,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
           </>; })()}
         </svg>}
-      </div></ZoomWrap>;
+      </div></ZoomWrap>
+      {canEdit && <AddItem label="Add step" accent={st.accent} style={{ marginTop: 8 }} onAdd={() => addItemAt(block, onChange, newItemFor(block,"flow"))} />}
+      </>;
     }
 
     case "table": {
@@ -772,11 +960,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             onChange?.({ rows: nr });
           }} style={{ padding: "9px 14px", fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>)}
+        {canEdit && <AddItem label="Add row" accent={st.accent} style={{ borderRadius: 0, border: "none", borderTop: `1px solid ${brdColor}` }} onAdd={() => onChange({ rows: [...rows, Array.from({ length: cols }, (_, j) => j === 0 ? "New row" : "Value")] })} />}
       </div>;
     }
 
     case "progress": {
       const items = block.items || (block.value != null ? [{ value: block.value, label: block.label, color: block.color }] : []);
+      const hasItems = Array.isArray(block.items);
       const trackCol = block.trackColor || `${st.accent}15`;
       const barH = block.height || 8;
       const labelColor = block.labelColor || st.muted;
@@ -784,19 +974,23 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         {(block.leftLabel || block.rightLabel) && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: -6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {block.leftIcon && getIcon(block.leftIcon, { size: 14, color: labelColor })}
+              <EditableIcon editable={editable && !presenting} value={block.leftIcon} size={14} onPick={(name) => onChange?.({ leftIcon: name || undefined })}>{block.leftIcon ? getIcon(block.leftIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
               {block.leftLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.leftLabel}</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               {block.rightLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.rightLabel}</span>}
-              {block.rightIcon && getIcon(block.rightIcon, { size: 14, color: labelColor })}
+              <EditableIcon editable={editable && !presenting} value={block.rightIcon} size={14} onPick={(name) => onChange?.({ rightIcon: name || undefined })}>{block.rightIcon ? getIcon(block.rightIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
             </div>
           </div>
         )}
         {items.map((item, i) => {
           const val = Math.max(0, Math.min(item.value || 0, 100));
           const col = item.color || st.accent;
-          return <div key={i} className={stg(staggerIdx, i)} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+            wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
+            link={itemLinkOf(item)} linkLabel={item.label}
+            onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+            onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "sm"], fontWeight: 500, color: block.labelColor || st.text }} />
               {block.showValue !== false && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: col, fontWeight: 700 }}>{val}%</span>}
@@ -804,8 +998,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <div style={{ width: "100%", height: barH, borderRadius: barH / 2, background: trackCol, overflow: "hidden" }}>
               <div style={{ width: `${val}%`, height: "100%", borderRadius: barH / 2, background: col, transition: "width 0.6s ease" }} />
             </div>
-          </div>;
+          </ItemChrome>;
         })}
+        {canEdit && hasItems && <AddItem label="Add bar" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"progress"))} />}
         {block.annotation && (
           <div style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }}>
             {block.annotation}
@@ -822,7 +1017,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         {items.map((item, i) => {
           const isActive = i < active;
           const dotCol = isActive ? (block.numberColor || st.accent) : `${st.textDim}60`;
-          return <div key={i} className={stg(staggerIdx, i)} style={{ display: "flex", gap: 16, alignItems: "flex-start", position: "relative", paddingBottom: i < items.length - 1 ? 20 : 0 }}>
+          return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+            wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
+            link={itemLinkOf(item)} linkLabel={item.title}
+            onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+            onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: isActive ? dotCol : "transparent", border: `2px solid ${dotCol}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: isActive ? "#fff" : st.textDim, flexShrink: 0, zIndex: 1 }}>{i + 1}</div>
               {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: lineCol, marginTop: 4 }} />}
@@ -831,8 +1030,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
               {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
             </div>
-          </div>;
+          </ItemChrome>;
         })}
+        {canEdit && <AddItem label="Add step" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"steps"))} />}
       </div>;
     }
 
@@ -847,11 +1047,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             : variant === "subtle"
               ? { background: `${col}15`, border: "1px solid transparent", color: col }
               : { background: col, border: "1px solid transparent", color: "#fff" };
-          return <div key={i} className={stg(staggerIdx, i)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}>
-            {item.icon && <span style={{ display: "flex", flexShrink: 0 }}>{getIcon(item.icon, { size: 12, color: variant === "filled" ? "#fff" : col, strokeWidth: 2 })}</span>}
+          return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+            wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
+            link={itemLinkOf(item)} linkLabel={item.text}
+            onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+            onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
+            <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
+              {item.icon ? <span style={{ display: "flex", flexShrink: 0 }}>{getIcon(item.icon, { size: 12, color: variant === "filled" ? "#fff" : col, strokeWidth: 2 })}</span> : null}
+            </EditableIcon>
             <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" />
-          </div>;
+          </ItemChrome>;
         })}
+        {canEdit && <AddItem variant="chip" label="Add" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"tag-group"))} />}
       </div>;
     }
 
@@ -864,7 +1071,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       if (isVert) {
         return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
           {items.map((item, i) => (
-            <div key={i} className={stg(staggerIdx, i)} style={{ display: "flex", gap: 16, alignItems: "flex-start", position: "relative", paddingBottom: i < items.length - 1 ? 24 : 0 }}>
+            <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+              wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
+              link={itemLinkOf(item)} linkLabel={item.title}
+              onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+              onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, border: `2px solid ${dotCol}`, flexShrink: 0, zIndex: 1, marginTop: 4 }} />
                 {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: lineCol, marginTop: 4 }} />}
@@ -874,8 +1085,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
                 {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
               </div>
-            </div>
+            </ItemChrome>
           ))}
+          {canEdit && <AddItem label="Add event" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"timeline"))} />}
         </div>;
       }
 
@@ -884,14 +1096,19 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <div style={{ display: "flex", alignItems: "flex-start", position: "relative" }}>
           <div style={{ position: "absolute", top: 4, left: 0, right: 0, height: 2, background: lineCol }} />
           {items.map((item, i) => (
-            <div key={i} className={stg(staggerIdx, i)} style={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", position: "relative", minWidth: 0 }}>
+            <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+              wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
+              link={itemLinkOf(item)} linkLabel={item.title}
+              onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+              onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
               {item.date && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
               <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
               {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
-            </div>
+            </ItemChrome>
           ))}
         </div>
+        {canEdit && <AddItem label="Add event" accent={st.accent} style={{ marginTop: 8 }} onAdd={() => addItemAt(block, onChange, newItemFor(block,"timeline"))} />}
       </div>;
     }
 
@@ -902,19 +1119,40 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const leftColor = left.color || "#ef4444";
       const rightColor = right.color || "#22c55e";
       const dividerLabel = block.dividerLabel || "VS";
+      // Per-point delete/link, nested in items[side].items
+      const deletePoint = (side, pi) => onChange?.({ items: items.map((col, k) => k === side ? { ...col, items: (col.items || []).filter((_, j) => j !== pi) } : col) });
+      const linkPoint = (side, pi, url) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => {
+        if (j !== pi) return p;
+        const base = typeof p === "string" ? { text: p } : { ...p };
+        if (url) base.link = url; else delete base.link;
+        return base;
+      }) }) });
+      const addPoint = (side) => {
+        const cols = [{ ...left }, { ...right }];
+        const prev = cols[side].items || [];
+        cols[side] = { ...cols[side], items: [...prev, clonePoint(prev[prev.length - 1])] };
+        onChange?.({ items: cols });
+      };
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
         <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              {left.icon && <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} />}
+              <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
+                {left.icon ? <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} /> : null}
+              </EditableIcon>
               <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
             </div>
             {(left.items || []).map((pt, pi) => (
-              <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+              <ItemChrome key={pi} editable={editable} presenting={presenting}
+                wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
+                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
+                onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
                 <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
-              </div>
+              </ItemChrome>
             ))}
+            {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
@@ -923,15 +1161,22 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              {right.icon && <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} />}
+              <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
+                {right.icon ? <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} /> : null}
+              </EditableIcon>
               <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
             </div>
             {(right.items || []).map((pt, pi) => (
-              <div key={pi} style={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}>
+              <ItemChrome key={pi} editable={editable} presenting={presenting}
+                wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
+                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
+                onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
                 <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
-              </div>
+              </ItemChrome>
             ))}
+            {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
           </div>
         </div>
       </div>;
@@ -942,7 +1187,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const count = items.length || 1;
       const stageH = Math.floor(280 / count);
       const gap = 4;
-      return <ZoomWrap enabled={items.length > 0}><div className={cls} style={{ width: "100%", ...block.style }}>
+      return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={{ width: "100%", ...block.style }}>
         <svg viewBox={`0 0 700 ${count * (stageH + gap)}`} style={{ width: "100%", maxWidth: 700 }} xmlns="http://www.w3.org/2000/svg">
           {items.map((item, i) => {
             const col = item.color || st.accent;
@@ -965,7 +1210,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             </g>;
           })}
         </svg>
-      </div></ZoomWrap>;
+      </div></ZoomWrap>
+      {canEdit && <AddItem label="Add stage" accent={st.accent} style={{ marginTop: 8 }} onAdd={() => addItemAt(block, onChange, newItemFor(block,"funnel"))} />}
+      </>;
     }
 
     case "cycle": {
@@ -974,7 +1221,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const cx = 260, cy = 200, radius = 130;
       const nodeR = 40;
       const defaultColors = ["#3b82f6", "#22c55e", "#f97316", "#8b5cf6", "#ec4899", "#06b6d4", "#f59e0b"];
-      return <ZoomWrap enabled={items.length > 0}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", ...block.style }}>
+      return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%", ...block.style }}>
         <svg viewBox={`0 0 520 ${cy * 2 + 40}`} style={{ width: "100%", maxWidth: 520 }} xmlns="http://www.w3.org/2000/svg">
           <defs>
             {items.map((_, i) => {
@@ -1015,27 +1262,37 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             </g>;
           })}
         </svg>
-      </div></ZoomWrap>;
+      </div></ZoomWrap>
+      {canEdit && <AddItem label="Add node" accent={st.accent} style={{ marginTop: 8 }} onAdd={() => addItemAt(block, onChange, newItemFor(block,"cycle"))} />}
+      </>;
     }
 
     case "number-row": {
       const items = block.items || [];
       const showIcons = block.showIcons !== false;
-      return <div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
+      return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
         {items.map((item, i) => {
           const col = item.color || st.accent;
           return <React.Fragment key={i}>
             {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
-            <div className={stg(staggerIdx, i)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}>
-              {showIcons && item.icon && <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${col}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
-              </div>}
+            <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+              wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
+              link={itemLinkOf(item)} linkLabel={item.label}
+              onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+              onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
+              {showIcons && <EditableIcon editable={editable && !presenting} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
+                {item.icon ? <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${col}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
+                </div> : null}
+              </EditableIcon>}
               <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
               {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
-            </div>
+            </ItemChrome>
           </React.Fragment>;
         })}
-      </div>;
+      </div>
+      {canEdit && <AddItem label="Add stat" accent={st.accent} style={{ marginTop: 8 }} onAdd={() => addItemAt(block, onChange, newItemFor(block,"number-row"))} />}
+      </>;
     }
 
     case "matrix": {
@@ -1048,6 +1305,21 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const defaultQColors = ["#22c55e", "#3b82f6", "#f97316", "#ef4444"];
       const hasY = yTop || yBottom;
       const yLabelStyle = { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em", transform: "rotate(-90deg)", whiteSpace: "nowrap" };
+      // Per-point delete/link, nested in quadrants[qi].items[pi]
+      const qKey = block.quadrants ? "quadrants" : "items";
+      const deleteQPoint = (qi, pi) => onChange?.({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, items: (qq.items || []).filter((_, j) => j !== pi) } : qq) });
+      const linkQPoint = (qi, pi, url) => onChange?.({ [qKey]: quadrants.map((qq, k) => k !== qi ? qq : { ...qq, items: (qq.items || []).map((p, j) => {
+        if (j !== pi) return p;
+        const base = typeof p === "string" ? { text: p } : { ...p };
+        if (url) base.link = url; else delete base.link;
+        return base;
+      }) }) });
+      const addQPoint = (qi) => onChange?.({ [qKey]: [0, 1, 2, 3].map((k) => {
+        const qq = quadrants[k] || {};
+        if (k !== qi) return qq;
+        const prev = qq.items || [];
+        return { ...qq, items: [...prev, clonePoint(prev[prev.length - 1])] };
+      }) });
       const renderRow = (indices, radii, yLabel) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
@@ -1059,14 +1331,21 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               const qc = cssColor(qd.color) || defaultQColors[qi];
               return <div key={qi} className={stg(staggerIdx, qi)} style={{ flex: 1, background: `${qc}0a`, border: `1px solid ${qc}30`, borderRadius: radii[qi - indices[0]], padding: "14px 16px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  {qd.icon && <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span>}
+                  <EditableIcon editable={editable && !presenting} value={qd.icon} size={16} onPick={onChange ? (name) => onChange({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, icon: name || undefined } : qq) }) : undefined}>
+                    {qd.icon ? <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span> : null}
+                  </EditableIcon>
                   <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
                 </div>
                 {(qd.items || []).map((pt, pi) => (
-                  <div key={pi} style={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}>
+                  <ItemChrome key={pi} editable={editable} presenting={presenting}
+                    wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
+                    link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
+                    onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
                     <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
-                  </div>
+                  </ItemChrome>
                 ))}
+                {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
               </div>;
             })}
           </div>
@@ -1096,15 +1375,20 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           const status = item.status || "pending";
           const cfg = statusConfig[status] || statusConfig.pending;
           const labelColor = status === "done" ? "#22c55e" : status === "partial" ? "#f59e0b" : status === "blocked" ? "#ef4444" : st.muted;
-          return <div key={i} className={stg(staggerIdx, i)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}>
+          return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
+            wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
+            link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
+            onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
             <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
             {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
-          </div>;
+          </ItemChrome>;
         })}
+        {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
       </div>;
     }
 
@@ -1185,7 +1469,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const innerRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
   const [fitJustify, setFitJustify] = useState(requestedJustify);
+  const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [hoveredBlock, setHoveredBlock] = useState(null);
+  const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
   const [blockPrompt, setBlockPrompt] = useState("");
@@ -1220,7 +1506,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       void inner.scrollHeight;
       const cs = getComputedStyle(outer);
       const availH = outer.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      const ih = inner.scrollHeight;
+      // In a side-by-side layout the CONTENT column drives the height: the image
+      // conforms to it (see splitImgMaxH below) and must never push the whole
+      // slide to scale down. So for split we measure the content column alone,
+      // not inner.scrollHeight — which would include a tall square/portrait image
+      // and shrink the text beside it (the bug this fixes).
+      let contentH = 0;
+      if (isSplit) {
+        const contentEl = inner.querySelector("[data-split-content]");
+        contentH = contentEl ? contentEl.scrollHeight : 0;
+      }
+      const ih = isSplit ? contentH : inner.scrollHeight;
       if (ih > availH && ih > 0) {
         const s = Math.max(availH / ih, 0.35);
         inner.style.transform = `scale(${s})`;
@@ -1235,6 +1531,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         setFitScale(1);
         setFitJustify(requestedJustify);
       }
+      // Cap a side image to the content's height (never beyond the slide): a
+      // taller image shrinks to match the text, a shorter one keeps its size and
+      // centers — so the image conforms to the content instead of out-sizing it.
+      setSplitImgMaxH(isSplit && contentH > 0 ? Math.min(availH, Math.max(contentH, 140)) : null);
     };
     measure();
     if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
@@ -1259,10 +1559,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
-      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); }}>
+      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -1349,8 +1649,19 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Fallback: if no images found, render as stack
       if (imageIdxs.length === 0) return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const imageOnRight = layout === "image-right";
-      const contentCol = <div key="__content" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: fitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
+      // Both columns share one vertical alignment so their content lines up.
+      // Default (no explicit verticalAlign): center each column when everything
+      // fits (fitScale === 1), so a short content block sits at the side image's
+      // vertical middle instead of crowding the top and leaving a gap below — a
+      // square/tall image otherwise dominates while top-aligned content looks
+      // shrunken. When content overflows (fitScale < 1) we keep flex-start so the
+      // scaled column reads top-down; an explicit verticalAlign is always honored.
+      const splitJustify = slide.verticalAlign ? fitJustify : (fitScale < 1 ? "flex-start" : "center");
+      const contentCol = <div key="__content" data-split-content style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
+      // Apply the measured height cap to each image (unless the author pinned its
+      // own maxHeight). A bare number becomes px on the <img>, so it caps the
+      // image directly — independent of the wrapper/zoom chrome between here and it.
+      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
@@ -1361,7 +1672,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     <SlideErrorBoundary>
       <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
         <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, boxSizing: "border-box" }}>
-          {renderBlocks()}
+          <ItemHoverContext.Provider value={setItemHovered}>
+            {renderBlocks()}
+          </ItemHoverContext.Provider>
         </div>
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {

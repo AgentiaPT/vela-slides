@@ -88,8 +88,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.74";
+const VELA_VERSION = "12.75";
 const VELA_CHANGELOG = [
+  { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
   { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
@@ -1023,6 +1024,31 @@ function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
 
 let IMG_SETTINGS = { maxWidth: defaultBranding.imgMaxWidth, quality: defaultBranding.imgQuality };
 const compressSlideImage = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality);
+
+// Natural aspect ratio (width / height) of a data URL image. Resolves 1 on error
+// so callers can treat undecodable images as square. Used by paste heuristics to
+// decide stacked-vs-side-by-side layout (wide images read better stacked below).
+const imageAspect = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve(img.height ? img.width / img.height : 1);
+  img.onerror = () => resolve(1);
+  img.src = dataUrl;
+});
+
+// Decide the layout for a slide an image is being pasted onto. Returns the layout
+// the slide should carry: an explicit author layout is preserved; an empty/mostly-
+// title slide or a wide landscape image (aspect >= 1.6, e.g. screenshots) stacks
+// the image below ("stack"); otherwise the slide is promoted to "image-right" so
+// the image sits beside the existing body content. aspect = image width / height.
+const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
+function pasteImageLayout(slide, aspect) {
+  const layout = slide && slide.layout;
+  if (layout && layout !== "stack") return layout; // respect explicit author layout
+  const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const wide = aspect >= 1.6;
+  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];

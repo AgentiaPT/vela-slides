@@ -17,6 +17,20 @@ const VELA_TESTS = [
   { name: "S.primaryBtn returns style", fn: () => typeof S.primaryBtn() === "object" },
   { name: "S.input returns style", fn: () => typeof S.input() === "object" },
 
+  // ── Image Paste Layout (v12.78) ──
+  { name: "pasteImageLayout is function", fn: () => typeof pasteImageLayout === "function" },
+  { name: "pasteImageLayout: empty slide stacks", fn: () => pasteImageLayout({ blocks: [] }, 1) === "stack" },
+  { name: "pasteImageLayout: title-only slide stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1) === "stack" },
+  { name: "pasteImageLayout: heading+subtitle stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "subtitle", text: "Sub" }] }, 1) === "stack" },
+  { name: "pasteImageLayout: content slide → image-right", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "bullets", items: ["a", "b"] }] }, 1) === "image-right" },
+  { name: "pasteImageLayout: 3 text blocks → image-right", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1) === "image-right" },
+  { name: "pasteImageLayout: wide image stacks even with content", fn: () => pasteImageLayout({ blocks: [{ type: "bullets", items: ["a"] }] }, 1.78) === "stack" },
+  { name: "pasteImageLayout: 1.6 aspect counts as wide", fn: () => pasteImageLayout({ blocks: [{ type: "bullets", items: ["a"] }] }, 1.6) === "stack" },
+  { name: "pasteImageLayout: 1.5 aspect → image-right", fn: () => pasteImageLayout({ blocks: [{ type: "bullets", items: ["a"] }] }, 1.5) === "image-right" },
+  { name: "pasteImageLayout: explicit image-left preserved", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1) === "image-left" },
+  { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
+  { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
+
   // ── Block Reference & Design Rules ──
   { name: "BLOCK_REFERENCE defined", fn: () => typeof BLOCK_REFERENCE === "string" && BLOCK_REFERENCE.length > 100 },
   { name: "DESIGN_RULES defined", fn: () => typeof DESIGN_RULES === "string" && DESIGN_RULES.length > 50 },
