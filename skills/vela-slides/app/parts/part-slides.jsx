@@ -423,32 +423,40 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     return groups;
   }, [lanes, search, currentConceptId]);
 
+  // A module with a title card shows a virtual card at presSlides[0] in
+  // fullscreen, so raw slide index i maps to presSlides[i+1]. The TOC is
+  // fullscreen-only, so this offset always applies to presentCard modules.
+  const presentCardOf = (id) => { for (const l of (lanes || [])) { const it = (l.items || []).find((i) => i.id === id); if (it) return !!it.presentCard; } return false; };
+  const currentOffset = presentCardOf(currentConceptId) ? 1 : 0;
+
   // Count total visible slides for footer
   const totalSlides = useMemo(() => grouped.reduce((sum, g) => sum + g.slides.length, 0), [grouped]);
   const globalIndex = useMemo(() => {
     let idx = 0;
     for (const g of grouped) {
       if (g.isCurrent) {
-        // `grouped` excludes hidden slides, so map the raw slideIndex to its
-        // position among VISIBLE slides (count visible slides before it) —
-        // otherwise a hidden slide before the cursor inflates the "N/M" counter.
-        return idx + g.slides.filter((s) => s.slideIdx < slideIndex).length;
+        // `grouped` excludes hidden slides, so map the raw slideIndex (minus any
+        // title-card offset) to its position among VISIBLE slides.
+        return idx + g.slides.filter((s) => s.slideIdx < slideIndex - currentOffset).length;
       }
       idx += g.slides.length;
     }
     return idx;
-  }, [grouped, slideIndex]);
+  }, [grouped, slideIndex, currentOffset]);
 
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
   const handleJump = (moduleId, slideIdx) => {
+    // Add the target module's title-card offset so the jump lands on the intended
+    // slide (not one early) in presentCard modules.
+    const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
     if (moduleId === currentConceptId) {
-      onJump(slideIdx);
+      onJump(idx);
     } else {
       // Navigate to different module
       dispatch({ type: "SELECT", id: moduleId });
-      dispatch({ type: "SET_SLIDE_INDEX", index: slideIdx });
+      dispatch({ type: "SET_SLIDE_INDEX", index: idx });
     }
     // Jumping always closes the TOC/search pane (CR: quick-jump then dismiss).
     setPinned(false);
@@ -530,7 +538,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               {/* Slides */}
               {group.slides.map(({ title, slideIdx, visible }) => {
                 if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex;
+                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
                 return (
                   <div
                     key={slideIdx}
