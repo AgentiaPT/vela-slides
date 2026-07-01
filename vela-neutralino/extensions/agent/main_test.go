@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,6 +93,70 @@ func indexOf(s []string, v string) int {
 	return -1
 }
 
+func TestResolveAgentBinRejectsMissing(t *testing.T) {
+	if _, err := resolveAgentBin("vela-nonexistent-agent-xyz"); err == nil {
+		t.Fatal("missing binary must be rejected")
+	}
+}
+
+func TestResolveAgentBinAbsolute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATHEXT / ACL semantics differ; covered on POSIX")
+	}
+	dir := t.TempDir() // 0700, under a sticky /tmp — accepted
+	bin := filepath.Join(dir, "faux-agent")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	got, err := resolveAgentBin("faux-agent")
+	if err != nil {
+		t.Fatalf("expected resolution, got error: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("resolved path must be absolute, got %q", got)
+	}
+	if got != bin {
+		t.Fatalf("resolved %q, want %q", got, bin)
+	}
+}
+
+func TestResolveAgentBinRejectsWorldWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("world-writable check is POSIX-only (FileMode != NTFS ACL)")
+	}
+	// A world-writable binary file — any local account could rewrite it.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "faux-agent")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o777); err != nil { // set exact bits, bypassing umask
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if _, err := resolveAgentBin("faux-agent"); err == nil {
+		t.Fatal("world-writable binary must be rejected")
+	}
+
+	// A binary in a world-writable, non-sticky directory — swap-able.
+	wdir := filepath.Join(t.TempDir(), "open")
+	if err := os.Mkdir(wdir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(wdir, 0o777); err != nil { // clear any umask masking
+		t.Fatal(err)
+	}
+	wbin := filepath.Join(wdir, "faux-agent")
+	if err := os.WriteFile(wbin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", wdir)
+	if _, err := resolveAgentBin("faux-agent"); err == nil {
+		t.Fatal("binary under world-writable non-sticky dir must be rejected")
+	}
+}
+
 func TestSerialiseConversation(t *testing.T) {
 	s := serialiseConversation("sys", []message{
 		{Role: "user", Content: json.RawMessage(`"u1"`)},
@@ -160,7 +227,8 @@ func TestServerAuthAndRouting(t *testing.T) {
 	}
 	defer func() { runner = orig }()
 
-	ts := httptest.NewServer(newServer(token))
+	const nlPort = "45999"
+	ts := httptest.NewServer(newServer(token, nlPort))
 	defer ts.Close()
 
 	post := func(path, tok string, body interface{}) (int, map[string]interface{}) {
@@ -200,9 +268,12 @@ func TestServerAuthAndRouting(t *testing.T) {
 		t.Fatalf("unknown provider must be 400, got %d", code)
 	}
 
-	// CORS preflight: the webview is a different localhost origin, so OPTIONS
-	// must succeed without a token and advertise the custom header.
+	// CORS preflight from this window's own loopback origin: OPTIONS must
+	// succeed without a token, echo that exact origin (never a wildcard), and
+	// advertise the custom header.
+	const webOrigin = "http://localhost:" + nlPort
 	optReq, _ := http.NewRequest(http.MethodOptions, ts.URL+"/detect", nil)
+	optReq.Header.Set("Origin", webOrigin)
 	optResp, err := http.DefaultClient.Do(optReq)
 	if err != nil {
 		t.Fatal(err)
@@ -211,10 +282,70 @@ func TestServerAuthAndRouting(t *testing.T) {
 	if optResp.StatusCode != http.StatusNoContent {
 		t.Fatalf("OPTIONS preflight must be 204, got %d", optResp.StatusCode)
 	}
-	if optResp.Header.Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatal("preflight missing Access-Control-Allow-Origin")
+	if got := optResp.Header.Get("Access-Control-Allow-Origin"); got != webOrigin {
+		t.Fatalf("preflight must echo the window origin, got %q", got)
 	}
 	if !strings.Contains(optResp.Header.Get("Access-Control-Allow-Headers"), "x-vela-token") {
 		t.Fatal("preflight must allow x-vela-token header")
+	}
+
+	// A foreign browser origin must be refused outright (defense-in-depth against
+	// a leaked token being replayed from another page) — even for OPTIONS.
+	badReq, _ := http.NewRequest(http.MethodOptions, ts.URL+"/detect", nil)
+	badReq.Header.Set("Origin", "https://evil.example")
+	badResp, err := http.DefaultClient.Do(badReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign-origin preflight must be 403, got %d", badResp.StatusCode)
+	}
+	if badResp.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatal("foreign origin must not receive an Access-Control-Allow-Origin")
+	}
+
+	// A foreign-origin POST carrying the *correct* token is still refused by the
+	// origin gate before it can reach the spawn path.
+	var pb bytes.Buffer
+	_ = json.NewEncoder(&pb).Encode(map[string]interface{}{"provider": "claude-code"})
+	fReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/send", &pb)
+	fReq.Header.Set("x-vela-token", token)
+	fReq.Header.Set("Origin", "https://evil.example")
+	fResp, err := http.DefaultClient.Do(fReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fResp.Body.Close()
+	if fResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign-origin /send with valid token must be 403, got %d", fResp.StatusCode)
+	}
+}
+
+func TestAllowedOrigin(t *testing.T) {
+	// With the window's NL_PORT known, only that exact loopback origin passes.
+	for _, ok := range []string{"http://localhost:45999", "http://127.0.0.1:45999", ""} {
+		if !allowedOrigin(ok, "45999") {
+			t.Fatalf("origin %q should be allowed", ok)
+		}
+	}
+	for _, bad := range []string{
+		"http://localhost:5173",       // wrong port
+		"http://evil.example",         // remote host
+		"https://localhost:45999",     // https, not the loopback http origin
+		"http://localhost.evil.com:45999",
+		"null",
+	} {
+		if allowedOrigin(bad, "45999") {
+			t.Fatalf("origin %q should be rejected", bad)
+		}
+	}
+	// Handshake missed (nlPort unknown): any loopback http origin is allowed,
+	// every off-machine origin still rejected.
+	if !allowedOrigin("http://localhost:1234", "") || !allowedOrigin("http://127.0.0.1:9", "") {
+		t.Fatal("loopback origins must be allowed when nlPort is unknown")
+	}
+	if allowedOrigin("http://evil.example", "") {
+		t.Fatal("remote origin must be rejected even when nlPort is unknown")
 	}
 }

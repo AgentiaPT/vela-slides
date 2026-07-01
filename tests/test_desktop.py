@@ -98,6 +98,23 @@ class GatekeeperInvariants(unittest.TestCase):
     def test_binds_loopback_only(self):
         self.assertIn('"127.0.0.1:0"', self.go)
 
+    def test_agent_binary_resolved_to_absolute_path(self):
+        # exec.LookPath trusts PATH; a shim planted earlier in PATH (or in a
+        # world-writable dir) would otherwise run with --dangerously-skip-
+        # permissions. The name must resolve to a verified absolute path, and
+        # the child must be launched by that path — not the bare name.
+        self.assertIn("resolveAgentBin(", self.go)
+        self.assertIn("filepath.IsAbs", self.go)
+        self.assertIn("checkBinaryTrusted(", self.go)
+        self.assertIn("exec.CommandContext(ctx, binPath", self.go)
+
+    def test_cors_is_origin_pinned_not_wildcard(self):
+        # CORS must be pinned to this window's loopback origin, never a wildcard,
+        # so a leaked token cannot be replayed from a browser page on another
+        # origin. Dropping the origin gate re-opens that replay path.
+        self.assertIn("allowedOrigin(", self.go)
+        self.assertNotIn('"Access-Control-Allow-Origin", "*"', self.go)
+
     def test_self_terminates_on_parent_exit(self):
         # Neutralino never kills extension processes (upstream #1299) — the
         # gatekeeper must self-terminate or it orphans. Two independent signals
@@ -157,6 +174,19 @@ class ProcTreeReaperInvariants(unittest.TestCase):
         go = read("vela-neutralino", "extensions", "agent", "procwatch_unix.go")
         self.assertIn("Setpgid", go)
         self.assertIn("Kill(-", go)  # negative pid == signal the whole group
+
+    def test_unix_rejects_world_writable_agent_binary(self):
+        # The absolute-path resolver refuses a binary in a world-writable file or
+        # (non-sticky) dir, where a local account could swap in a shim. The
+        # world-writable bit + sticky exception must stay in the check.
+        go = read("vela-neutralino", "extensions", "agent", "procwatch_unix.go")
+        self.assertIn("checkBinaryTrusted", go)
+        self.assertIn("0o002", go)          # world-writable bit is the trigger
+        self.assertIn("ModeSticky", go)     # sticky dirs (e.g. /tmp) are exempt
+
+    def test_windows_binary_trust_check_present(self):
+        go = read("vela-neutralino", "extensions", "agent", "procwatch_windows.go")
+        self.assertIn("checkBinaryTrusted", go)  # no-op, but must exist to build
 
 
 class AgentsBridgeInvariants(unittest.TestCase):

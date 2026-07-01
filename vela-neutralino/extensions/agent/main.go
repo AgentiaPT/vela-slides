@@ -25,6 +25,11 @@
 //     real array (no shell), so the prompt can never be reinterpreted.
 //   - every agent runs with all filesystem / shell / web / edit tools disabled.
 //   - requests without the matching token are rejected.
+//   - the agent name resolves to an absolute path in a non-world-writable
+//     location (resolveAgentBin) — never a PATH-planted shim.
+//   - CORS is pinned to this window's loopback origin, never a wildcard
+//     (allowedOrigin / withCORS), so a leaked token cannot be replayed from a
+//     browser page on another origin.
 
 package main
 
@@ -229,11 +234,41 @@ func reapChildren() {
 	}
 }
 
-func execAgent(ctx context.Context, bin string, args []string, stdin string) (string, error) {
-	if _, err := exec.LookPath(bin); err != nil {
+// resolveAgentBin resolves a whitelisted agent binary NAME to a verified
+// absolute path. exec.LookPath trusts PATH; on an end-user desktop PATH is far
+// softer than in CI, so a `claude` / `copilot` shim planted earlier in PATH (or
+// dropped into a world-writable install dir) would otherwise be launched with
+// --dangerously-skip-permissions. We (a) pin to an absolute path — so the child
+// is the file we vetted, not whatever PATH later resolves — and (b) refuse a
+// resolution that lands in a world-writable file or directory, where any local
+// account could swap the binary out from under us. checkBinaryTrusted is a
+// no-op on Windows, where os.FileMode does not model the NTFS ACL (see
+// procwatch_windows.go); there the absolute-path pin plus install-dir ACLs carry
+// the guarantee.
+func resolveAgentBin(bin string) (string, error) {
+	p, err := exec.LookPath(bin)
+	if err != nil {
 		return "", fmt.Errorf("agent binary not found: %s", bin)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...) // args is a real argv — no shell
+	if !filepath.IsAbs(p) {
+		abs, aerr := filepath.Abs(p)
+		if aerr != nil {
+			return "", fmt.Errorf("cannot resolve agent binary to an absolute path: %s", p)
+		}
+		p = abs
+	}
+	if err := checkBinaryTrusted(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+func execAgent(ctx context.Context, bin string, args []string, stdin string) (string, error) {
+	binPath, err := resolveAgentBin(bin)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, binPath, args...) // absolute path, real argv — no shell
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -259,7 +294,7 @@ func execAgent(ctx context.Context, bin string, args []string, stdin string) (st
 	}
 	_ = tree.enrol(cmd)
 	trackTree(tree)
-	err := cmd.Wait()
+	err = cmd.Wait()
 	untrackTree(tree)
 	tree.dispose()
 
@@ -326,7 +361,7 @@ func writeJSON(w http.ResponseWriter, code int, obj interface{}) {
 	_ = json.NewEncoder(w).Encode(obj)
 }
 
-func newServer(token string) http.Handler {
+func newServer(token, nlPort string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -404,16 +439,54 @@ func newServer(token string) http.Handler {
 		})
 	}))
 
-	return withCORS(mux)
+	return withCORS(mux, nlPort)
 }
 
-// withCORS lets the Neutralino webview (a different localhost origin) call the
-// gatekeeper. The custom x-vela-token header makes browser requests "non-simple",
-// so a preflight OPTIONS must be answered before the real request is allowed.
-// No credentials are used, so a wildcard origin is safe.
-func withCORS(next http.Handler) http.Handler {
+// allowedOrigin reports whether a browser Origin may talk to the gatekeeper.
+// The only legitimate caller is this window's Neutralino webview, served from a
+// loopback origin (http://localhost:<NL_PORT> — 127.0.0.1 accepted too). A
+// missing Origin (a non-browser client such as curl, which carries no ambient
+// browser authority) is allowed through and still faces the token gate. Any
+// *present* cross-origin value is refused: a remote page that guessed the port,
+// or one trying to replay a leaked token, no longer gets a permissive CORS
+// response. When nlPort is unknown (stdin handshake missed) we pin to the
+// loopback host on any port, which still rejects every off-machine origin.
+func allowedOrigin(origin, nlPort string) bool {
+	if origin == "" {
+		return true // non-browser client; the token is still required downstream
+	}
+	for _, host := range []string{"http://localhost", "http://127.0.0.1"} {
+		if nlPort != "" {
+			if origin == host+":"+nlPort {
+				return true
+			}
+			continue
+		}
+		if origin == host || strings.HasPrefix(origin, host+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// withCORS lets this window's Neutralino webview (a different loopback origin)
+// call the gatekeeper while refusing every other origin. The token is the
+// primary gate; echoing Access-Control-Allow-Origin only for the window's own
+// loopback origin — never a wildcard — is defense-in-depth so a leaked token
+// cannot be replayed from a browser page on another origin. The custom
+// x-vela-token header keeps browser requests "non-simple", so the preflight
+// OPTIONS this handler answers must succeed before the real request is sent.
+func withCORS(next http.Handler, nlPort string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if !allowedOrigin(origin, nlPort) {
+			writeJSON(w, http.StatusForbidden, map[string]interface{}{"ok": false, "error": "forbidden origin"})
+			return
+		}
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, x-vela-token")
 		if r.Method == http.MethodOptions {
@@ -566,7 +639,7 @@ func main() {
 		_ = os.Remove(tokenFile)
 	}
 
-	srv := &http.Server{Handler: newServer(token)}
+	srv := &http.Server{Handler: newServer(token, nlPort)}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

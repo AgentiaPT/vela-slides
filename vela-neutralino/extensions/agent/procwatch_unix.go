@@ -3,9 +3,50 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
+
+// checkBinaryTrusted refuses an agent binary that resolves into a location where
+// a lower-/same-privileged local account could plant or swap the executable we
+// then launch with --dangerously-skip-permissions. It checks the file itself and
+// every parent directory up to the root.
+//
+// Only the world-writable bit (0o002) disqualifies, and for directories only
+// when the sticky bit is NOT set:
+//   - group-writable install dirs (e.g. Homebrew's admin-owned /usr/local on
+//     Intel macOS) are legitimate, so group-write is not treated as a risk.
+//   - a world-writable *sticky* dir (e.g. /tmp, mode 01777) only lets the file's
+//     owner rename/delete it, so an attacker cannot swap our vetted binary —
+//     accepted. A world-writable file is always rejected regardless of dir.
+func checkBinaryTrusted(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("cannot stat agent binary %s: %v", path, err)
+	}
+	if info.Mode().Perm()&0o002 != 0 {
+		return fmt.Errorf("refusing world-writable agent binary: %s", path)
+	}
+	dir := filepath.Dir(path)
+	for {
+		di, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("cannot stat agent dir %s: %v", dir, err)
+		}
+		if di.Mode().Perm()&0o002 != 0 && di.Mode()&os.ModeSticky == 0 {
+			return fmt.Errorf("refusing agent binary under world-writable dir: %s", dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached the filesystem root
+		}
+		dir = parent
+	}
+	return nil
+}
 
 // parentAlive reports whether pid is still running. On POSIX, signal 0 performs
 // error checking without delivering a signal: nil means alive, EPERM means the
