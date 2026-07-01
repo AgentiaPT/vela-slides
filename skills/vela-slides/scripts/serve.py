@@ -962,6 +962,20 @@ class VelaLocalServer:
         vela_jsx = vela_jsx.replace("const VELA_LOCAL_MODE = false;", "const VELA_LOCAL_MODE = true;", 1)
         vela_jsx = vela_jsx.replace("const VELA_CHANNEL_PORT = 0;", f"const VELA_CHANNEL_PORT = {self.channel_port};", 1)
 
+        # Neutralize HTML script-data tokens inside the JS source before it is
+        # inlined into <script type="text/babel">. vela.jsx legitimately holds
+        # literal "</script>" and "<!--" substrings (uitest sanitizer payloads);
+        # the HTML tokenizer would act on them — the first "</script" closes the
+        # block early, ejecting the rest of the source as live HTML (rendering it
+        # as text and executing the embedded test payloads). Backslash-breaking
+        # the token is a no-op inside JS string/regex literals (the runtime value
+        # is byte-identical) but hides the sequence from the HTML parser. The
+        # deck JSON injected above is handled separately by
+        # escape_for_script_context (a JSON-string escaper — not applicable to JS
+        # source, which must keep its literal "<" / ">").
+        vela_jsx = re.sub(r"</(?=script)", r"<\\/", vela_jsx, flags=re.IGNORECASE)
+        vela_jsx = vela_jsx.replace("<!--", "<\\!--")
+
         # Assemble HTML
         html = html_template.replace("__VELA_JSX_PLACEHOLDER__", vela_jsx)
         html = html.replace("__VELA_CHANNEL_PORT__", str(self.channel_port))

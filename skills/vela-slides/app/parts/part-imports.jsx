@@ -34,6 +34,24 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// React hook: re-renders the caller when AI availability changes. velaAIAvailable()
+// is a plain read of window.__velaAgentReady, which the Neutralino shell flips
+// asynchronously once agent detection finishes and announces via a
+// "vela-agent-update" event. Components that gate buttons on AI must subscribe,
+// or they keep a stale disabled state until some unrelated re-render (e.g. the
+// first Vera message) happens to refresh them. Artifact / serve.py runtimes never
+// dispatch the event, so this simply returns the initial value there.
+const useAIAvailable = () => {
+  const [ok, setOk] = useState(velaAIAvailable);
+  useEffect(() => {
+    const sync = () => setOk(velaAIAvailable());
+    sync(); // catch a flip between first render and effect mount
+    window.addEventListener("vela-agent-update", sync);
+    return () => window.removeEventListener("vela-agent-update", sync);
+  }, []);
+  return ok;
+};
+
 // Clipboard helper — Clipboard API is blocked in Claude.ai artifact iframes
 // Uses execCommand('copy') fallback with a temporary textarea
 const velaClipboard = (text) => {
@@ -70,8 +88,12 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.71";
+const VELA_VERSION = "12.75";
 const VELA_CHANGELOG = [
+  { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
+  { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
+  { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
+  { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
   { v: "12.71", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
   { v: "12.70", d: "Quality: remove three fail-soft/no-op patterns surfaced by a code audit. (1) Timing estimation now propagates an error and the UI reports it, instead of silently overwriting every slide with a fabricated uniform duration when the request or parse fails. (2) The Navigation/Presenter in-browser UI tests now assert the slide position actually changes on arrow-key nav (via the local test hook or the on-slide counter) instead of only checking that no exception was thrown. (3) validate.py warns when a compact/turbo deck can't be expanded instead of silently validating the un-expanded form." },
   { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
@@ -1002,6 +1024,31 @@ function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
 
 let IMG_SETTINGS = { maxWidth: defaultBranding.imgMaxWidth, quality: defaultBranding.imgQuality };
 const compressSlideImage = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality);
+
+// Natural aspect ratio (width / height) of a data URL image. Resolves 1 on error
+// so callers can treat undecodable images as square. Used by paste heuristics to
+// decide stacked-vs-side-by-side layout (wide images read better stacked below).
+const imageAspect = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve(img.height ? img.width / img.height : 1);
+  img.onerror = () => resolve(1);
+  img.src = dataUrl;
+});
+
+// Decide the layout for a slide an image is being pasted onto. Returns the layout
+// the slide should carry: an explicit author layout is preserved; an empty/mostly-
+// title slide or a wide landscape image (aspect >= 1.6, e.g. screenshots) stacks
+// the image below ("stack"); otherwise the slide is promoted to "image-right" so
+// the image sits beside the existing body content. aspect = image width / height.
+const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
+function pasteImageLayout(slide, aspect) {
+  const layout = slide && slide.layout;
+  if (layout && layout !== "stack") return layout; // respect explicit author layout
+  const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const wide = aspect >= 1.6;
+  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];

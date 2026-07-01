@@ -24,6 +24,10 @@ const session = {
   deny:  new Set(), // absolute paths explicitly rejected this session
 };
 
+// Once the user confirms AI usage once in a session, the whole session is
+// enabled (the user picked "once per session"). Cleared on app restart.
+let sessionConfirmed = false;
+
 // Cache per folder to avoid re-reading the JSON on every gate call.
 const folderCache = new Map(); // folder → { decks: { [rel]: { at } } }
 
@@ -118,7 +122,7 @@ function agentLabel() {
   return parts.join(" · ");
 }
 
-function showModal({ filename, folder, includeIntro }) {
+function showModal({ filename, folder, includeIntro, alreadyTrusted }) {
   installStyles();
   return new Promise((resolve) => {
     // Backdrop
@@ -135,7 +139,9 @@ function showModal({ filename, folder, includeIntro }) {
     const h2 = document.createElement("h2");
     h2.textContent = includeIntro
       ? "Enable AI for this deck?"
-      : `Enable AI for "${filename}"?`;
+      : alreadyTrusted
+        ? "Enable AI for this session?"
+        : `Enable AI for "${filename}"?`;
     box.appendChild(h2);
 
     const sub = document.createElement("div");
@@ -150,12 +156,14 @@ function showModal({ filename, folder, includeIntro }) {
       box.appendChild(intro);
     }
 
+    const info = (typeof window !== "undefined" && window.__velaAgentInfo) || {};
+    const providerName = info.label || "your local agent";
     const ul = document.createElement("ul");
     [
-      "Vera runs via your local Claude Code installation — your account, your plan.",
-      "Slide content from this deck is sent to Anthropic through Claude Code.",
+      `Vera runs via your local ${providerName} installation — your account, your plan.`,
+      "Slide content from this deck is sent to the model through that agent.",
       "Vera suggests edits; you review each change before it applies.",
-      "The agent cannot read other files, run shell commands, or browse the web — Vela restricts it to chat-only.",
+      "The agent cannot read other files, run shell commands, edit files, or browse the web — Vela restricts it to chat-only.",
     ].forEach((t) => {
       const li = document.createElement("li");
       li.textContent = t;
@@ -163,21 +171,52 @@ function showModal({ filename, folder, includeIntro }) {
     });
     box.appendChild(ul);
 
-    const note = document.createElement("div");
-    note.className = "note";
-    note.textContent =
-      "If you didn't create this deck or don't recognise where it came from, decline for now — you can always trust it later from Settings.";
-    box.appendChild(note);
+    if (!alreadyTrusted) {
+      const note = document.createElement("div");
+      note.className = "note";
+      note.textContent =
+        "If you didn't create this deck or don't recognise where it came from, decline for now — you can always trust it later from Settings.";
+      box.appendChild(note);
+    }
 
+    const providers = Array.isArray(info.providers) ? info.providers : [];
     const ag = document.createElement("div");
     ag.className = "agent";
-    const agLabel = document.createElement("span");
-    agLabel.textContent = "Active agent: ";
-    const agId = document.createElement("span");
-    agId.className = "id";
-    agId.textContent = agentLabel();
-    ag.appendChild(agLabel);
-    ag.appendChild(agId);
+    if (providers.length > 1) {
+      // More than one agent installed → let the user pick before enabling.
+      const head = document.createElement("div");
+      head.textContent = "Choose an agent for this session:";
+      head.style.marginBottom = "8px";
+      ag.appendChild(head);
+      providers.forEach((p) => {
+        const row = document.createElement("label");
+        row.style.cssText = "display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "vela-agent-pick";
+        radio.value = p.id;
+        radio.checked = p.id === info.id;
+        radio.onchange = () => {
+          if (radio.checked && typeof window.__velaSelectProvider === "function") {
+            window.__velaSelectProvider(p.id);
+          }
+        };
+        const span = document.createElement("span");
+        span.className = "id";
+        span.textContent = p.label + (p.version ? ` · v${p.version}` : "");
+        row.appendChild(radio);
+        row.appendChild(span);
+        ag.appendChild(row);
+      });
+    } else {
+      const agLabel = document.createElement("span");
+      agLabel.textContent = "Active agent: ";
+      const agId = document.createElement("span");
+      agId.className = "id";
+      agId.textContent = agentLabel();
+      ag.appendChild(agLabel);
+      ag.appendChild(agId);
+    }
     box.appendChild(ag);
 
     // Buttons
@@ -231,16 +270,23 @@ function showModal({ filename, folder, includeIntro }) {
 let pending = null; // serialise concurrent gate calls so we only show one modal
 async function gate(folder, absolutePath) {
   if (!folder || !absolutePath) return "allow"; // no deck context, nothing to gate
+  // Confirmed once already this session → no further prompts (the user picked
+  // "once per session": one confirm per app launch, then AI stays enabled).
+  if (sessionConfirmed) return "allow";
   // Session-level short-circuits.
   if (session.allow.has(absolutePath)) return "allow";
   if (session.deny.has(absolutePath))  return "deny";
-  // Persistent trust?
-  const data = await loadTrust(folder);
-  const rel = relPath(folder, absolutePath);
-  if (rel && data.decks[rel]) return "allow";
 
   // Serialise: if another AI action is already prompting, wait for it.
   if (pending) return pending;
+
+  const data = await loadTrust(folder);
+  const rel = relPath(folder, absolutePath);
+  // A persisted trust.json entry no longer silently enables AI. The user asked
+  // to confirm AI use once per app launch *always*, so we still prompt once per
+  // session even for a trusted deck — the persisted flag only softens the modal
+  // (skips the "did you make this deck?" warning for a deck already trusted).
+  const alreadyTrusted = !!(rel && data.decks[rel]);
 
   pending = (async () => {
     const includeIntro = !(await configStore.hasSeenIntro());
@@ -248,16 +294,19 @@ async function gate(folder, absolutePath) {
       filename: rel || absolutePath.split(/[\\/]/).pop(),
       folder: folder,
       includeIntro,
+      alreadyTrusted,
     });
     if (includeIntro) await configStore.markIntroSeen();
 
     if (decision === "trust") {
+      sessionConfirmed = true;
       data.decks[rel] = { at: isoNow() };
       try { await writeTrust(folder, data); }
       catch (e) { console.warn("[trust] persist failed, allowing session only:", e); session.allow.add(absolutePath); }
       return "allow";
     }
     if (decision === "session") {
+      sessionConfirmed = true;
       session.allow.add(absolutePath);
       return "allow";
     }

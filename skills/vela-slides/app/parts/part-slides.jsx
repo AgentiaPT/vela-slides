@@ -22,14 +22,21 @@ function computeVirtualDims(ratioId) {
 function loadHtml2Canvas() {
   return new Promise((resolve) => {
     if (window.html2canvas) { resolve(window.html2canvas); return; }
+    // Fail-safe: the desktop (Neutralino) webview blocks this CDN via CSP and
+    // has no network, so onload may never fire. Resolve null on error/timeout
+    // instead of hanging — callers fall back to layout-stats-only (no thumbnail).
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    setTimeout(() => done(window.html2canvas || null), 4000);
     if (!window._h2cLoading) {
       window._h2cLoading = true;
       const s = document.createElement("script");
       s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload = () => { window._h2cLoaded = true; resolve(window.html2canvas); };
+      s.onload = () => { window._h2cLoaded = true; done(window.html2canvas || null); };
+      s.onerror = () => { window._h2cLoading = false; done(null); };
       document.head.appendChild(s);
     } else {
-      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); resolve(window.html2canvas); } }, 50);
+      const check = setInterval(() => { if (window.html2canvas) { clearInterval(check); done(window.html2canvas); } }, 50);
     }
   });
 }
@@ -856,8 +863,9 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   const messages = teacherHistory[slideKey] || [];
   const sn = slide && slide.studyNotes ? slide.studyNotes : null;
 
-  // Centralized AI availability check (v12.36)
-  const apiAvailable = velaAIAvailable();
+  // Centralized AI availability check (v12.36) — reactive so the panel re-renders
+  // when the desktop shell finishes agent detection (v12.74).
+  const apiAvailable = useAIAvailable();
 
   useEffect(() => {
     activeKeyRef.current = slideKey;
@@ -1187,7 +1195,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
   const presOffset = fullscreen && concept.presentCard ? 1 : 0;
@@ -1227,6 +1235,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [revealKey, setRevealKey] = useState(null); // triggers magic reveal animation
   const improveCancelRef = useRef(false);
   const runImproveRef = useRef(null);
+  const measureRef = useRef(null);
+  const [measureSlide, setMeasureSlide] = useState(null);
+  // Latest props read inside the long-running improve loop (closures go stale),
+  // so the background task survives the user navigating to other slides/modules.
+  const lanesRef = useRef(lanes); lanesRef.current = lanes;
+  const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
+  const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
+  // visible panel, so Improve no longer has to move the view to measure — it can
+  // keep running in the background while the user browses elsewhere.
+  const measureSlideLayout = async (slideData) => {
+    setMeasureSlide(slideData);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))));
+    return computeSlideLayoutStats(measureRef.current);
+  };
 
   const stopImprove = useCallback(() => {
     if (improving) {
@@ -1272,9 +1295,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [previewRatio, setPreviewRatio] = useState("auto");
   const [alternatives, setAlternatives] = useState(null); // [{slide, label, emoji}] or null
   const [altLoading, setAltLoading] = useState(false);
-  const [altPreview, setAltPreview] = useState(null); // null = original, 0-3 = alternative index
+  const [altPreview, setAltPreview] = useState(null); // currently-applied variant: null = original, 0-3 = alternative index
+  const [altOriginal, setAltOriginal] = useState(null); // snapshot of the slide before the first variant was applied
   const altCancelRef = useRef(false);
-  const stopAlternatives = () => { altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); };
+  // Close the grid keeping whatever variant is currently applied (clicking a tile already applied it live).
+  const stopAlternatives = () => { altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); setAltOriginal(null); };
   const stopAll = () => { stopImprove(); stopAlternatives(); };
   const currentLane = lanes?.find((l) => l.items.some((i) => i.id === concept.id));
   const [showTimingScope, setShowTimingScope] = useState(false);
@@ -1454,8 +1479,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
         reader.onload = async () => {
           const compressed = await compressSlideImage(reader.result);
-          if (slides.length === 0) dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } });
-          else { const cur = slides[slideIndex] || {}; dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] }, merge: true }); }
+          // Empty module → brand-new full-bleed solo-image slide.
+          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
+          const cur = slides[slideIndex] || {};
+          const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          // Layout-aware paste: place the image beside existing body content rather
+          // than always stacking it below. pasteImageLayout() respects an explicit
+          // author layout, keeps mostly-title slides and wide images stacked, and
+          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          const aspect = await imageAspect(compressed);
+          const layout = pasteImageLayout(cur, aspect);
+          if (layout !== "stack" && layout !== cur.layout) {
+            patch.layout = layout;
+            // A square/portrait side image is tall; at the default 1:1 split it
+            // squeezes the body text into a half-width column where it wraps past
+            // the slide height and gets auto-scaled smaller. Give the content
+            // column the larger share so the text keeps its size and just uses
+            // more vertical space. Only when the author hasn't pinned a ratio;
+            // wider images (aspect > 1.2) read fine at 1:1.
+            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
+              patch.contentFlex = 1.4;
+              patch.imageFlex = 1;
+            }
+          }
+          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
         };
         reader.readAsDataURL(blob); break;
       }
@@ -1467,19 +1514,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
 
-      // Alternatives modal: 1-4 preview, Enter accept, ESC dismiss
+      // Alternatives grid: 1-4 apply variant live, 0 back to original, Enter done, ESC close.
+      // Applying keeps the grid open so each variant can be viewed full-size before settling.
       if (altLoading || alternatives) {
         if (e.key === "Escape") { e.preventDefault(); stopAlternatives(); }
         if (alternatives && e.key >= "1" && e.key <= "4") {
           const idx = parseInt(e.key) - 1;
-          const alt = alternatives[idx];
-          if (alt?.slide) { e.preventDefault(); setAltPreview(idx); }
+          if (alternatives[idx]?.slide) { e.preventDefault(); applyAlternative(idx); }
         }
-        if (e.key === "0") { e.preventDefault(); setAltPreview(null); }
-        if (e.key === "Enter" && alternatives && altPreview !== null) {
-          const alt = alternatives[altPreview];
-          if (alt?.slide) { e.preventDefault(); applyAlternative(alt); }
-        }
+        if (e.key === "0") { e.preventDefault(); revertToOriginal(); }
+        if (e.key === "Enter") { e.preventDefault(); stopAlternatives(); }
         return;
       }
 
@@ -1491,7 +1535,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       const navSlides = fullscreen ? presSlides : slides;
       if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
-        stopAll();
+        stopAlternatives(); // keep a running Improve alive across navigation
         if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
           dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
         } else if (curIdx >= 0 && curIdx + 1 < mods.length) {
@@ -1504,7 +1548,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
-        stopAll();
+        stopAlternatives(); // keep a running Improve alive across navigation
         if (navSlides.length > 0 && slideIndex > 0) {
           dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
         } else if (curIdx >= 0 && curIdx - 1 >= 0) {
@@ -1522,9 +1566,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && !showGalleryRef.current && (e.key === "+" || e.key === "=")) { e.preventDefault(); { const v = Math.min(fontScale + 0.1, 2.0); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "-") { e.preventDefault(); { const v = Math.max(fontScale - 0.1, 0.5); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "0" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); dispatch({ type: "SET_FONT_SCALE", value: 1 }); showNavToast("FONT 100%"); }
-      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: !fullscreen }); }
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: !fullscreen }); }
       // F5 → fullscreen (prevent page reload)
-      if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+      if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
       // E → quick edit current slide (not in input/textarea)
       if (e.key === "e" && !e.metaKey && !e.ctrlKey && !e.shiftKey && slides.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
@@ -1567,7 +1611,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides.length, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altPreview, fontScale]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -1768,7 +1812,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (jobs.length === 0) return;
 
     try {
-      const h2c = await loadHtml2Canvas();
+      // Improve uses computeSlideLayoutStats (not a screenshot), so html2canvas
+      // is not needed here — loading it would hang the desktop (CDN blocked).
       // Snapshot all slides being improved for before/after comparison
       const snapshots = {};
       jobs.forEach((j) => { snapshots[`${j.itemId}-${j.slideIdx}`] = JSON.parse(JSON.stringify(j.slideData)); });
@@ -1781,30 +1826,33 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
-        const isSameItem = job.itemId === concept.id;
+        setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
-        // If improving across items (section scope), select the item first
-        if (!isSameItem) dispatch({ type: "SELECT", id: job.itemId });
-        dispatch({ type: "SET_SLIDE_INDEX", index: job.slideIdx });
-
-        setImproving({ current: j + 1, total: jobs.length, status: `Capturing ${job.itemTitle} #${job.slideIdx + 1}...` });
-        setRevealKey(null);
-        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))));
-
-        const el = slideRef.current;
-        if (!el || improveCancelRef.current) break;
+        // Measure layout in a hidden offscreen host — Improve no longer navigates
+        // the visible view, so it keeps running while the user browses elsewhere.
+        const layoutStats = await measureSlideLayout(job.slideData);
+        if (improveCancelRef.current) break;
 
         try {
-          // Measure DOM layout stats (replaces screenshot — gives AI structured visual context)
-          const layoutStats = computeSlideLayoutStats(el);
-
-          setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
-
-          if (improveCancelRef.current) break;
           const improved = await improveSlide(null, job.slideData, job.itemTitle, job.slideIdx + 1, (scope === "section" ? jobs.length : slides.length), prompt, branding, guidelines, layoutStats);
           if (improveCancelRef.current) break;
+          // Don't clobber a slide the user (or another action) changed while we worked,
+          // and skip ones whose module/slide was removed meanwhile.
+          const cur = findItem(lanesRef.current, job.itemId)?.slides?.[job.slideIdx];
+          if (!cur) {
+            failures++;
+            setImproving({ current: j + 1, total: jobs.length, status: `⚠ ${job.itemTitle} #${job.slideIdx + 1} gone — skipping` });
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
+          if (JSON.stringify(cur) !== JSON.stringify(snapshots[`${job.itemId}-${job.slideIdx}`])) {
+            setImproving({ current: j + 1, total: jobs.length, status: `↪ ${job.itemTitle} #${job.slideIdx + 1} edited — skipping` });
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
           console.log(`[IMPROVE] ${job.itemTitle} #${job.slideIdx + 1} → bg=${improved.bg || "(none)"} bgGradient=${improved.bgGradient || "(none)"} color=${improved.color || "(none)"}`);
-          setRevealKey(`${job.itemId}-${job.slideIdx}-${Date.now()}`);
+          // Animate the reveal only when the improved slide is the one on screen.
+          if (job.itemId === conceptIdRef.current && job.slideIdx === slideIndexRef.current) setRevealKey(`${job.itemId}-${job.slideIdx}-${Date.now()}`);
           dispatch({ type: "UPDATE_SLIDE", id: job.itemId, index: job.slideIdx, patch: improved });
           successes++;
 
@@ -1817,13 +1865,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
+      setMeasureSlide(null);
 
-      if (!improveCancelRef.current) {
-        if (jobs.length > 1) {
-          dispatch({ type: "SELECT", id: concept.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
-        }
-      }
+      // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
       if (failures > 0) setTimeout(() => setImproving(null), 3000);
       setCapturedThumb(null);
@@ -1847,9 +1891,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try {
       const el = slideRef.current;
       if (!el) { setAltLoading(false); return; }
-      if (!window._h2cLoaded) { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"; document.head.appendChild(s); await new Promise((r) => { s.onload = r; }); window._h2cLoaded = true; }
-      const h2c = window.html2canvas;
-      const base64 = await captureSlide(el, h2c);
+      // Use the fail-safe loader so the desktop (CDN-blocked) doesn't hang;
+      // without html2canvas we send no screenshot and rely on layout stats.
+      const h2c = await loadHtml2Canvas();
+      const base64 = h2c ? await captureSlide(el, h2c) : null;
       if (altCancelRef.current) { setAltLoading(false); return; }
 
       const slideJson = slides[slideIndex];
@@ -1874,20 +1919,42 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     setAltLoading(false);
   };
 
-  const applyAlternative = (alt) => {
+  // Apply a variant live to the slide but keep the grid open, so the user can click
+  // through each variant and see it full-size before settling. Snapshot the original
+  // once (on first apply) so the Original tile can revert.
+  const applyAlternative = (i) => {
+    const alt = alternatives?.[i];
     if (!alt?.slide) return;
+    setAltOriginal((prev) => prev ?? slides[slideIndex]);
     setRevealKey(`alt-${Date.now()}`);
     dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: alt.slide });
-    setAlternatives(null);
+    setAltPreview(i);
+    setTimeout(() => setRevealKey(null), 1200);
+  };
+  // Revert to the pre-variant snapshot, keeping the grid open.
+  const revertToOriginal = () => {
+    if (altOriginal == null) { setAltPreview(null); return; }
+    setRevealKey(`alt-orig-${Date.now()}`);
+    dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: altOriginal });
+    setAltPreview(null);
     setTimeout(() => setRevealKey(null), 1200);
   };
   // Clear alternatives when slide changes
-  useEffect(() => { setAlternatives(null); setAltLoading(false); setAltPreview(null); }, [concept.id, slideIndex]);
+  useEffect(() => { setAlternatives(null); setAltLoading(false); setAltPreview(null); setAltOriginal(null); }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
 
+  // Hidden offscreen host used to measure a slide's layout without disturbing the
+  // visible view, so Improve can run in the background across navigation.
+  const measureHarness = measureSlide ? (
+    <div aria-hidden style={{ position: "fixed", left: -99999, top: 0, width: VIRTUAL_W, pointerEvents: "none", opacity: 0, zIndex: -1 }}>
+      <VirtualSlide slide={measureSlide} index={0} total={1} innerRef={measureRef} branding={branding} />
+    </div>
+  ) : null;
+
   if (fullscreen) return (
     <div ref={containerRef} tabIndex={0} style={{ position: "fixed", inset: 0, zIndex: 9999, background: T.bg, display: "flex", flexDirection: "row", outline: "none" }}>
+      {measureHarness}
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
@@ -1954,7 +2021,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <button onClick={() => { setShowNewSlide(true); setShowQuickEdit(false); }} title="New slide (N)" style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: T.green + "cc", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>+</button>
             <button onClick={() => { if (aiOk) { setShowQuickEdit(true); setShowNewSlide(false); } }} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: aiOk ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
             <button onClick={() => { if (aiOk && !improving && !altLoading && slides.length > 0) runImproveRef.current?.(null, "slide"); }} title={aiOk ? "Improve (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: improving ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !altLoading ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !altLoading && !improving ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✨</button>
-            <button onClick={() => { if (aiOk && !altLoading && !improving && slides.length > 0) runAlternatives(); }} title={aiOk ? "Design variants (1-4 preview, Enter accept)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !improving && !altLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
+            <button onClick={() => { if (aiOk && !altLoading && !improving && slides.length > 0) runAlternatives(); }} title={aiOk ? "Design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !improving && !altLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
           </div>}
           {(quickEditing || newSlideGenerating) && <div style={{ padding: "3px 4px" }}><div style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 13, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span></div></div>}
         </div>}
@@ -1967,6 +2034,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   return (
     <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+      {measureHarness}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
@@ -2037,17 +2105,41 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 <button onClick={() => setBeforeSlides(null)} style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 9, padding: "2px 6px" })}>✕</button>
               </div>}
             </div>
-            {/* Alternatives grid */}
+            {/* Alternatives grid — click a tile to apply it live; grid stays open so each variant can be viewed full-size */}
             {(alternatives || altLoading) && <div style={{ position: "absolute", bottom: isMobile ? 6 : 10, left: isMobile ? 6 : 10, right: isMobile ? 50 : 70, zIndex: 15 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim, background: "rgba(0,0,0,0.5)", padding: "2px 8px", borderRadius: 10 }}>Click to apply · Esc to close</span>
+                <button onClick={stopAlternatives} title="Close variants (Esc)" style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 10, padding: "2px 7px", borderRadius: 10 })}>✕</button>
+              </div>
               <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "nowrap", overflowX: "auto" }}>
+                {/* Original — revert to the pre-variant slide */}
+                {(() => {
+                  const origSlide = altOriginal ?? slides[slideIndex];
+                  const isOrig = altPreview === null;
+                  if (!origSlide) return null;
+                  return (
+                    <div key="orig" onClick={revertToOriginal}
+                      style={{ flex: "0 0 auto", width: isMobile ? 80 : 110, cursor: "pointer", borderRadius: 8, overflow: "hidden", border: `2px solid ${isOrig ? T.accent : "transparent"}`, background: T.bgPanel, transition: "border-color 0.2s, transform 0.2s", transform: isOrig ? "scale(1.05)" : "scale(1)" }}>
+                      <div style={{ aspectRatio: "16/9", overflow: "hidden", position: "relative" }}>
+                        <div style={{ transform: `scale(${(isMobile ? 80 : 110) / VIRTUAL_W})`, transformOrigin: "top left", width: VIRTUAL_W, height: VIRTUAL_H, pointerEvents: "none" }}>
+                          <SlideContent slide={origSlide} index={slideIndex} total={slides.length} branding={branding} />
+                        </div>
+                      </div>
+                      <div style={{ padding: "2px 4px", textAlign: "center" }}>
+                        <span style={{ fontSize: 9 }}>↩</span>
+                        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isOrig ? T.accent : T.textMuted, marginLeft: 2, fontWeight: isOrig ? 700 : 400 }}>Original</span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {ALT_DIRECTIONS.map((d, i) => {
                   const alt = alternatives?.[i];
                   const ready = alt?.slide;
                   const failed = alt?.error;
-                  const isPreview = altPreview === i;
+                  const isApplied = altPreview === i;
                   return (
-                    <div key={i} onClick={() => { if (ready) { if (isPreview) applyAlternative(alt); else setAltPreview(i); } }}
-                      style={{ flex: "0 0 auto", width: isMobile ? 80 : 110, cursor: ready ? "pointer" : "default", opacity: failed ? 0.4 : 1, borderRadius: 8, overflow: "hidden", border: `2px solid ${isPreview ? T.accent : "transparent"}`, background: T.bgPanel, transition: "border-color 0.2s, transform 0.2s", transform: isPreview ? "scale(1.05)" : "scale(1)" }}>
+                    <div key={i} onClick={() => { if (ready) applyAlternative(i); }}
+                      style={{ flex: "0 0 auto", width: isMobile ? 80 : 110, cursor: ready ? "pointer" : "default", opacity: failed ? 0.4 : 1, borderRadius: 8, overflow: "hidden", border: `2px solid ${isApplied ? T.accent : "transparent"}`, background: T.bgPanel, transition: "border-color 0.2s, transform 0.2s", transform: isApplied ? "scale(1.05)" : "scale(1)" }}>
                       {ready ? (
                         <>
                           <div style={{ aspectRatio: "16/9", overflow: "hidden", position: "relative" }}>
@@ -2057,7 +2149,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                           </div>
                           <div style={{ padding: "2px 4px", textAlign: "center" }}>
                             <span style={{ fontSize: 9 }}>{d.emoji}</span>
-                            <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isPreview ? T.accent : T.textMuted, marginLeft: 2, fontWeight: isPreview ? 700 : 400 }}>{isPreview ? "apply" : d.label}</span>
+                            <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isApplied ? T.accent : T.textMuted, marginLeft: 2, fontWeight: isApplied ? 700 : 400 }}>{isApplied ? "applied ✓" : d.label}</span>
                           </div>
                         </>
                       ) : failed ? (
@@ -2129,7 +2221,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
           <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>✏️{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
-          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design alternatives (1-4 to preview, Enter to accept)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
+          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
           <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>

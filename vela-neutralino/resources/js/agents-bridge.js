@@ -1,224 +1,160 @@
 // Agents bridge: routes Vera's callClaudeAPI() calls to a local CLI coding
-// agent instead of the Anthropic API. PR3 ships with one adapter — Claude
-// Code in `--print` mode — wired behind a pluggable `AgentBackend`
-// interface so Copilot CLI and Codex CLI can be added as separate files
-// without touching this module or the monolith.
+// agent instead of the Anthropic API. The webview never spawns anything — it
+// talks over loopback HTTP to the hardened gatekeeper extension
+// (vela-neutralino/extensions/agent), which is the ONLY process allowed to
+// launch a child, and only the two whitelisted agent binaries at that.
 //
-// ⚠️ THIS MODULE IS NOT LOADED BY THE DESKTOP SHELL.
-// `os.spawnProcess` / `os.updateSpawnedProcess` are intentionally absent
-// from neutralino.config.json's nativeAllowList for security reasons (see
-// SECURITY.md), so the runProcess() helper below cannot run. nl-boot.js
-// does not import this file — every Neutralino.os.spawnProcess call here
-// is dead code preserved only as a reference if AI is ever re-enabled.
-// Re-enabling AI requires: (1) putting `os.spawnProcess` and
-// `os.updateSpawnedProcess` back in the allowlist, (2) re-importing this
-// module from nl-boot.js, (3) accepting the larger XSS→RCE blast radius
-// (or first moving exec into a Neutralino extension process).
+// `os.spawnProcess` stays out of neutralino.config.json's nativeAllowList, so
+// a deck-driven DOM-XSS cannot reach process execution: at most it can ask the
+// gatekeeper to run a whitelisted agent, which the webview gates behind the
+// session-confirm UI (trust.js).
 //
-// Contract (mirrors vela-channel's /action payload so the monolith's
-// existing channel branch shape is reused):
+// Handshake: the gatekeeper writes ~/.vela/agent-ext.{port,token} on launch.
+// We read them (the webview already has filesystem read on ~/.vela via
+// fsGuard) and authenticate every request with the token. Loopback HTTP +
+// token mirrors the serve.py channel branch the monolith already speaks
+// (part-engine.jsx), so the existing __velaAgentSend contract is reused:
 //   send({ system, messages, temperature, max_tokens, _callType })
-//     → Promise<{ text, request_id, stats? }>
-//
-// Each call spawns a fresh subprocess (stateless). Vera's ReAct loop keeps
-// multi-turn state in the React tree, so we don't need to maintain a CLI
-// session between calls.
+//     -> Promise<{ text, request_id, stats? }>
 
-// ---------------------------------------------------------------------------
-// Prompt serialisation
-// ---------------------------------------------------------------------------
-//
-// CLI agents accept a single prompt string, not an Anthropic-format messages
-// array. We collapse {system, messages} into a role-tagged transcript the
-// underlying Claude model can read. The format is deliberately plain ASCII
-// so it survives shell / stdin encoding on Windows and WSL alike.
+import { fsGuard } from "./fs-guard.js";
+import { configStore } from "./config-store.js";
 
-function serialiseConversation(system, messages) {
-  const parts = [];
-  if (system) parts.push(`<SYSTEM>\n${system}\n</SYSTEM>`);
-  for (const m of messages || []) {
-    const role = (m.role || "user").toUpperCase();
-    const content = typeof m.content === "string"
-      ? m.content
-      : JSON.stringify(m.content);
-    parts.push(`<${role}>\n${content}\n</${role}>`);
-  }
-  return parts.join("\n\n");
-}
-
-// ---------------------------------------------------------------------------
-// Process helper
-// ---------------------------------------------------------------------------
-//
-// Neutralino exposes a one-shot subprocess API. spawnProcess returns a pid
-// and future stdOut/stdErr/exit events arrive via `spawnedProcess`. We wrap
-// that into a Promise so callers get a clean async/await.
-
-async function runProcess(cmdLine, stdinText, { timeoutMs = 120000 } = {}) {
-  const started = performance.now();
-  const proc = await Neutralino.os.spawnProcess(cmdLine);
-  let out = "", err = "", exitCode = null, timedOut = false;
-
-  const done = new Promise((resolve) => {
-    const handler = (evt) => {
-      const d = evt && evt.detail;
-      if (!d || d.id !== proc.id) return;
-      if (d.action === "stdOut") out += d.data;
-      else if (d.action === "stdErr") err += d.data;
-      else if (d.action === "exit") {
-        exitCode = Number(d.data);
-        Neutralino.events.off("spawnedProcess", handler);
-        resolve();
-      }
-    };
-    Neutralino.events.on("spawnedProcess", handler);
-  });
-
-  if (stdinText != null) {
-    await Neutralino.os.updateSpawnedProcess(proc.id, "stdIn", stdinText);
-    await Neutralino.os.updateSpawnedProcess(proc.id, "stdInEnd");
-  }
-
-  const timer = setTimeout(async () => {
-    timedOut = true;
-    try { await Neutralino.os.updateSpawnedProcess(proc.id, "exit"); } catch {}
-  }, timeoutMs);
-
-  await done;
-  clearTimeout(timer);
-
-  return {
-    stdout: out,
-    stderr: err,
-    exitCode,
-    timedOut,
-    elapsedMs: Math.round(performance.now() - started),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// ClaudeCodeBackend
-// ---------------------------------------------------------------------------
-//
-// Invokes `claude -p` (print mode) with the conversation on stdin and
-// `--output-format json` for a single structured response envelope we can
-// parse deterministically. Filesystem / bash tools are explicitly disabled
-// so Claude Code plays the Claude-chat role Vera expects and doesn't
-// wander off to read files. `--dangerously-skip-permissions` is required
-// for fully non-interactive runs (no approval prompts).
-//
-// availability check: `claude --version` with a short timeout. Returns
-// true iff exit code is 0.
-
-class ClaudeCodeBackend {
-  constructor() {
-    this.id = "claude-code";
-    this.label = "Claude Code";
-    this._avail = null; // cached tri-state: null=unknown, true/false=known
-    this._version = null; // captured from `claude --version`
-    this._lastModel = null; // populated after the first successful send()
-  }
-
-  info() {
-    return {
-      id: this.id,
-      label: this.label,
-      available: !!this._avail,
-      version: this._version,
-      model: this._lastModel,
-    };
-  }
-
-  async available({ refresh = false } = {}) {
-    if (this._avail != null && !refresh) return this._avail;
-    try {
-      const r = await runProcess("claude --version", null, { timeoutMs: 10000 });
-      this._avail = r.exitCode === 0 && /\d+\.\d+/.test(r.stdout);
-      if (this._avail) {
-        const m = r.stdout.match(/(\d+\.\d+(?:\.\d+)?)/);
-        this._version = m ? m[1] : null;
-      }
-    } catch {
-      this._avail = false;
-    }
-    return this._avail;
-  }
-
-  async send({ system, messages, temperature, max_tokens, _callType }) {
-    const prompt = serialiseConversation(system, messages);
-    const args = [
-      "claude",
-      "-p",
-      "--output-format", "json",
-      "--dangerously-skip-permissions",
-      // Disable all filesystem/shell/web tools so Claude Code behaves as a
-      // pure chat completion endpoint. Vera expects a plain text (often
-      // JSON-with-tool_calls) reply and drives its own tool loop.
-      "--disallowed-tools", "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Task",
-    ];
-    const cmd = args.join(" ");
-
-    const timeoutMs = Math.max(30000, _callType === "create" ? 300000 : 180000);
-    const r = await runProcess(cmd, prompt, { timeoutMs });
-
-    if (r.timedOut) {
-      throw new Error(`claude -p timed out after ${Math.round(timeoutMs / 1000)}s`);
-    }
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `claude -p exited ${r.exitCode}: ${r.stderr.slice(0, 400) || r.stdout.slice(0, 400)}`
-      );
-    }
-
-    // The json envelope looks like:
-    //   { type: "result", subtype: "success", result: "…assistant text…",
-    //     session_id, total_cost_usd, usage: {...}, ... }
-    let parsed;
-    try {
-      parsed = JSON.parse(r.stdout);
-    } catch {
-      // Fallback — treat stdout as raw text (some older builds print plain).
-      parsed = { result: r.stdout };
-    }
-    const text = parsed.result != null ? String(parsed.result) : "";
-    if (parsed.model) this._lastModel = parsed.model;
-
-    return {
-      text,
-      request_id: parsed.session_id || `cc-${Date.now()}`,
-      stats: {
-        model: parsed.model || "claude-code",
-        duration_ms: r.elapsedMs,
-        input_tokens: parsed.usage?.input_tokens || 0,
-        output_tokens: parsed.usage?.output_tokens || 0,
-        cache_read_tokens: parsed.usage?.cache_read_input_tokens || 0,
-        cache_create_tokens: parsed.usage?.cache_creation_input_tokens || 0,
-        cost_usd: parsed.total_cost_usd || 0,
-      },
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Registry + public API
-// ---------------------------------------------------------------------------
-
-const backends = {
-  "claude-code": new ClaudeCodeBackend(),
-  // Future: copilot-cli, codex-cli, mcp-channel.
+const DESCRIPTORS = {
+  "claude-code": { id: "claude-code", label: "Claude Code" },
+  "copilot-cli": { id: "copilot-cli", label: "GitHub Copilot CLI" },
 };
 
-let active = backends["claude-code"];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let handshake = null;   // { port, token } once the gatekeeper is up
+let detected = null;    // { id: { id, label, available, version } }
+let activeId = null;    // selected provider id
+let lastModel = null;   // populated after the first successful send()
+
+async function velaDir() {
+  const home = (await Neutralino.os.getEnv("HOME")) || (await Neutralino.os.getEnv("USERPROFILE"));
+  if (!home) throw new Error("cannot locate user home directory");
+  const dir = `${home.replace(/[\\/]+$/, "")}/.vela`;
+  fsGuard.allow(dir); // the gatekeeper handshake files live here
+  return dir;
+}
+
+// Read the gatekeeper's loopback port + auth token. The extension is launched
+// by Neutralino in parallel with the webview, so the files may not exist for a
+// beat — poll briefly before giving up (AI then renders as unavailable).
+async function readHandshake() {
+  let dir;
+  try { dir = await velaDir(); } catch { return null; }
+  // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
+  // multiple windows never share one channel. Prefer the keyed file; fall back
+  // to the unkeyed name (older gatekeeper / standalone run).
+  const suffixes = [];
+  if (typeof window !== "undefined" && window.NL_PORT != null) suffixes.push(`-${window.NL_PORT}`);
+  suffixes.push("");
+  for (let i = 0; i < 20; i++) {
+    for (const sfx of suffixes) {
+      try {
+        const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
+        const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
+        if (port && token) return { port, token };
+      } catch { /* not written yet */ }
+    }
+    await sleep(150);
+  }
+  return null;
+}
+
+async function ensureHandshake() {
+  if (handshake) return handshake;
+  handshake = await readHandshake();
+  return handshake;
+}
+
+async function extFetch(pathname, body, timeoutMs) {
+  const hs = await ensureHandshake();
+  if (!hs) throw new Error("AI agent is not available");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // host literal "localhost" — the desktop CSP allows http://localhost:* and
+    // it resolves to the loopback the gatekeeper binds.
+    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
+    return data;
+  } finally { clearTimeout(timer); }
+}
+
+function availableList() {
+  if (!detected) return [];
+  return Object.values(detected)
+    .filter((p) => p && p.available)
+    .map((p) => ({ id: p.id, label: p.label || DESCRIPTORS[p.id]?.label, version: p.version || null }));
+}
+
+// Probe which agents are installed and choose the active one: the persisted
+// pick if it is still available, otherwise the first available provider.
+async function detect() {
+  try {
+    const data = await extFetch("/detect", {}, 15000);
+    detected = data.providers || {};
+  } catch {
+    detected = {};
+  }
+  let saved = null;
+  try { saved = await configStore.getAgent(); } catch {}
+  const avail = availableList().map((p) => p.id);
+  if (saved && detected[saved]?.available) activeId = saved;
+  else if (avail.length) activeId = avail[0];
+  else activeId = null;
+  return detected;
+}
 
 export const agents = {
-  list() { return Object.values(backends).map((b) => ({ id: b.id, label: b.label })); },
-  active() { return active; },
-  info() { return active.info ? active.info() : { id: active.id, label: active.label }; },
-  pick(id) {
-    if (!backends[id]) throw new Error(`unknown backend: ${id}`);
-    active = backends[id];
+  // Re-probe availability (after install, or on manual refresh).
+  async detect() { return detect(); },
+
+  // Available providers only (for the picker UI).
+  list() { return availableList(); },
+
+  activeId() { return activeId; },
+
+  // Snapshot for window.__velaAgentInfo (consumed by AgentStatusChip).
+  info() {
+    const a = activeId ? detected?.[activeId] : null;
+    return {
+      id: activeId,
+      label: a?.label || DESCRIPTORS[activeId]?.label || "—",
+      available: !!(a && a.available),
+      version: a?.version || null,
+      model: lastModel,
+      providers: availableList(),
+    };
   },
-  async available() { return active.available({ refresh: false }); },
-  async refreshAvailability() { return active.available({ refresh: true }); },
-  async send(payload) { return active.send(payload); },
+
+  available() { return !!(activeId && detected?.[activeId]?.available); },
+
+  // Switch provider + persist the choice in ~/.vela/config.json.
+  async pick(id) {
+    if (!DESCRIPTORS[id]) throw new Error(`unknown provider: ${id}`);
+    activeId = id;
+    lastModel = null;
+    try { await configStore.setAgent(id); } catch {}
+    return activeId;
+  },
+
+  async send(payload) {
+    if (!activeId) throw new Error("No AI provider selected");
+    const timeoutMs = Math.max(30000, payload?._callType === "create" ? 300000 : 200000);
+    const data = await extFetch("/send", { provider: activeId, ...payload }, timeoutMs);
+    if (data.stats?.model) lastModel = data.stats.model;
+    return { text: data.text || "", request_id: data.request_id, stats: data.stats || {} };
+  },
 };

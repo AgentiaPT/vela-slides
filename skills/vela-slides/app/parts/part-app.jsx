@@ -295,10 +295,10 @@ function ShortcutHelp({ onClose }) {
       ["Shift+I", "Quick improve slide via Vera"],
       ["E", "Quick edit slide by prompt"],
       ["N", "New slide by prompt"],
-      ["1 – 4", "Preview variant"],
+      ["1 – 4", "Apply variant (preview stays open)"],
       ["0", "Back to original"],
-      ["Enter", "Accept previewed variant"],
-      ["Esc", "Dismiss alternatives"],
+      ["Enter", "Done — close variants, keep applied"],
+      ["Esc", "Close variants"],
     ]},
   ];
   return (
@@ -536,10 +536,13 @@ function AgentSettingsDialog({ onClose }) {
 
   return (
     <ModalBackdrop onClose={onClose}>
-      <div style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 24, width: "min(560px, 92vw)", maxHeight: "80vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
+      <div style={{ maxHeight: "70vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
 
-        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Active agent</div>
+        <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Active agent</span>
+          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+        </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
           <div style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono, marginTop: 4 }}>
@@ -547,6 +550,21 @@ function AgentSettingsDialog({ onClose }) {
             {info?.model ? ` · last model ${info.model}` : ""}
           </div>
         </div>
+
+        {Array.isArray(info?.providers) && info.providers.length > 1 && (
+          <>
+            <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Switch agent</div>
+            <div style={{ marginBottom: 18 }}>
+              {info.providers.map((p) => (
+                <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: p.id === info.id ? T.bgInput : "transparent", border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="radio" name="vela-agent-switch" checked={p.id === info.id} onChange={() => { try { window.__velaConfig?.setAgent?.(p.id); } catch {} }} />
+                  <span style={{ fontWeight: 600 }}>{p.label}</span>
+                  {p.version && <span style={{ fontSize: 11, color: T.textDim, fontFamily: FONT.mono }}>v{p.version}</span>}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Trusted decks in this folder</span>
@@ -766,7 +784,7 @@ export default function App() {
   T = dark ? themes.dark : themes.light;
   const [hist, dispatch] = useReducer(reducer, historyInit);
   const state = hist.present;
-  const aiOk = velaAIAvailable();
+  const aiOk = useAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
   const loaded = useRef(false);
@@ -781,6 +799,8 @@ export default function App() {
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
+  const [iconPicker, setIconPicker] = useState(null); // { value, onPick } — searchable icon picker
+  const openIconPicker = useCallback((value, onPick) => setIconPicker({ value, onPick }), []);
   const fileInputRef = useRef(null);
 
   // ━━━ Local mode: two-way sync with serve.py ━━━━━━━━━━━━━━━━━━━━
@@ -1268,6 +1288,7 @@ export default function App() {
   }
 
   return (
+    <IconPickerContext.Provider value={openIconPicker}>
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
@@ -1486,6 +1507,7 @@ export default function App() {
       </div>}
 
       {jsonModal && <JsonClipboardModal mode={jsonModal} setMode={setJsonModal} state={state} dispatch={dispatch} />}
+      {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
@@ -1510,6 +1532,7 @@ export default function App() {
       {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
       {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
+    </IconPickerContext.Provider>
   );
 }
 

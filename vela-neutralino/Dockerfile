@@ -13,6 +13,27 @@
 #
 # Versions pinned to match CI: Node 22, pnpm 9, Python 3, neu exact-pinned in package.json.
 
+# ── Gatekeeper stage ───────────────────────────────────────────────────────
+# Cross-compile the Node-free agent gatekeeper (static, stdlib-only Go binary)
+# for every target OS/arch. Unit tests run first so a broken gatekeeper fails
+# the build. The webview never spawns — this binary is the sole process allowed
+# to launch the whitelisted agent CLIs (see SECURITY.md).
+FROM golang:1.22-bookworm AS gobuild
+WORKDIR /gk
+COPY vela-neutralino/extensions/agent/ ./
+RUN go test ./...
+RUN set -eux; \
+    for t in "linux amd64 linux_x64 vela-agent" \
+             "linux arm64 linux_arm64 vela-agent" \
+             "darwin amd64 mac_x64 vela-agent" \
+             "darwin arm64 mac_arm64 vela-agent" \
+             "windows amd64 win_x64 vela-agent.exe"; do \
+      set -- $t; mkdir -p "/out/$3"; \
+      CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -ldflags="-s -w" -o "/out/$3/$4" . ; \
+    done; \
+    # mac_universal: Apple-Silicon binary (Intel-mac users use the mac_x64 build).
+    mkdir -p /out/mac_universal && cp /out/mac_arm64/vela-agent /out/mac_universal/vela-agent
+
 # ── Build stage ────────────────────────────────────────────────────────────
 FROM node:22-bookworm AS build
 
@@ -48,17 +69,35 @@ RUN cd vela-neutralino \
     && python3 scripts/verify-runtime.py \
     && ./node_modules/.bin/neu build --release --embed-resources
 
-# Package per-OS ZIPs the same way CI does.
+# Bring in the cross-compiled gatekeepers.
+COPY --from=gobuild /out /gatekeepers
+
+# `neu build` copies the extension SOURCE dir into dist/vela/extensions/agent/.
+# Replace it with the compiled binaries so the raw dist/vela output is directly
+# runnable (win + linux) and ships no Go source. The per-OS ZIPs below stage the
+# correct single binary independently.
+RUN set -eux; d=vela-neutralino/dist/vela/extensions/agent; \
+    rm -f "$d"/*.go "$d"/go.mod; \
+    cp /gatekeepers/win_x64/vela-agent.exe "$d/"; \
+    cp /gatekeepers/linux_x64/vela-agent "$d/"
+
+# Package per-OS ZIPs the same way CI does. Each ZIP carries the platform binary
+# at the root plus the arch-matched gatekeeper at extensions/agent/ (resolved at
+# runtime via ${NL_PATH}/extensions/agent/vela-agent[.exe]).
 RUN cd vela-neutralino/dist/vela \
     && for entry in \
-        "linux_x64 vela-linux_x64" \
-        "linux_arm64 vela-linux_arm64" \
-        "mac_x64 vela-mac_x64" \
-        "mac_arm64 vela-mac_arm64" \
-        "mac_universal vela-mac_universal" \
-        "win_x64 vela-win_x64.exe"; do \
-        set -- $entry; \
-        zip -j "../vela-desktop-local-$1.zip" "$2"; \
+        "linux_x64 vela-linux_x64 vela-agent" \
+        "linux_arm64 vela-linux_arm64 vela-agent" \
+        "mac_x64 vela-mac_x64 vela-agent" \
+        "mac_arm64 vela-mac_arm64 vela-agent" \
+        "mac_universal vela-mac_universal vela-agent" \
+        "win_x64 vela-win_x64.exe vela-agent.exe"; do \
+        set -- $entry; os="$1"; bin="$2"; gk="$3"; \
+        stage="/tmp/stage/$os"; \
+        mkdir -p "$stage/extensions/agent"; \
+        cp "$bin" "$stage/$bin"; \
+        cp "/gatekeepers/$os/$gk" "$stage/extensions/agent/$gk"; \
+        ( cd "$stage" && zip -r "/repo/vela-neutralino/dist/vela-desktop-local-$os.zip" . ); \
     done
 
 # ── Export stage ───────────────────────────────────────────────────────────

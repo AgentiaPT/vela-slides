@@ -8,10 +8,13 @@ contained DOM XSS; **in this webview the same bypass could reach
 `Neutralino.filesystem.*` and read/overwrite files inside the user's
 allowed roots.**
 
-`os.spawnProcess` — the host command-execution primitive — is **not granted**.
-With it absent, even a full script-execution escape in the webview has no
-exec to call, so the worst case is bounded to file reads/writes within the
-allowed roots (see layer 3), not host RCE.
+`os.spawnProcess` — the host command-execution primitive — is **not granted to
+the webview**. With it absent, even a full script-execution escape in the
+webview has no exec to call, so the worst case is bounded to file reads/writes
+within the allowed roots (see layer 3), not host RCE. The AI integration's
+process execution is delegated to a separate, hardened **gatekeeper extension**
+(layer 5) that can launch only the two whitelisted agent binaries; the webview
+reaches it over a token-authenticated loopback socket, never by spawning.
 
 The primary defense remains the engine's deck-JSON sanitization
 (`validateAndSanitizeDeck` / `sanitizeSvgMarkup` / link sanitizers — see the
@@ -36,29 +39,28 @@ acknowledgment before the deck mounts.
 
 2. **Minimal `nativeAllowList`** (`neutralino.config.json`). Only the native
    methods the shell actually calls are exposed; wildcards like `os.*` /
-   `filesystem.*` and unused namespaces (`clipboard.*`, `computer.*`,
-   `extensions.*`) are **not** granted. Re-audit with:
+   `filesystem.*` and unused namespaces (`clipboard.*`, `computer.*`) are
+   **not** granted. `enableExtensions` is on (so Neutralino launches the
+   gatekeeper at startup); the client's init then makes one **read-only**
+   `extensions.getStats` call, so that single method is granted — but
+   **`extensions.dispatch` / `extensions.broadcast` are deliberately NOT in the
+   allowlist**, so the webview cannot message or send data to the extension. It
+   reaches the gatekeeper only over a token-authenticated loopback socket,
+   keeping the webview's native surface minimal. Re-audit with:
    ```
    grep -rhoE "Neutralino\.[a-zA-Z]+\.[a-zA-Z]+" resources/ | sort -u
    ```
    Any method in the allowlist that no longer appears in that list should be
    removed.
 
-   **`os.spawnProcess` is intentionally NOT granted, and the AI integration
-   that depended on it is fully disabled.** Process spawn is the host
-   command-execution primitive and is the single largest XSS→RCE risk.
-   `nl-boot.js` no longer imports `agents-bridge.js`, no longer probes for
-   a CLI agent, and hardcodes `window.__velaAgentReady = false` so the
-   monolith's `velaAIAvailable()` reports AI as unavailable. The
-   `agents-bridge.js` source file is kept for reference but is dead code —
-   none of its `Neutralino.os.spawnProcess` / `updateSpawnedProcess` calls
-   can run because (a) the methods are absent from the allowlist and
-   (b) nothing imports the module. The desktop app is a **viewer/editor
-   only**. Re-enabling AI later requires: (1) putting `os.spawnProcess`
-   and `os.updateSpawnedProcess` back in the allowlist, (2) re-importing
-   `agents-bridge.js` from `nl-boot.js` and restoring `installAgentsBridge()`,
-   (3) accepting the larger XSS→RCE blast radius (or first moving exec
-   into a Neutralino extension process).
+   **`os.spawnProcess` is intentionally NOT granted to the webview.** Process
+   spawn is the host command-execution primitive and the single largest
+   XSS→RCE risk, so it stays out of the allowlist. The AI integration does not
+   re-introduce it: exec is moved into a separate **gatekeeper extension**
+   (layer 5), exactly the mitigation flagged as the prerequisite for any AI
+   re-enablement. The webview only knows how to make a token-authenticated
+   loopback request; it has no way to spawn a process or to ask the gatekeeper
+   to run anything other than the two whitelisted agents.
 
 3. **Filesystem path guard** (`resources/js/fs-guard.js`). The shell still
    needs `filesystem.*` to read/write decks and app config, so a
@@ -100,12 +102,29 @@ acknowledgment before the deck mounts.
    `textContent`-only DOM nodes — never `innerHTML` — so a filename like
    `<img src=x onerror=…>.vela` cannot execute.
 
-5. **Injection-safe agent bridge** (`resources/js/agents-bridge.js`).
-   Currently **not imported** by `nl-boot.js` and therefore not executed at
-   all (see layer 2). Kept as reference for any future AI re-enablement.
-   If re-enabled, the CLI would be invoked with a hardcoded command
-   (`claude -p …`) and the prompt passed on **stdin**, never interpolated
-   into the command line.
+5. **Hardened agent gatekeeper** (`extensions/agent/main.go`, a compiled
+   Node-free binary; webview side in `resources/js/agents-bridge.js`).
+   Neutralino launches the gatekeeper at startup; it is the **only** process
+   permitted to spawn a child, and only the two whitelisted agent binaries
+   (`claude` / `copilot`). Key properties:
+   - **Loopback + token.** It binds `127.0.0.1` on an ephemeral port and writes
+     the port + a random per-launch token to `~/.vela/agent-ext.{port,token}`.
+     Every request must carry the token (constant-time compared), so other
+     local processes cannot drive the user's agents.
+   - **Fixed binary, locked args.** The binary is a constant chosen from a
+     two-entry allowlist; the prompt is data only — passed on **stdin**
+     (claude) or as a single argv element (copilot) — and run via `os/exec`
+     with an argument array (**no shell**), so it can never be reinterpreted as
+     a command.
+   - **No capabilities.** Claude runs with `--disallowed-tools` covering all
+     file/shell/web/edit tools; Copilot is `--deny-tool`'d for shell/write/read/
+     url and never given `--allow-tool`/`--allow-all-tools`. The agents act as
+     chat-completion endpoints only.
+   - **Consent.** The webview gates the first AI use of each session behind a
+     confirm modal (`trust.js`); when more than one agent is installed the user
+     picks one there and can switch later.
+   The webview itself spawns nothing and has no `extensions.dispatch`
+   capability — see layers 1–2.
 
 6. **Externally-authored-deck warning** (`resources/js/deck-warning.js`).
    A modal shown on every deck load (initial boot + picker selection)
