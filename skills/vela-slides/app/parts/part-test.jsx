@@ -31,6 +31,81 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
 
+  // ── Editing UX Batch (v12.75): imageAspect ──
+  { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
+  { name: "imageAspect returns a Promise", fn: () => imageAspect("data:image/png;base64,x") instanceof Promise },
+
+  // ── Editing UX Batch (v12.75): Icon Picker ──
+  { name: "IconPicker component exists", fn: () => typeof IconPicker === "function" },
+  { name: "EditableIcon component exists", fn: () => typeof EditableIcon === "function" },
+  { name: "allIconNames returns a populated, sorted list", fn: () => { const names = allIconNames(); return Array.isArray(names) && names.length > 100 && names[0] <= names[1]; } },
+  { name: "searchIconNames prefix-matches by name", fn: () => searchIconNames("rocket").includes("Rocket") },
+  { name: "searchIconNames: empty query returns curated common list", fn: () => searchIconNames("") === COMMON_ICON_NAMES && COMMON_ICON_NAMES.length > 5 },
+
+  // ── Editing UX Batch (v12.75): Add-Item affordance ──
+  { name: "blankItemFor: bullets → placeholder string", fn: () => blankItemFor("bullets") === "New point" },
+  { name: "blankItemFor: icon-row → placeholder object", fn: () => { const b = blankItemFor("icon-row"); return b.icon === "Circle" && b.title === "Title" && b.text === "Description"; } },
+  { name: "blankItemFor: grid → heading+text blocks", fn: () => { const b = blankItemFor("grid"); return Array.isArray(b.blocks) && b.blocks.some((x) => x.type === "heading") && b.blocks.some((x) => x.type === "text"); } },
+  { name: "blankItemFor: unknown type falls back to generic item", fn: () => blankItemFor("nonsense-type").text === "New item" },
+  { name: "newItemFor: clones last sibling's style, resets content", fn: () => {
+    const block = { type: "icon-row", items: [{ icon: "Rocket", iconColor: "#fff", title: "A", text: "B" }] };
+    const next = newItemFor(block, "icon-row");
+    return next.icon === "Rocket" && next.iconColor === "#fff" && next.title === "Title" && next.text === "Description";
+  }},
+  { name: "newItemFor: drops link from the cloned sibling", fn: () => {
+    const block = { type: "bullets", items: [{ text: "A", link: "https://x" }] };
+    return newItemFor(block, "bullets").link === undefined;
+  }},
+  { name: "newItemFor: bare-string sibling (bullets) falls back to blank", fn: () => {
+    const block = { type: "bullets", items: ["Existing point"] };
+    return newItemFor(block, "bullets") === "New point";
+  }},
+  { name: "newItemFor: empty list falls back to blankItemFor", fn: () => {
+    const block = { type: "steps", items: [] };
+    const next = newItemFor(block, "steps");
+    return next.title === "Step title" && next.text === "Description";
+  }},
+  { name: "newItemFor: grid clones via cloneGridCell", fn: () => {
+    const block = { type: "grid", items: [{ padding: 20, blocks: [{ type: "heading", text: "Old" }, { type: "text", text: "Old body" }] }] };
+    const next = newItemFor(block, "grid");
+    return next.padding === 20 && next.blocks[0].text === "Title" && next.blocks[1].text === "Description";
+  }},
+  { name: "cloneGridCell: resets text/value/label, keeps structure, drops link", fn: () => {
+    const cell = { padding: 12, link: "https://x", blocks: [{ type: "heading", text: "Old Title" }, { type: "metric", value: "42", label: "Old Label" }] };
+    const c = cloneGridCell(cell);
+    return c.padding === 12 && c.link === undefined && c.blocks[0].text === "Title" && c.blocks[1].value === "00" && c.blocks[1].label === "Label";
+  }},
+  { name: "clonePoint: string form resets to placeholder", fn: () => clonePoint("Old point") === "New point" },
+  { name: "clonePoint: object form resets text, keeps color, drops link", fn: () => {
+    const p = clonePoint({ text: "Old", color: "#fff", link: "https://x" });
+    return p.text === "New point" && p.color === "#fff" && p.link === undefined;
+  }},
+  { name: "addItemAt appends to items via onChange", fn: () => {
+    let patch; addItemAt({ items: ["a", "b"] }, (p) => { patch = p; }, "c");
+    return Array.isArray(patch.items) && patch.items.length === 3 && patch.items[2] === "c";
+  }},
+  { name: "AddItem affordance component exists", fn: () => typeof AddItem === "function" },
+
+  // ── Editing UX Batch (v12.75): Per-item toolbar (ItemChrome) ──
+  { name: "ItemChrome component exists", fn: () => typeof ItemChrome === "function" },
+  { name: "ItemChrome wires delete + link actions", fn: () => { const src = ItemChrome.toString(); return src.includes("onDelete") && src.includes("onSetLink"); } },
+  { name: "removeItemAt filters the target index", fn: () => {
+    let patch; removeItemAt({ items: ["a", "b", "c"] }, (p) => { patch = p; }, 1);
+    return patch.items.length === 2 && patch.items[0] === "a" && patch.items[1] === "c";
+  }},
+  { name: "setItemLink upgrades a bare string item", fn: () => {
+    let patch; setItemLink({ items: ["hello"] }, (p) => { patch = p; }, 0, "https://x");
+    return patch.items[0].text === "hello" && patch.items[0].link === "https://x";
+  }},
+  { name: "setItemLink clears an existing link", fn: () => {
+    let patch; setItemLink({ items: [{ text: "hi", link: "https://x" }] }, (p) => { patch = p; }, 0, "");
+    return patch.items[0].link === undefined;
+  }},
+  { name: "patchItemAt merges a partial patch", fn: () => {
+    let patch; patchItemAt({ items: [{ icon: "Old", text: "Keep" }] }, (p) => { patch = p; }, 0, { icon: "New" });
+    return patch.items[0].icon === "New" && patch.items[0].text === "Keep";
+  }},
+
   // ── Block Reference & Design Rules ──
   { name: "BLOCK_REFERENCE defined", fn: () => typeof BLOCK_REFERENCE === "string" && BLOCK_REFERENCE.length > 100 },
   { name: "DESIGN_RULES defined", fn: () => typeof DESIGN_RULES === "string" && DESIGN_RULES.length > 50 },
