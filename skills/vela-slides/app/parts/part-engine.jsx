@@ -138,6 +138,20 @@ function preserveImages(newBlocks, originalBlocks) {
   return out;
 }
 
+// Last-line guard for edit_slide: after a merge, replace any image whose src is
+// still the "keep-original" placeholder (or empty) with the real src from the
+// original blocks, matched positionally. Walks GRID cells too — the per-block
+// merge/preserveImages paths only reach top-level images, so a grid-nested image
+// would otherwise persist the placeholder and be dropped on the next sanitize.
+function restoreKeepOriginal(finalBlocks, originalBlocks) {
+  const origSrcs = [];
+  const collect = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image" && b.src && b.src !== "keep-original") origSrcs.push(b.src); if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) collect(c && c.blocks); } };
+  collect(originalBlocks);
+  let i = 0;
+  const walk = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image") { if ((b.src === "keep-original" || !b.src) && origSrcs[i] != null) b.src = origSrcs[i]; i++; } if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) walk(c && c.blocks); } };
+  walk(finalBlocks);
+}
+
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   // Replace bulky image data with a stable "keep-original" placeholder (matches
@@ -216,6 +230,9 @@ function executeTool(name, input, ws, attachedImages) {
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
       const patch = input.patch || {};
+      // Snapshot the pre-edit blocks so any image the model echoed back as the
+      // "keep-original" placeholder (incl. grid-nested) can be restored below.
+      const _origBlocks = slide.blocks ? JSON.parse(JSON.stringify(slide.blocks)) : [];
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
         if (k === "blocks" && Array.isArray(v)) {
@@ -252,6 +269,9 @@ function executeTool(name, input, ws, attachedImages) {
           slide[k] = v;
         }
       }
+      // Final guard: never persist a "keep-original" placeholder (top-level or
+      // grid-nested) — restore the real image data from the pre-edit blocks.
+      if ("blocks" in patch) restoreKeepOriginal(slide.blocks, _origBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
