@@ -107,6 +107,77 @@ class GatekeeperInvariants(unittest.TestCase):
         self.assertIn("close(stdinClosed)", self.go)   # stdin EOF closes the channel
         self.assertIn("<-stdinClosed", self.go)        # a watcher waits on it
         self.assertIn("portOpen(", self.go)            # port-watch fallback retained
+        # Windows-primary: block on the parent process HANDLE (immune to PID
+        # reuse, which defeats both the port watch and the ppid poll).
+        self.assertIn("watchParentExit()", self.go)
+
+    def test_early_stdin_close_is_ignored(self):
+        # A platform that closes stdin almost immediately after handing off the
+        # handshake (rather than holding it open for the app's lifetime) must
+        # not be mistaken for "parent exited" — that would self-terminate the
+        # gatekeeper at launch. The grace window must stay in place.
+        self.assertIn("5*time.Second", self.go)
+        self.assertIn("stdin closed early", self.go)
+
+    def test_handshake_files_keyed_by_nlport_suffix(self):
+        # Each Vela window's gatekeeper must key its port/token files by the
+        # window's Neutralino port, so two windows never collide on one
+        # handshake file.
+        self.assertIn('"agent-ext"+suffix+".port"', self.go)
+        self.assertIn('"agent-ext"+suffix+".token"', self.go)
+
+    def test_reaps_child_process_tree_on_shutdown(self):
+        # claude/copilot spawn their own node subtree; os/exec's ctx-cancel kills
+        # only the direct child, so the rest would orphan when the window closes.
+        # Each spawn is bound to a tree, and the shutdown path reaps live trees
+        # before exiting. Dropping either re-opens the orphan-process leak.
+        self.assertIn("newChildTree(", self.go)  # every spawn is tree-scoped
+        self.assertIn("trackTree(", self.go)     # live trees are registered
+        self.assertIn("reapChildren()", self.go) # shutdown tears them down
+
+
+class ProcTreeReaperInvariants(unittest.TestCase):
+    """The spawned agent's whole process tree must die with the gatekeeper.
+
+    os/exec kills only the direct child; claude/copilot launch a node subtree
+    that would otherwise orphan when the desktop window closes. Windows binds
+    the tree to a Job Object (kill-on-close); Unix puts each agent in its own
+    process group and SIGKILLs the group.
+    """
+
+    def test_windows_uses_kill_on_close_job_object(self):
+        go = read("vela-neutralino", "extensions", "agent", "procwatch_windows.go")
+        self.assertIn("AssignProcessToJobObject", go)
+        self.assertIn("KILL_ON_JOB_CLOSE", go)
+        self.assertIn("TerminateJobObject", go)
+        # Handle-based parent watch — immune to PID reuse (unlike the ppid poll).
+        self.assertIn("WaitForSingleObject", go)
+
+    def test_unix_kills_the_process_group(self):
+        go = read("vela-neutralino", "extensions", "agent", "procwatch_unix.go")
+        self.assertIn("Setpgid", go)
+        self.assertIn("Kill(-", go)  # negative pid == signal the whole group
+
+
+class AgentsBridgeInvariants(unittest.TestCase):
+    def setUp(self):
+        self.js = read("vela-neutralino", "resources", "js", "agents-bridge.js")
+
+    def test_handshake_prefers_window_nlport_suffix(self):
+        # Must prefer the NL_PORT-keyed handshake file over the legacy
+        # unsuffixed name, matching the gatekeeper's own keying (main.go).
+        self.assertIn("window.NL_PORT", self.js)
+        self.assertIn("suffixes.push", self.js)
+
+    def test_401_resets_cached_handshake(self):
+        # A stale/rotated token must not be cached forever — 401 must clear it
+        # so the next call re-reads the handshake files.
+        self.assertIn("handshake = null", self.js)
+
+    def test_send_routes_through_active_provider_only(self):
+        # send() must refuse to call the extension with no provider selected,
+        # rather than defaulting to some provider id.
+        self.assertIn('throw new Error("No AI provider selected")', self.js)
 
 
 class TrustGateInvariants(unittest.TestCase):
@@ -127,6 +198,25 @@ class TrustGateInvariants(unittest.TestCase):
         # Guard against the old bypass (set the session flag + allow inline on
         # a persisted-deck hit) ever returning.
         self.assertNotIn('{ sessionConfirmed = true; return "allow"; }', self.js)
+
+    def test_multi_provider_picker_wired(self):
+        # When more than one agent is installed, the modal must let the user
+        # pick before enabling — wired back to the shared provider switcher.
+        self.assertIn("vela-agent-pick", self.js)
+        self.assertIn("window.__velaSelectProvider", self.js)
+
+
+class AIAvailabilityEventContractInvariants(unittest.TestCase):
+    """The 'vela-agent-update' event name must match on both ends of the
+    boot-time wiring, or the monolith's AI-gated buttons silently never
+    refresh from their initial (disabled) state."""
+
+    def test_event_name_matches_across_boot_and_monolith(self):
+        boot_js = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        imports_jsx = read("skills", "vela-slides", "app", "parts", "part-imports.jsx")
+        self.assertIn('dispatchEvent(new Event("vela-agent-update"))', boot_js)
+        self.assertIn('"vela-agent-update"', imports_jsx)
+        self.assertIn("useAIAvailable", imports_jsx)
 
 
 if __name__ == "__main__":

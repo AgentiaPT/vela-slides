@@ -30,6 +30,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -47,6 +48,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -205,6 +207,28 @@ func parseCopilot(stdout string) sendResult {
 
 var runner = execAgent
 
+// Live agent process trees. The shutdown handler reaps these before exiting:
+// os.Exit reaps nothing itself, and on Unix a bare exit would orphan the whole
+// group. Keyed by the tree so concurrent /send calls never collide.
+var (
+	liveMu    sync.Mutex
+	liveTrees = map[*childTree]struct{}{}
+)
+
+func trackTree(t *childTree)   { liveMu.Lock(); liveTrees[t] = struct{}{}; liveMu.Unlock() }
+func untrackTree(t *childTree) { liveMu.Lock(); delete(liveTrees, t); liveMu.Unlock() }
+
+// reapChildren tears down every in-flight agent tree. Called from the shutdown
+// path so closing the desktop window never leaves an agent (and its node
+// subtree) running.
+func reapChildren() {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	for t := range liveTrees {
+		t.killTree()
+	}
+}
+
 func execAgent(ctx context.Context, bin string, args []string, stdin string) (string, error) {
 	if _, err := exec.LookPath(bin); err != nil {
 		return "", fmt.Errorf("agent binary not found: %s", bin)
@@ -213,21 +237,48 @@ func execAgent(ctx context.Context, bin string, args []string, stdin string) (st
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
-	out, err := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Bind the agent's whole process tree to a job (Windows) / process group
+	// (Unix) so a timeout, ctx cancel, or gatekeeper exit tears down the node
+	// subtree too — not just the direct child (see procwatch_*.go). newChildTree
+	// also wires cmd.Cancel to kill the tree on ctx cancellation. WaitDelay is a
+	// backstop so a stuck child cannot wedge Wait if Cancel fails to reap it.
+	tree := newChildTree(cmd)
+	cmd.WaitDelay = 10 * time.Second
+	if err := cmd.Start(); err != nil {
+		tree.dispose()
+		// An already-expired context surfaces here (Start refuses to launch);
+		// report it as a timeout, matching the Wait path below.
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("%s timed out", bin)
+		}
+		return "", fmt.Errorf("%s failed to start: %v", bin, err)
+	}
+	_ = tree.enrol(cmd)
+	trackTree(tree)
+	err := cmd.Wait()
+	untrackTree(tree)
+	tree.dispose()
+
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", fmt.Errorf("%s timed out", bin)
 	}
 	if err != nil {
 		msg := err.Error()
-		if ee, ok := err.(*exec.ExitError); ok {
-			msg = strings.TrimSpace(string(ee.Stderr))
+		if _, ok := err.(*exec.ExitError); ok {
+			if s := strings.TrimSpace(stderr.String()); s != "" {
+				msg = s
+			}
 			if len(msg) > 400 {
 				msg = msg[:400]
 			}
 		}
 		return "", fmt.Errorf("%s failed: %s", bin, msg)
 	}
-	return string(out), nil
+	return stdout.String(), nil
 }
 
 func detect(ctx context.Context, id string) map[string]interface{} {
@@ -537,6 +588,18 @@ func main() {
 		sig <- syscall.SIGTERM
 	}()
 
+	// Primary signal on Windows: block on the parent's process HANDLE. It is
+	// bound to the actual process object (not the PID number), so it cannot be
+	// fooled by PID reuse the way the ppid poll below can. No-op on Unix, where
+	// stdin EOF and the poll cover it.
+	if parentGone := watchParentExit(); parentGone != nil {
+		go func() {
+			<-parentGone
+			logf(dir, "parent process handle signaled exit, exiting")
+			sig <- syscall.SIGTERM
+		}()
+	}
+
 	// Fallback signal: this window's Neutralino NL_PORT stops accepting TCP
 	// connections (PID-independent). When nlPort is unknown, fall back further to
 	// the parent PID. Two consecutive misses (~8s) before exiting, to ride out a
@@ -566,6 +629,7 @@ func main() {
 	go func() {
 		<-sig
 		cleanup()
+		reapChildren() // tear down any in-flight agent trees before exiting
 		ctx, c := context.WithTimeout(context.Background(), 2*time.Second)
 		defer c()
 		_ = srv.Shutdown(ctx)
