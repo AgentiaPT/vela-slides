@@ -83,7 +83,13 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 // visible) vs "row" (between slides, reveal on hover).
 function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
   const [mode, setMode] = useState(null); // null | "menu" | "ai"
-  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => setMode(null)} dispatch={dispatch} guidelines={guidelines} />;
+  const [pinned, setPinned] = useState(false); // set by click — keeps menu open on mouseout
+  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} />;
+
+  const close = () => { setMode(null); setPinned(false); };
+  const openPinned = (e) => { e.stopPropagation(); setMode("menu"); setPinned(true); }; // click → open + pin
+  const hoverOpen = () => setMode((m) => m || "menu"); // reveal on mouseover
+  const hoverClose = () => { if (!pinned) setMode(null); }; // hide on mouseout unless pinned
 
   const addBlank = (e) => {
     e.stopPropagation();
@@ -91,51 +97,48 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
     dispatch({ type: "INSERT_SLIDE", id: item.id, index: insertIndex, slide: blankSlideFrom(prev) });
     dispatch({ type: "SELECT", id: item.id });
     setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: insertIndex }), 0);
-    setMode(null);
+    close();
   };
-  const addSection = (e) => { e.stopPropagation(); dispatch({ type: "INSERT_ITEM", laneId, afterId: item.id, title: "New section" }); setMode(null); };
+  // Insert a section at THIS exact add-point: between slides it splits the tail
+  // off into the new section; at the top/bottom it adds an adjacent empty one.
+  const addSection = (e) => { e.stopPropagation(); dispatch({ type: "SPLIT_ITEM_AT", id: item.id, index: insertIndex, laneId }); close(); };
 
   if (mode === "menu") {
     const btn = (label, icon, onClick, color) => (
-      <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
-        onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{icon} {label}</button>
+      <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
+        onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, fontSize: 11, lineHeight: 1 }}>{icon}</span>
+        <span style={{ lineHeight: 1 }}>{label}</span>
+      </button>
     );
     return (
-      <div style={{ display: "flex", gap: 4, padding: "3px 8px 3px 38px", flexWrap: "wrap", alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+      // ADD_AFFORDANCE_HEIGHT (24) matches the collapsed "＋ add" row below so hovering
+      // swaps content without shifting layout (the between-slide rows were jumping).
+      <div style={{ display: "flex", gap: 4, height: 24, boxSizing: "border-box", padding: "0 12px", flexWrap: "nowrap", alignItems: "center", justifyContent: "center" }} onClick={(e) => e.stopPropagation()} onMouseLeave={hoverClose}>
         {btn("Blank", "▭", addBlank)}
         {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent)}
         {btn("Section", "▤", addSection)}
-        <button onClick={(e) => { e.stopPropagation(); setMode(null); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px" }}>✕</button>
+        <button onClick={(e) => { e.stopPropagation(); close(); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px", lineHeight: 1 }}>✕</button>
       </div>
     );
   }
 
-  if (variant === "empty") {
-    return (
-      <div onClick={(e) => { e.stopPropagation(); setMode("menu"); }}
-        style={{ padding: "4px 8px 5px 38px", fontSize: 11, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.75, transition: "opacity .15s" }}
-        onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.75}
-      >＋ Add slide / section</div>
-    );
-  }
-  // "row" variant — faintly visible between slides (discoverable), clear on hover.
+  // Single faint "＋ add" affordance — identical look/label whether it sits in an
+  // empty section or between slides (consistency). Fixed 24px height matches the
+  // hover menu above so revealing it doesn't shift surrounding rows. Hover reveals
+  // the Blank / AI / Section menu; click pins it open.
   return (
-    <div onClick={(e) => { e.stopPropagation(); setMode("menu"); }}
-      style={{ padding: "1px 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-      onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.28}
+    <div onClick={openPinned} onMouseEnter={hoverOpen}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24, boxSizing: "border-box", padding: "0 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s" }}
       title="Add slide or section here"
     >＋ add</div>
   );
 }
 
-// --- Empty Module Adder (blank / AI / section) ---
-function EmptyAiSlideAdder({ item, dispatch, guidelines, laneId }) {
-  return <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="empty" laneId={laneId} />;
-}
-
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
   const [dropTarget, setDropTarget] = useState(null);
+  const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const maxSlideDur = globalMaxSlideDur || 1;
@@ -225,9 +228,39 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
     }
   };
 
+  const isEmpty = item.slides.length === 0;
+  // NOTE: read the _velaDrag global LIVE inside every drag handler (like the slide-row
+  // handlers do) — never gate on a render-time snapshot. An empty section renders
+  // before any drag starts, so a captured "is a slide being dragged?" flag stays false
+  // and preventDefault() never runs → the browser shows the blocked cursor and refuses
+  // the drop. Reading the global in-handler always reflects the current drag.
+  // An empty section also needs a real, easily-hit drop target — a one-line add-row is
+  // far too thin to aim a slide at. Render a tall dashed box that doubles as the
+  // add affordance and lights up when a slide is dragged over it.
+  if (isEmpty) {
+    return (
+      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
+        onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; if (_velaDrag.fromItemId !== item.id && !containerOver) setContainerOver(true); } }}
+        onDrop={(e) => { setContainerOver(false); handleContainerDrop(e); }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setContainerOver(false); }}
+      >
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          minHeight: 30, borderRadius: 6,
+          border: `1.5px dashed ${containerOver ? T.accent : T.border}`,
+          background: containerOver ? T.accent + "18" : "transparent",
+          transition: "background .12s, border-color .12s",
+        }}>
+          {containerOver
+            ? <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, pointerEvents: "none" }}>Drop slide here</span>
+            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
-      onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+      onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
     >
@@ -307,6 +340,11 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const [hovered, setHovered] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
+  // A just-inserted section opens directly in title-edit mode with an empty field,
+  // so the user can type the name immediately (INSERT_ITEM tags its id).
+  useEffect(() => {
+    if (_autoEditItemId === item.id) { _autoEditItemId = null; setEditing(true); setTitle(""); }
+  }, []);
 
   const headerRef = useRef(null);
   // Section-level drag/drop on the outer wrapper (works even when the section is
@@ -333,7 +371,10 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   // path for moving a slide INTO an empty section).
   const handleRowDragOver = (e) => {
     if (!_velaDrag || _velaDrag.kind !== "slide") return;
-    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    // stopPropagation is REQUIRED: the app-root global dragover forces
+    // dropEffect="copy", which conflicts with the slide's effectAllowed="move" and
+    // makes the browser show the blocked cursor. Stopping here keeps it "move".
+    e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move";
     setDropPos("slide");
   };
 
@@ -344,6 +385,22 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
     if (slideData.slideIndex != null && slideData.fromItemId !== item.id) {
       dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: slideData.fromItemId, toId: item.id, index: slideData.slideIndex });
     }
+  };
+
+  // Wrapper-level handlers accept BOTH drag kinds. A slide dropped anywhere in
+  // the section — not just on the thin header — moves into this module; this is
+  // the only slide-drop target an EMPTY section has (its body renders just the
+  // add affordance, with no slide rows to catch the drop). The header/slide-row
+  // handlers stopPropagation, so they still win for finer-grained positioning.
+  const handleWrapperDragOver = (e) => {
+    if (!_velaDrag) return;
+    if (_velaDrag.kind === "section") return handleSectionDragOver(e);
+    if (_velaDrag.kind === "slide") return handleRowDragOver(e);
+  };
+  const handleWrapperDrop = (e) => {
+    if (!_velaDrag) return;
+    if (_velaDrag.kind === "section") return handleSectionDrop(e);
+    if (_velaDrag.kind === "slide") return handleRowDrop(e);
   };
 
   const hasNotes = !!(item.notes && item.notes.trim());
@@ -359,9 +416,9 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
 
   return (
     <div
-      onDragOver={handleSectionDragOver}
+      onDragOver={handleWrapperDragOver}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropPos(null); }}
-      onDrop={handleSectionDrop}
+      onDrop={handleWrapperDrop}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -388,7 +445,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
         <span onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }} style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
-        {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
+        {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
@@ -429,8 +486,11 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
         </div>
       </div>}
-      {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} laneId={laneId} />}
-      {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
+      {/* Always render SlideListWithAdder — even when empty — so an empty section
+          has the SAME "＋ add" affordance AND the same proven slide-drop container
+          as a populated one (fixes both the inconsistency and the can't-drop-into-
+          empty-section bug). It renders just the add row when there are no slides. */}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
     </div>
   );
 }

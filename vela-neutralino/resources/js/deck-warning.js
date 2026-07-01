@@ -87,6 +87,9 @@ export function showDeckWarning(deckPath) {
     host.appendChild(box);
     document.body.appendChild(host);
 
+    // Ensure the OS window has focus before this modal expects an Enter/Escape —
+    // on launch Neutralino may not have grabbed focus yet (see nl-boot focusWindow).
+    try { window.Neutralino?.window?.focus?.(); } catch {}
     setTimeout(() => { try { ok.focus(); } catch {} }, 30);
     requestAnimationFrame(() => host.classList.add("open"));
 

@@ -388,7 +388,18 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
-  useEffect(() => { if (!open) setSearch(""); }, [open]);
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      // Return keyboard focus to the presenter surface. The search box lives in a
+      // panel that only slides off-screen (still in the DOM), so if it keeps focus
+      // the window-level presenter nav handlers — which bail when activeElement is
+      // an INPUT — swallow every arrow key. Blurring drops focus back to the body.
+      if (searchRef.current && document.activeElement === searchRef.current) {
+        searchRef.current.blur();
+      }
+    }
+  }, [open]);
 
   useEffect(() => {
     const handler = (e) => {
