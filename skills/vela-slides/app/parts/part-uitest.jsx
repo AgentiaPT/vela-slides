@@ -1106,6 +1106,14 @@ uiSuite("SVG Sanitizer (XSS)", [
     const d = document.createElement("div"); d.innerHTML = out;
     return !/<script/i.test(out) && !d.querySelector("script");
   }},
+  // sanitizeString: single-pass /<[^>]*>/ is incomplete (an unclosed "<script" has
+  // no ">" to match, and reconstruction can rejoin fragments). Fixpoint loop +
+  // residual "<" strip must leave no live tag opener, while bare "<" math survives.
+  { name: "sanitizeString neutralizes unclosed/reconstructed tags", fn: async () => {
+    const bad = ["<script", "<scr<script>ipt>alert(1)", "<img src=x onerror=alert(1)", "<<script>>alert"];
+    const clean = bad.every((s) => { const o = sanitizeString(s); return !/<script/i.test(o) && !/<[a-z!/]/i.test(o); });
+    return clean && sanitizeString("a < b") === "a < b";
+  }},
   { name: "Unclosed iframe/embed/script/foreignObject neutralized", fn: async () => {
     const danger = (mk) => { const out = sanitizeSvgMarkup(mk); const d = document.createElement("div"); d.innerHTML = out;
       return !!d.querySelector("iframe,embed,script,foreignObject") ||

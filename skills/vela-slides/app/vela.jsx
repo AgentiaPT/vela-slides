@@ -98,8 +98,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.78";
+const VELA_VERSION = "12.79";
 const VELA_CHANGELOG = [
+  { v: "12.79", d: "Security (defense-in-depth): harden the plain-text field sanitizer against incomplete single-pass HTML-tag stripping, and route PDF-export link extraction through the URL-scheme allowlist so only http/https/mailto links are embedded. Static-analysis clean-up; regression coverage added." },
   { v: "12.78", d: "List/presenter UX batch. The slide '+ add' affordance reveals its Blank / AI / Section options on hover and hides them on mouse-out (a click still pins it open); the same faint '+ add' now appears consistently in empty sections and between slides. An empty section now shows a tall dashed drop zone (with a 'Drop slide here' cue) so a slide can actually be dropped into it — the old target was a one-line strip too thin to hit. Adding a section inserts it at that exact add-point: choosing Section between two slides splits the tail slides off into the new section, while at the top/bottom it adds an adjacent empty one; the new section opens in a focused, empty title field so you can name it immediately. The top header's slide/section stats pill keeps full width so the slide count always shows, ceding space from the deck title. Presenter mode: closing the table-of-contents/search pane returns keyboard focus to the slide canvas, so arrow-key navigation and shortcuts work again instead of being swallowed by the hidden search box." },
   { v: "12.77", d: "Changelog: condense historical release notes to concise one-line summaries." },
   { v: "12.76", d: "Sprint 7-1 UX batch: section drag-reorder (drops into empty sections too); Blank/AI/Section add menu (blank inherits prior styling); hide slides/elements via eye toggle (excluded from totals, exports, presenter TOC) with a visible-vs-hidden stats dialog; header rounds duration to whole minutes; presenter TOC/search on Ctrl+E; AI edits preserve existing images; Export Vela deck file; desktop new-deck writes a fresh file, About 'Check for updates', responsive Re-scan." },
@@ -383,8 +384,16 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
-  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link
+  // extraction), then strip HTML tags. A single pass of /<[^>]*>/ is incomplete:
+  // it needs a closing '>', so an unclosed or regex-reconstructed '<script...'
+  // could survive. We repeat the tag strip to a fixpoint, then drop any residual
+  // tag-opening '<' (one followed by a letter, '!' or '/'). A bare '<' used as
+  // math (e.g. 'a < b') is preserved. Truncate last.
+  let out = val.replace(/\u0000/g, "");
+  let prev;
+  do { prev = out; out = out.replace(/<[^>]*>/g, ""); } while (out !== prev);
+  return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -9647,6 +9656,14 @@ uiSuite("SVG Sanitizer (XSS)", [
     const d = document.createElement("div"); d.innerHTML = out;
     return !/<script/i.test(out) && !d.querySelector("script");
   }},
+  // sanitizeString: single-pass /<[^>]*>/ is incomplete (an unclosed "<script" has
+  // no ">" to match, and reconstruction can rejoin fragments). Fixpoint loop +
+  // residual "<" strip must leave no live tag opener, while bare "<" math survives.
+  { name: "sanitizeString neutralizes unclosed/reconstructed tags", fn: async () => {
+    const bad = ["<script", "<scr<script>ipt>alert(1)", "<img src=x onerror=alert(1)", "<<script>>alert"];
+    const clean = bad.every((s) => { const o = sanitizeString(s); return !/<script/i.test(o) && !/<[a-z!/]/i.test(o); });
+    return clean && sanitizeString("a < b") === "a < b";
+  }},
   { name: "Unclosed iframe/embed/script/foreignObject neutralized", fn: async () => {
     const danger = (mk) => { const out = sanitizeSvgMarkup(mk); const d = document.createElement("div"); d.innerHTML = out;
       return !!d.querySelector("iframe,embed,script,foreignObject") ||
@@ -12722,14 +12739,18 @@ function extractTextRuns(container, containerRect) {
 function extractLinks(container, containerRect) {
   const links = [];
   container.querySelectorAll("a[href]").forEach(a => {
-    const href = a.getAttribute("href");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+    const raw = a.getAttribute("href");
+    if (!raw || raw.startsWith("#")) return;
+    // Allowlist scheme (http/https/mailto) so a javascript:/data:/vbscript: href
+    // can never become a live annotation in the exported PDF.
+    const href = sanitizeUrl(raw);
+    if (!href) return;
     const r = a.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
     links.push({ href, x: r.left - containerRect.left, y: r.top - containerRect.top, w: r.width, h: r.height });
   });
   container.querySelectorAll("[data-href]").forEach(el => {
-    const href = el.getAttribute("data-href");
+    const href = sanitizeUrl(el.getAttribute("data-href"));
     if (!href) return;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
@@ -12737,7 +12758,7 @@ function extractLinks(container, containerRect) {
   });
   // Block-level links (heading, text, metric etc. with link property)
   container.querySelectorAll("[data-pdf-link]").forEach(el => {
-    const href = el.getAttribute("data-pdf-link");
+    const href = sanitizeUrl(el.getAttribute("data-pdf-link"));
     if (!href) return;
     // Skip if already captured via a[href] or data-href
     if (el.tagName === "A" || el.hasAttribute("data-href")) return;

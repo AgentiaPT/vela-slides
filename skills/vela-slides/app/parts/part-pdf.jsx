@@ -1670,14 +1670,18 @@ function extractTextRuns(container, containerRect) {
 function extractLinks(container, containerRect) {
   const links = [];
   container.querySelectorAll("a[href]").forEach(a => {
-    const href = a.getAttribute("href");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+    const raw = a.getAttribute("href");
+    if (!raw || raw.startsWith("#")) return;
+    // Allowlist scheme (http/https/mailto) so a javascript:/data:/vbscript: href
+    // can never become a live annotation in the exported PDF.
+    const href = sanitizeUrl(raw);
+    if (!href) return;
     const r = a.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
     links.push({ href, x: r.left - containerRect.left, y: r.top - containerRect.top, w: r.width, h: r.height });
   });
   container.querySelectorAll("[data-href]").forEach(el => {
-    const href = el.getAttribute("data-href");
+    const href = sanitizeUrl(el.getAttribute("data-href"));
     if (!href) return;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
@@ -1685,7 +1689,7 @@ function extractLinks(container, containerRect) {
   });
   // Block-level links (heading, text, metric etc. with link property)
   container.querySelectorAll("[data-pdf-link]").forEach(el => {
-    const href = el.getAttribute("data-pdf-link");
+    const href = sanitizeUrl(el.getAttribute("data-pdf-link"));
     if (!href) return;
     // Skip if already captured via a[href] or data-href
     if (el.tagName === "A" || el.hasAttribute("data-href")) return;

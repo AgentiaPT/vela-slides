@@ -192,6 +192,25 @@ def test_security():
     else:
         fail("sanitizeString NULL byte stripping", "required for parseInline link sentinel safety")
 
+    # 6b. sanitizeString hardened against incomplete single-pass tag stripping:
+    #     repeat /<[^>]*>/ to a fixpoint, then drop any residual tag-opening "<"
+    #     (CodeQL js/incomplete-multi-character-sanitization).
+    if 'while (out !== prev)' in all_jsx and 'replace(/<(?=[a-zA-Z!/])/g' in all_jsx:
+        ok("sanitizeString loops tag strip to fixpoint + drops residual '<'")
+    else:
+        fail("sanitizeString incomplete-sanitization hardening",
+             "must loop /<[^>]*>/ to a fixpoint and strip residual tag-opening '<'")
+
+    # 6c. PDF export link extraction allowlists URL schemes via sanitizeUrl, so a
+    #     javascript:/data:/vbscript: href can never become a live PDF annotation
+    #     (CodeQL js/incomplete-url-scheme-check).
+    if 'href.startsWith("javascript:")' not in all_jsx \
+            and 'sanitizeUrl(el.getAttribute("data-pdf-link"))' in all_jsx:
+        ok("PDF extractLinks routes hrefs through sanitizeUrl allowlist")
+    else:
+        fail("PDF link scheme allowlist",
+             "extractLinks must sanitize hrefs via sanitizeUrl (drop javascript:/data:/vbscript:)")
+
     # 7. sanitizeStudyNotes exists and routes diagram through sanitizeSvgMarkup
     if 'function sanitizeStudyNotes' in all_jsx:
         ok("sanitizeStudyNotes helper present")

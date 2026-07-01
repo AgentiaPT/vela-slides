@@ -98,8 +98,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.78";
+const VELA_VERSION = "12.79";
 const VELA_CHANGELOG = [
+  { v: "12.79", d: "Security (defense-in-depth): harden the plain-text field sanitizer against incomplete single-pass HTML-tag stripping, and route PDF-export link extraction through the URL-scheme allowlist so only http/https/mailto links are embedded. Static-analysis clean-up; regression coverage added." },
   { v: "12.78", d: "List/presenter UX batch. The slide '+ add' affordance reveals its Blank / AI / Section options on hover and hides them on mouse-out (a click still pins it open); the same faint '+ add' now appears consistently in empty sections and between slides. An empty section now shows a tall dashed drop zone (with a 'Drop slide here' cue) so a slide can actually be dropped into it — the old target was a one-line strip too thin to hit. Adding a section inserts it at that exact add-point: choosing Section between two slides splits the tail slides off into the new section, while at the top/bottom it adds an adjacent empty one; the new section opens in a focused, empty title field so you can name it immediately. The top header's slide/section stats pill keeps full width so the slide count always shows, ceding space from the deck title. Presenter mode: closing the table-of-contents/search pane returns keyboard focus to the slide canvas, so arrow-key navigation and shortcuts work again instead of being swallowed by the hidden search box." },
   { v: "12.77", d: "Changelog: condense historical release notes to concise one-line summaries." },
   { v: "12.76", d: "Sprint 7-1 UX batch: section drag-reorder (drops into empty sections too); Blank/AI/Section add menu (blank inherits prior styling); hide slides/elements via eye toggle (excluded from totals, exports, presenter TOC) with a visible-vs-hidden stats dialog; header rounds duration to whole minutes; presenter TOC/search on Ctrl+E; AI edits preserve existing images; Export Vela deck file; desktop new-deck writes a fresh file, About 'Check for updates', responsive Re-scan." },
@@ -383,8 +384,16 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
-  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link
+  // extraction), then strip HTML tags. A single pass of /<[^>]*>/ is incomplete:
+  // it needs a closing '>', so an unclosed or regex-reconstructed '<script...'
+  // could survive. We repeat the tag strip to a fixpoint, then drop any residual
+  // tag-opening '<' (one followed by a letter, '!' or '/'). A bare '<' used as
+  // math (e.g. 'a < b') is preserved. Truncate last.
+  let out = val.replace(/\u0000/g, "");
+  let prev;
+  do { prev = out; out = out.replace(/<[^>]*>/g, ""); } while (out !== prev);
+  return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
