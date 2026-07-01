@@ -719,6 +719,9 @@ function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
   const clean = { ...block };
+  // `hidden` (element visibility toggle) — coerce to a strict boolean so a
+  // non-boolean value can never reach layout/render logic.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (clean.text) clean.text = sanitizeString(clean.text, 2000);
   if (clean.content) clean.content = sanitizeString(clean.content, 2000);
   if (clean.label) clean.label = sanitizeString(clean.label, 200);
@@ -913,6 +916,8 @@ function sanitizeStudyNotes(raw) {
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
+  // `hidden` (slide excluded from presentation/counts) — strict boolean only.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
@@ -1181,7 +1186,15 @@ const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (cons
 const findItem = (lanes, id) => { for (const l of lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
 const fmtSize = (b) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(2)}MB`;
 const fmtTime = (s) => { if (!s || s <= 0) return ""; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
+// Compact, minutes-only duration for the top header (leaves room for the slide
+// count). Rounds to the nearest minute; anything >0 but under a minute shows "<1m".
+const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.round(s / 60); if (totalMin <= 0) return "<1m"; const h = Math.floor(totalMin / 60); const m = totalMin % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; return `${m}m`; };
+// Slide visibility helpers (CR: hide/unhide slides). Hidden slides are excluded
+// from presentation counts, totals, and presenter navigation, but remain in the
+// editor list so they can be unhidden.
+const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
+const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),

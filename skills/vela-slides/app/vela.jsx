@@ -719,6 +719,9 @@ function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
   const clean = { ...block };
+  // `hidden` (element visibility toggle) — coerce to a strict boolean so a
+  // non-boolean value can never reach layout/render logic.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (clean.text) clean.text = sanitizeString(clean.text, 2000);
   if (clean.content) clean.content = sanitizeString(clean.content, 2000);
   if (clean.label) clean.label = sanitizeString(clean.label, 200);
@@ -913,6 +916,8 @@ function sanitizeStudyNotes(raw) {
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
+  // `hidden` (slide excluded from presentation/counts) — strict boolean only.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
@@ -1181,7 +1186,15 @@ const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (cons
 const findItem = (lanes, id) => { for (const l of lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
 const fmtSize = (b) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(2)}MB`;
 const fmtTime = (s) => { if (!s || s <= 0) return ""; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
+// Compact, minutes-only duration for the top header (leaves room for the slide
+// count). Rounds to the nearest minute; anything >0 but under a minute shows "<1m".
+const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.round(s / 60); if (totalMin <= 0) return "<1m"; const h = Math.floor(totalMin / 60); const m = totalMin % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; return `${m}m`; };
+// Slide visibility helpers (CR: hide/unhide slides). Hidden slides are excluded
+// from presentation counts, totals, and presenter navigation, but remain in the
+// editor list so they can be unhidden.
+const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
+const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -3357,6 +3370,7 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId) || state.lanes[0]; if (!lane) return state; const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: state.lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -3412,6 +3426,7 @@ function innerReducer(state, a) {
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
     case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
+    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
@@ -7028,6 +7043,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+
+// Drag payload lives in a module-level variable, NOT only in dataTransfer.
+// `dataTransfer.getData()` is unreadable in the drop handler in several browsers
+// (and returns "" for synthetic/headless events), which is why section + slide
+// drag-drop silently did nothing. Reading the payload from here is reliable and
+// unit-testable. We still call setData() so the OS shows the native move cursor.
+let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "section", itemId, laneId }
+const _setDrag = (p) => { _velaDrag = p; };
+const _clearDrag = () => { _velaDrag = null; };
+
+// Visual/theme keys that define a slide's "look" — copied when adding a blank
+// slide so it inherits the previous slide's styling but starts with no content.
+const SLIDE_STYLE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "padding", "p", "align", "gap", "contentFlex", "imageFlex", "theme", "t", "layout"];
+function blankSlideFrom(prev) {
+  const base = {};
+  if (prev && typeof prev === "object") for (const k of SLIDE_STYLE_KEYS) if (k in prev) base[k] = prev[k];
+  return { ...base, blocks: [], duration: (prev && prev.duration) || 20 };
+}
+
 // ━━━ AI Slide Adder (inline prompt) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
   const [prompt, setPrompt] = useState("");
@@ -7086,22 +7120,65 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 
 
 
-// --- Empty Module AI Slide Adder ---
-function EmptyAiSlideAdder({ item, dispatch, guidelines }) {
-  const [open, setOpen] = useState(false);
-  if (!open) return (
-    <div onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-      style={{ padding: "3px 8px 3px 38px", fontSize: 10, fontFamily: FONT.mono, color: T.accent, cursor: "pointer", opacity: 0.5, transition: "opacity .15s" }}
-      onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-      onMouseLeave={(e) => e.currentTarget.style.opacity = 0.5}
-    >+ ai slide</div>
+// ━━━ Add Menu (blank / AI / section) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Replaces the old faint "+ ai" affordance. Offers three clearly-labelled
+// options (CR: add blank slide reusing the previous slide's def, add AI slide,
+// add section). `variant` controls prominence: "empty" (empty section, always
+// visible) vs "row" (between slides, reveal on hover).
+function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
+  const [mode, setMode] = useState(null); // null | "menu" | "ai"
+  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => setMode(null)} dispatch={dispatch} guidelines={guidelines} />;
+
+  const addBlank = (e) => {
+    e.stopPropagation();
+    const prev = insertIndex > 0 ? item.slides[insertIndex - 1] : (item.slides[insertIndex] || item.slides[item.slides.length - 1] || null);
+    dispatch({ type: "INSERT_SLIDE", id: item.id, index: insertIndex, slide: blankSlideFrom(prev) });
+    dispatch({ type: "SELECT", id: item.id });
+    setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: insertIndex }), 0);
+    setMode(null);
+  };
+  const addSection = (e) => { e.stopPropagation(); dispatch({ type: "INSERT_ITEM", laneId, afterId: item.id, title: "New section" }); setMode(null); };
+
+  if (mode === "menu") {
+    const btn = (label, icon, onClick, color) => (
+      <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+        onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{icon} {label}</button>
+    );
+    return (
+      <div style={{ display: "flex", gap: 4, padding: "3px 8px 3px 38px", flexWrap: "wrap", alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+        {btn("Blank", "▭", addBlank)}
+        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent)}
+        {btn("Section", "▤", addSection)}
+        <button onClick={(e) => { e.stopPropagation(); setMode(null); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px" }}>✕</button>
+      </div>
+    );
+  }
+
+  if (variant === "empty") {
+    return (
+      <div onClick={(e) => { e.stopPropagation(); setMode("menu"); }}
+        style={{ padding: "4px 8px 5px 38px", fontSize: 11, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.75, transition: "opacity .15s" }}
+        onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.75}
+      >＋ Add slide / section</div>
+    );
+  }
+  // "row" variant — faintly visible between slides (discoverable), clear on hover.
+  return (
+    <div onClick={(e) => { e.stopPropagation(); setMode("menu"); }}
+      style={{ padding: "1px 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
+      onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.28}
+      title="Add slide or section here"
+    >＋ add</div>
   );
-  return <AiSlideAdder item={item} insertIndex={0} onClose={() => setOpen(false)} dispatch={dispatch} guidelines={guidelines} />;
+}
+
+// --- Empty Module Adder (blank / AI / section) ---
+function EmptyAiSlideAdder({ item, dispatch, guidelines, laneId }) {
+  return <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="empty" laneId={laneId} />;
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset }) {
-  const [adderAt, setAdderAt] = useState(null);
+function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
@@ -7136,18 +7213,19 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
 
   const handleSlideDragStart = (e, si) => {
     e.stopPropagation();
-    e.dataTransfer.setData("application/vela-slide", JSON.stringify({ fromItemId: item.id, slideIndex: si }));
-    e.dataTransfer.effectAllowed = "move";
+    _setDrag({ kind: "slide", fromItemId: item.id, slideIndex: si });
+    try { e.dataTransfer.setData("application/vela-slide", JSON.stringify({ fromItemId: item.id, slideIndex: si })); e.dataTransfer.effectAllowed = "move"; } catch {}
     e.currentTarget.style.opacity = "0.35";
   };
 
   const handleSlideDragEnd = (e) => {
     e.currentTarget.style.opacity = "1";
     setDropTarget(null);
+    _clearDrag();
   };
 
   const handleSlideDragOver = (e, si) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
@@ -7157,60 +7235,47 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDrop = (e, si) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
+    const data = _velaDrag;
     setDropTarget(null);
-    try {
-      const data = JSON.parse(e.dataTransfer.getData("application/vela-slide"));
-      if (!data || data.slideIndex == null) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const toIndex = e.clientY < rect.top + rect.height / 2 ? si : si + 1;
-      if (data.fromItemId === item.id) {
-        let from = data.slideIndex, to = toIndex;
-        if (from === to || from === to - 1) return;
-        if (from < to) to--;
-        dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
-        dispatch({ type: "SET_SLIDE_INDEX", index: to });
-      } else {
-        dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex, toIndex });
-      }
-    } catch {}
+    if (data.slideIndex == null) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const toIndex = e.clientY < rect.top + rect.height / 2 ? si : si + 1;
+    if (data.fromItemId === item.id) {
+      let from = data.slideIndex, to = toIndex;
+      if (from === to || from === to - 1) return;
+      if (from < to) to--;
+      dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
+      dispatch({ type: "SET_SLIDE_INDEX", index: to });
+    } else {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex, toIndex });
+    }
   };
 
   const handleContainerDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
+    const data = _velaDrag;
     setDropTarget(null);
-    try {
-      const data = JSON.parse(e.dataTransfer.getData("application/vela-slide"));
-      if (!data || data.slideIndex == null) return;
-      if (data.fromItemId === item.id) {
-        const from = data.slideIndex, to = item.slides.length - 1;
-        if (from !== to) dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
-      } else {
-        dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex });
-      }
-    } catch {}
+    if (data.slideIndex == null) return;
+    if (data.fromItemId === item.id) {
+      const from = data.slideIndex, to = item.slides.length - 1;
+      if (from !== to) dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
+    } else {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex });
+    }
   };
 
   return (
     <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
-      onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-slide")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+      onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
     >
-      {adderAt === 0 ? (
-        <AiSlideAdder item={item} insertIndex={0} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-      ) : (
-        <div onClick={(e) => { e.stopPropagation(); setAdderAt(0); }}
-          style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-          title="AI: insert slide here"
-        >+ ai</div>
-      )}
+      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
@@ -7242,6 +7307,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               overflow: "hidden", whiteSpace: "nowrap",
               transition: "background .12s, color .12s",
               position: "relative",
+              opacity: s.hidden ? 0.5 : 1,
             }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
@@ -7259,19 +7325,15 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
                 style={{ ...S.input({ padding: "1px 4px", fontSize: 12, border: `1px solid ${T.accent}` }), flex: 1, minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
+            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+              title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
+              style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
+            >{s.hidden ? "🙈" : "👁"}</span>
           </div>
-          {adderAt === si + 1 ? (
-            <AiSlideAdder item={item} insertIndex={si + 1} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-          ) : (
-            <div onClick={(e) => { e.stopPropagation(); setAdderAt(si + 1); }}
-              style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-              title="AI: insert slide here"
-            >+ ai</div>
-          )}
+          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
         </React.Fragment>;
       }); })()}
     </div>
@@ -7290,47 +7352,42 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
 
-  // Section-level drag/drop on outer wrapper (works even when expanded)
+  const headerRef = useRef(null);
+  // Section-level drag/drop on the outer wrapper (works even when the section is
+  // expanded). Position (top/bottom) is measured against the HEADER row, not the
+  // tall wrapper, so dropping anywhere in the section still reorders correctly.
   const handleSectionDragOver = (e) => {
-    // Only handle section drags, let slide drags pass through
-    if (!e.dataTransfer.types.includes("application/vela-section")) return;
+    if (!_velaDrag || _velaDrag.kind !== "section" || _velaDrag.itemId === item.id) return;
     e.preventDefault(); e.dataTransfer.dropEffect = "move";
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = (headerRef.current || e.currentTarget).getBoundingClientRect();
     const mid = rect.top + rect.height / 2;
     setDropPos(e.clientY < mid ? "top" : "bottom");
   };
 
   const handleSectionDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-section")) return;
-    e.preventDefault(); e.stopPropagation(); 
-    const pos = dropPos;
+    if (!_velaDrag || _velaDrag.kind !== "section") return;
+    e.preventDefault(); e.stopPropagation();
+    const d = _velaDrag; const pos = dropPos;
     setDropPos(null);
-    try {
-      const d = JSON.parse(e.dataTransfer.getData("application/vela-section"));
-      if (d.itemId === item.id) return;
-      dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: pos === "top" ? item.id : null, afterId: pos === "bottom" ? item.id : null });
-    } catch {}
+    if (d.itemId === item.id) return;
+    dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: pos === "top" ? item.id : null, afterId: pos !== "top" ? item.id : null });
   };
 
-  // Slide cross-module drops (on the header row only)
+  // Slide cross-module drops (dropping a slide onto a section header — the key
+  // path for moving a slide INTO an empty section).
   const handleRowDragOver = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault(); e.dataTransfer.dropEffect = "move";
     setDropPos("slide");
   };
 
   const handleRowDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
-    e.preventDefault(); e.stopPropagation(); setDropPos(null);
-    try {
-      const sd = e.dataTransfer.getData("application/vela-slide");
-      if (sd) {
-        const slideData = JSON.parse(sd);
-        if (slideData && slideData.slideIndex != null && slideData.fromItemId !== item.id) {
-          dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: slideData.fromItemId, toId: item.id, index: slideData.slideIndex });
-        }
-      }
-    } catch {}
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
+    e.preventDefault(); e.stopPropagation();
+    const slideData = _velaDrag; setDropPos(null);
+    if (slideData.slideIndex != null && slideData.fromItemId !== item.id) {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: slideData.fromItemId, toId: item.id, index: slideData.slideIndex });
+    }
   };
 
   const hasNotes = !!(item.notes && item.notes.trim());
@@ -7339,7 +7396,9 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const allItemComments = [...itemComments.map((c) => ({ ...c, slideIndex: null })), ...slideComments];
   const openCommentCount = allItemComments.filter((c) => c.status === "open").length;
   const hasSlides = item.slides.length > 0;
-  const itemTime = item.slides.reduce((a, s) => a + (s.duration || 0), 0);
+  const itemTime = sumVisibleDurations(item.slides);
+  const visibleCount = visibleSlides(item.slides).length;
+  const hiddenCount = item.slides.length - visibleCount;
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
   return (
@@ -7355,13 +7414,14 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       }}
     >
       <div className={`concept-row ${selected ? "selected" : ""}`}
+        ref={headerRef}
         onClick={() => dispatch({ type: "SELECT", id: item.id })}
         draggable
         onDragStart={(e) => {
-          e.dataTransfer.setData("application/vela-section", JSON.stringify({ itemId: item.id, laneId }));
-          e.dataTransfer.setData("text/plain", JSON.stringify({ itemId: item.id, laneId }));
-          e.dataTransfer.effectAllowed = "move";
+          _setDrag({ kind: "section", itemId: item.id, laneId });
+          try { e.dataTransfer.setData("application/vela-section", JSON.stringify({ itemId: item.id, laneId })); e.dataTransfer.setData("text/plain", JSON.stringify({ itemId: item.id, laneId })); e.dataTransfer.effectAllowed = "move"; } catch {}
         }}
+        onDragEnd={_clearDrag}
         onDragOver={handleRowDragOver}
         onDragLeave={() => { if (dropPos === "slide") setDropPos(null); }}
         onDrop={handleRowDrop}
@@ -7369,7 +7429,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           background: dropPos === "slide" ? T.accent + "15" : undefined,
           outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
         }}>
-        {timePct > 0 && <div title={`${item.slides.length} slides · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
+        {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
         <span onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }} style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
@@ -7413,8 +7473,8 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
         </div>
       </div>}
-      {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} />}
-      {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} />}
+      {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} laneId={laneId} />}
+      {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
     </div>
   );
 }
@@ -7425,13 +7485,14 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + (i.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0), 0), [allItems]);
+  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
-  const handleDrop = (e) => { e.preventDefault(); if (!laneId) return; try { const d = JSON.parse(e.dataTransfer.getData("application/vela-section") || e.dataTransfer.getData("text/plain")); dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); } catch {} };
+  // Drop on empty container area → append the dragged section to the end.
+  const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-section")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
@@ -14282,21 +14343,70 @@ function exportMarkdown(state, opts = {}) {
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModalBackdrop({ onClose, extraKeys, children }) {
+function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   useEffect(() => {
     const h = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      // Enter activates the dialog's default action (CR: every confirm dialog
+      // should be confirmable with Enter). Don't hijack Enter inside multi-line
+      // text entry (textarea / contentEditable) where it means "newline".
+      if (e.key === "Enter" && onEnter && !e.shiftKey) {
+        const tag = (e.target && e.target.tagName) || "";
+        if (tag !== "TEXTAREA" && !(e.target && e.target.isContentEditable)) { e.preventDefault(); onEnter(); return; }
+      }
       if (extraKeys?.(e)) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, extraKeys]);
+  }, [onClose, onEnter, extraKeys]);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
     </div>
+  );
+}
+
+// ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Opened from the header stat pill. The header shows presentation totals (hidden
+// slides excluded); this dialog breaks down visible vs hidden (CR: hide/unhide).
+function StatsDialog({ state, onClose }) {
+  const items = state.lanes.flatMap((l) => l.items);
+  const allSlides = items.flatMap((i) => i.slides || []);
+  const visible = allSlides.filter((s) => !s.hidden);
+  const hidden = allSlides.filter((s) => s.hidden);
+  const dur = (arr) => arr.reduce((a, s) => a + (s.duration || 0), 0);
+  const Row = ({ label, a, b, accent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
+      <span style={{ fontFamily: FONT.body, fontSize: 13, color: accent ? T.accent : T.text, fontWeight: accent ? 700 : 400 }}>{label}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: 12, color: accent ? T.accent : T.textDim }}>{a}{b != null ? <span style={{ color: T.textDim }}> · {b}</span> : null}</span>
+    </div>
+  );
+  return (
+    <ModalBackdrop onClose={onClose} onEnter={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>📊 Deck stats</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <Row label="Presenting" a={`${visible.length} slides`} b={fmtTime(dur(visible)) || "0s"} accent />
+      {hidden.length > 0 && <Row label="Hidden" a={`${hidden.length} slides`} b={fmtTime(dur(hidden)) || "0s"} />}
+      <Row label="Total (incl. hidden)" a={`${allSlides.length} slides`} b={fmtTime(dur(allSlides)) || "0s"} />
+      <Row label="Sections" a={`${items.length}`} b={`${state.lanes.length} lane${state.lanes.length === 1 ? "" : "s"}`} />
+      <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textDim, letterSpacing: "0.1em", textTransform: "uppercase" }}>Per section</div>
+      <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 4 }}>
+        {items.map((i, idx) => {
+          const vis = (i.slides || []).filter((s) => !s.hidden);
+          const hid = (i.slides || []).length - vis.length;
+          return (
+            <div key={i.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "4px 0", fontSize: 12 }}>
+              <span style={{ fontFamily: FONT.body, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{i.title}</span>
+              <span style={{ fontFamily: FONT.mono, color: T.textDim, flexShrink: 0 }}>{vis.length}sl{hid > 0 ? ` (+${hid}⊘)` : ""} · {fmtTime(sumVisibleDurations(i.slides)) || "0s"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </ModalBackdrop>
   );
 }
 
@@ -15077,6 +15187,7 @@ export default function App() {
   const [jsonModal, setJsonModal] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -15554,7 +15665,12 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
-  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
+  // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
+  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
+  const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
+  const slideCountAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0);
+  const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + visibleSlides(i.slides).length, 0), 0);
+  const hiddenSlideCount = slideCountAll - slideCountVisible;
   const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (s.duration || 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
 
   // ━━━ Mobile helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -15596,7 +15712,7 @@ export default function App() {
         ) : (
           <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
-        {!isMobile && (deckTime > 0 || total > 0) && <span title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)} slides · ${total} sections`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4 }}>{deckTime > 0 ? `⏱${fmtTime(deckTime)} · ` : ""}{state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)}sl · {total}§</span>}
+        {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
@@ -15792,6 +15908,7 @@ export default function App() {
       {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
+      {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
