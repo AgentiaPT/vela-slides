@@ -85,6 +85,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.22"
+
       - name: Install npm devDependencies (locked)
         # Uses `npm ci` so the install is driven by package-lock.json — exact
         # versions + sha512 integrity hashes, no registry re-resolution. This
@@ -161,6 +166,54 @@ jobs:
           echo "$output"
           passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
           failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Run desktop gatekeeper invariant tests
+        id: desktop
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(python3 -m unittest tests.test_desktop -v 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
+          failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
+          passed=${passed:-0}
+          failed=${failed:-0}
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
+      - name: Run gatekeeper Go unit tests
+        id: gotest
+        if: always()
+        run: |
+          set +e
+          start_time=$(date +%s)
+          output=$(cd vela-neutralino/extensions/agent && go test -v ./... 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          passed=$(echo "$output" | grep -cE '^--- PASS:')
+          failed=$(echo "$output" | grep -cE '^--- FAIL:')
           passed=${passed:-0}
           failed=${failed:-0}
           EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
@@ -250,11 +303,15 @@ jobs:
           UNIT_EXIT: ${{ steps.unit.outputs.exit_code }}
           INT_EXIT: ${{ steps.integration.outputs.exit_code }}
           SRV_EXIT: ${{ steps.server.outputs.exit_code }}
+          DESKTOP_EXIT: ${{ steps.desktop.outputs.exit_code }}
+          GOTEST_EXIT: ${{ steps.gotest.outputs.exit_code }}
           CONCAT_EXIT: ${{ steps.concat.outputs.exit_code }}
           E2E_EXIT: ${{ steps.e2e.outputs.exit_code }}
           UNIT_OUTPUT: ${{ steps.unit.outputs.output }}
           INT_OUTPUT: ${{ steps.integration.outputs.output }}
           SRV_OUTPUT: ${{ steps.server.outputs.output }}
+          DESKTOP_OUTPUT: ${{ steps.desktop.outputs.output }}
+          GOTEST_OUTPUT: ${{ steps.gotest.outputs.output }}
           CONCAT_OUTPUT: ${{ steps.concat.outputs.output }}
           E2E_OUTPUT: ${{ steps.e2e.outputs.output }}
           UNIT_PASSED: ${{ steps.unit.outputs.passed }}
@@ -266,6 +323,12 @@ jobs:
           SRV_PASSED: ${{ steps.server.outputs.passed }}
           SRV_FAILED: ${{ steps.server.outputs.failed }}
           SRV_TIME: ${{ steps.server.outputs.elapsed }}
+          DESKTOP_PASSED: ${{ steps.desktop.outputs.passed }}
+          DESKTOP_FAILED: ${{ steps.desktop.outputs.failed }}
+          DESKTOP_TIME: ${{ steps.desktop.outputs.elapsed }}
+          GOTEST_PASSED: ${{ steps.gotest.outputs.passed }}
+          GOTEST_FAILED: ${{ steps.gotest.outputs.failed }}
+          GOTEST_TIME: ${{ steps.gotest.outputs.elapsed }}
           CONCAT_TIME: ${{ steps.concat.outputs.elapsed }}
           E2E_PASSED: ${{ steps.e2e.outputs.passed }}
           E2E_FAILED: ${{ steps.e2e.outputs.failed }}
@@ -276,12 +339,16 @@ jobs:
             const unitExit = process.env.UNIT_EXIT || '';
             const integrationExit = process.env.INT_EXIT || '';
             const serverExit = process.env.SRV_EXIT || '';
+            const desktopExit = process.env.DESKTOP_EXIT || '';
+            const gotestExit = process.env.GOTEST_EXIT || '';
             const concatExit = process.env.CONCAT_EXIT || '';
             const e2eExit = process.env.E2E_EXIT || '';
 
             const unitOutput = process.env.UNIT_OUTPUT || '';
             const integrationOutput = process.env.INT_OUTPUT || '';
             const serverOutput = process.env.SRV_OUTPUT || '';
+            const desktopOutput = process.env.DESKTOP_OUTPUT || '';
+            const gotestOutput = process.env.GOTEST_OUTPUT || '';
             const concatOutput = process.env.CONCAT_OUTPUT || '';
             const e2eOutput = process.env.E2E_OUTPUT || '';
 
@@ -294,6 +361,12 @@ jobs:
             const srvPassed = process.env.SRV_PASSED || '0';
             const srvFailed = process.env.SRV_FAILED || '0';
             const srvTime = process.env.SRV_TIME || '?';
+            const desktopPassed = process.env.DESKTOP_PASSED || '0';
+            const desktopFailed = process.env.DESKTOP_FAILED || '0';
+            const desktopTime = process.env.DESKTOP_TIME || '?';
+            const gotestPassed = process.env.GOTEST_PASSED || '0';
+            const gotestFailed = process.env.GOTEST_FAILED || '0';
+            const gotestTime = process.env.GOTEST_TIME || '?';
             const concatTime = process.env.CONCAT_TIME || '?';
             const e2ePassed = process.env.E2E_PASSED || '0';
             const e2eFailed = process.env.E2E_FAILED || '0';
@@ -303,15 +376,15 @@ jobs:
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
-            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && concatExit === '0' && e2eExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
 
-            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(e2ePassed);
-            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(e2eFailed);
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed);
             const totalTests = totalPassed + totalFailed;
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 
-            let body = `## 🧪 CI Test Results — Python 3.12 + Node 22\n\n`;
+            let body = `## 🧪 CI Test Results — Python 3.12 + Node 22 + Go 1.22\n\n`;
             body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
             if (totalFailed > 0) body += `, ${totalFailed} failed`;
             body += `\n\n`;
@@ -319,6 +392,8 @@ jobs:
             body += `| Unit Tests | ${status(unitExit)} | ${unitPassed} passed${unitFailed !== '0' ? ', ' + unitFailed + ' failed' : ''} | ${unitTime} |\n`;
             body += `| Integration Tests | ${status(integrationExit)} | ${intPassed} passed${intFailed !== '0' ? ', ' + intFailed + ' failed' : ''} | ${intTime} |\n`;
             body += `| Server Tests | ${status(serverExit)} | ${srvPassed} passed${srvFailed !== '0' ? ', ' + srvFailed + ' failed' : ''} | ${srvTime} |\n`;
+            body += `| Desktop Gatekeeper Tests | ${status(desktopExit)} | ${desktopPassed} passed${desktopFailed !== '0' ? ', ' + desktopFailed + ' failed' : ''} | ${desktopTime} |\n`;
+            body += `| Gatekeeper Go Tests | ${status(gotestExit)} | ${gotestPassed} passed${gotestFailed !== '0' ? ', ' + gotestFailed + ' failed' : ''} | ${gotestTime} |\n`;
             body += `| E2E UI Tests | ${status(e2eExit)} | ${e2ePassed} passed${e2eFailed !== '0' ? ', ' + e2eFailed + ' failed' : ''} | ${e2eTime} |\n`;
             body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
 
@@ -327,6 +402,8 @@ jobs:
             if (unitExit !== '0') failures.push({ name: 'Unit Tests', output: unitOutput });
             if (integrationExit !== '0') failures.push({ name: 'Integration Tests', output: integrationOutput });
             if (serverExit !== '0') failures.push({ name: 'Server Tests', output: serverOutput });
+            if (desktopExit !== '0') failures.push({ name: 'Desktop Gatekeeper Tests', output: desktopOutput });
+            if (gotestExit !== '0') failures.push({ name: 'Gatekeeper Go Tests', output: gotestOutput });
             if (e2eExit !== '0') failures.push({ name: 'E2E UI Tests', output: e2eOutput });
             if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
 

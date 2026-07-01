@@ -388,14 +388,26 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
-  useEffect(() => { if (!open) setSearch(""); }, [open]);
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      // Return keyboard focus to the presenter surface. The search box lives in a
+      // panel that only slides off-screen (still in the DOM), so if it keeps focus
+      // the window-level presenter nav handlers — which bail when activeElement is
+      // an INPUT — swallow every arrow key. Blurring drops focus back to the body.
+      if (searchRef.current && document.activeElement === searchRef.current) {
+        searchRef.current.blur();
+      }
+    }
+  }, [open]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane (CR: quick-jump). Works even while
+      // the search box is focused so the same chord closes it again.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -409,10 +421,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
+        // Hidden slides are not part of the presentation, so keep them out of the
+        // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
           const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, visible: !q || title.toLowerCase().includes(q) };
-        });
+          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
+        }).filter((s) => !s.hidden);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
       }
@@ -420,27 +434,51 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     return groups;
   }, [lanes, search, currentConceptId]);
 
+  // A module with a title card shows a virtual card at presSlides[0] in
+  // fullscreen, so raw slide index i maps to presSlides[i+1]. The TOC is
+  // fullscreen-only, so this offset always applies to presentCard modules.
+  const presentCardOf = (id) => { for (const l of (lanes || [])) { const it = (l.items || []).find((i) => i.id === id); if (it) return !!it.presentCard; } return false; };
+  const currentOffset = presentCardOf(currentConceptId) ? 1 : 0;
+
   // Count total visible slides for footer
   const totalSlides = useMemo(() => grouped.reduce((sum, g) => sum + g.slides.length, 0), [grouped]);
   const globalIndex = useMemo(() => {
     let idx = 0;
     for (const g of grouped) {
-      if (g.isCurrent) return idx + slideIndex;
+      if (g.isCurrent) {
+        // `grouped` excludes hidden slides, so map the raw slideIndex (minus any
+        // title-card offset) to its position among VISIBLE slides.
+        return idx + g.slides.filter((s) => s.slideIdx < slideIndex - currentOffset).length;
+      }
       idx += g.slides.length;
     }
     return idx;
-  }, [grouped, slideIndex]);
+  }, [grouped, slideIndex, currentOffset]);
 
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
   const handleJump = (moduleId, slideIdx) => {
+    // Add the target module's title-card offset so the jump lands on the intended
+    // slide (not one early) in presentCard modules.
+    const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
     if (moduleId === currentConceptId) {
-      onJump(slideIdx);
+      onJump(idx);
     } else {
       // Navigate to different module
       dispatch({ type: "SELECT", id: moduleId });
-      dispatch({ type: "SET_SLIDE_INDEX", index: slideIdx });
+      dispatch({ type: "SET_SLIDE_INDEX", index: idx });
+    }
+    // Jumping always closes the TOC/search pane (CR: quick-jump then dismiss).
+    setPinned(false);
+    setOpen(false);
+  };
+
+  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
+  const jumpFirstMatch = () => {
+    for (const g of grouped) {
+      const first = g.slides.find((s) => s.visible);
+      if (first) { handleJump(g.id, first.slideIdx); return; }
     }
   };
 
@@ -466,7 +504,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>⌃E</span>
         </div>
 
         {/* Search */}
@@ -477,10 +515,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
+              // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
+              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -508,7 +549,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               {/* Slides */}
               {group.slides.map(({ title, slideIdx, visible }) => {
                 if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex;
+                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
                 return (
                   <div
                     key={slideIdx}
@@ -544,7 +585,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or ⌃E</span>
         </div>
       </div>
     </>
@@ -1206,20 +1247,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
 
-  // Global slide index/total across all modules (for slide counter display)
+  // Global slide index/total across all modules (for the on-slide page-number
+  // badge). Counts only VISIBLE slides so it agrees with the header pill and the
+  // presenter TOC (hidden slides are excluded from presentation counts). The
+  // `+ presOffset` keeps the downstream `displayIndex = globalSlideIndex - presOffset`
+  // correct when a virtual title card is prepended in fullscreen.
   const { globalSlideIndex, globalSlideTotal } = useMemo(() => {
     let offset = 0, total = 0;
     let found = false;
     for (const l of (lanes || [])) {
       for (const item of l.items) {
-        const count = (item.slides || []).length;
-        if (item.id === concept.id) { offset += slideIndex; found = true; }
-        else if (!found) { offset += count; }
-        total += count;
+        const sl = item.slides || [];
+        const vis = sl.filter((s) => !s.hidden).length;
+        if (item.id === concept.id) {
+          offset += sl.slice(0, Math.max(0, slideIndex - presOffset)).filter((s) => !s.hidden).length + presOffset;
+          found = true;
+        } else if (!found) { offset += vis; }
+        total += vis;
       }
     }
     return { globalSlideIndex: offset, globalSlideTotal: total };
-  }, [lanes, concept.id, slideIndex]);
+  }, [lanes, concept.id, slideIndex, presOffset]);
 
   const handleSlideEdit = useCallback((patch) => {
     if (fullscreen && presOffset && slideIndex === 0) return; // Don't edit virtual slide
@@ -1274,6 +1322,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
+  // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
+  // presented). Self-contained: only acts when fullscreen AND the current slide
+  // is hidden, so decks with no hidden slides are completely unaffected. Skips in
+  // the direction of travel, falling back to the other direction at the ends.
+  // Backstop for LANDING on a hidden slide during fullscreen (module-boundary
+  // crossing, entering fullscreen on a hidden slide, or a stale jump): nudge to
+  // the nearest visible slide, forward first then backward. Arrow navigation
+  // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
+  // so this only fires on a land and can never oscillate (it always resolves to a
+  // visible slide, and nav never re-lands on a hidden one).
+  useEffect(() => {
+    if (!fullscreen) return;
+    const cur = presSlides[slideIndex];
+    if (!cur || !cur.hidden) return;
+    let n = -1;
+    for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
+    if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
+    if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
+  }, [fullscreen, slideIndex, presSlides]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -1395,7 +1462,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
-        list.push({ id: item.id, title: item.title, slideCount: (item.slides || []).length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard });
+        const sl = item.slides || [];
+        let firstVisible = -1, lastVisible = -1;
+        for (let i = 0; i < sl.length; i++) if (!sl[i].hidden) { if (firstVisible < 0) firstVisible = i; lastVisible = i; }
+        list.push({ id: item.id, title: item.title, slideCount: sl.length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard, firstVisible, lastVisible });
       }
     }
     return list;
@@ -1533,31 +1603,54 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Arrow keys + Space: move through slides, crossing to next/prev module at boundaries
       // Up/Down behave the same as Left/Right (like PowerPoint)
       const navSlides = fullscreen ? presSlides : slides;
+      // In fullscreen, step over hidden slides so a draft never appears on screen
+      // (editor nav keeps reaching them so they can be edited/unhidden).
+      const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
-        if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
-          dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
-        } else if (curIdx >= 0 && curIdx + 1 < mods.length) {
-          const next = mods[curIdx + 1];
-          dispatch({ type: "SELECT", id: next.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
-          const changedLane = next.laneId !== mods[curIdx].laneId;
-          showNavToast(next.title, changedLane ? next.laneTitle : null);
+        const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
+        if (ni >= 0) {
+          dispatch({ type: "SET_SLIDE_INDEX", index: ni });
+        } else {
+          // Cross to the next module. In fullscreen, skip modules that have
+          // nothing to present (all slides hidden, no title card) so a draft
+          // module never flashes on screen, and land on the first VISIBLE slide.
+          let ti = curIdx + 1;
+          if (fullscreen) while (ti < mods.length && !mods[ti].presentCard && mods[ti].firstVisible < 0) ti++;
+          if (ti >= 0 && ti < mods.length) {
+            const next = mods[ti];
+            dispatch({ type: "SELECT", id: next.id });
+            const target = fullscreen ? (next.presentCard ? 0 : Math.max(0, next.firstVisible)) : 0;
+            dispatch({ type: "SET_SLIDE_INDEX", index: target });
+            const changedLane = next.laneId !== mods[curIdx].laneId;
+            showNavToast(next.title, changedLane ? next.laneTitle : null);
+          }
         }
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
-        if (navSlides.length > 0 && slideIndex > 0) {
-          dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
-        } else if (curIdx >= 0 && curIdx - 1 >= 0) {
-          const prev = mods[curIdx - 1];
-          dispatch({ type: "SELECT", id: prev.id });
-          const prevPresOffset = prev.presentCard ? 1 : 0;
-          dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + (fullscreen ? prevPresOffset : 0)) });
-          const changedLane = prev.laneId !== mods[curIdx].laneId;
-          showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+        const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
+        if (pi >= 0) {
+          dispatch({ type: "SET_SLIDE_INDEX", index: pi });
+        } else {
+          let ti = curIdx - 1;
+          if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
+          if (ti >= 0) {
+            const prev = mods[ti];
+            dispatch({ type: "SELECT", id: prev.id });
+            const prevPresOffset = prev.presentCard ? 1 : 0;
+            // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
+            // title card if the module has only a card. Editor: the real last slide.
+            const target = fullscreen
+              ? (prev.lastVisible >= 0 ? prev.lastVisible + prevPresOffset : 0)
+              : Math.max(0, (prev.slideCount || 1) - 1);
+            dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, target) });
+            const changedLane = prev.laneId !== mods[curIdx].laneId;
+            showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+          }
         }
       }
 

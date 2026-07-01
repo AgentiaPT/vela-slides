@@ -111,12 +111,58 @@ function restoreImageSrcs(improved, originalBlocks) {
     // Restore links from original blocks at same index
     if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
   }
+  // GUARANTEE no image is lost (CR: AI edits must never drop existing images).
+  // If the model returned fewer image blocks than the original, re-append the
+  // dropped originals so their content survives even when the model omits them.
+  for (; imgIdx < origImages.length; imgIdx++) improved.blocks.push({ ...origImages[imgIdx] });
+}
+
+// Merge a model-produced block array with the originals so that existing image
+// blocks are always preserved: real src is restored (never left as the
+// "keep-original" placeholder), the model's repositioning/resizing/recaptioning
+// is kept, and any image the model dropped is re-appended. Used by edit_slide,
+// which replaces the block array wholesale.
+function preserveImages(newBlocks, originalBlocks) {
+  const origImages = (originalBlocks || []).filter((b) => b && b.type === "image");
+  if (origImages.length === 0) return newBlocks;
+  let idx = 0;
+  const out = [];
+  for (const b of (newBlocks || [])) {
+    if (b && b.type === "image") {
+      const orig = origImages[idx];
+      if (orig) { out.push({ ...orig, ...b, src: orig.src }); idx++; }
+      else out.push(b);
+    } else out.push(b);
+  }
+  for (; idx < origImages.length; idx++) out.push({ ...origImages[idx] });
+  return out;
+}
+
+// Last-line guard for edit_slide: after a merge, replace any image whose src is
+// still the "keep-original" placeholder (or empty) with the real src from the
+// original blocks, matched positionally. Walks GRID cells too — the per-block
+// merge/preserveImages paths only reach top-level images, so a grid-nested image
+// would otherwise persist the placeholder and be dropped on the next sanitize.
+function restoreKeepOriginal(finalBlocks, originalBlocks) {
+  const origSrcs = [];
+  const collect = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image" && b.src && b.src !== "keep-original") origSrcs.push(b.src); if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) collect(c && c.blocks); } };
+  collect(originalBlocks);
+  let i = 0;
+  const walk = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image") { if ((b.src === "keep-original" || !b.src) && origSrcs[i] != null) b.src = origSrcs[i]; i++; } if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) walk(c && c.blocks); } };
+  walk(finalBlocks);
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
+  // Replace bulky image data with a stable "keep-original" placeholder (matches
+  // the system-prompt instruction) so the model still SEES the image blocks and
+  // keeps them in place, but never has to reproduce the data. NOTE: only `blocks`
+  // (and nested grid cells) are stripped — the restore paths (restoreImageSrcs /
+  // preserveImages) only re-attach `blocks`/grid srcs. Stripping L/R here without
+  // a matching restore would turn split-column side images into the literal
+  // "keep-original" string (data loss), so L/R are intentionally left intact.
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src && b.src.length > 200) b.src = "keep-original";
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
@@ -184,6 +230,9 @@ function executeTool(name, input, ws, attachedImages) {
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
       const patch = input.patch || {};
+      // Snapshot the pre-edit blocks so any image the model echoed back as the
+      // "keep-original" placeholder (incl. grid-nested) can be restored below.
+      const _origBlocks = slide.blocks ? JSON.parse(JSON.stringify(slide.blocks)) : [];
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
         if (k === "blocks" && Array.isArray(v)) {
@@ -191,6 +240,10 @@ function executeTool(name, input, ws, attachedImages) {
           if (v.length === (slide.blocks || []).length) {
             slide.blocks = slide.blocks.map((existing, bi) => {
               const patched = { ...existing, ...v[bi] };
+              // Never let an edit overwrite an existing image's src — the model
+              // only ever sees the "keep-original" placeholder, so echoing it back
+              // must not clobber the real image data (CR: preserve images).
+              if (existing.type === "image" && existing.src) patched.src = existing.src;
               // Deep merge grid items: preserve cell blocks unless patch explicitly provides them
               if (existing.type === "grid" && existing.items && v[bi] && !v[bi].items) {
                 patched.items = existing.items;
@@ -205,12 +258,20 @@ function executeTool(name, input, ws, attachedImages) {
               return patched;
             });
           } else {
-            slide.blocks = v;
+            // Block count changed → the model may have re-ordered or dropped
+            // blocks. Preserve existing images so they are never lost.
+            slide.blocks = preserveImages(v, slide.blocks);
           }
+        } else if ((k === "L" || k === "R") && Array.isArray(v)) {
+          // Split-column arrays can hold images too — preserve them like blocks.
+          slide[k] = preserveImages(v, slide[k]);
         } else {
           slide[k] = v;
         }
       }
+      // Final guard: never persist a "keep-original" placeholder (top-level or
+      // grid-nested) — restore the real image data from the pre-edit blocks.
+      if ("blocks" in patch) restoreKeepOriginal(slide.blocks, _origBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
@@ -467,7 +528,7 @@ ${ICON_LIST}
 Use icons GENEROUSLY — in bullets, headings, badges, callouts, metrics, grids.
 
 
-IMPORTANT: For image blocks, keep src as "keep-original" — do not modify image data.`;
+IMPORTANT: The slide may contain image blocks shown with src:"keep-original" — these are REAL images. You MUST keep every image block (never delete or omit one). You may move, resize, recaption, or lay them out differently, but leave src exactly "keep-original".`;
 }
 
 function extractSlideImages(lanes, selectedId, slideIndex) {
@@ -660,7 +721,7 @@ ${BLOCK_REFERENCE}
 
 ${ICON_LIST}
 
-IMPORTANT: For image blocks, keep src as "keep-original".`;
+IMPORTANT: Image blocks with src:"keep-original" are REAL existing images — keep every one of them (never delete or omit an image block), leave src as "keep-original", and feel free to reposition/resize/recaption around them.`;
 
 // ━━━ Slide Design API (shared by improve + alternatives) ━━━━━━━━━━
 async function callSlideDesignAPI(screenshotBase64, slideJson, conceptTitle, slideNum, totalSlides, sysPrompt, temperature = 0.3, userMsgOverride = null, _callType = "improve") {

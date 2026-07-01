@@ -53,6 +53,20 @@ function showError(text) {
   host.appendChild(body);
 }
 
+// Bring the native OS window to the foreground and give it keyboard focus.
+// Neutralino opens the window but on Windows/WebView2 (and some Linux WMs) it
+// does NOT grab focus on launch — so keydown events never reach the webview
+// until the user clicks the window. That breaks every "press Enter to confirm"
+// dialog on first run (deck warning, trust prompt, React confirm modals). We
+// focus explicitly after init, and retry a couple of times because the native
+// window is created asynchronously and an immediate focus() can no-op.
+function focusWindow() {
+  const tryFocus = () => { try { Neutralino.window.focus(); } catch { /* window.* gated or not ready */ } };
+  tryFocus();
+  setTimeout(tryFocus, 120);
+  setTimeout(tryFocus, 400);
+}
+
 async function boot() {
   setMsg("Starting Neutralino…");
   try {
@@ -60,6 +74,7 @@ async function boot() {
   } catch (e) {
     return showError("Neutralino.init() failed: " + e.message);
   }
+  focusWindow();
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
@@ -167,6 +182,11 @@ async function boot() {
   // Save hook: Vela calls this on every state change. deck-io debounces.
   window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
 
+  // New-deck hook: Vela calls this (desktop only) BEFORE creating a blank deck so
+  // it lands in a fresh file in the same folder instead of overwriting the deck
+  // the user currently has open (CR). Returns the new path (or null).
+  window.__velaNewDeckFile = (title) => deckIO.newDeck(title);
+
   setMsg("Transpiling Vela…");
   await loadVela();
 
@@ -178,6 +198,11 @@ async function boot() {
   }
 
   setTimeout(() => checkForUpdate(configStore).catch(() => {}), 5000);
+
+  // Manual "Check for updates" from Vela's About dialog (CR). Reuses the same
+  // checker; force bypasses the 24h throttle and returns a status string
+  // ("update" | "uptodate" | "error") so the app can report the outcome.
+  window.__velaCheckForUpdate = () => checkForUpdate(configStore, { force: true }).catch(() => "error");
 }
 
 // ---------- Deck picker ----------------------------------------------------

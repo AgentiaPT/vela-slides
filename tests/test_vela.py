@@ -192,6 +192,25 @@ def test_security():
     else:
         fail("sanitizeString NULL byte stripping", "required for parseInline link sentinel safety")
 
+    # 6b. sanitizeString hardened against incomplete single-pass tag stripping:
+    #     repeat /<[^>]*>/ to a fixpoint, then drop any residual tag-opening "<"
+    #     (CodeQL js/incomplete-multi-character-sanitization).
+    if 'while (out !== prev)' in all_jsx and 'replace(/<(?=[a-zA-Z!/])/g' in all_jsx:
+        ok("sanitizeString loops tag strip to fixpoint + drops residual '<'")
+    else:
+        fail("sanitizeString incomplete-sanitization hardening",
+             "must loop /<[^>]*>/ to a fixpoint and strip residual tag-opening '<'")
+
+    # 6c. PDF export link extraction allowlists URL schemes via sanitizeUrl, so a
+    #     javascript:/data:/vbscript: href can never become a live PDF annotation
+    #     (CodeQL js/incomplete-url-scheme-check).
+    if 'href.startsWith("javascript:")' not in all_jsx \
+            and 'sanitizeUrl(el.getAttribute("data-pdf-link"))' in all_jsx:
+        ok("PDF extractLinks routes hrefs through sanitizeUrl allowlist")
+    else:
+        fail("PDF link scheme allowlist",
+             "extractLinks must sanitize hrefs via sanitizeUrl (drop javascript:/data:/vbscript:)")
+
     # 7. sanitizeStudyNotes exists and routes diagram through sanitizeSvgMarkup
     if 'function sanitizeStudyNotes' in all_jsx:
         ok("sanitizeStudyNotes helper present")
@@ -396,6 +415,47 @@ def test_security():
             fail("data: image sanitization suite", "timeout after 60s")
     else:
         fail("data: image sanitization suite", f"missing: {dimg_script}")
+
+    # 9c. AI image preservation (CR: edits must never drop existing images).
+    # preserveImages / restoreImageSrcs re-attach real srcs and re-append any
+    # image the model omitted, so image blocks survive every edit path.
+    imgpres_script = os.path.join(REPO_ROOT, "tests", "test_image_preserve.cjs")
+    if os.path.exists(imgpres_script):
+        try:
+            r = subprocess.run(["node", imgpres_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"AI image preservation suite ({count} cases)")
+            else:
+                fail("AI image preservation suite",
+                     f"node tests/test_image_preserve.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("AI image preservation suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("AI image preservation suite", "timeout after 60s")
+    else:
+        fail("AI image preservation suite", f"missing: {imgpres_script}")
+
+    # 9d. Sprint 7-1 UX logic: minutes formatting, slide-visibility helpers,
+    # blank-slide derivation, and the new reducer actions.
+    uxlogic_script = os.path.join(REPO_ROOT, "tests", "test_ux_logic.cjs")
+    if os.path.exists(uxlogic_script):
+        try:
+            r = subprocess.run(["node", uxlogic_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"Sprint 7-1 UX logic suite ({count} cases)")
+            else:
+                fail("Sprint 7-1 UX logic suite",
+                     f"node tests/test_ux_logic.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("Sprint 7-1 UX logic suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("Sprint 7-1 UX logic suite", "timeout after 60s")
+    else:
+        fail("Sprint 7-1 UX logic suite", f"missing: {uxlogic_script}")
 
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the

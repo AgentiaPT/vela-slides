@@ -1,14 +1,21 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModalBackdrop({ onClose, extraKeys, children }) {
+function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   useEffect(() => {
     const h = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      // Enter activates the dialog's default action (CR: every confirm dialog
+      // should be confirmable with Enter). Don't hijack Enter inside multi-line
+      // text entry (textarea / contentEditable) where it means "newline".
+      if (e.key === "Enter" && onEnter && !e.shiftKey) {
+        const tag = (e.target && e.target.tagName) || "";
+        if (tag !== "TEXTAREA" && !(e.target && e.target.isContentEditable)) { e.preventDefault(); onEnter(); return; }
+      }
       if (extraKeys?.(e)) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, extraKeys]);
+  }, [onClose, onEnter, extraKeys]);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
@@ -18,9 +25,60 @@ function ModalBackdrop({ onClose, extraKeys, children }) {
   );
 }
 
+// ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Opened from the header stat pill. The header shows presentation totals (hidden
+// slides excluded); this dialog breaks down visible vs hidden (CR: hide/unhide).
+function StatsDialog({ state, onClose }) {
+  const items = state.lanes.flatMap((l) => l.items);
+  const allSlides = items.flatMap((i) => i.slides || []);
+  const visible = allSlides.filter((s) => !s.hidden);
+  const hidden = allSlides.filter((s) => s.hidden);
+  const dur = (arr) => arr.reduce((a, s) => a + (s.duration || 0), 0);
+  const Row = ({ label, a, b, accent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
+      <span style={{ fontFamily: FONT.body, fontSize: 13, color: accent ? T.accent : T.text, fontWeight: accent ? 700 : 400 }}>{label}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: 12, color: accent ? T.accent : T.textDim }}>{a}{b != null ? <span style={{ color: T.textDim }}> · {b}</span> : null}</span>
+    </div>
+  );
+  return (
+    <ModalBackdrop onClose={onClose} onEnter={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>📊 Deck stats</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <Row label="Presenting" a={`${visible.length} slides`} b={fmtTime(dur(visible)) || "0s"} accent />
+      {hidden.length > 0 && <Row label="Hidden" a={`${hidden.length} slides`} b={fmtTime(dur(hidden)) || "0s"} />}
+      <Row label="Total (incl. hidden)" a={`${allSlides.length} slides`} b={fmtTime(dur(allSlides)) || "0s"} />
+      <Row label="Sections" a={`${items.length}`} b={`${state.lanes.length} lane${state.lanes.length === 1 ? "" : "s"}`} />
+      <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textDim, letterSpacing: "0.1em", textTransform: "uppercase" }}>Per section</div>
+      <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 4 }}>
+        {items.map((i, idx) => {
+          const vis = (i.slides || []).filter((s) => !s.hidden);
+          const hid = (i.slides || []).length - vis.length;
+          return (
+            <div key={i.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "4px 0", fontSize: 12 }}>
+              <span style={{ fontFamily: FONT.body, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{i.title}</span>
+              <span style={{ fontFamily: FONT.mono, color: T.textDim, flexShrink: 0 }}>{vis.length}sl{hid > 0 ? ` (+${hid}⊘)` : ""} · {fmtTime(sumVisibleDurations(i.slides)) || "0s"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Changelog Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChangelogDialog({ onClose }) {
   const [showDeps, setShowDeps] = React.useState(false);
+  const hasUpdater = typeof window !== "undefined" && typeof window.__velaCheckForUpdate === "function";
+  const [updateState, setUpdateState] = React.useState(null); // null | "checking" | "update" | "uptodate" | "error"
+  const checkUpdates = async () => {
+    if (updateState === "checking") return;
+    setUpdateState("checking");
+    try { setUpdateState(await window.__velaCheckForUpdate()); }
+    catch { setUpdateState("error"); }
+  };
+  const updateLabel = { checking: "Checking…", update: "Update available →", uptodate: "✓ Up to date", error: "Check failed — retry" };
   return (
     <ModalBackdrop onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -28,6 +86,7 @@ function ChangelogDialog({ onClose }) {
           <VelaIcon size={22} />
           <span style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: T.accent, letterSpacing: 2 }}>VELA</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>v{VELA_VERSION}</span>
+          {hasUpdater && <button onClick={checkUpdates} disabled={updateState === "checking"} style={S.btn({ fontSize: 9, padding: "2px 8px", color: updateState === "uptodate" ? T.green : updateState === "update" ? T.accent : T.textMuted, borderColor: (updateState === "update" ? T.accent : T.border) + "80", cursor: updateState === "checking" ? "wait" : "pointer" })}>{updateLabel[updateState] || "Check for updates"}</button>}
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -277,7 +336,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
-      ["T", "Toggle TOC panel (fullscreen)"],
+      ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
@@ -506,6 +565,21 @@ function AgentSettingsDialog({ onClose }) {
   const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
   const [trusted, setTrusted] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Re-scan for an installed AI agent. The old handler fired a fire-and-forget
+  // refresh with no feedback and a muted style, so it read as un-clickable /
+  // doing nothing (CR). Now it awaits detection, shows progress, and refreshes.
+  async function rescanAgents() {
+    if (scanning) return;
+    setScanning(true);
+    try { await window.__velaAgents?.refresh?.(); }
+    catch {}
+    finally {
+      setScanning(false);
+      if (typeof window !== "undefined") setInfo(window.__velaAgentInfo || null);
+    }
+  }
 
   async function loadTrusted() {
     if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
@@ -541,7 +615,7 @@ function AgentSettingsDialog({ onClose }) {
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Active agent</span>
-          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+          <button onClick={rescanAgents} disabled={scanning} style={S.btn({ fontSize: 10, padding: "3px 10px", color: scanning ? T.textDim : T.accent, borderColor: T.accent + "80", cursor: scanning ? "wait" : "pointer", opacity: scanning ? 0.7 : 1 })}>{scanning ? "Scanning…" : "↻ Re-scan"}</button>
         </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
@@ -795,6 +869,7 @@ export default function App() {
   const [jsonModal, setJsonModal] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -1195,14 +1270,18 @@ export default function App() {
 
   // Export
   const exportDeck = () => {
+    // Export the canonical Vela deck format (.vela) \u2014 the same shape as
+    // examples/*.vela and what the `vela` CLI reads: deckTitle + lanes (+ branding
+    // + guidelines). No app-state wrapper (chat/selection are not part of a deck).
     const save = extractSave(state);
-    const cleaned = { ...save, chatMessages: save.chatMessages.map((m) => m.images ? { ...m, images: [] } : m) };
     const title = state.deckTitle || "Untitled";
-    const payload = { _vela: 1, name: title, exportedAt: now(), data: cleaned };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const deck = { deckTitle: title, lanes: save.lanes || [] };
+    if (save.branding) deck.branding = save.branding;
+    if (save.guidelines) deck.guidelines = save.guidelines;
+    const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.vela`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     takeSnapshot(state);
@@ -1272,7 +1351,12 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
-  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
+  // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
+  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
+  const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
+  const slideCountAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0);
+  const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + visibleSlides(i.slides).length, 0), 0);
+  const hiddenSlideCount = slideCountAll - slideCountVisible;
   const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (s.duration || 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
 
   // ━━━ Mobile helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1314,7 +1398,7 @@ export default function App() {
         ) : (
           <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
-        {!isMobile && (deckTime > 0 || total > 0) && <span title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)} slides · ${total} sections`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4 }}>{deckTime > 0 ? `⏱${fmtTime(deckTime)} · ` : ""}{state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)}sl · {total}§</span>}
+        {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
@@ -1356,7 +1440,7 @@ export default function App() {
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
-                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export JSON {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
+                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
@@ -1365,8 +1449,8 @@ export default function App() {
               </div>
             </>}
           </div>
-          <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <CostBadge />
+          {velaIsArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
+          <CostBadge /></>}
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
@@ -1405,7 +1489,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
-            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
+            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
@@ -1510,7 +1594,20 @@ export default function App() {
       {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
-      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
+      {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
+      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
+        // Desktop: allocate a NEW file in the same folder first, so creating a
+        // deck never overwrites the one currently open (CR). If allocation FAILS
+        // (returns null), abort — proceeding would let the blank deck autosave
+        // over the open file. No-op / always-proceed elsewhere (artifact, serve).
+        if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
+          let path = null;
+          try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          if (!path) { alert("Couldn't create a new deck file in this folder — your current deck was left untouched."); return; }
+        }
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);

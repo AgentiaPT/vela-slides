@@ -393,23 +393,46 @@ func TestExecAgentBinaryNotFound(t *testing.T) {
 	}
 }
 
-func TestExecAgentRealSubprocess(t *testing.T) {
-	// "go" is guaranteed on PATH wherever `go test` runs — exercises the real
-	// spawn path, not just the LookPath check.
-	out, err := execAgent(context.Background(), "go", []string{"version"}, "")
-	if err != nil {
-		t.Fatalf("execAgent(go version) failed: %v", err)
+// trustedExecutable writes a tiny, dependency-free executable into a fresh
+// t.TempDir() (created 0700 under sticky /tmp → passes checkBinaryTrusted) and
+// returns its path. It exercises the real spawn path against a binary the guard
+// accepts, without depending on where a system tool is installed. We can't just
+// copy the toolchain `go`: CI builds it with -trimpath, so a `go` moved out of
+// its GOROOT layout dies with "cannot find GOROOT". A shell script is a genuine
+// exec target (the kernel honours the shebang) with no such dependency.
+// checkBinaryTrusted and the process-tree teardown are POSIX-only (see
+// procwatch_unix.go); on Windows the guard is a no-op and there is no shebang,
+// so the real-spawn coverage is skipped there — Linux CI is the gate.
+func trustedExecutable(t *testing.T, marker string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("real-subprocess exec test is POSIX-only (guard + shebang)")
 	}
-	if !strings.Contains(out, "go version") {
+	p := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\necho "+marker+"\n"), 0o755); err != nil {
+		t.Fatalf("write %s: %v", p, err)
+	}
+	return p
+}
+
+func TestExecAgentRealSubprocess(t *testing.T) {
+	// A trusted script exercises the real spawn path, not just the LookPath check.
+	bin := trustedExecutable(t, "vela-agent-exec-ok")
+	out, err := execAgent(context.Background(), bin, nil, "")
+	if err != nil {
+		t.Fatalf("execAgent failed: %v", err)
+	}
+	if !strings.Contains(out, "vela-agent-exec-ok") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
 
 func TestExecAgentTimeout(t *testing.T) {
+	bin := trustedExecutable(t, "vela-agent-exec-ok")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	time.Sleep(2 * time.Millisecond) // guarantee the deadline has passed
-	_, err := execAgent(ctx, "go", []string{"version"}, "")
+	_, err := execAgent(ctx, bin, nil, "")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("expected timeout error, got %v", err)
 	}

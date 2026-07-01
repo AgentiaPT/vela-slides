@@ -1670,14 +1670,18 @@ function extractTextRuns(container, containerRect) {
 function extractLinks(container, containerRect) {
   const links = [];
   container.querySelectorAll("a[href]").forEach(a => {
-    const href = a.getAttribute("href");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+    const raw = a.getAttribute("href");
+    if (!raw || raw.startsWith("#")) return;
+    // Allowlist scheme (http/https/mailto) so a javascript:/data:/vbscript: href
+    // can never become a live annotation in the exported PDF.
+    const href = sanitizeUrl(raw);
+    if (!href) return;
     const r = a.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
     links.push({ href, x: r.left - containerRect.left, y: r.top - containerRect.top, w: r.width, h: r.height });
   });
   container.querySelectorAll("[data-href]").forEach(el => {
-    const href = el.getAttribute("data-href");
+    const href = sanitizeUrl(el.getAttribute("data-href"));
     if (!href) return;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
@@ -1685,7 +1689,7 @@ function extractLinks(container, containerRect) {
   });
   // Block-level links (heading, text, metric etc. with link property)
   container.querySelectorAll("[data-pdf-link]").forEach(el => {
-    const href = el.getAttribute("data-pdf-link");
+    const href = sanitizeUrl(el.getAttribute("data-pdf-link"));
     if (!href) return;
     // Skip if already captured via a[href] or data-href
     if (el.tagName === "A" || el.hasAttribute("data-href")) return;
@@ -3439,6 +3443,16 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
 
 
 // Helper to collect all slides flat from editor lanes
+// Strip hidden blocks from a slide so exports match the presented output.
+function stripHiddenBlocks(slide) {
+  if (!slide || typeof slide !== "object") return slide;
+  const hasHidden = ["blocks", "L", "R"].some((k) => Array.isArray(slide[k]) && slide[k].some((b) => b && b.hidden));
+  if (!hasHidden) return slide;
+  const out = { ...slide };
+  for (const k of ["blocks", "L", "R"]) if (Array.isArray(out[k])) out[k] = out[k].filter((b) => !(b && b.hidden));
+  return out;
+}
+
 function collectAllSlides(lanes, branding) {
   const all = [];
   for (const lane of (lanes || [])) {
@@ -3447,7 +3461,10 @@ function collectAllSlides(lanes, branding) {
       // auto-generated title slide before its content slides.
       if (item.presentCard) all.push(buildTitleCardSlide(item, lane, branding));
       for (const slide of (item.slides || [])) {
-        all.push(slide);
+        // Hidden slides/elements are not part of the presentation, so keep them
+        // out of exports too (CR: hide/unhide).
+        if (slide && slide.hidden) continue;
+        all.push(stripHiddenBlocks(slide));
       }
     }
   }
@@ -3612,11 +3629,12 @@ function deckToMarkdown(state, opts = {}) {
       ln(`## ${item.title || "Untitled Module"}`);
 
       for (const slide of (item.slides || [])) {
+        if (slide && slide.hidden) continue; // hidden slides are not exported
         slideNum++;
         blank();
 
         // Speaker notes as metadata
-        const blocks = slide.blocks || [];
+        const blocks = (slide.blocks || []).filter((b) => !(b && b.hidden));
         if (!blocks.length) continue;
 
         for (const b of blocks) blockToMd(b);

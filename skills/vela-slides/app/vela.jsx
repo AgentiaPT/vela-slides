@@ -34,6 +34,16 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// True only when running as a Claude.ai artifact (the Anthropic proxy that meters
+// tokens). Desktop (Neutralino agent) and local serve.py bill nothing through the
+// artifact proxy, so token/cost stats are meaningless there and are hidden. (CR)
+const velaIsArtifactMode = () => {
+  if (typeof window === "undefined") return false;
+  if (window.__velaAgentReady != null || window.__velaAgentInfo != null) return false; // Neutralino desktop
+  if (VELA_LOCAL_MODE) return false; // serve.py local preview
+  return window.self !== window.top; // Claude.ai renders artifacts inside an iframe
+};
+
 // React hook: re-renders the caller when AI availability changes. velaAIAvailable()
 // is a plain read of window.__velaAgentReady, which the Neutralino shell flips
 // asynchronously once agent detection finishes and announces via a
@@ -88,94 +98,99 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.75";
+const VELA_VERSION = "12.79";
 const VELA_CHANGELOG = [
-  { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
-  { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
-  { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
-  { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a selectable local-AI provider alongside Claude Code, and re-enable the desktop AI path through a hardened, Node-free gatekeeper. The webview still has no process-spawn capability (os.spawnProcess stays off the Neutralino allowlist); a separate compiled gatekeeper extension is the only process that can launch a child, and only the two whitelisted agent binaries, each run with all filesystem/shell/edit/web tools disabled. AI usage is confirmed once per session, and when more than one agent is installed the user picks one and can switch between Claude and Copilot. Artifact and local-server (serve.py) flows are unchanged." },
-  { v: "12.71", d: "Security (defense-in-depth, audit follow-up to v12.61/v12.66): extend the inline-style value filter to the non-color layout/sizing scalars that a few block renderers spread raw into inline CSS, so they are scrubbed at import on the same rule as the color scalars; no deck value placed into one of these positions can carry a CSS auto-load or context-break primitive. No known-exploitable issue (these positions reach CSS properties that don't fetch); this closes the gap before a future renderer change could promote one. The local dev server (serve.py) also now rejects a missing/empty Host header (closing a falsy-host edge in the DNS-rebind guard) and parses bracketed IPv6 Host literals correctly so loopback [::1] is matched rather than wrongly rejected. No behavior change for legitimate decks or clients. Added regression coverage through the real sanitizers and a real-browser render check." },
-  { v: "12.70", d: "Quality: remove three fail-soft/no-op patterns surfaced by a code audit. (1) Timing estimation now propagates an error and the UI reports it, instead of silently overwriting every slide with a fabricated uniform duration when the request or parse fails. (2) The Navigation/Presenter in-browser UI tests now assert the slide position actually changes on arrow-key nav (via the local test hook or the on-slide counter) instead of only checking that no exception was thrown. (3) validate.py warns when a compact/turbo deck can't be expanded instead of silently validating the un-expanded form." },
-  { v: "12.69", d: "Local/desktop mode: fix deck-switch data loss. The browser→file sync-out now cancels any pending stale-deck timer before a switch and refuses to write an empty deck; the file→browser path resets selection when the deck actually changes so the newly-opened deck displays instead of the previous one. LOCAL_MODE skips localStorage load/save entirely (the file on disk is authoritative). Presentation mode starts fullscreen and suppresses the in-app test runners. Pairs with the Neutralino shell's deck-io switching guard and the desktop binary's Windows metadata (\"Vela Slides\")." },
-  { v: "12.68", d: "Security (defense-in-depth, audit follow-up to v12.66/v12.67): close two residual CSS auto-load paths the value-filter hardening did not cover — the slide background image (inline data:image validation now anchors on the full encoded payload, so no trailing content can ride along on an otherwise-valid value) and a block-level color field rendered from a secondary array the import scrub did not visit. Deck values placed into an inline CSS url()/color position are now also output-encoded so they cannot break out of that position. Exposure was limited to non-sandboxed runtimes; the hosted-artifact / local-server CSP already blocked it. Decks still load nothing external. Added regression coverage." },
-  { v: "12.67", d: "Security (audit 2026-06, follow-up to v12.61/v12.66): extend the canonical slide/branding sanitization to the in-app paths that mutate content after load, so the CSS auto-load class stays closed regardless of how content reaches the render layer (deck import was already covered). Exposure was limited to the non-sandboxed runtimes; the hosted artifact CSP already blocked it. No behavior change for legitimate decks; decks still load nothing external. Added regression guards." },
-  { v: "12.66", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual CSS auto-load exfil channel. Under a specific value construction, a deck-supplied value could slip past the inline-style/color-scalar and SVG style value filters and fire a zero-click outbound request on render. Exposure was limited to the non-sandboxed runtimes (local dev server / desktop shell); the hosted artifact's CSP already blocked it. Both value filters were hardened and now share one rule so the two surfaces can't drift. Decks still load nothing external. Added regression coverage through the real sanitizers plus a real-browser render check." },
-  { v: "12.65", d: "Security (defense-in-depth, audit follow-up): the local dev server (serve.py) live-reload watcher now re-validates folder containment every time it re-reads a deck, using the same realpath guard as the HTTP read/write paths instead of a bare open(). This makes every server-side file read consistent and keeps reloads scoped to the served folder. Local-server hardening only; no deck or engine behavior change. Added a regression test." },
-  { v: "12.64", d: "Security (defense-in-depth, audit follow-up): inline data: images (image-block src, slide background image, branding logo) are now sanitized consistently — raster types pass through, SVG data: images are routed through the same SVG sanitizer the svg block uses, and non-image data: types are dropped (the logo no longer accepts arbitrary data: MIME types). Deck-supplied prompt-guidelines text is stripped of control/bidi/format characters before it reaches the engine. Local server (serve.py) deck-name validation normalizes Unicode and rejects bidi/format controls and separator/dot lookalikes (anti-spoofing; the path containment check was already in place). Added regression coverage." },
-  { v: "12.63", d: "Security (defense-in-depth): the local dev server (serve.py) now sends a Content-Security-Policy header. The hosted artifact runs sandboxed with its own CSP; the local server had none, leaving the client sanitizer as the only egress control. The policy constrains image and connection egress to same-origin and inline data (no external network requests on render) while still permitting the in-browser build toolchain. No deck or engine behavior change." },
-  { v: "12.62", d: "Security (audit 2026-06, follow-up to v12.59/12.61): close a residual zero-click outbound-fetch channel in the SVG sanitizer. Deck-supplied SVG markup is sanitized as SVG but later rendered into an HTML context, where a sanitized fragment could be re-parsed under HTML rules and an image element treated as an HTML image with a fetching attribute — a different surface from the href/CSS holes already closed. The sanitizer now strips the relevant image-source attributes and guarantees the output stays in SVG scope, so the same content can never be reinterpreted as a network-loading HTML element. Decks still load nothing external. Added a jsdom round-trip regression battery and a CI source guard." },
-  { v: "12.61", d: "Security (audit 2026-06, follow-up to v12.59): close a CSS auto-load exfil channel on the slide/block color surface. Slide and block background/color scalars (e.g. bg, bgGradient, color, accent, border, the per-block color fields, and grid cell backgrounds) were written straight into inline CSS at render without the value filter that already covered the block style object, so a deck-supplied value could fire a zero-click outbound request on render — same class as the SVG/img holes, different surface. These fields are now scrubbed at import with a function-name-agnostic reject (no url()/quoted-source function/bare scheme), preserving legitimate colors and gradients; the undocumented slide background-image field is clamped to inline data:image/* like the image block. Decks still load nothing external. Added jsdom round-trip + CI source guards and in-browser regression cases." },
-  { v: "12.60", d: "Security (defense-in-depth, follow-up to v12.53): harden the SVG/CSS sanitizer so deck-supplied content cannot trigger any external network request on render. URL references are constrained to same-document fragments, links to standard click navigation, and inline images to embedded data; legitimate same-document refs and links are preserved. Added CI regression coverage asserting no external reference survives sanitization." },
-  { v: "12.59", d: "serve.py: tighten request validation on the local live-edit save endpoint — match the full request origin (scheme/host/port) and require a JSON content type. Local-server hardening only; no deck or engine behavior change." },
-  { v: "12.58", d: "PDF export: (1) Fix dark boxes behind module title-card badge/icon in the vector exporter — the title card's `bg` is a gradient string, so the composite-bg detector (which only matched rgba()/^#hex$) fell back to dark #0a0f1c and translucent badge/icon fills (#RRGGBBAA) alpha-blended to navy. Now derives the alpha-blend base from the gradient's first hex stop. (2) New 'Module title cards' toggle in the export dialog with a live count of enabled 🎬 present-cards; off filters the _virtual cards out of the exported PDF (raster + vector). Default on." },
-  { v: "12.57", d: "PDF export now includes auto-generated module title cards (the 🎬 \"present card\") so exports match presentation mode exactly. Extracted buildTitleCardSlide() as the single source of truth shared by SlidePanel (presentation) and collectAllSlides (PDF/markdown). Title cards are inserted before each enabled module's slides and rendered without branding overlays; slide numbering excludes the cards (displayIndex/displayTotal) so real slides keep continuous 1-based numbers, matching the on-screen presentation." },
-  { v: "12.56", d: "Release: version bump to publish desktop binaries with the merged security hardening (assemble.py script-context escape, SVG mutation-XSS fixes, deck-JSON sanitizer + fail-closed loads, and the Neutralino desktop blast-radius containment — strict CSP, minimal nativeAllowList with no os.spawnProcess, filesystem path guard, externally-authored-deck warning, and update notifier). No engine behavior change in this bump itself." },
-  { v: "12.55", d: "Security (Critical, audit 2026-06): fix an output-encoding gap in assemble.py where deck content embedded into the assembled app at the STARTUP_PATCH marker was not fully escaped for its surrounding context, letting crafted deck text break out of that context on render. Centralized the encoding in a single shared escape_for_script_context() helper (also imported by serve.py) covering the full required character set, replacing a narrower prior filter in both call sites. CI regression test asserts the assembled output is correctly encoded." },
-  { v: "12.54", d: "Security (audit 2026-06, High + structural): close a mutation-XSS hole in sanitizeSvgMarkup() involving certain child node types inside <style>, and switch SVG element filtering from a blocklist to an allowlist (mirroring DOMPurify's svg + svgFilters profile) so anything not explicitly known-safe is removed. Added a CI-gated jsdom round-trip test that runs the real sanitizer against a payload battery, replacing source-string-only checks." },
-  { v: "12.53", d: "Security (audit 2026-06, Low/defense-in-depth): close a CSS-text exfil channel inside SVG, where <style> CSS could reference an external resource and fire an outbound request on render. <link> is now removed outright and <style> text is filtered to allow only same-document references, preserving legitimate class-based diagram styling while removing the exfil." },
-  { v: "12.52", d: "Security (audit 2025-06 follow-up): pin every GitHub Actions reference to a commit SHA across all workflows (mutable tag pins are a supply-chain risk in the privileged release pipeline), guarded by a CI regression test. Bump the channel @modelcontextprotocol/sdk dependency to clear known transitive advisories." },
-  { v: "12.51", d: "Security (defense-in-depth, follow-up to v12.44/12.45): tighten SVG href validation from a blocklist to a scheme allowlist after DOMParser normalization, so only standard link schemes (plus same-document fragments and relative refs) survive; xlink:href stays fragment-only. Mixed-case and entity-encoded schemes have explicit regression tests, with a guard so legitimate links aren't stripped." },
-  { v: "12.50", d: "Security (audit 2025-05 — Critical/High hardening): (H1) the LOAD_LANES reducer now re-sanitizes every slide, closing the one ingest path (Vera's tool writes) that previously skipped sanitization. (H2) new sanitizeStyle() + SAFE_STYLE_KEYS allowlist for block/item style objects, which were previously typecheck-only — excludes resource-loading CSS keys and rejects external/url-bearing values. (H5) the ReAct loop caps per-turn and session tool counts and payload size to prevent prompt-injection cost-amplification." },
-  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage — added CI-gating source assertions and new in-browser uitest cases across the SVG sanitizer and deck-sanitization paths." },
-  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in the SVG sanitizer. Their event handlers were already stripped (inert), but removing the elements outright eliminates any residual animation surface. Static presentation diagrams don't use SMIL." },
-  { v: "12.47", d: "Security (High): fix a fail-open path in deck sanitization where an oversized-deck error was caught by callers that then loaded the unsanitized deck. The size limit is now clamped instead of thrown, and all fallbacks fail closed (log and skip). Also routes an additional chat-paste import path through full sanitization." },
-  { v: "12.46", d: "Security (Medium/defense-in-depth): close link-sanitization gaps so all deck-supplied link fields are URL-sanitized at import and again at the click sink via a shared helper, including the study-notes glossary link. Brings item-level links in line with block-level and bullet links." },
-  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() now drops comment/CDATA/processing-instruction nodes during the DOM walk, keeping only element and text nodes. These node types could otherwise survive a sanitize/re-parse round-trip and yield mutation XSS across all three SVG sinks (svg block, study-notes diagram, chat diagram). Confirmed via jsdom round-trip." },
-  { v: "12.44", d: "Security (High): svg block markup now goes through the DOM-based sanitizeSvgMarkup() at both import and render, replacing a bypassable regex chain that let obfuscated URIs survive. DOMParser parsing plus scheme normalization brings the svg block in line with the study-notes/chat diagram paths." },
-  { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default. neutralino.config.json sets enableInspector:false (release-safe); dev sessions re-enable DevTools via the runtime override `--window-enable-inspector=true` passed by scripts/run.sh, so no config mutation or git churn during development." },
-  { v: "12.42", d: "Single-file desktop binaries: build now uses `neu build --release --embed-resources`, so resources.neu is injected into each per-OS executable via postject. ZIPs contain just the binary — no companion file required, no \"keep next to each other\" caveat. Requires neu CLI ≥ 11.6 and Neutralino framework ≥ 6.3 (both already pinned)." },
-  { v: "12.41", d: "Release pipeline: desktop binaries now ship on every push to main alongside the skill ZIP (previously preview-only). Neutralino runtime + client lib are pinned by SHA256 (verified after `neu update` so an upstream re-roll fails the build). Stable and PR-preview releases share a reusable workflow, and every release ZIP gets a SHA256SUMS manifest plus a SLSA build-provenance attestation." },
-  { v: "12.40", d: "Agent visibility + trust UX: footer now renders an agent chip (Vera · Claude Code · version · model · trust-state) that opens a settings dialog listing trusted decks in the current folder with per-deck revoke and revoke-all. AgentStatusChip subscribes to window.__velaAgentInfo + vela-agent-update events — it is feature-gated, so artifact and serve.py runtimes render nothing." },
-  { v: "12.39", d: "Per-deck trust gate for AI (Neutralino desktop): callClaudeAPI awaits window.__velaTrustGate before dispatching, so the host shell can prompt for consent on the first AI action per deck. The shell stores trust in <folder>/.vela/trust.json by relative path, denies are session-only (re-ask on next launch), and the first-ever AI use shows a one-time intro explaining the data path. Missing gate (artifact / serve.py) falls through as 'allow' — those runtimes keep their existing trust models." },
-  { v: "12.38", d: "Agent-bridge runtime hook: callClaudeAPI now routes to window.__velaAgentSend when defined, so host shells can plug in a local CLI coding agent (the Neutralino desktop build ships a Claude Code adapter that spawns `claude -p` via the Neutralino subprocess API). velaAIAvailable consults window.__velaAgentReady for Neutralino runtimes; artifact and serve.py flows are unchanged." },
-  { v: "12.37", d: "Header sail icon runtime hook: top-bar VelaIcon now calls window.__velaOpenDeckPicker when defined (Neutralino desktop shell registers it to open the deck folder picker), falling back to the About/Changelog dialog in artifact and serve.py runtimes so those flows are unchanged. Footer version badge remains the canonical entry point for release notes." },
-  { v: "12.36", d: "AI capability detection: centralized velaAIAvailable() checks artifact proxy or channel availability. All AI buttons (Edit, Improve, Batch, Variants, Generate, Estimate, Vera chat send) are visible but disabled with tooltip when AI is unavailable. callClaudeAPI guards against missing backend. Fix vertical flow arrows: connector alignSelf uses 'center' in vertical mode so arrows align below nodes. Remove slide 16 from demo deck." },
-  { v: "12.35", d: "Cols layout: new layout:'cols' for two-column slides using L (left) and R (right) block arrays. B/blocks renders full-width above columns. contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32). Works with all 21 block types. Pipeline: expand/compact/validate/stats/extract-text/patch-text all handle L/R." },
-  { v: "12.34", d: "Callout reveal: new 'reveal' property (compact: 'rv') makes callouts collapsible — starts closed, click title/icon to expand. Chevron indicator (▸/▾) and fallback 'Revelar/Ocultar' label when no title. Extracted CalloutBlock sub-component for useState hook." },
-  { v: "12.33", d: "Code block copy button: new 'copy' property (compact: 'cp') adds a 'Copiar' button in the top-right corner that copies block.text to clipboard with 'Copiado ✓' feedback for 2s. Extracted CodeBlock sub-component for useState hook. paddingRight: 80 prevents text overlap when copy is active." },
-  { v: "12.32", d: "Offline studyNotes: slides can embed pre-authored markdown, an inline SVG diagram, follow-up questions, and a glossary for Kindle-style X-Ray link popups — renders with zero API calls. Extended parseInline for [label](url) external links and [term](#key) glossary popups via sanitizeUrl. When a live channel is reachable, authored questions become clickable Vera prompts and an Ask input appears; otherwise the panel is pure static content. New 🎓 marker in TOC, gallery thumbnails, and slide viewer. Compact key 'sN', turbo position 10. validate.py + sanitizeStudyNotes enforce size limits and SVG/URL sanitization. JSON-only authoring for v1 (Vera set_study_notes tool deferred)." },
-  { v: "12.31", d: "Fix fullscreen button collision: cinema tip (VelaIcon) was stacked on top of student toggle at same position (right:52) — shifted cinema to right:124 so all top-right buttons are visible." },
-  { v: "12.30", d: "Comparison block: center content group within each pane using flex centering + fit-content wrapper, so bullet zones have equal spacing to VS divider regardless of text length." },
-  { v: "12.29", d: "Fix matrix block vertical axis labels: replace absolute positioning with flex-based centering so labels align with their respective quadrant rows regardless of content height." },
-  { v: "12.28", d: "Fix cycle block arrows: proper geometry using direct node-to-node vectors for start/end points and outward control points, replacing broken midAngle offsets that caused arrows to overshoot and cross." },
-  { v: "12.27", d: "SKILL.md: additive-only update — live v12.2 verbatim + 6 new block examples (comparison, funnel, cycle, number-row, matrix, checklist), new compact keys, vela server start in fast paths/workflow/CLI. Eval-validated: 98% assertion rate, 18% cheaper than live, block variety +27%." },
-  { v: "12.25", d: "6 new block primitives: comparison (A vs B with semantic coloring), funnel (tapered SVG stages), cycle (circular process diagram), number-row (inline big metrics), matrix (2×2 quadrant grid with axis labels), checklist (status-aware items: done/partial/pending/blocked). Compact and turbo format support for all new blocks. Block count: 21 → 27." },
-  { v: "12.24", d: "Arrow Up/Down unified with Left/Right for PowerPoint-style slide navigation; server hardening with graceful lifecycle management; .vela extension support and deck rename command; supply chain security improvements." },
-  { v: "12.23", d: "Fix PDF export: branding logo now renders in both canvas and vector PDF exports; agentIA watermark respects showBranding toggle instead of being hardcoded; vector PDF modal gets branding toggle UI." },
-  { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize — no longer hardcoded." },
-  { v: "12.21", d: "Add explicit UTF-8 encoding to all file open() calls for Windows compatibility." },
-  { v: "12.20", d: "Browser tab title syncs with deck title — shows 'DeckName — Vela Slides' instead of generic page title." },
-  { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url() — CodeQL incomplete URL scheme check." },
-  { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser — proper DOM-based tag/attribute removal instead of regex, fixes CodeQL incomplete multi-char sanitization." },
-  { v: "12.16", d: "Fix: student mode routes through channel in local mode — was always hitting direct API (no key in browser), causing silent failures." },
-  { v: "12.15", d: "Security: sanitize SVG in chat panel (dangerouslySetInnerHTML), block javascript: URIs in links and image src." },
-  { v: "12.14", d: "Fix: footer/counter contrast on light slides — auto-detect slide brightness for footer bg/color defaults. Non-branding counter uses slide muted color instead of app theme." },
-  { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set. Global slide counter uses displayIndex/displayTotal to avoid breaking comments." },
-  { v: "12.12", d: "Fix: section drag-and-drop broken by slide handlers swallowing events. Slide counter now shows global slide/total across all sections. Auto-focus Vera chat input." },
-  { v: "12.10", d: "Fix: folder/local mode deck loading — STARTUP_PATCH (file on disk) is now authoritative over localStorage, preventing wrong deck from loading when multiple decks share the same origin." },
-  { v: "12.9", d: "Comments UX: slide count badge always visible (hidden when panel/popover open). Module list comment count + 💬 toggle only in review mode." },
-  { v: "12.8", d: "Review Mode: inline comment cards rendered next to referenced blocks (blockIndex). Resolve/delete buttons directly on each comment row in both inline cards and sidebar panel. Better UX — no need to scroll to batch actions." },
-  { v: "12.7", d: "Review Mode: inline comments system — annotate slides and modules with review comments. Comments panel, visual badges, anchor quoting, batch resolve/clear. Vera list_comments/resolve_comment tools. Notes migrated to structured comments." },
-  { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails — replaces raw title flash before slide renders." },
-  { v: "12.5", d: "Security: add symlink escape checks to save/upload endpoints for consistency with GET handler. Replace cmd.exe browser launch with webbrowser.open()." },
-  { v: "12.4", d: "Rename vela-template.jsx → vela.jsx. Consolidate demo deck under skills/. Add themed example decks (startup-pitch, tech-talk, course-training, business-report)." },
-  { v: "12.3", d: "Security hardening: DNS rebinding protection, path traversal on /poll/, symlink escape checks, safe Content-Length parsing, security headers, bounded thread pool, XSS-safe deck name injection, no info leakage." },
-  { v: "12.1", d: "Channel mode: 120s timeout (was 30s) to match server, SSE late-reply recovery for chat tool_calls that arrive after timeout." },
-  { v: "12.0", d: "UI polish: larger fonts across chrome (+2-4px), resizable TOC with persisted width, gallery delete & zoom persistence, cumulative time in TOC, strikethrough ~~text~~, clipboard skip on text selection, gallery/presenter +/- key isolation." },
-  { v: "11.9", d: "Channel server: kill stale port processes on startup and gracefully handle EADDRINUSE." },
-  { v: "11.7", d: "Channel complete action: route Vera AI completion calls through Claude Code via channel server (no API key needed)." },
-  { v: "10.6", d: "Editor TOC auto-scrolls to active slide when navigating with arrow keys." },
-  { v: "10.5", d: "Hot reload — browser auto-refreshes when template is rebuilt via concat.py." },
-  { v: "10.4", d: "Fix Ctrl+C copying wrong slide — use ref to avoid stale closure in keyboard handler." },
-  { v: "10.3", d: "Browser Fullscreen API in local mode (F/F5 triggers native fullscreen). Cross-tab slide clipboard (Ctrl+C/V via system clipboard with Vela envelope). TOC auto-scroll fix on slide navigation." },
-  { v: "10.2", d: "Gallery drag-and-drop slide reorder (mouse-based, bypasses iframe sandbox). Extra zoom levels (560/800px). ZoomWrap badge-icon fix. Undo/redo state clamping hardened. Demo end-card prompt cards auto-send to Vera. Save excludes teacher state from storage. Size 983→947KB via CDN fonts + minify." },
-  { v: "10.1", d: "Gallery View redesign — continuous-flow CSS grid with per-module color bars and labels, zero wasted rows. Theme-aware Gallery and Presenter TOC (D key). Student Mode close button (✕). Undo/Redo crash fix — selectedId/slideIndex clamped on restore. Demo end card prompt cards — 4 clickable prompts that auto-fill Vera chat, expand input, glow highlight, and auto-send. Artifact size 983→859KB: 2 rare fonts (DMSans-Italic, Sora-Regular) moved to CDN-only, indent collapse in safe_minify." },  { v: "10.0", d: "Student Mode (🎓) — Vera teaching assistant in presenter mode with streaming responses, SVG diagrams, per-slide Q&A history. Haiku 4.5 + prompt caching + N+1 prefetch for fast responses. Gallery View (🗂) — slide sorter overlay with real thumbnails. Press G in fullscreen." },
-  { v: "9.30", d: "Auto-select first slide on every deck load (import, drag & drop, merge). Progress block supports flat format (value/label/color) alongside items array. Babel JSX validation on minified output." },
-  { v: "9.29", d: "Smart deck merge — detects new embedded deck versions, per-item conflict resolution (Keep Mine / Use New / Keep Both). Babel JSX validation in assembly pipeline. Updated demo deck with 18 block types showcased." },
-  { v: "9.28", d: "Vector PDF export — crisp scalable text with embedded fonts (zlib-compressed). Proper text baseline positioning, icon-to-circle alignment, image slide capture. ~860KB published artifact." },
-  { v: "9.1", d: "Session cost tracker (💲). Cinematic 🎬 demo mode with 14-scene guided tour." },
-  { v: "9.0", d: "Agentic editing & mobile-first. edit_slide tool for surgical edits. ReAct loop with 12 iterations. DOM Layout Stats in all AI paths. Mobile: swipe, fill-mode fullscreen, responsive popups. Variants (🎲). Cinema bookmarklet. UI test suite (32 tests). ELv2 licensing." },
-  { v: "8.0", d: "First public release. 3-zone layout. Vera AI chat with 18 tools. Batch edit & auto-improve. Branding panel. PDF & Markdown export. Drag & drop. 280+ Lucide icons. WYSIWYG editing. Presenter mode. Keyboard shortcuts. Dark/light mode. Persistent storage." },
+  { v: "12.79", d: "Security (defense-in-depth): harden the plain-text field sanitizer against incomplete single-pass HTML-tag stripping, and route PDF-export link extraction through the URL-scheme allowlist so only http/https/mailto links are embedded. Static-analysis clean-up; regression coverage added." },
+  { v: "12.78", d: "List/presenter UX batch. The slide '+ add' affordance reveals its Blank / AI / Section options on hover and hides them on mouse-out (a click still pins it open); the same faint '+ add' now appears consistently in empty sections and between slides. An empty section now shows a tall dashed drop zone (with a 'Drop slide here' cue) so a slide can actually be dropped into it — the old target was a one-line strip too thin to hit. Adding a section inserts it at that exact add-point: choosing Section between two slides splits the tail slides off into the new section, while at the top/bottom it adds an adjacent empty one; the new section opens in a focused, empty title field so you can name it immediately. The top header's slide/section stats pill keeps full width so the slide count always shows, ceding space from the deck title. Presenter mode: closing the table-of-contents/search pane returns keyboard focus to the slide canvas, so arrow-key navigation and shortcuts work again instead of being swallowed by the hidden search box." },
+  { v: "12.77", d: "Changelog: condense historical release notes to concise one-line summaries." },
+  { v: "12.76", d: "Sprint 7-1 UX batch: section drag-reorder (drops into empty sections too); Blank/AI/Section add menu (blank inherits prior styling); hide slides/elements via eye toggle (excluded from totals, exports, presenter TOC) with a visible-vs-hidden stats dialog; header rounds duration to whole minutes; presenter TOC/search on Ctrl+E; AI edits preserve existing images; Export Vela deck file; desktop new-deck writes a fresh file, About 'Check for updates', responsive Re-scan." },
+  { v: "12.75", d: "Editing UX: searchable icon picker, per-item hover toolbar, inline '+ add', layout-aware image paste; side-by-side image layouts follow vertical align and size to the content column; link-over-zoom on zoomable blocks; live design-variant tiles with Original revert; Improve runs in background; serve.py script-tag boundary fix + test." },
+  { v: "12.74", d: "Desktop AI action buttons (Improve, Alternatives, Vera) enable as soon as agent detection finishes, via a detection-event hook. Artifact/server runtimes unaffected." },
+  { v: "12.73", d: "Desktop AI: Improve/Alternatives no longer hang when html2canvas can't load — loader fails safe to layout-stats-only. No change in artifact/server runtimes." },
+  { v: "12.72", d: "Desktop AI: add GitHub Copilot CLI as a local-AI provider alongside Claude Code, via a hardened Node-free gatekeeper (webview still can't spawn processes; agents run with all tools disabled). Per-session confirmation and agent switching. Artifact/serve.py unchanged." },
+  { v: "12.71", d: "Security (defense-in-depth): extend the inline-style value filter to non-color layout/sizing scalars; serve.py rejects empty Host and parses bracketed IPv6 Host literals. No behavior change; regression coverage added." },
+  { v: "12.70", d: "Quality: remove three fail-soft/no-op patterns — timing failures now surface an error instead of overwriting durations, presenter nav UI tests assert the position changes, validate.py warns on un-expandable compact/turbo decks." },
+  { v: "12.69", d: "Local/desktop: fix deck-switch data loss (cancel stale-deck timer, refuse empty writes, reset selection on change); LOCAL_MODE skips localStorage; presentation starts fullscreen." },
+  { v: "12.68", d: "Security (defense-in-depth): close two residual CSS auto-load paths (slide background image, a block-level color field) and output-encode inline CSS url()/color values. Regression coverage added." },
+  { v: "12.67", d: "Security: extend canonical slide/branding sanitization to in-app paths that mutate content after load. No behavior change; regression guards added." },
+  { v: "12.66", d: "Security: close a residual CSS auto-load exfil channel; both value filters hardened to share one rule. Regression coverage added." },
+  { v: "12.65", d: "Security (defense-in-depth): serve.py live-reload watcher re-validates folder containment on every re-read via the realpath guard. Regression test added." },
+  { v: "12.64", d: "Security (defense-in-depth): consistent inline data: image sanitization (SVG routed through the SVG sanitizer, non-image data: dropped); strip control/bidi from prompt-guidelines; serve.py deck-name anti-spoofing. Regression coverage added." },
+  { v: "12.63", d: "Security (defense-in-depth): serve.py now sends a Content-Security-Policy constraining image/connection egress to same-origin + inline data. No behavior change." },
+  { v: "12.62", d: "Security: close a residual zero-click outbound-fetch channel in the SVG sanitizer (sanitized SVG re-parsed under HTML rules); output kept in SVG scope. jsdom regression battery + CI guard added." },
+  { v: "12.61", d: "Security: close a CSS auto-load exfil channel on slide/block color scalars — now scrubbed at import; slide background-image clamped to inline data:image/*. jsdom + CI guards and in-browser cases added." },
+  { v: "12.60", d: "Security (defense-in-depth): harden the SVG/CSS sanitizer so no deck content triggers an external request (URL refs constrained to same-document, images to data:). CI regression coverage added." },
+  { v: "12.59", d: "serve.py: tighten the live-edit save endpoint — match the full request origin and require a JSON content type. Local-server hardening only." },
+  { v: "12.58", d: "PDF export: fix dark boxes behind title-card badge/icon (gradient bg detection in the vector exporter); new 'Module title cards' export toggle with a live count. Default on." },
+  { v: "12.57", d: "PDF export includes auto-generated module title cards to match presentation mode; buildTitleCardSlide() shared by presentation and PDF/markdown; card numbering excluded so real slides stay 1-based." },
+  { v: "12.56", d: "Release bump to publish desktop binaries with the merged security hardening (assemble.py escape, SVG mutation-XSS, fail-closed deck loads, Neutralino containment). No engine change." },
+  { v: "12.55", d: "Security (Critical): fix an output-encoding gap in assemble.py at the STARTUP_PATCH marker; centralized in a shared escape_for_script_context() helper. CI regression test added." },
+  { v: "12.54", d: "Security (High): close a mutation-XSS hole in sanitizeSvgMarkup() and switch SVG element filtering to an allowlist. jsdom round-trip test added." },
+  { v: "12.53", d: "Security (defense-in-depth): close a CSS-text exfil channel in SVG <style>; <link> removed and <style> limited to same-document references." },
+  { v: "12.52", d: "Security: pin every GitHub Actions reference to a commit SHA (CI-guarded); bump @modelcontextprotocol/sdk to clear transitive advisories." },
+  { v: "12.51", d: "Security (defense-in-depth): tighten SVG href validation to a scheme allowlist after DOMParser normalization; xlink:href stays fragment-only. Regression tests added." },
+  { v: "12.50", d: "Security (Critical/High): LOAD_LANES reducer re-sanitizes every slide; new sanitizeStyle() + SAFE_STYLE_KEYS allowlist for style objects; ReAct loop caps per-turn/session tool counts and payload size." },
+  { v: "12.49", d: "Tests: complete XSS/deck-load regression coverage — CI source assertions + new in-browser uitest cases across the SVG and deck-sanitization paths." },
+  { v: "12.48", d: "Security (defense-in-depth): block the full SMIL animation family in the SVG sanitizer (event handlers were already inert)." },
+  { v: "12.47", d: "Security (High): fix a fail-open path in deck sanitization (oversized deck now clamped, fallbacks fail closed); route an extra chat-paste import path through full sanitization." },
+  { v: "12.46", d: "Security (Medium): URL-sanitize all deck link fields at import and again at the click sink via a shared helper, including the study-notes glossary link." },
+  { v: "12.45", d: "Security (High): sanitizeSvgMarkup() drops comment/CDATA/PI nodes during the DOM walk to prevent round-trip mutation XSS across all SVG sinks." },
+  { v: "12.44", d: "Security (High): svg block markup now goes through DOM-based sanitizeSvgMarkup() at import and render, replacing a bypassable regex chain." },
+  { v: "12.43", d: "Desktop release builds ship with the web inspector disabled by default; dev sessions re-enable DevTools via a runtime override, so no config churn." },
+  { v: "12.42", d: "Single-file desktop binaries via `neu build --release --embed-resources` (resources.neu injected with postject); ZIPs contain just the binary. Requires neu ≥ 11.6 and Neutralino ≥ 6.3." },
+  { v: "12.41", d: "Release pipeline: desktop binaries ship on every push to main; Neutralino runtime pinned by SHA256; shared workflow for stable + preview; SHA256SUMS + SLSA attestation per ZIP." },
+  { v: "12.40", d: "Agent visibility + trust UX: footer agent chip (Vera · Claude Code · version · model · trust-state) opens a settings dialog with per-deck revoke and revoke-all. Feature-gated to desktop." },
+  { v: "12.39", d: "Per-deck AI trust gate (desktop): callClaudeAPI awaits window.__velaTrustGate; shell stores trust per deck, denies are session-only, first use shows an intro. Artifact/serve.py fall through as allow." },
+  { v: "12.38", d: "Agent-bridge hook: callClaudeAPI routes to window.__velaAgentSend when defined (desktop ships a Claude Code adapter spawning `claude -p`); velaAIAvailable consults window.__velaAgentReady. Artifact/serve.py unchanged." },
+  { v: "12.37", d: "Header sail icon hook: top-bar VelaIcon calls window.__velaOpenDeckPicker when defined (desktop deck-folder picker), falling back to About/Changelog elsewhere." },
+  { v: "12.36", d: "Centralized velaAIAvailable(); all AI buttons visible-but-disabled with a tooltip when AI is unavailable; fix vertical flow arrow alignment; remove demo slide 16." },
+  { v: "12.35", d: "New layout:'cols' for two-column slides (L/R block arrays; contentFlex/imageFlex/splitGap; blocks full-width above). Full pipeline support (expand/compact/validate/stats/extract-text/patch-text)." },
+  { v: "12.34", d: "Callout reveal: new 'reveal' (rv) makes callouts collapsible with a chevron indicator." },
+  { v: "12.33", d: "Code block copy button: new 'copy' (cp) adds a Copiar button with copied feedback." },
+  { v: "12.32", d: "Offline studyNotes: embedded markdown, inline SVG diagram, follow-up questions, and X-Ray glossary popups — renders with zero API calls; new 🎓 marker; size/SVG/URL limits enforced." },
+  { v: "12.31", d: "Fix fullscreen button collision — shift the cinema tip so all top-right buttons are visible." },
+  { v: "12.30", d: "Comparison block: center content within each pane for equal spacing to the VS divider." },
+  { v: "12.29", d: "Fix matrix block vertical axis labels via flex-based centering." },
+  { v: "12.28", d: "Fix cycle block arrow geometry using direct node-to-node vectors." },
+  { v: "12.27", d: "SKILL.md additive update: v12.2 verbatim + 6 new block examples and compact keys. Eval-validated." },
+  { v: "12.25", d: "6 new block primitives: comparison, funnel, cycle, number-row, matrix, checklist. Compact/turbo support. Block count 21 → 27." },
+  { v: "12.24", d: "Arrow Up/Down slide nav; server graceful lifecycle; .vela extension + deck rename; supply-chain security improvements." },
+  { v: "12.23", d: "Fix PDF export: branding logo renders in canvas + vector; watermark respects showBranding; vector modal branding toggle." },
+  { v: "12.22", d: "Flow and badge blocks: icons, arrows, padding now scale with size/labelSize." },
+  { v: "12.21", d: "Add explicit UTF-8 encoding to all file open() calls (Windows compatibility)." },
+  { v: "12.20", d: "Browser tab title syncs with the deck title." },
+  { v: "12.19", d: "Security: block data: and vbscript: URI schemes in SVG href/xlink:href and style url()." },
+  { v: "12.18", d: "Security: SVG sanitizer rewritten with DOMParser (DOM-based tag/attribute removal instead of regex)." },
+  { v: "12.16", d: "Fix: student mode routes through the channel in local mode (was hitting the keyless direct API)." },
+  { v: "12.15", d: "Security: sanitize SVG in the chat panel; block javascript: URIs in links and image src." },
+  { v: "12.14", d: "Fix footer/counter contrast on light slides via slide-brightness auto-detect." },
+  { v: "12.13", d: "Fix: table header text defaults to white when headerBg is set; global counter uses displayIndex/displayTotal." },
+  { v: "12.12", d: "Fix section drag-and-drop; global slide/total counter; auto-focus Vera chat input." },
+  { v: "12.10", d: "Fix folder/local deck loading — STARTUP_PATCH (file on disk) is authoritative over localStorage." },
+  { v: "12.9", d: "Comments UX: slide-count badge always visible; module comment count + 💬 toggle in review mode." },
+  { v: "12.8", d: "Review Mode: inline comment cards next to referenced blocks with resolve/delete per row." },
+  { v: "12.7", d: "Review Mode: inline comments system — panel, badges, anchor quoting, batch resolve; Vera comment tools." },
+  { v: "12.6", d: "Gallery: shimmer loading animation on thumbnails." },
+  { v: "12.5", d: "Security: symlink escape checks on save/upload endpoints; replace cmd.exe launch with webbrowser.open()." },
+  { v: "12.4", d: "Rename vela-template.jsx → vela.jsx; consolidate demo deck under skills/; add themed example decks." },
+  { v: "12.3", d: "Security hardening: DNS-rebind protection, path-traversal + symlink checks, safe Content-Length, security headers, XSS-safe deck name." },
+  { v: "12.1", d: "Channel mode: 120s timeout; SSE late-reply recovery for chat tool_calls." },
+  { v: "12.0", d: "UI polish: larger chrome fonts, resizable persisted TOC, gallery delete/zoom persistence, cumulative TOC time, strikethrough." },
+  { v: "11.9", d: "Channel server: kill stale port processes on startup; handle EADDRINUSE." },
+  { v: "11.7", d: "Channel complete action: route Vera completion through Claude Code (no API key)." },
+  { v: "10.6", d: "Editor TOC auto-scrolls to the active slide on arrow-key nav." },
+  { v: "10.5", d: "Hot reload — browser auto-refreshes on concat.py rebuild." },
+  { v: "10.4", d: "Fix Ctrl+C copying the wrong slide (stale-closure ref fix)." },
+  { v: "10.3", d: "Browser Fullscreen API in local mode; cross-tab slide clipboard; TOC auto-scroll fix." },
+  { v: "10.2", d: "Gallery drag-and-drop reorder; extra zoom levels; hardened undo/redo clamping; size 983→947KB." },
+  { v: "10.1", d: "Gallery redesign — continuous CSS grid; theme-aware Gallery/Presenter TOC; undo/redo crash fix; demo end-card prompts; size 983→859KB." },
+  { v: "10.0", d: "Student Mode (🎓) teaching assistant in presenter mode (Haiku 4.5 + caching); Gallery View (🗂) slide sorter (press G)." },
+  { v: "9.30", d: "Auto-select first slide on every deck load; progress block flat format; Babel JSX validation on minified output." },
+  { v: "9.29", d: "Smart deck merge with per-item conflict resolution; Babel JSX validation in the assembly pipeline." },
+  { v: "9.28", d: "Vector PDF export — scalable text with embedded zlib-compressed fonts." },
+  { v: "9.1", d: "Session cost tracker (💲); cinematic 🎬 demo mode." },
+  { v: "9.0", d: "Agentic editing & mobile-first: edit_slide tool, ReAct loop, layout stats, variants (🎲), UI test suite, ELv2 licensing." },
+  { v: "8.0", d: "First public release: 3-zone layout, Vera AI chat (18 tools), batch edit, branding, PDF/Markdown export, drag & drop, presenter mode, persistent storage." },
 ];
 
 // ━━━ Session Cost Tracker ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -336,6 +351,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
 const _dirtyMods = new Set();
 const _deletedMods = new Set();
 const _loadedMods = new Set(); // Track modules that loaded successfully (vs read failures)
+let _autoEditItemId = null; // id of a just-inserted section that should open in title-edit mode
 let _fullRewrite = false;
 const now = () => new Date().toISOString();
 
@@ -368,8 +384,16 @@ function linkPreview(url, label) {
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
-  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link extraction) + HTML tags + truncate
-  return val.replace(/\u0000/g, "").replace(/<[^>]*>/g, "").slice(0, maxLen);
+  // Defense-in-depth: strip NULL bytes (sentinel safety for parseInline link
+  // extraction), then strip HTML tags. A single pass of /<[^>]*>/ is incomplete:
+  // it needs a closing '>', so an unclosed or regex-reconstructed '<script...'
+  // could survive. We repeat the tag strip to a fixpoint, then drop any residual
+  // tag-opening '<' (one followed by a letter, '!' or '/'). A bare '<' used as
+  // math (e.g. 'a < b') is preserved. Truncate last.
+  let out = val.replace(/\u0000/g, "");
+  let prev;
+  do { prev = out; out = out.replace(/<[^>]*>/g, ""); } while (out !== prev);
+  return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -719,6 +743,9 @@ function sanitizeBlock(block) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
   const clean = { ...block };
+  // `hidden` (element visibility toggle) — coerce to a strict boolean so a
+  // non-boolean value can never reach layout/render logic.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (clean.text) clean.text = sanitizeString(clean.text, 2000);
   if (clean.content) clean.content = sanitizeString(clean.content, 2000);
   if (clean.label) clean.label = sanitizeString(clean.label, 200);
@@ -913,6 +940,8 @@ function sanitizeStudyNotes(raw) {
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
   const clean = { ...slide };
+  // `hidden` (slide excluded from presentation/counts) — strict boolean only.
+  if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
   if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
@@ -1181,7 +1210,15 @@ const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (cons
 const findItem = (lanes, id) => { for (const l of lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
 const fmtSize = (b) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(2)}MB`;
 const fmtTime = (s) => { if (!s || s <= 0) return ""; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
+// Compact, minutes-only duration for the top header (leaves room for the slide
+// count). Rounds to the nearest minute; anything >0 but under a minute shows "<1m".
+const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.round(s / 60); if (totalMin <= 0) return "<1m"; const h = Math.floor(totalMin / 60); const m = totalMin % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; return `${m}m`; };
+// Slide visibility helpers (CR: hide/unhide slides). Hidden slides are excluded
+// from presentation counts, totals, and presenter navigation, but remain in the
+// editor list so they can be unhidden.
+const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
+const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -3091,7 +3128,12 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
 
 function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
-  const blocks = slide.blocks || [];
+  // Hidden elements (CR: hide any element). In presentation they are removed
+  // entirely — no render, no layout — so a slide can carry a title that only
+  // serves the left TOC. In the editor they stay visible (dimmed) so they can be
+  // toggled back on.
+  const _vis = (arr) => presenting ? (arr || []).filter((b) => !(b && b.hidden)) : (arr || []);
+  const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
@@ -3180,8 +3222,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
   const isSplit = layout === "image-right" || layout === "image-left";
-  const colsL = isCols ? (slide.L || []) : [];
-  const colsR = isCols ? (slide.R || []) : [];
+  const colsL = isCols ? _vis(slide.L) : [];
+  const colsR = isCols ? _vis(slide.R) : [];
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -3189,17 +3231,19 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
+    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
+        <button onClick={(e) => { e.stopPropagation(); handleBlockChange(i, { hidden: b.hidden ? undefined : true }); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.hidden ? st.accent : T.bgPanel, border: `1px solid ${b.hidden ? st.accent : T.border}`, color: b.hidden ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.hidden ? "Hidden in presentation — click to show" : "Hide this element in presentation (stays in editor)"}>{b.hidden ? "🙈" : "👁"}</button>
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
@@ -3357,6 +3401,30 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId) || state.lanes[0]; if (!lane) return state; const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: state.lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
+    // Insert a section at an EXACT position within a source section's slide list.
+    // At a mid-list add-point the tail slides split off into the new section; at the
+    // very top (idx 0) or very bottom (idx>=len) a new empty section is inserted
+    // before/after instead (nothing to split). The new section opens in title edit.
+    case "SPLIT_ITEM_AT": {
+      const lane = state.lanes.find((l) => l.id === a.laneId) || state.lanes.find((l) => l.items.some((i) => i.id === a.id)) || state.lanes[0];
+      if (!lane) return state;
+      const src = lane.items.find((i) => i.id === a.id);
+      if (!src) return state;
+      const len = src.slides.length;
+      const idx = Math.max(0, Math.min(a.index == null ? len : a.index, len));
+      const nid = uid(); _loadedMods.add(nid); _autoEditItemId = nid; _dirtyMods.add(a.id); _dirtyMods.add(nid);
+      let keepSlides, newSlides, position;
+      if (idx <= 0) { keepSlides = src.slides; newSlides = []; position = "before"; }
+      else if (idx >= len) { keepSlides = src.slides; newSlides = []; position = "after"; }
+      else { keepSlides = src.slides.slice(0, idx); newSlides = src.slides.slice(idx); position = "after"; }
+      const newItem = { id: nid, title: "New section", notes: "", comments: [], status: "todo", importance: "should", order: 0, slides: newSlides, createdAt: now() };
+      const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999));
+      const srcPos = sorted.findIndex((i) => i.id === a.id);
+      sorted[srcPos] = { ...src, slides: keepSlides };
+      sorted.splice(position === "before" ? srcPos : srcPos + 1, 0, newItem);
+      return { ...state, lanes: state.lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 };
+    }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -3412,6 +3480,7 @@ function innerReducer(state, a) {
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
     case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
+    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
@@ -3709,12 +3778,58 @@ function restoreImageSrcs(improved, originalBlocks) {
     // Restore links from original blocks at same index
     if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
   }
+  // GUARANTEE no image is lost (CR: AI edits must never drop existing images).
+  // If the model returned fewer image blocks than the original, re-append the
+  // dropped originals so their content survives even when the model omits them.
+  for (; imgIdx < origImages.length; imgIdx++) improved.blocks.push({ ...origImages[imgIdx] });
+}
+
+// Merge a model-produced block array with the originals so that existing image
+// blocks are always preserved: real src is restored (never left as the
+// "keep-original" placeholder), the model's repositioning/resizing/recaptioning
+// is kept, and any image the model dropped is re-appended. Used by edit_slide,
+// which replaces the block array wholesale.
+function preserveImages(newBlocks, originalBlocks) {
+  const origImages = (originalBlocks || []).filter((b) => b && b.type === "image");
+  if (origImages.length === 0) return newBlocks;
+  let idx = 0;
+  const out = [];
+  for (const b of (newBlocks || [])) {
+    if (b && b.type === "image") {
+      const orig = origImages[idx];
+      if (orig) { out.push({ ...orig, ...b, src: orig.src }); idx++; }
+      else out.push(b);
+    } else out.push(b);
+  }
+  for (; idx < origImages.length; idx++) out.push({ ...origImages[idx] });
+  return out;
+}
+
+// Last-line guard for edit_slide: after a merge, replace any image whose src is
+// still the "keep-original" placeholder (or empty) with the real src from the
+// original blocks, matched positionally. Walks GRID cells too — the per-block
+// merge/preserveImages paths only reach top-level images, so a grid-nested image
+// would otherwise persist the placeholder and be dropped on the next sanitize.
+function restoreKeepOriginal(finalBlocks, originalBlocks) {
+  const origSrcs = [];
+  const collect = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image" && b.src && b.src !== "keep-original") origSrcs.push(b.src); if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) collect(c && c.blocks); } };
+  collect(originalBlocks);
+  let i = 0;
+  const walk = (arr) => { for (const b of (arr || [])) { if (!b) continue; if (b.type === "image") { if ((b.src === "keep-original" || !b.src) && origSrcs[i] != null) b.src = origSrcs[i]; i++; } if (b.type === "grid" && Array.isArray(b.items)) for (const c of b.items) walk(c && c.blocks); } };
+  walk(finalBlocks);
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
+  // Replace bulky image data with a stable "keep-original" placeholder (matches
+  // the system-prompt instruction) so the model still SEES the image blocks and
+  // keeps them in place, but never has to reproduce the data. NOTE: only `blocks`
+  // (and nested grid cells) are stripped — the restore paths (restoreImageSrcs /
+  // preserveImages) only re-attach `blocks`/grid srcs. Stripping L/R here without
+  // a matching restore would turn split-column side images into the literal
+  // "keep-original" string (data loss), so L/R are intentionally left intact.
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src && b.src.length > 200) b.src = "keep-original";
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
@@ -3782,6 +3897,9 @@ function executeTool(name, input, ws, attachedImages) {
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
       const patch = input.patch || {};
+      // Snapshot the pre-edit blocks so any image the model echoed back as the
+      // "keep-original" placeholder (incl. grid-nested) can be restored below.
+      const _origBlocks = slide.blocks ? JSON.parse(JSON.stringify(slide.blocks)) : [];
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
         if (k === "blocks" && Array.isArray(v)) {
@@ -3789,6 +3907,10 @@ function executeTool(name, input, ws, attachedImages) {
           if (v.length === (slide.blocks || []).length) {
             slide.blocks = slide.blocks.map((existing, bi) => {
               const patched = { ...existing, ...v[bi] };
+              // Never let an edit overwrite an existing image's src — the model
+              // only ever sees the "keep-original" placeholder, so echoing it back
+              // must not clobber the real image data (CR: preserve images).
+              if (existing.type === "image" && existing.src) patched.src = existing.src;
               // Deep merge grid items: preserve cell blocks unless patch explicitly provides them
               if (existing.type === "grid" && existing.items && v[bi] && !v[bi].items) {
                 patched.items = existing.items;
@@ -3803,12 +3925,20 @@ function executeTool(name, input, ws, attachedImages) {
               return patched;
             });
           } else {
-            slide.blocks = v;
+            // Block count changed → the model may have re-ordered or dropped
+            // blocks. Preserve existing images so they are never lost.
+            slide.blocks = preserveImages(v, slide.blocks);
           }
+        } else if ((k === "L" || k === "R") && Array.isArray(v)) {
+          // Split-column arrays can hold images too — preserve them like blocks.
+          slide[k] = preserveImages(v, slide[k]);
         } else {
           slide[k] = v;
         }
       }
+      // Final guard: never persist a "keep-original" placeholder (top-level or
+      // grid-nested) — restore the real image data from the pre-edit blocks.
+      if ("blocks" in patch) restoreKeepOriginal(slide.blocks, _origBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
@@ -4065,7 +4195,7 @@ ${ICON_LIST}
 Use icons GENEROUSLY — in bullets, headings, badges, callouts, metrics, grids.
 
 
-IMPORTANT: For image blocks, keep src as "keep-original" — do not modify image data.`;
+IMPORTANT: The slide may contain image blocks shown with src:"keep-original" — these are REAL images. You MUST keep every image block (never delete or omit one). You may move, resize, recaption, or lay them out differently, but leave src exactly "keep-original".`;
 }
 
 function extractSlideImages(lanes, selectedId, slideIndex) {
@@ -4258,7 +4388,7 @@ ${BLOCK_REFERENCE}
 
 ${ICON_LIST}
 
-IMPORTANT: For image blocks, keep src as "keep-original".`;
+IMPORTANT: Image blocks with src:"keep-original" are REAL existing images — keep every one of them (never delete or omit an image block), leave src as "keep-original", and feel free to reposition/resize/recaption around them.`;
 
 // ━━━ Slide Design API (shared by improve + alternatives) ━━━━━━━━━━
 async function callSlideDesignAPI(screenshotBase64, slideJson, conceptTitle, slideNum, totalSlides, sysPrompt, temperature = 0.3, userMsgOverride = null, _callType = "improve") {
@@ -5162,14 +5292,26 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
-  useEffect(() => { if (!open) setSearch(""); }, [open]);
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      // Return keyboard focus to the presenter surface. The search box lives in a
+      // panel that only slides off-screen (still in the DOM), so if it keeps focus
+      // the window-level presenter nav handlers — which bail when activeElement is
+      // an INPUT — swallow every arrow key. Blurring drops focus back to the body.
+      if (searchRef.current && document.activeElement === searchRef.current) {
+        searchRef.current.blur();
+      }
+    }
+  }, [open]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane (CR: quick-jump). Works even while
+      // the search box is focused so the same chord closes it again.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -5183,10 +5325,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
+        // Hidden slides are not part of the presentation, so keep them out of the
+        // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
           const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, visible: !q || title.toLowerCase().includes(q) };
-        });
+          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
+        }).filter((s) => !s.hidden);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
       }
@@ -5194,27 +5338,51 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     return groups;
   }, [lanes, search, currentConceptId]);
 
+  // A module with a title card shows a virtual card at presSlides[0] in
+  // fullscreen, so raw slide index i maps to presSlides[i+1]. The TOC is
+  // fullscreen-only, so this offset always applies to presentCard modules.
+  const presentCardOf = (id) => { for (const l of (lanes || [])) { const it = (l.items || []).find((i) => i.id === id); if (it) return !!it.presentCard; } return false; };
+  const currentOffset = presentCardOf(currentConceptId) ? 1 : 0;
+
   // Count total visible slides for footer
   const totalSlides = useMemo(() => grouped.reduce((sum, g) => sum + g.slides.length, 0), [grouped]);
   const globalIndex = useMemo(() => {
     let idx = 0;
     for (const g of grouped) {
-      if (g.isCurrent) return idx + slideIndex;
+      if (g.isCurrent) {
+        // `grouped` excludes hidden slides, so map the raw slideIndex (minus any
+        // title-card offset) to its position among VISIBLE slides.
+        return idx + g.slides.filter((s) => s.slideIdx < slideIndex - currentOffset).length;
+      }
       idx += g.slides.length;
     }
     return idx;
-  }, [grouped, slideIndex]);
+  }, [grouped, slideIndex, currentOffset]);
 
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
   const handleJump = (moduleId, slideIdx) => {
+    // Add the target module's title-card offset so the jump lands on the intended
+    // slide (not one early) in presentCard modules.
+    const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
     if (moduleId === currentConceptId) {
-      onJump(slideIdx);
+      onJump(idx);
     } else {
       // Navigate to different module
       dispatch({ type: "SELECT", id: moduleId });
-      dispatch({ type: "SET_SLIDE_INDEX", index: slideIdx });
+      dispatch({ type: "SET_SLIDE_INDEX", index: idx });
+    }
+    // Jumping always closes the TOC/search pane (CR: quick-jump then dismiss).
+    setPinned(false);
+    setOpen(false);
+  };
+
+  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
+  const jumpFirstMatch = () => {
+    for (const g of grouped) {
+      const first = g.slides.find((s) => s.visible);
+      if (first) { handleJump(g.id, first.slideIdx); return; }
     }
   };
 
@@ -5240,7 +5408,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>⌃E</span>
         </div>
 
         {/* Search */}
@@ -5251,10 +5419,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
+              // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
+              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -5282,7 +5453,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               {/* Slides */}
               {group.slides.map(({ title, slideIdx, visible }) => {
                 if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex;
+                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
                 return (
                   <div
                     key={slideIdx}
@@ -5318,7 +5489,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or ⌃E</span>
         </div>
       </div>
     </>
@@ -5980,20 +6151,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
 
-  // Global slide index/total across all modules (for slide counter display)
+  // Global slide index/total across all modules (for the on-slide page-number
+  // badge). Counts only VISIBLE slides so it agrees with the header pill and the
+  // presenter TOC (hidden slides are excluded from presentation counts). The
+  // `+ presOffset` keeps the downstream `displayIndex = globalSlideIndex - presOffset`
+  // correct when a virtual title card is prepended in fullscreen.
   const { globalSlideIndex, globalSlideTotal } = useMemo(() => {
     let offset = 0, total = 0;
     let found = false;
     for (const l of (lanes || [])) {
       for (const item of l.items) {
-        const count = (item.slides || []).length;
-        if (item.id === concept.id) { offset += slideIndex; found = true; }
-        else if (!found) { offset += count; }
-        total += count;
+        const sl = item.slides || [];
+        const vis = sl.filter((s) => !s.hidden).length;
+        if (item.id === concept.id) {
+          offset += sl.slice(0, Math.max(0, slideIndex - presOffset)).filter((s) => !s.hidden).length + presOffset;
+          found = true;
+        } else if (!found) { offset += vis; }
+        total += vis;
       }
     }
     return { globalSlideIndex: offset, globalSlideTotal: total };
-  }, [lanes, concept.id, slideIndex]);
+  }, [lanes, concept.id, slideIndex, presOffset]);
 
   const handleSlideEdit = useCallback((patch) => {
     if (fullscreen && presOffset && slideIndex === 0) return; // Don't edit virtual slide
@@ -6048,6 +6226,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
+  // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
+  // presented). Self-contained: only acts when fullscreen AND the current slide
+  // is hidden, so decks with no hidden slides are completely unaffected. Skips in
+  // the direction of travel, falling back to the other direction at the ends.
+  // Backstop for LANDING on a hidden slide during fullscreen (module-boundary
+  // crossing, entering fullscreen on a hidden slide, or a stale jump): nudge to
+  // the nearest visible slide, forward first then backward. Arrow navigation
+  // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
+  // so this only fires on a land and can never oscillate (it always resolves to a
+  // visible slide, and nav never re-lands on a hidden one).
+  useEffect(() => {
+    if (!fullscreen) return;
+    const cur = presSlides[slideIndex];
+    if (!cur || !cur.hidden) return;
+    let n = -1;
+    for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
+    if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
+    if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
+  }, [fullscreen, slideIndex, presSlides]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -6169,7 +6366,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
-        list.push({ id: item.id, title: item.title, slideCount: (item.slides || []).length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard });
+        const sl = item.slides || [];
+        let firstVisible = -1, lastVisible = -1;
+        for (let i = 0; i < sl.length; i++) if (!sl[i].hidden) { if (firstVisible < 0) firstVisible = i; lastVisible = i; }
+        list.push({ id: item.id, title: item.title, slideCount: sl.length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard, firstVisible, lastVisible });
       }
     }
     return list;
@@ -6307,31 +6507,54 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Arrow keys + Space: move through slides, crossing to next/prev module at boundaries
       // Up/Down behave the same as Left/Right (like PowerPoint)
       const navSlides = fullscreen ? presSlides : slides;
+      // In fullscreen, step over hidden slides so a draft never appears on screen
+      // (editor nav keeps reaching them so they can be edited/unhidden).
+      const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
-        if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
-          dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
-        } else if (curIdx >= 0 && curIdx + 1 < mods.length) {
-          const next = mods[curIdx + 1];
-          dispatch({ type: "SELECT", id: next.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
-          const changedLane = next.laneId !== mods[curIdx].laneId;
-          showNavToast(next.title, changedLane ? next.laneTitle : null);
+        const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
+        if (ni >= 0) {
+          dispatch({ type: "SET_SLIDE_INDEX", index: ni });
+        } else {
+          // Cross to the next module. In fullscreen, skip modules that have
+          // nothing to present (all slides hidden, no title card) so a draft
+          // module never flashes on screen, and land on the first VISIBLE slide.
+          let ti = curIdx + 1;
+          if (fullscreen) while (ti < mods.length && !mods[ti].presentCard && mods[ti].firstVisible < 0) ti++;
+          if (ti >= 0 && ti < mods.length) {
+            const next = mods[ti];
+            dispatch({ type: "SELECT", id: next.id });
+            const target = fullscreen ? (next.presentCard ? 0 : Math.max(0, next.firstVisible)) : 0;
+            dispatch({ type: "SET_SLIDE_INDEX", index: target });
+            const changedLane = next.laneId !== mods[curIdx].laneId;
+            showNavToast(next.title, changedLane ? next.laneTitle : null);
+          }
         }
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
-        if (navSlides.length > 0 && slideIndex > 0) {
-          dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
-        } else if (curIdx >= 0 && curIdx - 1 >= 0) {
-          const prev = mods[curIdx - 1];
-          dispatch({ type: "SELECT", id: prev.id });
-          const prevPresOffset = prev.presentCard ? 1 : 0;
-          dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + (fullscreen ? prevPresOffset : 0)) });
-          const changedLane = prev.laneId !== mods[curIdx].laneId;
-          showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+        const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
+        if (pi >= 0) {
+          dispatch({ type: "SET_SLIDE_INDEX", index: pi });
+        } else {
+          let ti = curIdx - 1;
+          if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
+          if (ti >= 0) {
+            const prev = mods[ti];
+            dispatch({ type: "SELECT", id: prev.id });
+            const prevPresOffset = prev.presentCard ? 1 : 0;
+            // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
+            // title card if the module has only a card. Editor: the real last slide.
+            const target = fullscreen
+              ? (prev.lastVisible >= 0 ? prev.lastVisible + prevPresOffset : 0)
+              : Math.max(0, (prev.slideCount || 1) - 1);
+            dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, target) });
+            const changedLane = prev.laneId !== mods[curIdx].laneId;
+            showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+          }
         }
       }
 
@@ -7028,6 +7251,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+
+// Drag payload lives in a module-level variable, NOT only in dataTransfer.
+// `dataTransfer.getData()` is unreadable in the drop handler in several browsers
+// (and returns "" for synthetic/headless events), which is why section + slide
+// drag-drop silently did nothing. Reading the payload from here is reliable and
+// unit-testable. We still call setData() so the OS shows the native move cursor.
+let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "section", itemId, laneId }
+const _setDrag = (p) => { _velaDrag = p; };
+const _clearDrag = () => { _velaDrag = null; };
+
+// Visual/theme keys that define a slide's "look" — copied when adding a blank
+// slide so it inherits the previous slide's styling but starts with no content.
+const SLIDE_STYLE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "padding", "p", "align", "gap", "contentFlex", "imageFlex", "theme", "t", "layout"];
+function blankSlideFrom(prev) {
+  const base = {};
+  if (prev && typeof prev === "object") for (const k of SLIDE_STYLE_KEYS) if (k in prev) base[k] = prev[k];
+  return { ...base, blocks: [], duration: (prev && prev.duration) || 20 };
+}
+
 // ━━━ AI Slide Adder (inline prompt) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
   const [prompt, setPrompt] = useState("");
@@ -7086,23 +7328,69 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 
 
 
-// --- Empty Module AI Slide Adder ---
-function EmptyAiSlideAdder({ item, dispatch, guidelines }) {
-  const [open, setOpen] = useState(false);
-  if (!open) return (
-    <div onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-      style={{ padding: "3px 8px 3px 38px", fontSize: 10, fontFamily: FONT.mono, color: T.accent, cursor: "pointer", opacity: 0.5, transition: "opacity .15s" }}
-      onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-      onMouseLeave={(e) => e.currentTarget.style.opacity = 0.5}
-    >+ ai slide</div>
+// ━━━ Add Menu (blank / AI / section) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Replaces the old faint "+ ai" affordance. Offers three clearly-labelled
+// options (CR: add blank slide reusing the previous slide's def, add AI slide,
+// add section). `variant` controls prominence: "empty" (empty section, always
+// visible) vs "row" (between slides, reveal on hover).
+function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
+  const [mode, setMode] = useState(null); // null | "menu" | "ai"
+  const [pinned, setPinned] = useState(false); // set by click — keeps menu open on mouseout
+  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} />;
+
+  const close = () => { setMode(null); setPinned(false); };
+  const openPinned = (e) => { e.stopPropagation(); setMode("menu"); setPinned(true); }; // click → open + pin
+  const hoverOpen = () => setMode((m) => m || "menu"); // reveal on mouseover
+  const hoverClose = () => { if (!pinned) setMode(null); }; // hide on mouseout unless pinned
+
+  const addBlank = (e) => {
+    e.stopPropagation();
+    const prev = insertIndex > 0 ? item.slides[insertIndex - 1] : (item.slides[insertIndex] || item.slides[item.slides.length - 1] || null);
+    dispatch({ type: "INSERT_SLIDE", id: item.id, index: insertIndex, slide: blankSlideFrom(prev) });
+    dispatch({ type: "SELECT", id: item.id });
+    setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: insertIndex }), 0);
+    close();
+  };
+  // Insert a section at THIS exact add-point: between slides it splits the tail
+  // off into the new section; at the top/bottom it adds an adjacent empty one.
+  const addSection = (e) => { e.stopPropagation(); dispatch({ type: "SPLIT_ITEM_AT", id: item.id, index: insertIndex, laneId }); close(); };
+
+  if (mode === "menu") {
+    const btn = (label, icon, onClick, color) => (
+      <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
+        onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, fontSize: 11, lineHeight: 1 }}>{icon}</span>
+        <span style={{ lineHeight: 1 }}>{label}</span>
+      </button>
+    );
+    return (
+      // ADD_AFFORDANCE_HEIGHT (24) matches the collapsed "＋ add" row below so hovering
+      // swaps content without shifting layout (the between-slide rows were jumping).
+      <div style={{ display: "flex", gap: 4, height: 24, boxSizing: "border-box", padding: "0 12px", flexWrap: "nowrap", alignItems: "center", justifyContent: "center" }} onClick={(e) => e.stopPropagation()} onMouseLeave={hoverClose}>
+        {btn("Blank", "▭", addBlank)}
+        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent)}
+        {btn("Section", "▤", addSection)}
+        <button onClick={(e) => { e.stopPropagation(); close(); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px", lineHeight: 1 }}>✕</button>
+      </div>
+    );
+  }
+
+  // Single faint "＋ add" affordance — identical look/label whether it sits in an
+  // empty section or between slides (consistency). Fixed 24px height matches the
+  // hover menu above so revealing it doesn't shift surrounding rows. Hover reveals
+  // the Blank / AI / Section menu; click pins it open.
+  return (
+    <div onClick={openPinned} onMouseEnter={hoverOpen}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24, boxSizing: "border-box", padding: "0 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s" }}
+      title="Add slide or section here"
+    >＋ add</div>
   );
-  return <AiSlideAdder item={item} insertIndex={0} onClose={() => setOpen(false)} dispatch={dispatch} guidelines={guidelines} />;
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset }) {
-  const [adderAt, setAdderAt] = useState(null);
+function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
   const [dropTarget, setDropTarget] = useState(null);
+  const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const maxSlideDur = globalMaxSlideDur || 1;
@@ -7136,18 +7424,19 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
 
   const handleSlideDragStart = (e, si) => {
     e.stopPropagation();
-    e.dataTransfer.setData("application/vela-slide", JSON.stringify({ fromItemId: item.id, slideIndex: si }));
-    e.dataTransfer.effectAllowed = "move";
+    _setDrag({ kind: "slide", fromItemId: item.id, slideIndex: si });
+    try { e.dataTransfer.setData("application/vela-slide", JSON.stringify({ fromItemId: item.id, slideIndex: si })); e.dataTransfer.effectAllowed = "move"; } catch {}
     e.currentTarget.style.opacity = "0.35";
   };
 
   const handleSlideDragEnd = (e) => {
     e.currentTarget.style.opacity = "1";
     setDropTarget(null);
+    _clearDrag();
   };
 
   const handleSlideDragOver = (e, si) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
@@ -7157,60 +7446,77 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
   };
 
   const handleSlideDrop = (e, si) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
+    const data = _velaDrag;
     setDropTarget(null);
-    try {
-      const data = JSON.parse(e.dataTransfer.getData("application/vela-slide"));
-      if (!data || data.slideIndex == null) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const toIndex = e.clientY < rect.top + rect.height / 2 ? si : si + 1;
-      if (data.fromItemId === item.id) {
-        let from = data.slideIndex, to = toIndex;
-        if (from === to || from === to - 1) return;
-        if (from < to) to--;
-        dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
-        dispatch({ type: "SET_SLIDE_INDEX", index: to });
-      } else {
-        dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex, toIndex });
-      }
-    } catch {}
+    if (data.slideIndex == null) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const toIndex = e.clientY < rect.top + rect.height / 2 ? si : si + 1;
+    if (data.fromItemId === item.id) {
+      let from = data.slideIndex, to = toIndex;
+      if (from === to || from === to - 1) return;
+      if (from < to) to--;
+      dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
+      dispatch({ type: "SET_SLIDE_INDEX", index: to });
+    } else {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex, toIndex });
+    }
   };
 
   const handleContainerDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
     e.preventDefault();
     e.stopPropagation();
+    const data = _velaDrag;
     setDropTarget(null);
-    try {
-      const data = JSON.parse(e.dataTransfer.getData("application/vela-slide"));
-      if (!data || data.slideIndex == null) return;
-      if (data.fromItemId === item.id) {
-        const from = data.slideIndex, to = item.slides.length - 1;
-        if (from !== to) dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
-      } else {
-        dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex });
-      }
-    } catch {}
+    if (data.slideIndex == null) return;
+    if (data.fromItemId === item.id) {
+      const from = data.slideIndex, to = item.slides.length - 1;
+      if (from !== to) dispatch({ type: "REORDER_SLIDE", id: item.id, from, to });
+    } else {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: data.fromItemId, toId: item.id, index: data.slideIndex });
+    }
   };
 
+  const isEmpty = item.slides.length === 0;
+  // NOTE: read the _velaDrag global LIVE inside every drag handler (like the slide-row
+  // handlers do) — never gate on a render-time snapshot. An empty section renders
+  // before any drag starts, so a captured "is a slide being dragged?" flag stays false
+  // and preventDefault() never runs → the browser shows the blocked cursor and refuses
+  // the drop. Reading the global in-handler always reflects the current drag.
+  // An empty section also needs a real, easily-hit drop target — a one-line add-row is
+  // far too thin to aim a slide at. Render a tall dashed box that doubles as the
+  // add affordance and lights up when a slide is dragged over it.
+  if (isEmpty) {
+    return (
+      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
+        onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; if (_velaDrag.fromItemId !== item.id && !containerOver) setContainerOver(true); } }}
+        onDrop={(e) => { setContainerOver(false); handleContainerDrop(e); }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setContainerOver(false); }}
+      >
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          minHeight: 30, borderRadius: 6,
+          border: `1.5px dashed ${containerOver ? T.accent : T.border}`,
+          background: containerOver ? T.accent + "18" : "transparent",
+          transition: "background .12s, border-color .12s",
+        }}>
+          {containerOver
+            ? <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, pointerEvents: "none" }}>Drop slide here</span>
+            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
-      onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-slide")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+      onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
     >
-      {adderAt === 0 ? (
-        <AiSlideAdder item={item} insertIndex={0} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-      ) : (
-        <div onClick={(e) => { e.stopPropagation(); setAdderAt(0); }}
-          style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-          title="AI: insert slide here"
-        >+ ai</div>
-      )}
+      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
@@ -7242,6 +7548,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               overflow: "hidden", whiteSpace: "nowrap",
               transition: "background .12s, color .12s",
               position: "relative",
+              opacity: s.hidden ? 0.5 : 1,
             }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
@@ -7259,19 +7566,15 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
                 style={{ ...S.input({ padding: "1px 4px", fontSize: 12, border: `1px solid ${T.accent}` }), flex: 1, minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
+            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+              title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
+              style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
+            >{s.hidden ? "🙈" : "👁"}</span>
           </div>
-          {adderAt === si + 1 ? (
-            <AiSlideAdder item={item} insertIndex={si + 1} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-          ) : (
-            <div onClick={(e) => { e.stopPropagation(); setAdderAt(si + 1); }}
-              style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-              title="AI: insert slide here"
-            >+ ai</div>
-          )}
+          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
         </React.Fragment>;
       }); })()}
     </div>
@@ -7289,48 +7592,67 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const [hovered, setHovered] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
+  // A just-inserted section opens directly in title-edit mode with an empty field,
+  // so the user can type the name immediately (INSERT_ITEM tags its id).
+  useEffect(() => {
+    if (_autoEditItemId === item.id) { _autoEditItemId = null; setEditing(true); setTitle(""); }
+  }, []);
 
-  // Section-level drag/drop on outer wrapper (works even when expanded)
+  const headerRef = useRef(null);
+  // Section-level drag/drop on the outer wrapper (works even when the section is
+  // expanded). Position (top/bottom) is measured against the HEADER row, not the
+  // tall wrapper, so dropping anywhere in the section still reorders correctly.
   const handleSectionDragOver = (e) => {
-    // Only handle section drags, let slide drags pass through
-    if (!e.dataTransfer.types.includes("application/vela-section")) return;
+    if (!_velaDrag || _velaDrag.kind !== "section" || _velaDrag.itemId === item.id) return;
     e.preventDefault(); e.dataTransfer.dropEffect = "move";
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = (headerRef.current || e.currentTarget).getBoundingClientRect();
     const mid = rect.top + rect.height / 2;
     setDropPos(e.clientY < mid ? "top" : "bottom");
   };
 
   const handleSectionDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-section")) return;
-    e.preventDefault(); e.stopPropagation(); 
-    const pos = dropPos;
+    if (!_velaDrag || _velaDrag.kind !== "section") return;
+    e.preventDefault(); e.stopPropagation();
+    const d = _velaDrag; const pos = dropPos;
     setDropPos(null);
-    try {
-      const d = JSON.parse(e.dataTransfer.getData("application/vela-section"));
-      if (d.itemId === item.id) return;
-      dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: pos === "top" ? item.id : null, afterId: pos === "bottom" ? item.id : null });
-    } catch {}
+    if (d.itemId === item.id) return;
+    dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: pos === "top" ? item.id : null, afterId: pos !== "top" ? item.id : null });
   };
 
-  // Slide cross-module drops (on the header row only)
+  // Slide cross-module drops (dropping a slide onto a section header — the key
+  // path for moving a slide INTO an empty section).
   const handleRowDragOver = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
-    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
+    // stopPropagation is REQUIRED: the app-root global dragover forces
+    // dropEffect="copy", which conflicts with the slide's effectAllowed="move" and
+    // makes the browser show the blocked cursor. Stopping here keeps it "move".
+    e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move";
     setDropPos("slide");
   };
 
   const handleRowDrop = (e) => {
-    if (!e.dataTransfer.types.includes("application/vela-slide")) return;
-    e.preventDefault(); e.stopPropagation(); setDropPos(null);
-    try {
-      const sd = e.dataTransfer.getData("application/vela-slide");
-      if (sd) {
-        const slideData = JSON.parse(sd);
-        if (slideData && slideData.slideIndex != null && slideData.fromItemId !== item.id) {
-          dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: slideData.fromItemId, toId: item.id, index: slideData.slideIndex });
-        }
-      }
-    } catch {}
+    if (!_velaDrag || _velaDrag.kind !== "slide") return;
+    e.preventDefault(); e.stopPropagation();
+    const slideData = _velaDrag; setDropPos(null);
+    if (slideData.slideIndex != null && slideData.fromItemId !== item.id) {
+      dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: slideData.fromItemId, toId: item.id, index: slideData.slideIndex });
+    }
+  };
+
+  // Wrapper-level handlers accept BOTH drag kinds. A slide dropped anywhere in
+  // the section — not just on the thin header — moves into this module; this is
+  // the only slide-drop target an EMPTY section has (its body renders just the
+  // add affordance, with no slide rows to catch the drop). The header/slide-row
+  // handlers stopPropagation, so they still win for finer-grained positioning.
+  const handleWrapperDragOver = (e) => {
+    if (!_velaDrag) return;
+    if (_velaDrag.kind === "section") return handleSectionDragOver(e);
+    if (_velaDrag.kind === "slide") return handleRowDragOver(e);
+  };
+  const handleWrapperDrop = (e) => {
+    if (!_velaDrag) return;
+    if (_velaDrag.kind === "section") return handleSectionDrop(e);
+    if (_velaDrag.kind === "slide") return handleRowDrop(e);
   };
 
   const hasNotes = !!(item.notes && item.notes.trim());
@@ -7339,14 +7661,16 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const allItemComments = [...itemComments.map((c) => ({ ...c, slideIndex: null })), ...slideComments];
   const openCommentCount = allItemComments.filter((c) => c.status === "open").length;
   const hasSlides = item.slides.length > 0;
-  const itemTime = item.slides.reduce((a, s) => a + (s.duration || 0), 0);
+  const itemTime = sumVisibleDurations(item.slides);
+  const visibleCount = visibleSlides(item.slides).length;
+  const hiddenCount = item.slides.length - visibleCount;
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
   return (
     <div
-      onDragOver={handleSectionDragOver}
+      onDragOver={handleWrapperDragOver}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropPos(null); }}
-      onDrop={handleSectionDrop}
+      onDrop={handleWrapperDrop}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -7355,13 +7679,14 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       }}
     >
       <div className={`concept-row ${selected ? "selected" : ""}`}
+        ref={headerRef}
         onClick={() => dispatch({ type: "SELECT", id: item.id })}
         draggable
         onDragStart={(e) => {
-          e.dataTransfer.setData("application/vela-section", JSON.stringify({ itemId: item.id, laneId }));
-          e.dataTransfer.setData("text/plain", JSON.stringify({ itemId: item.id, laneId }));
-          e.dataTransfer.effectAllowed = "move";
+          _setDrag({ kind: "section", itemId: item.id, laneId });
+          try { e.dataTransfer.setData("application/vela-section", JSON.stringify({ itemId: item.id, laneId })); e.dataTransfer.setData("text/plain", JSON.stringify({ itemId: item.id, laneId })); e.dataTransfer.effectAllowed = "move"; } catch {}
         }}
+        onDragEnd={_clearDrag}
         onDragOver={handleRowDragOver}
         onDragLeave={() => { if (dropPos === "slide") setDropPos(null); }}
         onDrop={handleRowDrop}
@@ -7369,10 +7694,10 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           background: dropPos === "slide" ? T.accent + "15" : undefined,
           outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
         }}>
-        {timePct > 0 && <div title={`${item.slides.length} slides · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
+        {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
         <span onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }} style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
-        {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
+        {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
@@ -7413,8 +7738,11 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
         </div>
       </div>}
-      {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} />}
-      {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} />}
+      {/* Always render SlideListWithAdder — even when empty — so an empty section
+          has the SAME "＋ add" affordance AND the same proven slide-drop container
+          as a populated one (fixes both the inconsistency and the can't-drop-into-
+          empty-section bug). It renders just the add row when there are no slides. */}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
     </div>
   );
 }
@@ -7425,13 +7753,14 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + (i.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0), 0), [allItems]);
+  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
-  const handleDrop = (e) => { e.preventDefault(); if (!laneId) return; try { const d = JSON.parse(e.dataTransfer.getData("application/vela-section") || e.dataTransfer.getData("text/plain")); dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); } catch {} };
+  // Drop on empty container area → append the dragged section to the end.
+  const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-section")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
@@ -8323,6 +8652,17 @@ async function runUITests(onProgress) {
   return allResults;
 }
 
+// Headless entry point for automated browser drivers (see the vela-live-render
+// skill / vela-drive.js). Runs every suite and resolves to the results array,
+// also stashing it on window.__velaUITestResults for pollers.
+if (typeof window !== "undefined") {
+  window.__velaRunUITests = async () => {
+    const results = await runUITests();
+    window.__velaUITestResults = results;
+    return results;
+  };
+}
+
 // ━━━ TEST SUITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── Render Suite ─────────────────────────────────────────────────────
@@ -8443,8 +8783,13 @@ uiSuite("Toolbar", [
   { name: "New slide button exists (+)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("New slide") || b.textContent?.includes("New")));
   }},
-  { name: "Cost badge visible (💲)", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("💲")));
+  { name: "Cost badge visible only in artifact mode (💲)", fn: async () => {
+    // Token/cost stats render only as a Claude.ai artifact (metered proxy). In
+    // desktop / local-serve / test runtimes the badge is intentionally absent.
+    const artifact = typeof velaIsArtifactMode === "function" && velaIsArtifactMode();
+    const present = () => !!_$$("button").find((b) => (b.textContent || "").includes("💲"));
+    if (artifact) { await _waitFor(present); }
+    else if (present()) throw new Error("cost badge should be hidden outside artifact mode");
   }},
   { name: "Delete button exists (🗑)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Delete") || b.textContent?.includes("🗑")));
@@ -9311,6 +9656,14 @@ uiSuite("SVG Sanitizer (XSS)", [
     const d = document.createElement("div"); d.innerHTML = out;
     return !/<script/i.test(out) && !d.querySelector("script");
   }},
+  // sanitizeString: single-pass /<[^>]*>/ is incomplete (an unclosed "<script" has
+  // no ">" to match, and reconstruction can rejoin fragments). Fixpoint loop +
+  // residual "<" strip must leave no live tag opener, while bare "<" math survives.
+  { name: "sanitizeString neutralizes unclosed/reconstructed tags", fn: async () => {
+    const bad = ["<script", "<scr<script>ipt>alert(1)", "<img src=x onerror=alert(1)", "<<script>>alert"];
+    const clean = bad.every((s) => { const o = sanitizeString(s); return !/<script/i.test(o) && !/<[a-z!/]/i.test(o); });
+    return clean && sanitizeString("a < b") === "a < b";
+  }},
   { name: "Unclosed iframe/embed/script/foreignObject neutralized", fn: async () => {
     const danger = (mk) => { const out = sanitizeSvgMarkup(mk); const d = document.createElement("div"); d.innerHTML = out;
       return !!d.querySelector("iframe,embed,script,foreignObject") ||
@@ -9539,6 +9892,102 @@ uiSuite("Review", [
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
+  }},
+]);
+
+// ── Sprint 7-1 UX batch ──────────────────────────────────────────────
+// Header slide count parsed from the header stat pill ("⏱24m · 28sl · 13§").
+const _headerSlideCount = () => {
+  const hdr = _$("header");
+  if (!hdr) return null;
+  const el = _$$("span", hdr).find((e) => /\d+sl\b/.test(e.textContent || ""));
+  const m = el && (el.textContent || "").match(/(\d+)sl/);
+  return m ? parseInt(m[1], 10) : null;
+};
+
+uiSuite("Header & Stats (7-1)", [
+  { name: "Header shows minutes + slide count", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+m\b/.test(e.textContent || "") && /\d+sl\b/.test(e.textContent || "")); });
+    if (/\d+m\s*\d+s/.test(pill.textContent)) throw new Error("header still shows seconds: " + pill.textContent);
+  }},
+  { name: "Header pill opens the Deck stats dialog", fn: async () => {
+    const pill = await _waitFor(() => { const h = _$("header"); return h && _$$("span", h).find((e) => /\d+sl\b/.test(e.textContent || "") && /§/.test(e.textContent || "")); });
+    _click(pill);
+    await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /Deck stats/i.test(e.textContent || "")));
+    _key("Escape");
+    await _wait(150);
+  }},
+]);
+
+uiSuite("Hide slides (7-1)", [
+  { name: "Eye toggle hides a slide and updates the count", fn: async () => {
+    const eye = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hide slide")));
+    const before = _headerSlideCount();
+    if (before == null) throw new Error("no header slide count");
+    _click(eye);
+    await _waitFor(() => _headerSlideCount() === before - 1, 2000);
+    // restore
+    const unhide = await _waitFor(() => _$$("span").find((e) => (e.title || "").startsWith("Hidden")));
+    _click(unhide);
+    await _waitFor(() => _headerSlideCount() === before, 2000);
+  }},
+]);
+
+uiSuite("Add menu (7-1)", [
+  { name: "Add affordance offers Blank / AI / Section", fn: async () => {
+    const add = await _waitFor(() => _$$("*").find((e) => e.children.length === 0 && /＋\s*add|＋\s*Add slide/.test(e.textContent || "")));
+    _click(add);
+    await _waitFor(() => {
+      const btns = _$$("button").map((b) => (b.textContent || "").trim());
+      return btns.some((t) => /Blank/.test(t)) && btns.some((t) => /Section/.test(t)) && btns.some((t) => /AI/.test(t));
+    }, 2000);
+    // close the menu
+    const x = _$$("button").find((b) => (b.textContent || "").trim() === "✕");
+    if (x) _click(x);
+    await _wait(120);
+  }},
+]);
+
+uiSuite("Section drag reorder (7-1)", [
+  { name: "Dragging a section changes the order", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    const titleOf = (r) => { const s = _$$("span", r).find((x) => parseInt(x.style.fontWeight) >= 600); return (s ? s.textContent : r.textContent || "").trim().slice(0, 30); };
+    const before = rows().map(titleOf);
+    if (before.length < 3) throw new Error("need >=3 sections");
+    const src = rows()[0], dst = rows()[2];
+    const dt = new DataTransfer();
+    const fire = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra)));
+    const db = dst.getBoundingClientRect();
+    fire(src, "dragstart");
+    fire(dst, "dragover", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(dst, "drop", { clientX: db.x + db.width / 2, clientY: db.y + db.height - 3 });
+    fire(src, "dragend");
+    await _waitFor(() => JSON.stringify(rows().map(titleOf)) !== JSON.stringify(before), 2000);
+    // drag it back to restore original order
+    const r2 = rows(); const s2 = r2.find((r) => titleOf(r) === before[0]); const d2 = r2[0];
+    if (s2 && d2 && s2 !== d2) {
+      const dt2 = new DataTransfer();
+      const fire2 = (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt2 }, extra)));
+      const b2 = d2.getBoundingClientRect();
+      fire2(s2, "dragstart"); fire2(d2, "dragover", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(d2, "drop", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(s2, "dragend");
+      await _wait(150);
+    }
+  }},
+]);
+
+uiSuite("Presenter Ctrl+E (7-1)", [
+  { name: "Ctrl+E toggles the TOC search pane", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const isFs = () => !!_$("[style*='position: fixed']");
+    // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
+    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _wait(400); }
+    if (!isFs()) throw new Error("could not enter fullscreen");
+    const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
+    _key("e", { ctrlKey: true });
+    await _waitFor(tocOpen, 2500);
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocOpen(), 2500);
+    _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
 ]);
 
@@ -12290,14 +12739,18 @@ function extractTextRuns(container, containerRect) {
 function extractLinks(container, containerRect) {
   const links = [];
   container.querySelectorAll("a[href]").forEach(a => {
-    const href = a.getAttribute("href");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+    const raw = a.getAttribute("href");
+    if (!raw || raw.startsWith("#")) return;
+    // Allowlist scheme (http/https/mailto) so a javascript:/data:/vbscript: href
+    // can never become a live annotation in the exported PDF.
+    const href = sanitizeUrl(raw);
+    if (!href) return;
     const r = a.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
     links.push({ href, x: r.left - containerRect.left, y: r.top - containerRect.top, w: r.width, h: r.height });
   });
   container.querySelectorAll("[data-href]").forEach(el => {
-    const href = el.getAttribute("data-href");
+    const href = sanitizeUrl(el.getAttribute("data-href"));
     if (!href) return;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
@@ -12305,7 +12758,7 @@ function extractLinks(container, containerRect) {
   });
   // Block-level links (heading, text, metric etc. with link property)
   container.querySelectorAll("[data-pdf-link]").forEach(el => {
-    const href = el.getAttribute("data-pdf-link");
+    const href = sanitizeUrl(el.getAttribute("data-pdf-link"));
     if (!href) return;
     // Skip if already captured via a[href] or data-href
     if (el.tagName === "A" || el.hasAttribute("data-href")) return;
@@ -14059,6 +14512,16 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
 
 
 // Helper to collect all slides flat from editor lanes
+// Strip hidden blocks from a slide so exports match the presented output.
+function stripHiddenBlocks(slide) {
+  if (!slide || typeof slide !== "object") return slide;
+  const hasHidden = ["blocks", "L", "R"].some((k) => Array.isArray(slide[k]) && slide[k].some((b) => b && b.hidden));
+  if (!hasHidden) return slide;
+  const out = { ...slide };
+  for (const k of ["blocks", "L", "R"]) if (Array.isArray(out[k])) out[k] = out[k].filter((b) => !(b && b.hidden));
+  return out;
+}
+
 function collectAllSlides(lanes, branding) {
   const all = [];
   for (const lane of (lanes || [])) {
@@ -14067,7 +14530,10 @@ function collectAllSlides(lanes, branding) {
       // auto-generated title slide before its content slides.
       if (item.presentCard) all.push(buildTitleCardSlide(item, lane, branding));
       for (const slide of (item.slides || [])) {
-        all.push(slide);
+        // Hidden slides/elements are not part of the presentation, so keep them
+        // out of exports too (CR: hide/unhide).
+        if (slide && slide.hidden) continue;
+        all.push(stripHiddenBlocks(slide));
       }
     }
   }
@@ -14232,11 +14698,12 @@ function deckToMarkdown(state, opts = {}) {
       ln(`## ${item.title || "Untitled Module"}`);
 
       for (const slide of (item.slides || [])) {
+        if (slide && slide.hidden) continue; // hidden slides are not exported
         slideNum++;
         blank();
 
         // Speaker notes as metadata
-        const blocks = slide.blocks || [];
+        const blocks = (slide.blocks || []).filter((b) => !(b && b.hidden));
         if (!blocks.length) continue;
 
         for (const b of blocks) blockToMd(b);
@@ -14271,15 +14738,22 @@ function exportMarkdown(state, opts = {}) {
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModalBackdrop({ onClose, extraKeys, children }) {
+function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   useEffect(() => {
     const h = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      // Enter activates the dialog's default action (CR: every confirm dialog
+      // should be confirmable with Enter). Don't hijack Enter inside multi-line
+      // text entry (textarea / contentEditable) where it means "newline".
+      if (e.key === "Enter" && onEnter && !e.shiftKey) {
+        const tag = (e.target && e.target.tagName) || "";
+        if (tag !== "TEXTAREA" && !(e.target && e.target.isContentEditable)) { e.preventDefault(); onEnter(); return; }
+      }
       if (extraKeys?.(e)) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, extraKeys]);
+  }, [onClose, onEnter, extraKeys]);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
@@ -14289,9 +14763,60 @@ function ModalBackdrop({ onClose, extraKeys, children }) {
   );
 }
 
+// ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Opened from the header stat pill. The header shows presentation totals (hidden
+// slides excluded); this dialog breaks down visible vs hidden (CR: hide/unhide).
+function StatsDialog({ state, onClose }) {
+  const items = state.lanes.flatMap((l) => l.items);
+  const allSlides = items.flatMap((i) => i.slides || []);
+  const visible = allSlides.filter((s) => !s.hidden);
+  const hidden = allSlides.filter((s) => s.hidden);
+  const dur = (arr) => arr.reduce((a, s) => a + (s.duration || 0), 0);
+  const Row = ({ label, a, b, accent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
+      <span style={{ fontFamily: FONT.body, fontSize: 13, color: accent ? T.accent : T.text, fontWeight: accent ? 700 : 400 }}>{label}</span>
+      <span style={{ fontFamily: FONT.mono, fontSize: 12, color: accent ? T.accent : T.textDim }}>{a}{b != null ? <span style={{ color: T.textDim }}> · {b}</span> : null}</span>
+    </div>
+  );
+  return (
+    <ModalBackdrop onClose={onClose} onEnter={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>📊 Deck stats</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <Row label="Presenting" a={`${visible.length} slides`} b={fmtTime(dur(visible)) || "0s"} accent />
+      {hidden.length > 0 && <Row label="Hidden" a={`${hidden.length} slides`} b={fmtTime(dur(hidden)) || "0s"} />}
+      <Row label="Total (incl. hidden)" a={`${allSlides.length} slides`} b={fmtTime(dur(allSlides)) || "0s"} />
+      <Row label="Sections" a={`${items.length}`} b={`${state.lanes.length} lane${state.lanes.length === 1 ? "" : "s"}`} />
+      <div style={{ marginTop: 12, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textDim, letterSpacing: "0.1em", textTransform: "uppercase" }}>Per section</div>
+      <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 4 }}>
+        {items.map((i, idx) => {
+          const vis = (i.slides || []).filter((s) => !s.hidden);
+          const hid = (i.slides || []).length - vis.length;
+          return (
+            <div key={i.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "4px 0", fontSize: 12 }}>
+              <span style={{ fontFamily: FONT.body, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{i.title}</span>
+              <span style={{ fontFamily: FONT.mono, color: T.textDim, flexShrink: 0 }}>{vis.length}sl{hid > 0 ? ` (+${hid}⊘)` : ""} · {fmtTime(sumVisibleDurations(i.slides)) || "0s"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Changelog Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChangelogDialog({ onClose }) {
   const [showDeps, setShowDeps] = React.useState(false);
+  const hasUpdater = typeof window !== "undefined" && typeof window.__velaCheckForUpdate === "function";
+  const [updateState, setUpdateState] = React.useState(null); // null | "checking" | "update" | "uptodate" | "error"
+  const checkUpdates = async () => {
+    if (updateState === "checking") return;
+    setUpdateState("checking");
+    try { setUpdateState(await window.__velaCheckForUpdate()); }
+    catch { setUpdateState("error"); }
+  };
+  const updateLabel = { checking: "Checking…", update: "Update available →", uptodate: "✓ Up to date", error: "Check failed — retry" };
   return (
     <ModalBackdrop onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -14299,6 +14824,7 @@ function ChangelogDialog({ onClose }) {
           <VelaIcon size={22} />
           <span style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: T.accent, letterSpacing: 2 }}>VELA</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>v{VELA_VERSION}</span>
+          {hasUpdater && <button onClick={checkUpdates} disabled={updateState === "checking"} style={S.btn({ fontSize: 9, padding: "2px 8px", color: updateState === "uptodate" ? T.green : updateState === "update" ? T.accent : T.textMuted, borderColor: (updateState === "update" ? T.accent : T.border) + "80", cursor: updateState === "checking" ? "wait" : "pointer" })}>{updateLabel[updateState] || "Check for updates"}</button>}
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -14548,7 +15074,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
-      ["T", "Toggle TOC panel (fullscreen)"],
+      ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
@@ -14777,6 +15303,21 @@ function AgentSettingsDialog({ onClose }) {
   const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
   const [trusted, setTrusted] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Re-scan for an installed AI agent. The old handler fired a fire-and-forget
+  // refresh with no feedback and a muted style, so it read as un-clickable /
+  // doing nothing (CR). Now it awaits detection, shows progress, and refreshes.
+  async function rescanAgents() {
+    if (scanning) return;
+    setScanning(true);
+    try { await window.__velaAgents?.refresh?.(); }
+    catch {}
+    finally {
+      setScanning(false);
+      if (typeof window !== "undefined") setInfo(window.__velaAgentInfo || null);
+    }
+  }
 
   async function loadTrusted() {
     if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
@@ -14812,7 +15353,7 @@ function AgentSettingsDialog({ onClose }) {
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Active agent</span>
-          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+          <button onClick={rescanAgents} disabled={scanning} style={S.btn({ fontSize: 10, padding: "3px 10px", color: scanning ? T.textDim : T.accent, borderColor: T.accent + "80", cursor: scanning ? "wait" : "pointer", opacity: scanning ? 0.7 : 1 })}>{scanning ? "Scanning…" : "↻ Re-scan"}</button>
         </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
@@ -15066,6 +15607,7 @@ export default function App() {
   const [jsonModal, setJsonModal] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -15466,14 +16008,18 @@ export default function App() {
 
   // Export
   const exportDeck = () => {
+    // Export the canonical Vela deck format (.vela) \u2014 the same shape as
+    // examples/*.vela and what the `vela` CLI reads: deckTitle + lanes (+ branding
+    // + guidelines). No app-state wrapper (chat/selection are not part of a deck).
     const save = extractSave(state);
-    const cleaned = { ...save, chatMessages: save.chatMessages.map((m) => m.images ? { ...m, images: [] } : m) };
     const title = state.deckTitle || "Untitled";
-    const payload = { _vela: 1, name: title, exportedAt: now(), data: cleaned };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const deck = { deckTitle: title, lanes: save.lanes || [] };
+    if (save.branding) deck.branding = save.branding;
+    if (save.guidelines) deck.guidelines = save.guidelines;
+    const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.vela`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     takeSnapshot(state);
@@ -15543,7 +16089,12 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
-  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
+  // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
+  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
+  const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
+  const slideCountAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0);
+  const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + visibleSlides(i.slides).length, 0), 0);
+  const hiddenSlideCount = slideCountAll - slideCountVisible;
   const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (s.duration || 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
 
   // ━━━ Mobile helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -15585,7 +16136,7 @@ export default function App() {
         ) : (
           <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
-        {!isMobile && (deckTime > 0 || total > 0) && <span title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)} slides · ${total} sections`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4 }}>{deckTime > 0 ? `⏱${fmtTime(deckTime)} · ` : ""}{state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)}sl · {total}§</span>}
+        {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
@@ -15627,7 +16178,7 @@ export default function App() {
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
-                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export JSON {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
+                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
@@ -15636,8 +16187,8 @@ export default function App() {
               </div>
             </>}
           </div>
-          <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <CostBadge />
+          {velaIsArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
+          <CostBadge /></>}
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
@@ -15676,7 +16227,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
-            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
+            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>
@@ -15781,7 +16332,20 @@ export default function App() {
       {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
-      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
+      {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
+      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
+        // Desktop: allocate a NEW file in the same folder first, so creating a
+        // deck never overwrites the one currently open (CR). If allocation FAILS
+        // (returns null), abort — proceeding would let the blank deck autosave
+        // over the open file. No-op / always-proceed elsewhere (artifact, serve).
+        if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
+          let path = null;
+          try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          if (!path) { alert("Couldn't create a new deck file in this folder — your current deck was left untouched."); return; }
+        }
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
