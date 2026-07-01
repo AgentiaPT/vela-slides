@@ -6284,7 +6284,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
-        list.push({ id: item.id, title: item.title, slideCount: (item.slides || []).length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard });
+        const sl = item.slides || [];
+        let firstVisible = -1, lastVisible = -1;
+        for (let i = 0; i < sl.length; i++) if (!sl[i].hidden) { if (firstVisible < 0) firstVisible = i; lastVisible = i; }
+        list.push({ id: item.id, title: item.title, slideCount: sl.length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard, firstVisible, lastVisible });
       }
     }
     return list;
@@ -6432,12 +6435,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
         if (ni >= 0) {
           dispatch({ type: "SET_SLIDE_INDEX", index: ni });
-        } else if (curIdx >= 0 && curIdx + 1 < mods.length) {
-          const next = mods[curIdx + 1];
-          dispatch({ type: "SELECT", id: next.id });
-          dispatch({ type: "SET_SLIDE_INDEX", index: 0 }); // leading hidden slide is skipped by the effect
-          const changedLane = next.laneId !== mods[curIdx].laneId;
-          showNavToast(next.title, changedLane ? next.laneTitle : null);
+        } else {
+          // Cross to the next module. In fullscreen, skip modules that have
+          // nothing to present (all slides hidden, no title card) so a draft
+          // module never flashes on screen, and land on the first VISIBLE slide.
+          let ti = curIdx + 1;
+          if (fullscreen) while (ti < mods.length && !mods[ti].presentCard && mods[ti].firstVisible < 0) ti++;
+          if (ti >= 0 && ti < mods.length) {
+            const next = mods[ti];
+            dispatch({ type: "SELECT", id: next.id });
+            const target = fullscreen ? (next.presentCard ? 0 : Math.max(0, next.firstVisible)) : 0;
+            dispatch({ type: "SET_SLIDE_INDEX", index: target });
+            const changedLane = next.laneId !== mods[curIdx].laneId;
+            showNavToast(next.title, changedLane ? next.laneTitle : null);
+          }
         }
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
@@ -6446,13 +6457,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
         if (pi >= 0) {
           dispatch({ type: "SET_SLIDE_INDEX", index: pi });
-        } else if (curIdx >= 0 && curIdx - 1 >= 0) {
-          const prev = mods[curIdx - 1];
-          dispatch({ type: "SELECT", id: prev.id });
-          const prevPresOffset = prev.presentCard ? 1 : 0;
-          dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + (fullscreen ? prevPresOffset : 0)) });
-          const changedLane = prev.laneId !== mods[curIdx].laneId;
-          showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+        } else {
+          let ti = curIdx - 1;
+          if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
+          if (ti >= 0) {
+            const prev = mods[ti];
+            dispatch({ type: "SELECT", id: prev.id });
+            const prevPresOffset = prev.presentCard ? 1 : 0;
+            // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
+            // title card if the module has only a card. Editor: the real last slide.
+            const target = fullscreen
+              ? (prev.lastVisible >= 0 ? prev.lastVisible + prevPresOffset : 0)
+              : Math.max(0, (prev.slideCount || 1) - 1);
+            dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, target) });
+            const changedLane = prev.laneId !== mods[curIdx].laneId;
+            showNavToast(prev.title, changedLane ? prev.laneTitle : null);
+          }
         }
       }
 
