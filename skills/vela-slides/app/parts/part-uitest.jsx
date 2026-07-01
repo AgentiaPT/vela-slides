@@ -102,6 +102,17 @@ async function runUITests(onProgress) {
   return allResults;
 }
 
+// Headless entry point for automated browser drivers (see the vela-live-render
+// skill / vela-drive.js). Runs every suite and resolves to the results array,
+// also stashing it on window.__velaUITestResults for pollers.
+if (typeof window !== "undefined") {
+  window.__velaRunUITests = async () => {
+    const results = await runUITests();
+    window.__velaUITestResults = results;
+    return results;
+  };
+}
+
 // ━━━ TEST SUITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── Render Suite ─────────────────────────────────────────────────────

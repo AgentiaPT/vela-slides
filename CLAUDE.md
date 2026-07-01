@@ -213,6 +213,29 @@ REPS=1 MODEL=sonnet TIMEOUT=300 bash evals/run-isolated.sh <version>
 python3 evals/scripts/report.py evals/results/
 ```
 
+## Running the app live in a browser (offline / demo videos / visual QA)
+
+The remote container **blocks the React/lucide CDNs (esm.sh) and the Playwright
+browser CDN**, so `serve.py`'s default importmap HTML never boots here. Do NOT
+try to reach esm.sh or run `npx playwright install`. Use the offline harness
+(skill: **`vela-live-render`**) which reuses the Neutralino shell's vendored-UMD
+recipe (Node-transpiled external script):
+
+```bash
+python3 skills/vela-slides/scripts/concat.py                                   # after editing parts
+node skills/vela-slides/scripts/render-offline.js <deck.vela> /tmp/vout        # build offline render
+node skills/vela-slides/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
+node skills/vela-slides/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
+node skills/vela-slides/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
+```
+
+Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
+(newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;
+`npm i jsdom` once for the two Node security suites; `ERR_INVALID_URL`/`ERR_CONNECTION_CLOSED`
+console errors are harmless font fetches. In-app UI battery is invokable headless via
+`window.__velaRunUITests()`. Never inline the 1.1MB monolith as `text/babel` (its XSS-test
+strings contain `</script>` and truncate the block) — the harness loads an external `app.js`.
+
 ## License
 
 ELv2 (source-available, commercial use allowed for presentations)
