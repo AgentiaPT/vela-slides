@@ -17,7 +17,13 @@ func parentAlive(pid int) bool {
 
 // watchParentExit is Windows-only (handle wait). On Unix the stdin-EOF and
 // ppid/port poll in main.go cover parent-death detection, so return nil.
-func watchParentExit() <-chan struct{} { return nil }
+func watchParentExit(dir string) <-chan struct{} {
+	logf(dir, "parent-handle watch: unix — not used (stdin-eof + poll cover it)")
+	return nil
+}
+
+// processName is a Windows diagnostic; unix logging does not need it.
+func processName(pid int) string { return "" }
 
 // ---------------------------------------------------------------------------
 // childTree — puts each spawned agent in its OWN process group so the whole

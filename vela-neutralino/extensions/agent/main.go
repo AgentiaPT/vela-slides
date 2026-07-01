@@ -438,7 +438,13 @@ func velaDir() (string, error) {
 
 // logf appends a diagnostic line to ~/.vela/agent-ext.log. Best-effort — used to
 // debug extension lifecycle (parent watch / orphan cleanup) on the desktop.
+// VELA_AGENT_LOG_DIR overrides the destination (troubleshooting: point it at a
+// project-local dir to capture a run without reading the user's home folder).
 func logf(dir, format string, args ...interface{}) {
+	if d := os.Getenv("VELA_AGENT_LOG_DIR"); d != "" {
+		dir = d
+	}
+	_ = os.MkdirAll(dir, 0o700)
 	f, err := os.OpenFile(filepath.Join(dir, "agent-ext.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
@@ -559,7 +565,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	logf(dir, "start pid=%d ppid=%d nlPort=%s port=%d", os.Getpid(), os.Getppid(), nlPort, port)
+	ppid := os.Getppid()
+	logf(dir, "start pid=%d ppid=%d parent=%q nlPort=%q port=%d logDir=%q",
+		os.Getpid(), ppid, processName(ppid), nlPort, port, os.Getenv("VELA_AGENT_LOG_DIR"))
 
 	cleanup := func() {
 		_ = os.Remove(portFile)
@@ -592,10 +600,10 @@ func main() {
 	// bound to the actual process object (not the PID number), so it cannot be
 	// fooled by PID reuse the way the ppid poll below can. No-op on Unix, where
 	// stdin EOF and the poll cover it.
-	if parentGone := watchParentExit(); parentGone != nil {
+	if parentGone := watchParentExit(dir); parentGone != nil {
 		go func() {
 			<-parentGone
-			logf(dir, "parent process handle signaled exit, exiting")
+			logf(dir, "SIGNAL parent-handle: parent exited, sending SIGTERM")
 			sig <- syscall.SIGTERM
 		}()
 	}
@@ -604,38 +612,61 @@ func main() {
 	// connections (PID-independent). When nlPort is unknown, fall back further to
 	// the parent PID. Two consecutive misses (~8s) before exiting, to ride out a
 	// transient probe failure.
-	ppid := os.Getppid()
 	go func() {
 		misses := 0
 		for {
 			time.Sleep(4 * time.Second)
 			alive := true
+			how := ""
 			if nlPort != "" {
 				alive = portOpen("127.0.0.1:" + nlPort)
+				how = "portOpen(" + nlPort + ")"
 			} else if ppid > 1 {
 				alive = parentAlive(ppid)
+				how = fmt.Sprintf("parentAlive(%d)", ppid)
+			} else {
+				how = "no-signal"
 			}
 			if alive {
 				misses = 0
 				continue
 			}
+			logf(dir, "port/ppid watch: %s reported gone (miss %d/2)", how, misses+1)
 			if misses++; misses >= 2 {
-				logf(dir, "neutralino gone (nlPort=%s ppid=%d), exiting", nlPort, ppid)
+				logf(dir, "SIGNAL port/ppid: neutralino gone via %s, sending SIGTERM", how)
 				sig <- syscall.SIGTERM
 				return
 			}
 		}
 	}()
+
+	// Heartbeat: periodic liveness + watcher state, so a run's log shows exactly
+	// which signals were live and what each reported right up to app close.
 	go func() {
-		<-sig
+		for {
+			time.Sleep(60 * time.Second)
+			po := "n/a"
+			if nlPort != "" {
+				po = fmt.Sprintf("%v", portOpen("127.0.0.1:"+nlPort))
+			}
+			logf(dir, "heartbeat uptime=%.0fs ppid=%d parentAlive=%v portOpen=%s",
+				time.Since(startedAt).Seconds(), ppid, parentAlive(ppid), po)
+		}
+	}()
+
+	go func() {
+		s := <-sig
+		logf(dir, "shutdown: received %v — cleanup+reap+srv.Shutdown", s)
 		cleanup()
 		reapChildren() // tear down any in-flight agent trees before exiting
 		ctx, c := context.WithTimeout(context.Background(), 2*time.Second)
 		defer c()
 		_ = srv.Shutdown(ctx)
+		logf(dir, "shutdown: srv.Shutdown returned, exiting now")
 		os.Exit(0)
 	}()
 
+	logf(dir, "ready: watchers armed (stdin-eof, parent-handle, port/ppid), serving on 127.0.0.1:%d", port)
 	fmt.Printf("[vela-agent] listening on 127.0.0.1:%d\n", port)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "[vela-agent] server error: %v\n", err)

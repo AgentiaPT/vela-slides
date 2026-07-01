@@ -107,9 +107,11 @@ class GatekeeperInvariants(unittest.TestCase):
         self.assertIn("close(stdinClosed)", self.go)   # stdin EOF closes the channel
         self.assertIn("<-stdinClosed", self.go)        # a watcher waits on it
         self.assertIn("portOpen(", self.go)            # port-watch fallback retained
-        # Windows-primary: block on the parent process HANDLE (immune to PID
-        # reuse, which defeats both the port watch and the ppid poll).
-        self.assertIn("watchParentExit()", self.go)
+        # Windows-primary: block on the app process HANDLE. Neutralino spawns the
+        # extension via a cmd.exe wrapper that inherits the app's server socket
+        # (defeating the port watch) and blocks on the agent (defeating the ppid
+        # poll) — only the app process's death is a true "window closed" signal.
+        self.assertIn("watchParentExit(dir)", self.go)
 
     def test_early_stdin_close_is_ignored(self):
         # A platform that closes stdin almost immediately after handing off the
@@ -152,6 +154,16 @@ class ProcTreeReaperInvariants(unittest.TestCase):
         self.assertIn("TerminateJobObject", go)
         # Handle-based parent watch — immune to PID reuse (unlike the ppid poll).
         self.assertIn("WaitForSingleObject", go)
+
+    def test_windows_watches_app_ancestor_not_shell(self):
+        # Neutralino launches the extension through a cmd.exe wrapper, so the
+        # immediate parent is an immortal shell. The watch must walk PAST the
+        # shell to the real app process, or it never fires and the gatekeeper
+        # orphans. Lock the shell-skipping resolver in place.
+        go = read("vela-neutralino", "extensions", "agent", "procwatch_windows.go")
+        self.assertIn("resolveAppAncestor", go)
+        self.assertIn("shellWrappers", go)
+        self.assertIn('"cmd.exe"', go)  # the wrapper that must be skipped
 
     def test_unix_kills_the_process_group(self):
         go = read("vela-neutralino", "extensions", "agent", "procwatch_unix.go")

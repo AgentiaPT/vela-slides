@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -24,12 +25,38 @@ const (
 )
 
 var (
-	kernel32               = syscall.NewLazyDLL("kernel32.dll")
-	procCreateJobObject    = kernel32.NewProc("CreateJobObjectW")
-	procSetInformationJob  = kernel32.NewProc("SetInformationJobObject")
-	procAssignProcessToJob = kernel32.NewProc("AssignProcessToJobObject")
-	procTerminateJobObject = kernel32.NewProc("TerminateJobObject")
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	procCreateJobObject            = kernel32.NewProc("CreateJobObjectW")
+	procSetInformationJob          = kernel32.NewProc("SetInformationJobObject")
+	procAssignProcessToJob         = kernel32.NewProc("AssignProcessToJobObject")
+	procTerminateJobObject         = kernel32.NewProc("TerminateJobObject")
+	procQueryFullProcessImageNameW = kernel32.NewProc("QueryFullProcessImageNameW")
 )
+
+// processName returns the base executable name of pid (diagnostic only), or ""
+// if it cannot be read. Lets the log show whether ppid is the Neutralino app or
+// something else — the crux of why the parent watch may not fire.
+func processName(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	h, err := syscall.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return ""
+	}
+	defer syscall.CloseHandle(h)
+	buf := make([]uint16, 260)
+	size := uint32(len(buf))
+	r, _, _ := procQueryFullProcessImageNameW.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
+	if r == 0 {
+		return ""
+	}
+	full := syscall.UTF16ToString(buf[:size])
+	if i := strings.LastIndexAny(full, `\/`); i >= 0 {
+		return full[i+1:]
+	}
+	return full
+}
 
 // parentAlive reports whether pid is still running. On Windows we open the
 // process and ask whether its handle has become signaled: a 0ms wait returning
@@ -48,27 +75,98 @@ func parentAlive(pid int) bool {
 	return ev == _WAIT_TIMEOUT
 }
 
-// watchParentExit blocks on the parent process's HANDLE and closes the returned
-// channel when it exits. Unlike the ppid poll (parentAlive), the handle is
-// bound to the actual process object opened at startup, so a later process
-// reusing the parent's PID cannot fool it into thinking the parent is alive —
-// the exact leak that keeps vela-agent.exe orphaned under window churn. It is
-// the primary shutdown signal on Windows; stdin EOF / the port watch remain.
-func watchParentExit() <-chan struct{} {
-	ppid := os.Getppid()
-	if ppid <= 0 {
+type procInfo struct {
+	ppid uint32
+	name string
+}
+
+// snapshotProcs returns a pid -> {ppid, name} map of every running process.
+func snapshotProcs() map[uint32]procInfo {
+	const _TH32CS_SNAPPROCESS = 0x00000002
+	snap, err := syscall.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+	if err != nil {
 		return nil
 	}
-	h, err := syscall.OpenProcess(_SYNCHRONIZE, false, uint32(ppid))
+	defer syscall.CloseHandle(snap)
+	m := map[uint32]procInfo{}
+	var e syscall.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	if err := syscall.Process32First(snap, &e); err != nil {
+		return m
+	}
+	for {
+		m[e.ProcessID] = procInfo{ppid: e.ParentProcessID, name: syscall.UTF16ToString(e.ExeFile[:])}
+		if err := syscall.Process32Next(snap, &e); err != nil {
+			break
+		}
+	}
+	return m
+}
+
+var shellWrappers = map[string]bool{
+	"cmd.exe": true, "conhost.exe": true, "powershell.exe": true, "pwsh.exe": true,
+}
+
+// resolveAppAncestor walks up from the immediate parent, skipping the shell
+// wrapper(s) Neutralino spawns the extension through (agent -> cmd.exe -> app),
+// and returns the first non-shell ancestor — the Neutralino app process whose
+// death actually means "the window closed". Falls back to the immediate parent
+// if the walk cannot resolve it.
+func resolveAppAncestor(startPPID int) int {
+	m := snapshotProcs()
+	if len(m) == 0 {
+		return startPPID
+	}
+	cur := uint32(startPPID)
+	for hops := 0; hops < 8; hops++ {
+		e, ok := m[cur]
+		if !ok {
+			break
+		}
+		if shellWrappers[strings.ToLower(e.name)] {
+			if e.ppid == 0 || e.ppid == cur {
+				break
+			}
+			cur = e.ppid
+			continue
+		}
+		return int(cur) // first non-shell ancestor == the app
+	}
+	return int(cur)
+}
+
+// watchParentExit blocks on the Neutralino APP process's HANDLE and closes the
+// returned channel when it exits. It deliberately watches the app ancestor, not
+// the immediate parent: on Windows Neutralino launches the extension through a
+// cmd.exe wrapper that (a) inherits the app's server socket — so the loopback
+// port watch sees it as open long after the app dies — and (b) blocks waiting on
+// this agent, so the immediate ppid never dies either. Only the app process's
+// death is a true "window closed" signal, and a direct handle to it is immune to
+// PID reuse and to the inherited-socket/immortal-shell traps. Primary signal on
+// Windows; stdin EOF closes too early here to be usable, and the port watch is
+// unreliable for the same inheritance reason.
+func watchParentExit(dir string) <-chan struct{} {
+	ppid := os.Getppid()
+	appPid := resolveAppAncestor(ppid)
+	logf(dir, "parent-handle watch: ppid=%d parent=%q -> app-ancestor=%d name=%q",
+		ppid, processName(ppid), appPid, processName(appPid))
+	if appPid <= 0 {
+		logf(dir, "parent-handle watch: no app ancestor — DISABLED")
+		return nil
+	}
+	h, err := syscall.OpenProcess(_SYNCHRONIZE, false, uint32(appPid))
 	if err != nil {
+		logf(dir, "parent-handle watch: OpenProcess(app=%d) failed: %v — DISABLED", appPid, err)
 		return nil
 	}
 	ch := make(chan struct{})
 	go func() {
 		defer syscall.CloseHandle(h)
-		_, _ = syscall.WaitForSingleObject(h, _INFINITE)
+		ev, werr := syscall.WaitForSingleObject(h, _INFINITE)
+		logf(dir, "parent-handle watch: app process %d exited ev=0x%x err=%v", appPid, ev, werr)
 		close(ch)
 	}()
+	logf(dir, "parent-handle watch: ARMED on app-ancestor pid=%d name=%q", appPid, processName(appPid))
 	return ch
 }
 
