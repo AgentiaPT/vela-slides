@@ -899,6 +899,24 @@ class TestHTMLGeneration(unittest.TestCase):
         self.assertNotIn('</script><script>alert(1)', html,
                          "Raw </script> must be escaped in injected deck JSON")
 
+    def test_prepare_html_jsx_body_script_close_neutralized(self):
+        """The vela.jsx *source body* contains literal '</script>' and '<!--'
+        substrings (uitest sanitizer payloads). Inlined into
+        <script type="text/babel">, the first '</script' would close the block
+        early — ejecting the rest of the source as live HTML and executing the
+        embedded payloads. They must be backslash-broken (a no-op at JS runtime).
+        Distinct from the deck-JSON path, which escape_for_script_context handles."""
+        server = self._make_server(SAMPLE_DECK)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
+        # No raw closer payload survives in the body...
+        self.assertNotIn("<script>alert(1)</script>", html,
+                         "raw </script in JS body would close the babel block early")
+        self.assertNotIn("<!--<img src=x onerror=alert(1)>", html,
+                         "raw <!-- in JS body could derail the script-data parser")
+        # ...the backslash-broken forms are present (byte-identical at runtime).
+        self.assertIn("<script>alert(1)<\\/script>", html)
+        self.assertIn("<\\!--<img src=x onerror=alert(1)>", html)
+
     def test_build_html_for_deck_bare_slides_normalized(self):
         """Deck with only 'slides' (no 'lanes') should be auto-wrapped."""
         deck_path = os.path.join(self._tmpdir, "bare.vela")
