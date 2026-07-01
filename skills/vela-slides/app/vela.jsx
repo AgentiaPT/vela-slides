@@ -3773,14 +3773,17 @@ function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   // Replace bulky image data with a stable "keep-original" placeholder (matches
   // the system-prompt instruction) so the model still SEES the image blocks and
-  // keeps them in place, but never has to reproduce the data. Also cover L/R
-  // (split-column) block arrays, not just `blocks`.
+  // keeps them in place, but never has to reproduce the data. NOTE: only `blocks`
+  // (and nested grid cells) are stripped — the restore paths (restoreImageSrcs /
+  // preserveImages) only re-attach `blocks`/grid srcs. Stripping L/R here without
+  // a matching restore would turn split-column side images into the literal
+  // "keep-original" string (data loss), so L/R are intentionally left intact.
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
     if (b.type === "image" && b.src && b.src.length > 200) b.src = "keep-original";
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
-  walk(clone.blocks); walk(clone.L); walk(clone.R);
+  walk(clone.blocks);
   return clone;
 }
 
@@ -3873,6 +3876,9 @@ function executeTool(name, input, ws, attachedImages) {
             // blocks. Preserve existing images so they are never lost.
             slide.blocks = preserveImages(v, slide.blocks);
           }
+        } else if ((k === "L" || k === "R") && Array.isArray(v)) {
+          // Split-column arrays can hold images too — preserve them like blocks.
+          slide[k] = preserveImages(v, slide[k]);
         } else {
           slide[k] = v;
         }
@@ -16143,9 +16149,13 @@ export default function App() {
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
         // Desktop: allocate a NEW file in the same folder first, so creating a
-        // deck never overwrites the one currently open (CR). No-op elsewhere.
+        // deck never overwrites the one currently open (CR). If allocation FAILS
+        // (returns null), abort — proceeding would let the blank deck autosave
+        // over the open file. No-op / always-proceed elsewhere (artifact, serve).
         if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
-          try { await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          let path = null;
+          try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          if (!path) { alert("Couldn't create a new deck file in this folder — your current deck was left untouched."); return; }
         }
         dispatch({ type: "NEW_DECK", title, prompt, images });
         if (isMobile) setMobileTab("chat");

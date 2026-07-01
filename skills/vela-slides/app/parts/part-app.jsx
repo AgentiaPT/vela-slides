@@ -1597,9 +1597,13 @@ export default function App() {
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
         // Desktop: allocate a NEW file in the same folder first, so creating a
-        // deck never overwrites the one currently open (CR). No-op elsewhere.
+        // deck never overwrites the one currently open (CR). If allocation FAILS
+        // (returns null), abort — proceeding would let the blank deck autosave
+        // over the open file. No-op / always-proceed elsewhere (artifact, serve).
         if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
-          try { await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          let path = null;
+          try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          if (!path) { alert("Couldn't create a new deck file in this folder — your current deck was left untouched."); return; }
         }
         dispatch({ type: "NEW_DECK", title, prompt, images });
         if (isMobile) setMobileTab("chat");

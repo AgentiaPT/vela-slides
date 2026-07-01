@@ -142,14 +142,17 @@ function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   // Replace bulky image data with a stable "keep-original" placeholder (matches
   // the system-prompt instruction) so the model still SEES the image blocks and
-  // keeps them in place, but never has to reproduce the data. Also cover L/R
-  // (split-column) block arrays, not just `blocks`.
+  // keeps them in place, but never has to reproduce the data. NOTE: only `blocks`
+  // (and nested grid cells) are stripped — the restore paths (restoreImageSrcs /
+  // preserveImages) only re-attach `blocks`/grid srcs. Stripping L/R here without
+  // a matching restore would turn split-column side images into the literal
+  // "keep-original" string (data loss), so L/R are intentionally left intact.
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
     if (b.type === "image" && b.src && b.src.length > 200) b.src = "keep-original";
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
-  walk(clone.blocks); walk(clone.L); walk(clone.R);
+  walk(clone.blocks);
   return clone;
 }
 
@@ -242,6 +245,9 @@ function executeTool(name, input, ws, attachedImages) {
             // blocks. Preserve existing images so they are never lost.
             slide.blocks = preserveImages(v, slide.blocks);
           }
+        } else if ((k === "L" || k === "R") && Array.isArray(v)) {
+          // Split-column arrays can hold images too — preserve them like blocks.
+          slide[k] = preserveImages(v, slide[k]);
         } else {
           slide[k] = v;
         }

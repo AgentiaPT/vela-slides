@@ -206,8 +206,10 @@ export const deckIO = {
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
-    // Build a unique "<slug>.vela" (then -2, -3, …) that doesn't collide.
-    const slug = String(title || "Untitled").normalize("NFKD").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 60) || "Untitled";
+    // Build a unique "<slug>.vela" (then -2, -3, …) that doesn't collide. Slice
+    // BEFORE the final trailing-separator strip so a truncated name can't end in
+    // a stray "-"/"." right before the extension.
+    const slug = String(title || "Untitled").normalize("NFKD").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").slice(0, 60).replace(/^[-.]+|[-.]+$/g, "") || "Untitled";
     let existing = [];
     try { existing = (await listDecks()).map((d) => d.name.toLowerCase()); } catch {}
     let name = `${slug}.vela`, n = 1;
@@ -225,6 +227,11 @@ export const deckIO = {
       return path;
     } catch (e) {
       console.warn("[deck-io] newDeck failed:", e);
+      // Write failed: currentPath still points at the OLD deck. Restart its
+      // watcher (we stopped it above) so external sync keeps working, and return
+      // null so the caller aborts instead of letting a blank deck later autosave
+      // over the OLD file. (BUG fix: data-loss on failed new-deck allocation.)
+      if (state.currentPath) { try { startWatcher(); } catch {} }
       return null;
     } finally {
       state.switching = false;
