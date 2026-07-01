@@ -397,6 +397,27 @@ def test_security():
     else:
         fail("data: image sanitization suite", f"missing: {dimg_script}")
 
+    # 9c. AI image preservation (CR: edits must never drop existing images).
+    # preserveImages / restoreImageSrcs re-attach real srcs and re-append any
+    # image the model omitted, so image blocks survive every edit path.
+    imgpres_script = os.path.join(REPO_ROOT, "tests", "test_image_preserve.cjs")
+    if os.path.exists(imgpres_script):
+        try:
+            r = subprocess.run(["node", imgpres_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"AI image preservation suite ({count} cases)")
+            else:
+                fail("AI image preservation suite",
+                     f"node tests/test_image_preserve.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("AI image preservation suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("AI image preservation suite", "timeout after 60s")
+    else:
+        fail("AI image preservation suite", f"missing: {imgpres_script}")
+
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the
     # strip (or omitting bidi/zero-width) fails this check (red).
