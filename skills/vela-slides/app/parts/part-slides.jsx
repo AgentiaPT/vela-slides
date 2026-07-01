@@ -1228,20 +1228,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
 
-  // Global slide index/total across all modules (for slide counter display)
+  // Global slide index/total across all modules (for the on-slide page-number
+  // badge). Counts only VISIBLE slides so it agrees with the header pill and the
+  // presenter TOC (hidden slides are excluded from presentation counts). The
+  // `+ presOffset` keeps the downstream `displayIndex = globalSlideIndex - presOffset`
+  // correct when a virtual title card is prepended in fullscreen.
   const { globalSlideIndex, globalSlideTotal } = useMemo(() => {
     let offset = 0, total = 0;
     let found = false;
     for (const l of (lanes || [])) {
       for (const item of l.items) {
-        const count = (item.slides || []).length;
-        if (item.id === concept.id) { offset += slideIndex; found = true; }
-        else if (!found) { offset += count; }
-        total += count;
+        const sl = item.slides || [];
+        const vis = sl.filter((s) => !s.hidden).length;
+        if (item.id === concept.id) {
+          offset += sl.slice(0, Math.max(0, slideIndex - presOffset)).filter((s) => !s.hidden).length + presOffset;
+          found = true;
+        } else if (!found) { offset += vis; }
+        total += vis;
       }
     }
     return { globalSlideIndex: offset, globalSlideTotal: total };
-  }, [lanes, concept.id, slideIndex]);
+  }, [lanes, concept.id, slideIndex, presOffset]);
 
   const handleSlideEdit = useCallback((patch) => {
     if (fullscreen && presOffset && slideIndex === 0) return; // Don't edit virtual slide
