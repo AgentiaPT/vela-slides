@@ -183,6 +183,11 @@ async function boot() {
   }
 
   setTimeout(() => checkForUpdate(configStore).catch(() => {}), 5000);
+
+  // Manual "Check for updates" from Vela's About dialog (CR). Reuses the same
+  // checker; force bypasses the 24h throttle and returns a status string
+  // ("update" | "uptodate" | "error") so the app can report the outcome.
+  window.__velaCheckForUpdate = () => checkForUpdate(configStore, { force: true }).catch(() => "error");
 }
 
 // ---------- Deck picker ----------------------------------------------------

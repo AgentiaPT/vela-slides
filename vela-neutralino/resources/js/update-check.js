@@ -224,57 +224,65 @@ function showUpdateModal(info, isSecurity) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-export async function checkForUpdate(configStore) {
-  if (checking) return;
+// opts.force (manual "Check for updates" from the About dialog) bypasses the
+// 24h throttle and prior dismissals, and the returned status lets the caller
+// tell the user the outcome. Returns: "update" | "uptodate" | "error" |
+// "skipped" | "checking".
+export async function checkForUpdate(configStore, opts = {}) {
+  if (checking) return "checking";
   checking = true;
   try {
-    await _check(configStore);
+    return await _check(configStore, !!opts.force);
   } finally {
     checking = false;
   }
 }
 
-async function _check(configStore) {
+async function _check(configStore, force = false) {
   const config = await configStore.get();
-  if (!shouldCheck(config)) return;
+  if (!force && !shouldCheck(config)) return "skipped";
 
   const current = typeof NL_APPVERSION === "string" ? NL_APPVERSION : null;
-  if (!current || !parseSemver(current)) return;
+  if (!current || !parseSemver(current)) return "error";
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 10000);
   let res;
   try {
     res = await fetch(MANIFEST_URL, { signal: ac.signal });
-  } finally {
+  } catch { clearTimeout(timer); return "error"; } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) return;
+  if (!res.ok) return "error";
 
   const cl = res.headers.get("content-length");
-  if (cl && Number(cl) > MAX_MANIFEST_BYTES) return;
+  if (cl && Number(cl) > MAX_MANIFEST_BYTES) return "error";
 
   const text = await res.text();
-  if (text.length > MAX_MANIFEST_BYTES) return;
+  if (text.length > MAX_MANIFEST_BYTES) return "error";
 
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return; }
+  try { parsed = JSON.parse(text); } catch { return "error"; }
   const manifest = validateManifest(parsed);
-  if (!manifest) return;
+  if (!manifest) return "error";
 
   await configStore.patch({ lastUpdateCheck: Date.now() });
 
-  if (compareSemver(current, manifest.latest) >= 0) return;
+  if (compareSemver(current, manifest.latest) >= 0) return "uptodate";
 
   const releaseUrl = buildReleaseUrl(manifest.latest);
-  if (!releaseUrl) return;
+  if (!releaseUrl) return "error";
 
   const isSecurity = compareSemver(current, manifest.minSafeVersion) < 0;
 
-  if (!isSecurity) {
-    if (config.dismissedVersion === manifest.latest) return;
-  } else {
-    if (isSecurityDismissed(config, manifest.minSafeVersion)) return;
+  // A forced manual check always surfaces an available update, even one the user
+  // dismissed earlier; the background check still honours dismissals.
+  if (!force) {
+    if (!isSecurity) {
+      if (config.dismissedVersion === manifest.latest) return "update";
+    } else {
+      if (isSecurityDismissed(config, manifest.minSafeVersion)) return "update";
+    }
   }
 
   const result = await showUpdateModal(
@@ -291,4 +299,5 @@ async function _check(configStore) {
       await configStore.patch({ dismissedVersion: manifest.latest });
     }
   }
+  return "update";
 }

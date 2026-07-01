@@ -70,6 +70,15 @@ function StatsDialog({ state, onClose }) {
 // ━━━ Changelog Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChangelogDialog({ onClose }) {
   const [showDeps, setShowDeps] = React.useState(false);
+  const hasUpdater = typeof window !== "undefined" && typeof window.__velaCheckForUpdate === "function";
+  const [updateState, setUpdateState] = React.useState(null); // null | "checking" | "update" | "uptodate" | "error"
+  const checkUpdates = async () => {
+    if (updateState === "checking") return;
+    setUpdateState("checking");
+    try { setUpdateState(await window.__velaCheckForUpdate()); }
+    catch { setUpdateState("error"); }
+  };
+  const updateLabel = { checking: "Checking…", update: "Update available →", uptodate: "✓ Up to date", error: "Check failed — retry" };
   return (
     <ModalBackdrop onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -77,6 +86,7 @@ function ChangelogDialog({ onClose }) {
           <VelaIcon size={22} />
           <span style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: T.accent, letterSpacing: 2 }}>VELA</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>v{VELA_VERSION}</span>
+          {hasUpdater && <button onClick={checkUpdates} disabled={updateState === "checking"} style={S.btn({ fontSize: 9, padding: "2px 8px", color: updateState === "uptodate" ? T.green : updateState === "update" ? T.accent : T.textMuted, borderColor: (updateState === "update" ? T.accent : T.border) + "80", cursor: updateState === "checking" ? "wait" : "pointer" })}>{updateLabel[updateState] || "Check for updates"}</button>}
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -555,6 +565,21 @@ function AgentSettingsDialog({ onClose }) {
   const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
   const [trusted, setTrusted] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Re-scan for an installed AI agent. The old handler fired a fire-and-forget
+  // refresh with no feedback and a muted style, so it read as un-clickable /
+  // doing nothing (CR). Now it awaits detection, shows progress, and refreshes.
+  async function rescanAgents() {
+    if (scanning) return;
+    setScanning(true);
+    try { await window.__velaAgents?.refresh?.(); }
+    catch {}
+    finally {
+      setScanning(false);
+      if (typeof window !== "undefined") setInfo(window.__velaAgentInfo || null);
+    }
+  }
 
   async function loadTrusted() {
     if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
@@ -590,7 +615,7 @@ function AgentSettingsDialog({ onClose }) {
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Active agent</span>
-          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+          <button onClick={rescanAgents} disabled={scanning} style={S.btn({ fontSize: 10, padding: "3px 10px", color: scanning ? T.textDim : T.accent, borderColor: T.accent + "80", cursor: scanning ? "wait" : "pointer", opacity: scanning ? 0.7 : 1 })}>{scanning ? "Scanning…" : "↻ Re-scan"}</button>
         </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
