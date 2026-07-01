@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,061 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.2MB, 15,810 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 159 UI tests in 25 suites |
+| `part-uitest.jsx` | 159 UI tests in 26 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
 
@@ -63,12 +63,12 @@ Virtual canvas: **960×540px** (16:9).
 }
 ```
 
-### Block Types (21)
+### Block Types (27)
 Text: heading, text, quote, badge, callout
-Lists: bullets, icon-row, tag-group
-Data: grid, table, metric, progress, timeline
-Flow: flow (gates & loops), steps
-Media: image, code, svg
+Lists: bullets, icon-row, tag-group, checklist
+Data: grid, table, metric, progress, timeline, number-row, matrix, comparison
+Flow: flow (gates & loops), steps, funnel, cycle
+Media: image, code, svg, icon
 Layout: spacer, divider
 
 ## CLI — `vela.py`
@@ -134,7 +134,7 @@ examples/              ← vela-demo.vela, themed example decks
 decks/                 ← working deck files (gitignored)
 docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
 evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
-tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
+tests/                 ← test_vela.py (349 tests), test_serve.py (88 tests)
 ```
 
 ## AI Features (Vera Engine)
