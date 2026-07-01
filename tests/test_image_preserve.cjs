@@ -21,6 +21,8 @@ eval(extract("restoreImageSrcs"));
 eval(extract("preserveImages"));
 // eslint-disable-next-line no-eval
 eval(extract("stripImageSrcs"));
+// eslint-disable-next-line no-eval
+eval(extract("restoreKeepOriginal"));
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };
@@ -98,6 +100,28 @@ const IMG = { type: "image", src: "data:image/png;base64," + "A".repeat(300), ca
   const out = preserveImages([{ type: "heading", text: "H" }], origL); // model dropped the image
   if (out.filter((b) => b.type === "image").length === 1 && out.find((b) => b.type === "image").src === IMG.src) ok("preserveImages guards L/R arrays (dropped image re-appended)");
   else bad("preserveImages L/R guard", JSON.stringify(out.map((b) => b.type)));
+}
+
+// 9. Grid-nested image: an edit that echoes back the "keep-original" placeholder
+//    inside a grid cell must be restored (else it's dropped on sanitize).
+{
+  const orig = [{ type: "grid", items: [{ blocks: [{ type: "image", src: IMG.src, caption: "cell" }] }, { blocks: [{ type: "text", text: "x" }] }] }];
+  // simulate the model echoing the grid back with the placeholder src
+  const edited = JSON.parse(JSON.stringify(orig));
+  edited[0].items[0].blocks[0].src = "keep-original";
+  edited[0].items[0].blocks[0].caption = "new caption";
+  restoreKeepOriginal(edited, orig);
+  const cellImg = edited[0].items[0].blocks[0];
+  if (cellImg.src === IMG.src && cellImg.caption === "new caption") ok("grid-cell image src restored from keep-original (edit kept)");
+  else bad("grid-cell image restore", JSON.stringify(cellImg).slice(0, 60));
+}
+
+// 10. restoreKeepOriginal leaves a genuine (non-placeholder) src untouched.
+{
+  const orig = [{ type: "image", src: IMG.src }];
+  const edited = [{ type: "image", src: "data:image/png;base64," + "Z".repeat(300) }];
+  restoreKeepOriginal(edited, orig);
+  if (edited[0].src.includes("Z")) ok("restoreKeepOriginal leaves real (non-placeholder) src alone"); else bad("restoreKeepOriginal clobbered real src");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
