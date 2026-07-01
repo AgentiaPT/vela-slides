@@ -3104,7 +3104,12 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
 
 function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
-  const blocks = slide.blocks || [];
+  // Hidden elements (CR: hide any element). In presentation they are removed
+  // entirely — no render, no layout — so a slide can carry a title that only
+  // serves the left TOC. In the editor they stay visible (dimmed) so they can be
+  // toggled back on.
+  const _vis = (arr) => presenting ? (arr || []).filter((b) => !(b && b.hidden)) : (arr || []);
+  const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
   const bgStyle = {};
@@ -3193,8 +3198,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
   const isSplit = layout === "image-right" || layout === "image-left";
-  const colsL = isCols ? (slide.L || []) : [];
-  const colsR = isCols ? (slide.R || []) : [];
+  const colsL = isCols ? _vis(slide.L) : [];
+  const colsR = isCols ? _vis(slide.R) : [];
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -3202,17 +3207,19 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
+    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
+        <button onClick={(e) => { e.stopPropagation(); handleBlockChange(i, { hidden: b.hidden ? undefined : true }); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.hidden ? st.accent : T.bgPanel, border: `1px solid ${b.hidden ? st.accent : T.border}`, color: b.hidden ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.hidden ? "Hidden in presentation — click to show" : "Hide this element in presentation (stays in editor)"}>{b.hidden ? "🙈" : "👁"}</button>
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
@@ -5181,10 +5188,11 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane (CR: quick-jump). Works even while
+      // the search box is focused so the same chord closes it again.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -5198,10 +5206,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
+        // Hidden slides are not part of the presentation, so keep them out of the
+        // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
           const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, visible: !q || title.toLowerCase().includes(q) };
-        });
+          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
+        }).filter((s) => !s.hidden);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
       }
@@ -5231,6 +5241,17 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
       dispatch({ type: "SELECT", id: moduleId });
       dispatch({ type: "SET_SLIDE_INDEX", index: slideIdx });
     }
+    // Jumping always closes the TOC/search pane (CR: quick-jump then dismiss).
+    setPinned(false);
+    setOpen(false);
+  };
+
+  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
+  const jumpFirstMatch = () => {
+    for (const g of grouped) {
+      const first = g.slides.find((s) => s.visible);
+      if (first) { handleJump(g.id, first.slideIdx); return; }
+    }
   };
 
   return (
@@ -5255,7 +5276,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>⌃E</span>
         </div>
 
         {/* Search */}
@@ -5266,10 +5287,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
+              // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
+              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -5333,7 +5357,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or ⌃E</span>
         </div>
       </div>
     </>
@@ -6063,6 +6087,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
+  // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
+  // presented). Self-contained: only acts when fullscreen AND the current slide
+  // is hidden, so decks with no hidden slides are completely unaffected. Skips in
+  // the direction of travel, falling back to the other direction at the ends.
+  const lastPresIdxRef = useRef(slideIndex);
+  useEffect(() => {
+    if (!fullscreen) { lastPresIdxRef.current = slideIndex; return; }
+    const cur = presSlides[slideIndex];
+    if (cur && cur.hidden) {
+      const goingBack = slideIndex < lastPresIdxRef.current;
+      const fwd = () => { for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) return i; return -1; };
+      const back = () => { for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) return i; return -1; };
+      let n = goingBack ? back() : fwd();
+      if (n < 0) n = goingBack ? fwd() : back();
+      if (n >= 0 && n !== slideIndex) { dispatch({ type: "SET_SLIDE_INDEX", index: n }); return; }
+    }
+    lastPresIdxRef.current = slideIndex;
+  }, [fullscreen, slideIndex, presSlides]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -14131,6 +14173,16 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
 
 
 // Helper to collect all slides flat from editor lanes
+// Strip hidden blocks from a slide so exports match the presented output.
+function stripHiddenBlocks(slide) {
+  if (!slide || typeof slide !== "object") return slide;
+  const hasHidden = ["blocks", "L", "R"].some((k) => Array.isArray(slide[k]) && slide[k].some((b) => b && b.hidden));
+  if (!hasHidden) return slide;
+  const out = { ...slide };
+  for (const k of ["blocks", "L", "R"]) if (Array.isArray(out[k])) out[k] = out[k].filter((b) => !(b && b.hidden));
+  return out;
+}
+
 function collectAllSlides(lanes, branding) {
   const all = [];
   for (const lane of (lanes || [])) {
@@ -14139,7 +14191,10 @@ function collectAllSlides(lanes, branding) {
       // auto-generated title slide before its content slides.
       if (item.presentCard) all.push(buildTitleCardSlide(item, lane, branding));
       for (const slide of (item.slides || [])) {
-        all.push(slide);
+        // Hidden slides/elements are not part of the presentation, so keep them
+        // out of exports too (CR: hide/unhide).
+        if (slide && slide.hidden) continue;
+        all.push(stripHiddenBlocks(slide));
       }
     }
   }
@@ -14304,11 +14359,12 @@ function deckToMarkdown(state, opts = {}) {
       ln(`## ${item.title || "Untitled Module"}`);
 
       for (const slide of (item.slides || [])) {
+        if (slide && slide.hidden) continue; // hidden slides are not exported
         slideNum++;
         blank();
 
         // Speaker notes as metadata
-        const blocks = slide.blocks || [];
+        const blocks = (slide.blocks || []).filter((b) => !(b && b.hidden));
         if (!blocks.length) continue;
 
         for (const b of blocks) blockToMd(b);
@@ -14669,7 +14725,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
-      ["T", "Toggle TOC panel (fullscreen)"],
+      ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

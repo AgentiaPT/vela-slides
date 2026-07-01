@@ -392,10 +392,11 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane (CR: quick-jump). Works even while
+      // the search box is focused so the same chord closes it again.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -409,10 +410,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     for (const lane of (lanes || [])) {
       if (lane.collapsed) continue;
       for (const item of lane.items) {
+        // Hidden slides are not part of the presentation, so keep them out of the
+        // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
           const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, visible: !q || title.toLowerCase().includes(q) };
-        });
+          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
+        }).filter((s) => !s.hidden);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
       }
@@ -442,6 +445,17 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
       dispatch({ type: "SELECT", id: moduleId });
       dispatch({ type: "SET_SLIDE_INDEX", index: slideIdx });
     }
+    // Jumping always closes the TOC/search pane (CR: quick-jump then dismiss).
+    setPinned(false);
+    setOpen(false);
+  };
+
+  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
+  const jumpFirstMatch = () => {
+    for (const g of grouped) {
+      const first = g.slides.find((s) => s.visible);
+      if (first) { handleJump(g.id, first.slideIdx); return; }
+    }
   };
 
   return (
@@ -466,7 +480,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>⌃E</span>
         </div>
 
         {/* Search */}
@@ -477,10 +491,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
+              // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
+              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -544,7 +561,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or ⌃E</span>
         </div>
       </div>
     </>
@@ -1274,6 +1291,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
+  // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
+  // presented). Self-contained: only acts when fullscreen AND the current slide
+  // is hidden, so decks with no hidden slides are completely unaffected. Skips in
+  // the direction of travel, falling back to the other direction at the ends.
+  const lastPresIdxRef = useRef(slideIndex);
+  useEffect(() => {
+    if (!fullscreen) { lastPresIdxRef.current = slideIndex; return; }
+    const cur = presSlides[slideIndex];
+    if (cur && cur.hidden) {
+      const goingBack = slideIndex < lastPresIdxRef.current;
+      const fwd = () => { for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) return i; return -1; };
+      const back = () => { for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) return i; return -1; };
+      let n = goingBack ? back() : fwd();
+      if (n < 0) n = goingBack ? fwd() : back();
+      if (n >= 0 && n !== slideIndex) { dispatch({ type: "SET_SLIDE_INDEX", index: n }); return; }
+    }
+    lastPresIdxRef.current = slideIndex;
+  }, [fullscreen, slideIndex, presSlides]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
