@@ -8,10 +8,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProviderAllowlist(t *testing.T) {
@@ -216,5 +220,151 @@ func TestServerAuthAndRouting(t *testing.T) {
 	}
 	if !strings.Contains(optResp.Header.Get("Access-Control-Allow-Headers"), "x-vela-token") {
 		t.Fatal("preflight must allow x-vela-token header")
+	}
+}
+
+// ── detect() — provider availability from the (mocked) runner ──────────────
+
+func TestDetectProvider(t *testing.T) {
+	orig := runner
+	defer func() { runner = orig }()
+
+	runner = func(ctx context.Context, bin string, args []string, stdin string) (string, error) {
+		if bin == "claude" {
+			return "1.2.3", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	avail := detect(context.Background(), "claude-code")
+	if avail["available"] != true || avail["version"] != "1.2.3" || avail["label"] != "Claude Code" {
+		t.Fatalf("expected claude-code available with parsed version, got %+v", avail)
+	}
+
+	unavail := detect(context.Background(), "copilot-cli")
+	if unavail["available"] != false || unavail["version"] != nil {
+		t.Fatalf("expected copilot-cli unavailable, got %+v", unavail)
+	}
+
+	unknown := detect(context.Background(), "bash")
+	if unknown["available"] != false || unknown["version"] != nil {
+		t.Fatalf("expected unknown provider unavailable, got %+v", unknown)
+	}
+	if _, hasID := unknown["id"]; hasID {
+		t.Fatal("unknown provider result must omit id/label")
+	}
+}
+
+// ── execAgent — the one place a real process is created ────────────────────
+
+func TestExecAgentBinaryNotFound(t *testing.T) {
+	_, err := execAgent(context.Background(), "vela-agent-test-nonexistent-binary-xyz", nil, "")
+	if err == nil || !strings.Contains(err.Error(), "agent binary not found") {
+		t.Fatalf("expected 'agent binary not found' error, got %v", err)
+	}
+}
+
+func TestExecAgentRealSubprocess(t *testing.T) {
+	// "go" is guaranteed on PATH wherever `go test` runs — exercises the real
+	// spawn path, not just the LookPath check.
+	out, err := execAgent(context.Background(), "go", []string{"version"}, "")
+	if err != nil {
+		t.Fatalf("execAgent(go version) failed: %v", err)
+	}
+	if !strings.Contains(out, "go version") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestExecAgentTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(2 * time.Millisecond) // guarantee the deadline has passed
+	_, err := execAgent(ctx, "go", []string{"version"}, "")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
+// ── writeJSON ────────────────────────────────────────────────────────────
+
+func TestWriteJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeJSON(rec, http.StatusTeapot, map[string]interface{}{"ok": true})
+
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTeapot)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("bad json body: %v", err)
+	}
+	if body["ok"] != true {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+// ── velaDir ──────────────────────────────────────────────────────────────
+
+func TestVelaDir(t *testing.T) {
+	dir, err := velaDir()
+	if err != nil {
+		t.Fatalf("velaDir failed: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".vela"); dir != want {
+		t.Fatalf("velaDir() = %q, want %q", dir, want)
+	}
+}
+
+// ── readNlPort — stdin handshake parsing ────────────────────────────────────
+
+func withStdin(t *testing.T, write func(w *os.File)) {
+	t.Helper()
+	origStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+	go write(w)
+}
+
+func TestReadNlPortValidHandshake(t *testing.T) {
+	withStdin(t, func(w *os.File) {
+		_, _ = w.WriteString(`{"nlPort":57784}` + "\n")
+		_ = w.Close()
+	})
+
+	port, stdinClosed := readNlPort(t.TempDir())
+	if port != "57784" {
+		t.Fatalf("readNlPort port = %q, want 57784", port)
+	}
+	select {
+	case <-stdinClosed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stdinClosed channel never closed after pipe EOF")
+	}
+}
+
+func TestReadNlPortMalformedHandshake(t *testing.T) {
+	withStdin(t, func(w *os.File) {
+		_, _ = w.WriteString("not json\n")
+		_ = w.Close()
+	})
+
+	port, _ := readNlPort(t.TempDir())
+	if port != "" {
+		t.Fatalf("readNlPort port = %q, want empty for a malformed handshake line", port)
 	}
 }
