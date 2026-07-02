@@ -26,7 +26,23 @@ function innerReducer(state, a) {
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
-    case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+    case "ADD_ITEM": {
+      const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state;
+      const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid);
+      const newItem = { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() };
+      return { ...state, lanes: state.lanes.map((l) => {
+        if (l.id !== a.laneId) return l;
+        // Insert at a position when afterId/beforeId is given (CR: add section
+        // anywhere); otherwise append. Renumber `order` so the flat sorted list
+        // stays consistent.
+        const sorted = [...l.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999));
+        let insertIdx = sorted.length;
+        if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; }
+        else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; }
+        sorted.splice(insertIdx, 0, newItem);
+        return { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) };
+      }), selectedId: a.select ? nid : state.selectedId, slideIndex: a.select ? 0 : state.slideIndex };
+    }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;

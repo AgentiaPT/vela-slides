@@ -186,6 +186,46 @@ const VELA_TESTS = [
     return r.lanes[0].items[0].slides[0]._t === "b";
   }},
 
+  // ── Sprint 7-1: section DnD / add-menu / empty-section drop ──
+  { name: "ADD_ITEM appends by default", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "a", order: 1, slides: [] }, { id: "b", order: 2, slides: [] }] }] };
+    const r = innerReducer(s, { type: "ADD_ITEM", laneId: "l1", title: "C" });
+    const items = r.lanes[0].items;
+    return items.length === 3 && items[items.length - 1].title === "C";
+  }},
+  { name: "ADD_ITEM beforeId inserts at position", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "a", order: 1, slides: [] }, { id: "b", order: 2, slides: [] }] }] };
+    const r = innerReducer(s, { type: "ADD_ITEM", laneId: "l1", title: "X", beforeId: "b" });
+    const items = [...r.lanes[0].items].sort((p, q) => p.order - q.order);
+    return items[1].title === "X" && items[2].id === "b" && items.every((it, i) => it.order === i + 1);
+  }},
+  { name: "ADD_ITEM afterId + select inserts after and selects", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "a", order: 1, slides: [] }, { id: "b", order: 2, slides: [] }] }], selectedId: null };
+    const r = innerReducer(s, { type: "ADD_ITEM", laneId: "l1", title: "Y", afterId: "a", select: true });
+    const items = [...r.lanes[0].items].sort((p, q) => p.order - q.order);
+    return items[1].title === "Y" && r.selectedId === items[1].id;
+  }},
+  { name: "DRAG_REORDER moves section before target", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "a", order: 1, slides: [] }, { id: "b", order: 2, slides: [] }, { id: "c", order: 3, slides: [] }] }] };
+    const r = innerReducer(s, { type: "DRAG_REORDER", id: "c", targetLaneId: "l1", beforeId: "a", afterId: null });
+    const order = [...r.lanes[0].items].sort((p, q) => p.order - q.order).map((i) => i.id);
+    return order.join(",") === "c,a,b";
+  }},
+  { name: "MOVE_SLIDE_TO_MODULE drops slide into empty section", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "src", slides: [{ blocks: [{ type: "heading", text: "S1" }] }] }, { id: "empty", slides: [] }] }] };
+    const r = innerReducer(s, { type: "MOVE_SLIDE_TO_MODULE", fromId: "src", toId: "empty", index: 0, toIndex: 0 });
+    const items = r.lanes[0].items;
+    return items[0].slides.length === 0 && items[1].slides.length === 1 && r.selectedId === "empty";
+  }},
+  { name: "buildBlankSlide reuses styling, blank blocks", fn: () => {
+    const blank = buildBlankSlide({ bg: "#123456", accent: "#abcdef", blocks: [{ type: "heading", text: "old" }], comments: [{ id: "c" }] });
+    return blank.bg === "#123456" && blank.accent === "#abcdef" && Array.isArray(blank.blocks) && blank.blocks.length === 0 && !blank.comments;
+  }},
+  { name: "buildBlankSlide handles no previous slide", fn: () => {
+    const blank = buildBlankSlide(null);
+    return Array.isArray(blank.blocks) && blank.blocks.length === 0;
+  }},
+
   // ── v10: Reducer — Teacher Mode & veraMode ──
   { name: "Reducer init has veraMode=editor", fn: () => init.veraMode === "editor" },
   { name: "Reducer init has teacherHistory={}", fn: () => typeof init.teacherHistory === "object" && Object.keys(init.teacherHistory).length === 0 },
