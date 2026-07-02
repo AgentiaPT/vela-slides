@@ -311,7 +311,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
-      ["T", "Toggle TOC panel (fullscreen)"],
+      ["Ctrl-E", "Toggle TOC / slide search (fullscreen); Enter jumps to first match"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

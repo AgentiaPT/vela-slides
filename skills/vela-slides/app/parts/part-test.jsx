@@ -309,6 +309,11 @@ const VELA_TESTS = [
 
   // ── Feature: Delete key ──
   { name: "Delete key handler exists", fn: () => SlidePanel.toString().includes("Delete") },
+
+  // ── CR16: Presenter TOC Ctrl-E ──
+  { name: "PresenterTOC toggles on Ctrl-E (ctrl/meta + e)", fn: () => { const s = PresenterTOC.toString(); return s.includes("ctrlKey") && s.includes("metaKey"); } },
+  { name: "PresenterTOC Enter jumps to first match + closes", fn: () => { const s = PresenterTOC.toString(); return s.includes("handleJump") && s.includes("Enter") && s.includes("setOpen"); } },
+  { name: "PresenterTOC blurs search on close (re-open works)", fn: () => PresenterTOC.toString().includes("blur(") },
 ];
 
 function VelaBatteryTest() {

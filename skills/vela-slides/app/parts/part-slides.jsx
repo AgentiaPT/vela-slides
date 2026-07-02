@@ -388,14 +388,20 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
-  useEffect(() => { if (!open) setSearch(""); }, [open]);
+  // On close, clear the query AND blur the (now hidden) search box — otherwise
+  // focus stays trapped in it and the next Ctrl-E hits the input's own handler
+  // (which only closes) instead of the window toggle, so it can't reopen.
+  useEffect(() => { if (!open) { setSearch(""); searchRef.current?.blur(); } }, [open]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane. When the search box is focused it
+      // handles Ctrl-E itself (it stops propagation), so this covers everywhere
+      // else in presentation mode.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
+        if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -466,7 +472,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Ctrl-E</span>
         </div>
 
         {/* Search */}
@@ -478,9 +484,15 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) { e.preventDefault(); setOpen(false); setPinned(false); return; }
+              if (e.key === "Enter" && search.trim()) {
+                e.preventDefault();
+                // Jump to the first slide matching the search, then close.
+                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { handleJump(g.id, first.slideIdx); setOpen(false); setPinned(false); return; } }
+              }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Ctrl-E to toggle, Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -513,7 +525,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
                   <div
                     key={slideIdx}
                     ref={active ? activeRef : null}
-                    onClick={() => handleJump(group.id, slideIdx)}
+                    onClick={() => { handleJump(group.id, slideIdx); setOpen(false); setPinned(false); }}
                     style={{
                       padding: "6px 16px 6px 24px", cursor: "pointer",
                       display: "flex", alignItems: "baseline", gap: 10,
@@ -544,7 +556,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or Ctrl-E</span>
         </div>
       </div>
     </>

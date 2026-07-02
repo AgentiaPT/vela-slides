@@ -90,7 +90,7 @@ const velaClipboardReadSlide = async () => {
 
 const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
-  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. More to follow in this release." },
+  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. The presenter TOC/slide-search pane now toggles with Ctrl-E (was T): opening focuses the search box so you can type immediately, pressing Enter jumps to the first matching slide and closes the pane, clicking a result also closes it, and Ctrl-E toggles it shut again. More to follow in this release." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -5221,14 +5221,20 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
-  useEffect(() => { if (!open) setSearch(""); }, [open]);
+  // On close, clear the query AND blur the (now hidden) search box — otherwise
+  // focus stays trapped in it and the next Ctrl-E hits the input's own handler
+  // (which only closes) instead of the window toggle, so it can't reopen.
+  useEffect(() => { if (!open) { setSearch(""); searchRef.current?.blur(); } }, [open]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+      // Ctrl/Cmd+E toggles the TOC/search pane. When the search box is focused it
+      // handles Ctrl-E itself (it stops propagation), so this covers everywhere
+      // else in presentation mode.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
+        if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
         e.preventDefault();
-        setOpen((v) => { if (v) { setPinned(false); } else { setPinned(true); } return !v; });
+        setOpen((v) => { setPinned(!v); return !v; });
       }
     };
     window.addEventListener("keydown", handler);
@@ -5299,7 +5305,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${T.border}` }}>
           <Presentation size={14} color={T.accent} />
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.06em", textTransform: "uppercase", flex: 1 }}>Slides</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Ctrl-E</span>
         </div>
 
         {/* Search */}
@@ -5311,9 +5317,15 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation();
+              if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) { e.preventDefault(); setOpen(false); setPinned(false); return; }
+              if (e.key === "Enter" && search.trim()) {
+                e.preventDefault();
+                // Jump to the first slide matching the search, then close.
+                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { handleJump(g.id, first.slideIdx); setOpen(false); setPinned(false); return; } }
+              }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
-            placeholder="Search slides..."
+            placeholder="Search slides… (Ctrl-E to toggle, Enter jumps)"
             style={{
               width: "100%", padding: "6px 10px 6px 30px", fontSize: 13, fontFamily: FONT.body,
               background: T.bgInput, border: `1px solid ${T.border}`,
@@ -5346,7 +5358,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
                   <div
                     key={slideIdx}
                     ref={active ? activeRef : null}
-                    onClick={() => handleJump(group.id, slideIdx)}
+                    onClick={() => { handleJump(group.id, slideIdx); setOpen(false); setPinned(false); }}
                     style={{
                       padding: "6px 16px 6px 24px", cursor: "pointer",
                       display: "flex", alignItems: "baseline", gap: 10,
@@ -5377,7 +5389,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or T</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or Ctrl-E</span>
         </div>
       </div>
     </>
@@ -8352,6 +8364,11 @@ const VELA_TESTS = [
 
   // ── Feature: Delete key ──
   { name: "Delete key handler exists", fn: () => SlidePanel.toString().includes("Delete") },
+
+  // ── CR16: Presenter TOC Ctrl-E ──
+  { name: "PresenterTOC toggles on Ctrl-E (ctrl/meta + e)", fn: () => { const s = PresenterTOC.toString(); return s.includes("ctrlKey") && s.includes("metaKey"); } },
+  { name: "PresenterTOC Enter jumps to first match + closes", fn: () => { const s = PresenterTOC.toString(); return s.includes("handleJump") && s.includes("Enter") && s.includes("setOpen"); } },
+  { name: "PresenterTOC blurs search on close (re-open works)", fn: () => PresenterTOC.toString().includes("blur(") },
 ];
 
 function VelaBatteryTest() {
@@ -14800,7 +14817,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
-      ["T", "Toggle TOC panel (fullscreen)"],
+      ["Ctrl-E", "Toggle TOC / slide search (fullscreen); Enter jumps to first match"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
