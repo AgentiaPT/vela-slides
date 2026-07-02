@@ -34,6 +34,18 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// True only in the hosted Claude.ai artifact runtime, where the artifact proxy
+// meters token usage. The desktop shell (window.__velaAgentReady set) and the
+// local dev server (VELA_LOCAL_MODE) route AI through a local CLI/proxy that
+// doesn't report per-call cost, so the token/cost stats are meaningless there
+// and are hidden. (CR: token/cost stats only in Claude artifacts mode.)
+const velaArtifactMode = () => {
+  if (typeof window === "undefined") return false;
+  if (VELA_LOCAL_MODE) return false;
+  if (window.__velaAgentReady != null) return false;
+  return window.self !== window.top;
+};
+
 // React hook: re-renders the caller when AI availability changes. velaAIAvailable()
 // is a plain read of window.__velaAgentReady, which the Neutralino shell flips
 // asynchronously once agent detection finishes and announces via a
@@ -90,7 +102,7 @@ const velaClipboardReadSlide = async () => {
 
 const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
-  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. The presenter TOC/slide-search pane now toggles with Ctrl-E (was T): opening focuses the search box so you can type immediately, pressing Enter jumps to the first matching slide and closes the pane, clicking a result also closes it, and Ctrl-E toggles it shut again. More to follow in this release." },
+  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. The presenter TOC/slide-search pane now toggles with Ctrl-E (was T): opening focuses the search box so you can type immediately, pressing Enter jumps to the first matching slide and closes the pane, clicking a result also closes it, and Ctrl-E toggles it shut again. Dialogs now have a proper default action: Enter confirms/closes and the primary button takes focus with a visible ring (Escape still cancels). The About/version dialog gains a Check for updates action (desktop, reusing the existing update checker). The token/cost badge is now shown only in the hosted Claude.ai artifact runtime, where usage is actually metered — it is hidden in the desktop and local-server runtimes. Deck export is now labelled Export Vela and writes a .vela file (the same envelope; import still accepts .json and .vela)." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -1209,6 +1221,7 @@ const getCss = () => `
 .slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
+[data-default-btn]:focus-visible,[data-default-btn]:focus{outline:2px solid ${T.accent};outline-offset:2px;box-shadow:0 0 0 4px ${T.accent}33}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} .fade-in{animation:fadeIn .3s ease-out}
 @keyframes navToastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
@@ -8067,6 +8080,9 @@ const VELA_TESTS = [
   { name: "sumDurations works", fn: () => sumDurations([{ duration: 60 }, { duration: 30 }]) === 90 && sumDurations([]) === 0 },
   { name: "fmtMins rounds to whole minutes (no seconds)", fn: () => fmtMins(718) === "12m" && !fmtMins(718).includes("s") && fmtMins(0) === "" && fmtMins(30) === "1m" && fmtMins(3720) === "1h 2m" },
   { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
+  { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
+  { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
+  { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
   { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
     const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
     const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });
@@ -14506,18 +14522,34 @@ function exportMarkdown(state, opts = {}) {
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModalBackdrop({ onClose, extraKeys, children }) {
+function ModalBackdrop({ onClose, extraKeys, defaultAction, children }) {
+  const boxRef = useRef(null);
   useEffect(() => {
     const h = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if (e.key === "Enter" && defaultAction) {
+        // Enter confirms the default action, but only when focus isn't in a
+        // field or on another interactive control that handles Enter itself
+        // (text inputs submit their own form; a focused button/link fires its
+        // native click). This avoids hijacking or double-firing.
+        const tag = document.activeElement?.tagName;
+        if (["TEXTAREA", "INPUT", "BUTTON", "A", "SELECT"].includes(tag)) return;
+        e.preventDefault(); defaultAction(); return;
+      }
       if (extraKeys?.(e)) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose, extraKeys]);
+  }, [onClose, extraKeys, defaultAction]);
+  // Give the primary button focus (and a visible ring) so Enter/Space activate
+  // it natively and it reads as the default. Dialogs mark it with data-default-btn.
+  useEffect(() => {
+    const btn = boxRef.current?.querySelector("[data-default-btn]");
+    if (btn) { const t = setTimeout(() => btn.focus(), 30); return () => clearTimeout(t); }
+  }, []);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
+      <div ref={boxRef} onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
     </div>
@@ -14527,15 +14559,36 @@ function ModalBackdrop({ onClose, extraKeys, children }) {
 // ━━━ Changelog Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChangelogDialog({ onClose }) {
   const [showDeps, setShowDeps] = React.useState(false);
+  const [updateMsg, setUpdateMsg] = React.useState(null);
+  // "Check for updates" reuses the desktop update checker, exposed as a window
+  // bridge by the Neutralino shell. In artifact / local-server runtimes there is
+  // no update mechanism, so the button is only shown when the bridge exists.
+  const canCheckUpdates = typeof window !== "undefined" && typeof window.__velaCheckForUpdate === "function";
+  const checkUpdates = () => {
+    setUpdateMsg("Checking…");
+    try {
+      const r = window.__velaCheckForUpdate();
+      Promise.resolve(r).then((res) => {
+        if (res && res.updateAvailable) setUpdateMsg(`Update available: v${res.latest}`);
+        else if (res && res.latest) setUpdateMsg(`Up to date (v${res.latest})`);
+        else setUpdateMsg("Checked — see notifier");
+      }).catch(() => setUpdateMsg("Check failed"));
+    } catch { setUpdateMsg("Check failed"); }
+  };
   return (
-    <ModalBackdrop onClose={onClose}>
+    <ModalBackdrop onClose={onClose} defaultAction={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <VelaIcon size={22} />
           <span style={{ fontFamily: FONT.mono, fontSize: 16, fontWeight: 700, color: T.accent, letterSpacing: 2 }}>VELA</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>v{VELA_VERSION}</span>
         </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {canCheckUpdates && (updateMsg
+            ? <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.textMuted }}>{updateMsg}</span>
+            : <button onClick={checkUpdates} style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, background: T.accent + "14", border: `1px solid ${T.accent}55`, borderRadius: 5, padding: "3px 9px", cursor: "pointer" }} title="Check for a newer Vela release">Check for updates</button>)}
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+        </div>
       </div>
       <div style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: T.textDim, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Recent Changes</div>
       {VELA_CHANGELOG.slice(0, 3).map((c, i) => (
@@ -14842,7 +14895,7 @@ function ShortcutHelp({ onClose }) {
     ]},
   ];
   return (
-    <ModalBackdrop onClose={onClose} extraKeys={_questionKey}>
+    <ModalBackdrop onClose={onClose} defaultAction={onClose} extraKeys={_questionKey}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 20 }}>⌨️</span>
@@ -15743,7 +15796,7 @@ export default function App() {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${(title.replace(/[\u2014\u2013]/g, "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_").replace(/^[-_.]+|[-_.]+$/g, "").slice(0, 80)) || "vela-deck"}-${new Date().toISOString().slice(0, 10)}.vela`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     takeSnapshot(state);
@@ -15903,7 +15956,7 @@ export default function App() {
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
-                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export JSON {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
+                {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
@@ -15912,8 +15965,9 @@ export default function App() {
               </div>
             </>}
           </div>
+          {velaArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
+          <CostBadge /></>}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <CostBadge />
           <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
@@ -15952,7 +16006,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
-            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export JSON</button>}
+            {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
             <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileTab("chat"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🤖"} Vera</button>

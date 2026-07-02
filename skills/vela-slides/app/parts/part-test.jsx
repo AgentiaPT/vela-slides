@@ -12,6 +12,9 @@ const VELA_TESTS = [
   { name: "sumDurations works", fn: () => sumDurations([{ duration: 60 }, { duration: 30 }]) === 90 && sumDurations([]) === 0 },
   { name: "fmtMins rounds to whole minutes (no seconds)", fn: () => fmtMins(718) === "12m" && !fmtMins(718).includes("s") && fmtMins(0) === "" && fmtMins(30) === "1m" && fmtMins(3720) === "1h 2m" },
   { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
+  { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
+  { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
+  { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
   { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
     const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
     const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });
