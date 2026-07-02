@@ -12,7 +12,11 @@
 // read currentTime to verify it afterwards. Do NOT frame-check by re-opening the video.
 // The screenshots this script takes *while recording* are the real frame-check.
 
-import { chromium } from "playwright";
+// playwright is this skill's ONLY non-OS dependency (driver only — browsers are already
+// at /opt/pw-browsers). Do NOT auto-install: if it's missing, ask the user to approve it.
+let chromium;
+try { ({ chromium } = await import("playwright")); }
+catch { console.error("hyper-sprint: needs the Node 'playwright' package (driver only; browsers already present).\nThis is the skill's only non-OS dependency — new packages require user approval.\nAsk the user to approve:  npm i playwright   then re-run."); process.exit(3); }
 import { mkdirSync, readdirSync } from "fs";
 import { resolve, join } from "path";
 

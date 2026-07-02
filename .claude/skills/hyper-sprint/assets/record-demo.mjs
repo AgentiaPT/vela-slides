@@ -13,7 +13,11 @@
 // `shot(label)` saves out/shots/<clip>-<label>.png — inspect these to confirm the
 // feature is actually on screen before shipping (green tests are not proof of the demo).
 
-import { chromium } from "playwright";
+// playwright is this skill's ONLY non-OS dependency (driver only — the browsers are
+// already at /opt/pw-browsers). Do NOT auto-install: if it's missing, ask the user.
+let chromium;
+try { ({ chromium } = await import("playwright")); }
+catch { console.error("hyper-sprint: needs the Node 'playwright' package (driver only; browsers already present).\nThis is the skill's only non-OS dependency — new packages require user approval.\nAsk the user to approve:  npm i playwright   then re-run."); process.exit(3); }
 import { mkdirSync, copyFileSync, existsSync, readdirSync } from "fs";
 import { dirname, resolve, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";

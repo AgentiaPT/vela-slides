@@ -18,13 +18,12 @@ re-paying that cost.
 
 ## Operating principles (the economy rules)
 
-1. **Readiness before features (hard gate).** Before writing any code, confirm the
-   loop can *build, run, and drive the app* end-to-end on a throwaway smoke case.
-   Most wasted time comes from discovering harness quirks (blocked CDNs, headless
-   driver flags, how to enter/exit a mode, offscreen duplicate DOM, asset-size
-   truncation) *during* verification. Find them once, up front, and write them to
-   `NOTES.md`. If the environment can't run the app, say so now and agree on the
-   fallback (unit-only + manual checklist) — don't discover it at the demo.
+1. **Readiness before features (hard gate).** Before writing code, confirm the loop can
+   *build, run, and drive the app* end-to-end on a throwaway smoke case. Most wasted time
+   comes from discovering harness quirks (blocked CDNs, driver flags, how to enter/exit a
+   mode, offscreen duplicate DOM, asset truncation) *during* verification — find them
+   once, up front, into `NOTES.md`. If the app can't run here, say so now and agree the
+   fallback (unit-only + manual checklist), don't discover it at the demo.
 2. **Recon in parallel, once.** Fan out read-only sub-agents (one per subsystem) to
    return **line-anchored edit maps** (`file:line` + what changes). Persist them to
    `NOTES.md`. The main loop should edit from notes, not re-open the same files —
@@ -32,11 +31,10 @@ re-paying that cost.
 3. **Cluster by file-locality, not by ticket number.** Group changes that touch the
    same files into one work item so edits don't collide and each item is
    independently testable. Track them with the task tool; keep the list live.
-4. **Test-as-you-go, never batch-at-end.** Each change lands with its unit and/or
-   e2e test in the *same* step, then the full suite runs before moving on. A fix
-   with no test is not done. Re-run the whole suite after **every** fix — a fix can
-   regress the thing it fixed (this happened: an image-safety fix itself dropped
-   data). Keep total test wall-time roughly flat; prefer fast headless checks.
+4. **Test-as-you-go, never batch-at-end.** Each change lands with its unit and/or e2e
+   test in the *same* step; the full suite runs before moving on. A fix with no test is
+   not done. Re-run the whole suite after **every** fix — a fix can regress the thing it
+   fixed (it happened here). Keep test wall-time roughly flat; prefer fast headless checks.
 5. **Bug-hunt with diverse lenses, then converge — don't re-run "final" forever.**
    Two rounds of parallel adversarial hunters (each a *different* lens:
    correctness, edge/boundary, state/undo, data-loss, security) → dedupe → fix with
@@ -90,18 +88,16 @@ toolchain, plays offline. Arc: Open (theme/codename) → Scope (issue list) → 
 walkthrough** (one embedded real-app clip per change — the heart) → Close.
 
 **Real burndown (coding-agent flavour).** A "16/16 = 100%" bar is a scoreboard, not a
-burndown. The per-cluster effort estimates (Phase 2) are the *ideal* line; commit
-timestamps give the *actual*. Plot work-remaining = *open CRs + open defects* over
-elapsed time, and show the honest shape — features burn down, then the **bug-hunt adds
-scope** (defects found after "done") so the line bumps *up* before zero. Where rework,
-not features, dominated is the insight.
+burndown. Per-cluster effort estimates (Phase 2) are the *ideal* line; commit timestamps
+give the *actual*. Plot work-remaining = *open CRs + open defects* over elapsed time —
+the honest shape burns down, then the **bug-hunt adds scope** (defects found after "done")
+so it bumps *up* before zero. Where rework, not features, dominated is the insight.
 
 **Session stats & retro.** Mine what the session produced — availability is
 **profile-dependent** (`assets/sprint-stats.py` degrades gracefully): git gives the
-commit timeline / fix-vs-test ratio; the transcript gives tool calls, sub-agents,
-errors, timestamps (`claude-code-cloud-*`); token/cost + task list are often absent
-headless. Turn it into a stats slide + a **retro**: what worked and concrete
-**self-recommendations for next sprint**.
+commit timeline; the transcript gives tool calls, sub-agents, errors, timestamps
+(`claude-code-cloud-*`); token/cost + task list often absent headless. Turn it into a
+stats slide + a **retro**: what worked and concrete **self-recommendations for next sprint**.
 
 The slide chrome is **app-independent** and pre-built — you supply only recordings and
 text, so it drops onto any browser-based app. The bundled pipeline
@@ -124,6 +120,15 @@ screenshots, not post-hoc playback or `ffmpeg`; see `references/agent-profiles.m
    been sampled to confirm every change is actually shown working.
 
 Only then is the sprint done. Do not stop early; do not over-run past a dry round.
+
+## Package policy (installs)
+
+**Never install a language package (npm / pip / gem / cargo …) without explicit user
+approval.** Prefer stdlib. OS packages via the system manager (`apt-get`) are fine.
+Allow-list (safe, no approval — else ask): **`playwright`** (Node browser driver for the
+recorder/`play-deck`; browsers pre-provided — the skill's only non-OS dep) and
+**`poppler-utils`** (OS/apt: `pdftotext`+`pdftoppm` for spec PDFs). Anything else: stop
+and ask. The user amends this list to extend it.
 
 ## Pre-requisites the caller should provide
 
