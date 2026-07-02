@@ -1321,6 +1321,76 @@ uiSuite("Review", [
   }},
 ]);
 
+// ── Section/Slide list reducer suite (CR3/CR4/CR5/CR10) ──────────────
+// Pure innerReducer + helper assertions — no DOM, deterministic. Cover
+// section-insert-anywhere, cross-module drops into empty sections, blank
+// slide cloning, and hidden-flag persistence through non-merge updates.
+const _mkListState = () => ({
+  lanes: [{ id: "L1", title: "Lane", collapsed: false, items: [
+    { id: "m1", title: "Sec A", status: "todo", importance: "should", order: 1, slides: [
+      { bg: "#111111", color: "#eeeeee", accent: "#3b82f6", padding: "lg", layout: "center", duration: 30, blocks: [{ type: "heading", text: "Hi" }] },
+    ] },
+    { id: "m2", title: "Sec B", status: "todo", importance: "should", order: 2, slides: [] },
+  ] }],
+  selectedId: null, slideIndex: 0,
+});
+
+uiSuite("List Ops (reducer)", [
+  { name: "INSERT_ITEM inserts a section at index and reindexes order", fn: async () => {
+    const s1 = innerReducer(_mkListState(), { type: "INSERT_ITEM", laneId: "L1", index: 1, title: "Mid" });
+    const items = s1.lanes[0].items;
+    if (items.length !== 3) throw new Error(`expected 3 items, got ${items.length}`);
+    if (items[1].title !== "Mid") throw new Error(`expected inserted at 1, got '${items[1].title}'`);
+    if (items.map((i) => i.order).join(",") !== "1,2,3") throw new Error(`bad order: ${items.map((i) => i.order).join(",")}`);
+    return true;
+  }},
+  { name: "INSERT_ITEM after this section (index+1) lands right after it", fn: async () => {
+    // Emulate the "+ section" control: itemIndex of m1 is 0 → insert at 1.
+    const s1 = innerReducer(_mkListState(), { type: "INSERT_ITEM", laneId: "L1", index: 0 + 1, title: "New Section" });
+    const titles = s1.lanes[0].items.map((i) => i.title);
+    if (titles.join("|") !== "Sec A|New Section|Sec B") throw new Error(`order wrong: ${titles.join("|")}`);
+    return true;
+  }},
+  { name: "MOVE_SLIDE_TO_MODULE drops a slide into an EMPTY section (CR3)", fn: async () => {
+    const s1 = innerReducer(_mkListState(), { type: "MOVE_SLIDE_TO_MODULE", fromId: "m1", toId: "m2", index: 0 });
+    const from = s1.lanes[0].items.find((i) => i.id === "m1");
+    const to = s1.lanes[0].items.find((i) => i.id === "m2");
+    if (from.slides.length !== 0) throw new Error(`source should be empty, got ${from.slides.length}`);
+    if (to.slides.length !== 1) throw new Error(`empty target should have 1 slide, got ${to.slides.length}`);
+    if (to.slides[0].blocks[0].text !== "Hi") throw new Error("moved slide content lost");
+    if (s1.selectedId !== "m2") throw new Error("target section not selected after move");
+    return true;
+  }},
+  { name: "buildBlankSlide clones prev theme/layout with empty blocks (CR10a)", fn: async () => {
+    const prev = _mkListState().lanes[0].items[0].slides[0];
+    const blank = buildBlankSlide(prev);
+    if (!Array.isArray(blank.blocks) || blank.blocks.length !== 0) throw new Error("blank should have empty blocks");
+    if (blank.bg !== "#111111" || blank.color !== "#eeeeee" || blank.accent !== "#3b82f6") throw new Error("theme colors not copied");
+    if (blank.padding !== "lg" || blank.layout !== "center") throw new Error("layout scalars not copied");
+    if ("duration" in blank) throw new Error("duration must NOT be copied to a blank slide");
+    return true;
+  }},
+  { name: "Add-blank via INSERT_SLIDE yields empty-content slide with theme", fn: async () => {
+    const prev = _mkListState().lanes[0].items[0].slides[0];
+    const s1 = innerReducer(_mkListState(), { type: "INSERT_SLIDE", id: "m1", index: 0, slide: buildBlankSlide(prev) });
+    const inserted = s1.lanes[0].items[0].slides[0];
+    if ((inserted.blocks || []).length !== 0) throw new Error("inserted blank should have no blocks");
+    if (inserted.bg !== "#111111") throw new Error("theme not preserved through reducer/sanitize");
+    return true;
+  }},
+  { name: "Toggle hidden flips + persists through non-merge UPDATE_SLIDE (CR5)", fn: async () => {
+    let s = _mkListState();
+    s = innerReducer(s, { type: "UPDATE_SLIDE", id: "m1", index: 0, patch: { hidden: true }, merge: true });
+    if (s.lanes[0].items[0].slides[0].hidden !== true) throw new Error("hide (merge) failed");
+    // A subsequent non-merge update (e.g. block edit) must NOT drop the hidden flag.
+    s = innerReducer(s, { type: "UPDATE_SLIDE", id: "m1", index: 0, patch: { blocks: [{ type: "text", text: "x" }] }, merge: false });
+    if (s.lanes[0].items[0].slides[0].hidden !== true) throw new Error("hidden not preserved through non-merge path");
+    s = innerReducer(s, { type: "UPDATE_SLIDE", id: "m1", index: 0, patch: { hidden: false }, merge: true });
+    if (s.lanes[0].items[0].slides[0].hidden !== false) throw new Error("unhide failed");
+    return true;
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

@@ -1,4 +1,31 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+
+// ━━━ Slide-insert helpers (CR4/CR10) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Theme/layout scalars copied when cloning a "blank" slide from its
+// predecessor — keep the look, drop the content. Only scalars that
+// actually exist on the source slide are copied.
+const BLANK_SLIDE_THEME_KEYS = ["bg", "bgGradient", "color", "accent", "padding", "verticalAlign", "align", "layout"];
+function buildBlankSlide(prevSlide) {
+  const slide = { blocks: [] };
+  if (prevSlide) for (const k of BLANK_SLIDE_THEME_KEYS) { if (prevSlide[k] != null) slide[k] = prevSlide[k]; }
+  return slide;
+}
+
+const INSERT_BTN = () => ({ display: "inline-flex", alignItems: "center", gap: 3, background: T.accent + "14", border: `1px solid ${T.accent}38`, color: T.accent, fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, padding: "1px 7px", borderRadius: 4, cursor: "pointer", lineHeight: "16px", whiteSpace: "nowrap" });
+
+// Persistent, legible add-controls shown at every insert position — replaces
+// the old opacity:0 hover "+ ai" gutters (CR4/CR10). Blank slide, AI slide,
+// and (when onSection is supplied) insert a new section here.
+function InsertBar({ onBlank, onAi, onSection, pad }) {
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 5, alignItems: "center", justifyContent: "center", padding: pad || "2px 12px" }}>
+      <button type="button" title="Add a blank slide (copies the previous slide's theme)" onClick={onBlank} style={INSERT_BTN()}>+ blank</button>
+      <button type="button" title="Add a slide with AI" onClick={onAi} style={INSERT_BTN()}>⚡ ai</button>
+      {onSection && <button type="button" title="Insert a new section here" onClick={onSection} style={{ ...INSERT_BTN(), color: T.textMuted, borderColor: T.border, background: "transparent" }}>+ section</button>}
+    </div>
+  );
+}
+
 // ━━━ AI Slide Adder (inline prompt) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
   const [prompt, setPrompt] = useState("");
@@ -56,27 +83,33 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 }
 
 
-
-// --- Empty Module AI Slide Adder ---
-function EmptyAiSlideAdder({ item, dispatch, guidelines }) {
-  const [open, setOpen] = useState(false);
-  if (!open) return (
-    <div onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-      style={{ padding: "3px 8px 3px 38px", fontSize: 10, fontFamily: FONT.mono, color: T.accent, cursor: "pointer", opacity: 0.5, transition: "opacity .15s" }}
-      onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-      onMouseLeave={(e) => e.currentTarget.style.opacity = 0.5}
-    >+ ai slide</div>
-  );
-  return <AiSlideAdder item={item} insertIndex={0} onClose={() => setOpen(false)} dispatch={dispatch} guidelines={guidelines} />;
-}
-
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset }) {
+function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, itemIndex }) {
   const [adderAt, setAdderAt] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
+  const [containerDrag, setContainerDrag] = useState(false);
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const maxSlideDur = globalMaxSlideDur || 1;
+
+  // CR10 (a): add a blank slide that keeps the previous slide's theme/layout
+  // but has no content. Prev = slide before the insert point, falling back to
+  // the section's first slide, else engine defaults.
+  const insertBlank = (idx) => {
+    const prev = idx > 0 ? item.slides[idx - 1] : (item.slides[0] || null);
+    dispatch({ type: "INSERT_SLIDE", id: item.id, index: idx, slide: buildBlankSlide(prev) });
+    dispatch({ type: "SELECT", id: item.id });
+    setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: idx }), 0);
+  };
+  // CR4/CR10 (c): insert a new section directly after this one, anywhere in
+  // the deck (not just at the end).
+  const insertSection = () => {
+    if (!laneId) return;
+    dispatch({ type: "INSERT_ITEM", laneId, index: (itemIndex ?? 0) + 1, title: "New Section" });
+  };
+  const renderAdder = (idx, pad) => adderAt === idx
+    ? <AiSlideAdder item={item} insertIndex={idx} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
+    : <InsertBar onBlank={() => insertBlank(idx)} onAi={() => setAdderAt(idx)} onSection={insertSection} pad={pad} />;
   const activeSlideRef = useRef(null);
   useEffect(() => {
     if (selected && activeSlideRef.current) {
@@ -154,6 +187,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(null);
+    setContainerDrag(false);
     try {
       const data = JSON.parse(e.dataTransfer.getData("application/vela-slide"));
       if (!data || data.slideIndex == null) return;
@@ -166,22 +200,30 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
     } catch {}
   };
 
+  const containerDragProps = {
+    onDragOver: (e) => { if (e.dataTransfer.types.includes("application/vela-slide")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setContainerDrag(true); } },
+    onDrop: handleContainerDrop,
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setDropTarget(null); setContainerDrag(false); } },
+  };
+
+  // CR3: an empty section must still be a real slide-drop target. The container
+  // drop handler already routes cross-module drops (MOVE_SLIDE_TO_MODULE → the
+  // reducer appends to an empty target); render a visible drop zone + the same
+  // blank/AI/section add controls so empty sections aren't dead ends.
+  if (item.slides.length === 0) {
+    return (
+      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, minHeight: 8 }} {...containerDragProps}>
+        <div style={{ margin: "2px 12px 5px", padding: "7px 8px", border: `1px dashed ${containerDrag ? T.accent : T.border}`, background: containerDrag ? T.accent + "12" : "transparent", borderRadius: 6, textAlign: "center", fontSize: 10, fontFamily: FONT.mono, color: containerDrag ? T.accent : T.textDim, transition: "background .12s, border-color .12s" }}>
+          {containerDrag ? "drop slide here" : "empty section — drop a slide or add one"}
+        </div>
+        {renderAdder(0, "0 12px 2px")}
+      </div>
+    );
+  }
+
   return (
-    <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
-      onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-slide")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
-      onDrop={handleContainerDrop}
-      onDragLeave={() => setDropTarget(null)}
-    >
-      {adderAt === 0 ? (
-        <AiSlideAdder item={item} insertIndex={0} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-      ) : (
-        <div onClick={(e) => { e.stopPropagation(); setAdderAt(0); }}
-          style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-          title="AI: insert slide here"
-        >+ ai</div>
-      )}
+    <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }} {...containerDragProps}>
+      {renderAdder(0, "2px 12px 3px")}
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
@@ -190,7 +232,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
         const sDur = s.duration || 0;
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
-        cumTime += sDur;
+        if (!s.hidden) cumTime += sDur; // CR5: hidden slides don't consume timeline
         return <React.Fragment key={si}>
           <div
             ref={isActive ? activeSlideRef : null}
@@ -211,8 +253,9 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               borderRadius: "0 3px 3px 0", marginBottom: 1,
               display: "flex", alignItems: "center",
               overflow: "hidden", whiteSpace: "nowrap",
-              transition: "background .12s, color .12s",
+              transition: "background .12s, color .12s, opacity .12s",
               position: "relative",
+              opacity: s.hidden ? 0.42 : 1, // CR5: hidden slides shown dimmed
             }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
@@ -230,19 +273,19 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
                 style={{ ...S.input({ padding: "1px 4px", fontSize: 12, border: `1px solid ${T.accent}` }), flex: 1, minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
+            {/* CR5: per-slide hide/unhide eye toggle */}
+            <span
+              onClick={(e) => { e.stopPropagation(); dispatch({ type: "UPDATE_SLIDE", id: item.id, index: si, patch: { hidden: !s.hidden }, merge: true }); }}
+              title={s.hidden ? "Slide hidden — click to show" : "Hide slide"}
+              data-slide-hide-toggle
+              style={{ marginLeft: 6, flexShrink: 0, cursor: "pointer", display: "inline-flex", alignItems: "center", opacity: s.hidden ? 1 : 0.5, color: s.hidden ? T.amber : T.textDim }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 1 : 0.5}
+            >{getIcon(s.hidden ? "hidden" : "eye", { size: 13 })}</span>
           </div>
-          {adderAt === si + 1 ? (
-            <AiSlideAdder item={item} insertIndex={si + 1} onClose={() => setAdderAt(null)} dispatch={dispatch} guidelines={guidelines} />
-          ) : (
-            <div onClick={(e) => { e.stopPropagation(); setAdderAt(si + 1); }}
-              style={{ padding: "1px 12px", fontSize: 9, fontFamily: FONT.mono, color: T.textDim, cursor: "pointer", opacity: 0, transition: "opacity .15s", textAlign: "center", lineHeight: "14px" }}
-              onMouseEnter={(e) => e.currentTarget.style.opacity = 0.6}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
-              title="AI: insert slide here"
-            >+ ai</div>
-          )}
+          {renderAdder(si + 1, "2px 12px")}
         </React.Fragment>;
       }); })()}
     </div>
@@ -250,7 +293,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
+function ConceptRow({ item, selected, laneId, itemIndex, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -309,8 +352,9 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const slideComments = (item.slides || []).flatMap((s, si) => (s.comments || []).map((c) => ({ ...c, slideIndex: si })));
   const allItemComments = [...itemComments.map((c) => ({ ...c, slideIndex: null })), ...slideComments];
   const openCommentCount = allItemComments.filter((c) => c.status === "open").length;
-  const hasSlides = item.slides.length > 0;
-  const itemTime = item.slides.reduce((a, s) => a + (s.duration || 0), 0);
+  // CR5: counts/time exclude hidden slides (matches deck-total convention).
+  const visibleSlideCount = item.slides.filter((s) => !s.hidden).length;
+  const itemTime = item.slides.reduce((a, s) => a + (s.hidden ? 0 : (s.duration || 0)), 0);
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
   return (
@@ -340,7 +384,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           background: dropPos === "slide" ? T.accent + "15" : undefined,
           outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
         }}>
-        {timePct > 0 && <div title={`${item.slides.length} slides · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
+        {timePct > 0 && <div title={`${visibleSlideCount} slides · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
         <span onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }} style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
@@ -384,8 +428,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           <button onClick={() => { if (commentText.trim()) { dispatch({ type: "ADD_COMMENT", itemId: item.id, text: commentText.trim() }); setCommentText(""); } }} disabled={!commentText.trim()} style={S.primaryBtn({ padding: "3px 6px", fontSize: 9, opacity: commentText.trim() ? 1 : 0.4 })}>+</button>
         </div>
       </div>}
-      {!collapsed && item.slides.length === 0 && <EmptyAiSlideAdder item={item} dispatch={dispatch} guidelines={guidelines} />}
-      {!collapsed && hasSlides && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} itemIndex={itemIndex} />}
     </div>
   );
 }
@@ -396,20 +439,26 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + (i.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0), 0), [allItems]);
+  // CR5: deck total excludes hidden slides.
+  const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + (i.slides || []).reduce((a, sl) => a + (sl.hidden ? 0 : (sl.duration || 0)), 0), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
   const handleDrop = (e) => { e.preventDefault(); if (!laneId) return; try { const d = JSON.parse(e.dataTransfer.getData("application/vela-section") || e.dataTransfer.getData("text/plain")); dispatch({ type: "DRAG_REORDER", id: d.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); } catch {} };
 
   return (
     <div onDragOver={(e) => { if (e.dataTransfer.types.includes("application/vela-section")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
-      {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
+      {(() => { let offset = 0; let timeOffset = 0; let curLane = null; let laneLocal = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
+        // Item's index within its own lane (allItems groups by lane) — used for
+        // "insert section after this one" (CR4/CR10).
+        if (itemLaneId !== curLane) { curLane = itemLaneId; laneLocal = 0; }
+        const itemIndex = laneLocal++;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
-        timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
+        // CR5: cumulative timeline excludes hidden slides.
+        timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.hidden ? 0 : (sl.duration || 0)), 0);
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} itemIndex={itemIndex} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
