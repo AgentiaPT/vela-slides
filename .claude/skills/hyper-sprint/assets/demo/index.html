@@ -53,6 +53,11 @@
   #hud{position:fixed;bottom:14px;right:18px;color:var(--muted);font-size:13px;z-index:5}
   #accentbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);z-index:6;transition:width .3s}
   .foot{position:fixed;bottom:14px;left:18px;color:var(--muted);font-size:13px}
+  .tbl{width:100%;border-collapse:collapse;font-size:min(2.2vw,19px)}
+  .tbl th,.tbl td{padding:9px 14px;border-bottom:1px solid #24304f;text-align:left}
+  .tbl th{color:var(--accent);font-size:14px;letter-spacing:.04em;text-transform:uppercase}
+  .tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tbl tbody tr:last-child td{border-top:2px solid #3a466b;font-weight:700}
 </style>
 </head>
 <body>
@@ -98,6 +103,7 @@
       case 'bugs': return `${k}<h2>${esc(s.title)}</h2><ul>${(s.items||[]).map(b=>`<li><span class="sev ${b.sev||'m'}">${(b.sev||'m').toUpperCase()}</span>${esc(b.text)}</li>`).join('')}</ul>`;
       case 'chart': return `${k}<h2>${esc(s.title)}</h2>${chart(s)}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
       case 'retro': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:2"><div class="card"><h3 style="color:var(--ok)">What worked</h3><ul>${list(s.worked)}</ul></div><div class="card"><h3 style="color:var(--warn)">Next sprint — improve</h3><ul>${list(s.improve)}</ul></div></div>`;
+      case 'table': return `${k}<h2>${esc(s.title)}</h2><table class="tbl"><thead><tr>${(s.headers||[]).map((h,ci)=>`<th${ci?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${(s.rows||[]).map(r=>`<tr>${r.map((cell,ci)=>`<td${ci?' class="num"':''}>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>${s.note?`<p class="muted" style="font-size:15px">${esc(s.note)}</p>`:''}`;
       case 'bullets': return `${k}<h2>${esc(s.title)}</h2><ul>${list(s.items)}</ul>`;
       case 'video': return `<div class="chap"><span class="n">${esc(s.kicker||'Live')}</span><h2 style="margin:0">${esc(s.title)}</h2></div><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
       default: return `${k}<h2>${esc(s.title||'')}</h2><p>${esc(s.body||'')}</p>`;

@@ -57,6 +57,11 @@ re-paying that cost.
     contributing/CLAUDE guidance first (version bumps, changelog, test commands,
     public-repo secrecy). Match surrounding code style. Never leak secrets, session
     URLs, or exploit detail into anything committed/public.
+11. **Stay on the given branches.** Start from whatever **base branch** you were handed —
+    never assume `main`/`master`. The only branches in scope are the **sprint branch** and
+    its **base**; don't read, diff against, fetch, or checkout any other branch (or peek at
+    other refs) unless strictly required and the user approves. Diff against the base you
+    were given, not a guessed default.
 
 ## Phases
 
