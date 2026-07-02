@@ -1,0 +1,90 @@
+<!doctype html>
+<!-- App-agnostic end-of-sprint demo deck. Self-contained: no CDN, no build, no
+     dependency on the app under test. Edit deck.js (content) and drop clips into
+     clips/. Open with file:// or any static server. Works in the cloud profile. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sprint demo</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e6ecff; --muted:#93a0c8; --accent:#7c9cff;
+    --card:#141b33; --ok:#34d399; --warn:#f59e0b; --bad:#f87171;
+    --font: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:#05070f;color:var(--fg);font-family:var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;display:grid;place-items:center}
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+    gap:22px;padding:7vh 9vw;background:var(--bg);animation:fade .35s ease}
+  .slide.on{display:flex}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .kicker{color:var(--accent);font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:14px}
+  h1{font-size:min(7vw,64px);line-height:1.05;margin:0}
+  h2{font-size:min(4.4vw,40px);margin:0}
+  p,li{font-size:min(2.6vw,22px);color:var(--fg);line-height:1.5;margin:0}
+  .muted{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(var(--cols,2),1fr);gap:16px}
+  .card{background:var(--card);border:1px solid #24304f;border-radius:14px;padding:18px 20px}
+  .card h3{margin:0 0 6px;color:var(--accent);font-size:18px}
+  .metrics{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:18px}
+  .metric .v{font-size:min(7vw,56px);font-weight:800;line-height:1}
+  .metric .l{color:var(--muted);margin-top:6px;font-size:15px}
+  .bar{display:flex;align-items:center;gap:14px;margin:10px 0}
+  .bar .lab{flex:0 0 42%;color:var(--muted)} .track{flex:1;height:14px;background:#1c2540;border-radius:99px;overflow:hidden}
+  .fill{height:100%;background:var(--accent);border-radius:99px}
+  ul{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:10px}
+  .sev{font-weight:700;margin-right:8px}.sev.h{color:var(--bad)}.sev.m{color:var(--warn)}.sev.l{color:var(--muted)}
+  video{max-width:78vw;max-height:62vh;border-radius:14px;border:1px solid #24304f;background:#000}
+  .row{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:12px;max-width:38ch}
+  #hud{position:fixed;bottom:14px;right:18px;color:var(--muted);font-size:13px;z-index:5}
+  #accentbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);z-index:6;transition:width .3s}
+  .foot{position:fixed;bottom:14px;left:18px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div id="accentbar"></div>
+<div id="stage"></div>
+<div class="foot" id="foot"></div>
+<div id="hud"></div>
+<script src="deck.js"></script>
+<script>
+  const D = (window.DECK||{slides:[]});
+  if(D.accent) document.documentElement.style.setProperty('--accent', D.accent);
+  document.getElementById('foot').textContent = D.footer || '';
+  const stage = document.getElementById('stage');
+  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const list = a => (a||[]).map(x=>`<li>${esc(x)}</li>`).join('');
+  function render(s){
+    const k = s.kicker?`<div class="kicker">${esc(s.kicker)}</div>`:'';
+    switch(s.type){
+      case 'cover': return `${k}<h1>${esc(s.title)}</h1>${s.subtitle?`<h2 class="muted">${esc(s.subtitle)}</h2>`:''}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'scope': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:${s.cols||2}">${(s.groups||[]).map(g=>`<div class="card"><h3>${esc(g.title)}</h3><p>${esc(g.items)}</p></div>`).join('')}</div>`;
+      case 'metrics': return `${k}<h2>${esc(s.title)}</h2><div class="metrics" style="--cols:${(s.items||[]).length||4}">${(s.items||[]).map(m=>`<div class="metric"><div class="v">${esc(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join('')}</div>`;
+      case 'burndown': return `${k}<h2>${esc(s.title)}</h2><div>${(s.bars||[]).map(b=>`<div class="bar"><div class="lab">${esc(b.label)}</div><div class="track"><div class="fill" style="width:${Math.max(0,Math.min(100,b.value))}%;background:${b.color||'var(--accent)'}"></div></div><div style="flex:0 0 3ch;text-align:right">${b.value}%</div></div>`).join('')}</div>${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'bugs': return `${k}<h2>${esc(s.title)}</h2><ul>${(s.items||[]).map(b=>`<li><span class="sev ${b.sev||'m'}">${(b.sev||'m').toUpperCase()}</span>${esc(b.text)}</li>`).join('')}</ul>`;
+      case 'bullets': return `${k}<h2>${esc(s.title)}</h2><ul>${list(s.items)}</ul>`;
+      case 'video': return `${k}<h2>${esc(s.title)}</h2><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
+      default: return `${k}<h2>${esc(s.title||'')}</h2><p>${esc(s.body||'')}</p>`;
+    }
+  }
+  const slides = D.slides||[];
+  stage.innerHTML = slides.map(s=>`<section class="slide">${render(s)}</section>`).join('');
+  const els=[...stage.children]; let i=0;
+  function show(n){ i=Math.max(0,Math.min(els.length-1,n)); els.forEach((e,x)=>e.classList.toggle('on',x===i));
+    document.getElementById('hud').textContent=`${i+1} / ${els.length}`;
+    document.getElementById('accentbar').style.width=`${(i+1)/els.length*100}%`;
+    const v=els[i].querySelector('video'); if(v){try{v.currentTime=0;v.play().catch(()=>{})}catch(e){}} }
+  addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){show(i+1);e.preventDefault();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1);}
+    else if(e.key==='Home'){show(0);} else if(e.key==='End'){show(els.length-1);}
+    else if(e.key==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  });
+  stage.addEventListener('click',e=>{ if(!e.target.closest('video')) show(i+1); });
+  show(0); window.__deckReady=true; window.__deckGoto=show;
+</script>
+</body>
+</html>

@@ -48,13 +48,11 @@ re-paying that cost.
    *Proof artifact* below). Never trust a recording blindly — extract sample frames
    and *look* at them; a driver bug (wrong key, mode never entered) silently produces
    a demo that proves nothing.
-7. **Don't fight the environment.** Detect a capability once (signing keys, network
-   policy, missing binaries). If an operation is impossible here, record it as a
-   known limitation and move on — never burn turns retrying an op that returned
-   "command not found" or an empty/missing credential.
-8. **Right-size the fan-out.** Recon and hunting parallelize well; *sequential file
-   edits* to the same file do not. Spawn agents for independent read/verify work;
-   keep collision-prone writes in the main loop or isolate them (worktrees).
+7. **Don't fight the environment.** Detect a capability once (signing keys, network,
+   missing binaries); if an op is impossible here, record it as a known limitation and
+   move on — don't burn turns retrying "command not found" or an empty credential.
+8. **Right-size the fan-out.** Parallelize independent reads/hunts; keep collision-prone
+   writes to the same file serial (main loop) or isolate them (worktrees).
 9. **Report on a fixed cadence, not per-action.** Give the user a short,
    mobile-readable status tied to the task checklist (done / in-progress / blocked +
    progress vs total), on an interval — not a paragraph after every edit.
@@ -65,27 +63,23 @@ re-paying that cost.
 
 ## Phases
 
-**Phase 0 — Intake & readiness.** Parse the change list into discrete, testable
-items; note any that don't make sense or need a UX decision and ask *now*, batched.
-Read repo conventions. Run the build + test suite clean. Prove the app runs and is
-drivable on a smoke case; capture harness gotchas in `NOTES.md`. Agree the **stop
-rule** explicitly (bug-hunt duration + proof artifact).
+**Phase 0 — Intake & readiness.** Identify the **agent profile** (see
+`references/agent-profiles.md` — e.g. `claude-code-cloud-default`) and reuse its known
+browser/ffmpeg/network/git facts instead of rediscovering them. Parse the change list
+into discrete, testable items; note any that don't make sense or need a UX decision and
+ask *now*, batched. Read repo conventions. Run the build + test suite clean. Prove the
+app runs and is drivable on a smoke case; record any *new* gotchas in `NOTES.md`. Agree
+the **stop rule** explicitly (bug-hunt duration + proof artifact).
 
-**Phase 1 — Recon (parallel, read-only).** One sub-agent per subsystem → anchored
-edit maps into `NOTES.md`.
+**Phase 1 — Recon.** Parallel read-only sub-agents (one per subsystem) → anchored edit maps in `NOTES.md`.
 
-**Phase 2 — Plan.** Cluster by file-locality into task-tracked work items; sequence
-so colliding edits don't overlap.
+**Phase 2 — Plan.** Cluster by file-locality into task-tracked work items; sequence so colliding edits don't overlap.
 
-**Phase 3 — Implement (per cluster).** Edit from notes → add unit + e2e tests →
-full suite green → commit with a clear message. Repeat.
+**Phase 3 — Implement (per cluster).** Edit from notes → unit + e2e tests → full suite green → commit. Repeat.
 
-**Phase 4 — Adversarial hunt.** Diverse-lens hunters ×2 rounds → dedupe → fix +
-regression test (re-run suite each fix) → one confirming pass. Loop until a full
-round is dry.
+**Phase 4 — Adversarial hunt.** Diverse-lens hunters ×2 rounds → dedupe → fix + regression test (re-run suite each fix) → one confirming pass. Loop until a round is dry.
 
-**Phase 5 — Proof & handoff.** Build the demo deck (see below), sample its frames to
-confirm every feature shows, then deliver it. Report final status vs the full list.
+**Phase 5 — Proof & handoff.** Build the demo deck (below), frame-check it, deliver. Report final status vs the full list.
 
 ## Proof artifact — the end-of-sprint demo
 
@@ -106,18 +100,22 @@ browser, needs no toolchain, plays offline, easy to sample. Its arc:
    recorded demo** of the *real* app doing it. This is the heart of the deck.
 6. **Close — totals & what's next.**
 
-Building the live walkthrough:
+The slide chrome is **app-independent** and pre-built — you supply only recordings and
+text, so it drops onto any browser-based app. Use the bundled scaffold:
 
-- **Record each change live.** Drive the *real* app (headless browser recorder or
-  screen capture) end-to-end. Save short clips (`.mp4`/`.webm`) — many small clips
-  beat one long take, so a re-record costs one feature, not the whole demo.
-- **Embed, don't just link.** Clips go inline (`<video controls>` / image sequence)
-  beside each callout, so the deck is self-contained.
-- **Frame-check before shipping (hard gate).** For every clip, extract frames
-  (`ffmpeg -i clip.mp4 -vf fps=1 out_%03d.png`) and *inspect* them: feature visible,
-  right mode/screen, interaction landed? A green suite is **not** proof the demo shows
-  the feature — the recording is a separate artifact and can silently be wrong. Mark
-  the sprint done only once frames confirm **every** change is on screen.
+- **`assets/demo/`** — a self-contained HTML deck (no CDN, no build). Edit `deck.js`
+  (the only content file; slide types incl. `video`) and open `index.html`.
+- **`assets/record-demo.mjs`** — generic recorder: `node record-demo.mjs <app-url>
+  <out-dir> <scenario.mjs>`. It records one `.webm` per change **and** a screenshot at
+  every beat, then scaffolds the deck. The only app-specific file is `scenario.mjs`
+  (exports `boot(page)` + `clips[]`).
+- **Frame-check before shipping (hard gate).** *Inspect* the per-beat screenshots:
+  feature visible, right screen, interaction landed? A green suite is **not** proof the
+  demo shows the feature — the recording is a separate artifact and can silently be
+  wrong (wrong key, mode never entered). Ship only once frames confirm **every** change
+  is on screen. (On the `claude-code-cloud-default` profile use these screenshots, not
+  `ffmpeg` frame extraction — its bundled ffmpeg is a stripped recorder. See
+  `references/agent-profiles.md`.)
 
 ## Stop rule (both required)
 
@@ -130,8 +128,8 @@ Only then is the sprint done. Do not stop early; do not over-run past a dry roun
 
 ## Pre-requisites the caller should provide
 
-- How to **build/run tests** and **launch + drive the app** (or that a ready browser/
-  render harness exists), plus the **network policy** for this environment.
+- The **agent profile** (or confirmation of `claude-code-cloud-default`), plus how to
+  **build/run tests** and **launch + drive the app** for this repo.
 - The **change list** (with screenshots/acceptance criteria where possible).
-- The **stop rule** specifics: hunt duration and what proof artifact is expected.
+- The **stop rule**: hunt duration and expected proof artifact.
 - Repo conventions to honor (versioning, changelog, secrecy) and the target branch.
