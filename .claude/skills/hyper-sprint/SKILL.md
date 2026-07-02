@@ -91,9 +91,16 @@ profile** (see `references/agent-profiles.md` — e.g. `claude-code-cloud-defaul
 known browser/ffmpeg/network/git facts instead of rediscovering them. Parse the change list
 into discrete, testable items; note any that don't make sense or need a UX decision and
 ask *now*, batched. If the spec is an image-heavy PDF, rasterize its pages and read the
-screenshots — don't rely on text alone (recipe in `references/agent-profiles.md`). Read repo conventions. Run the build + test suite clean. Prove the
-app runs and is drivable on a smoke case; record any *new* gotchas in `NOTES.md`. Agree
-the **stop rule** explicitly (bug-hunt duration + proof artifact).
+screenshots — don't rely on text alone (recipe in `references/agent-profiles.md`). Read repo
+conventions. **Verify the config's commands/paths actually exist on the base branch before
+trusting them** — a referenced script that isn't there is *config drift* (often it lives only
+on a feature branch): surface it and fall back to an existing repo harness/skill rather than
+silently rebuilding one. **Capture a baseline in `NOTES.md`:** current version, passing-test
+count, and the exact set of *known pre-existing failures* (so regressions are unambiguous
+later). If the spec's screenshots are from a **different app version** than the base, flag it
+— some CRs may already be (partly) done; validate against the spec, don't blind-reimplement.
+Run the build + test suite; prove the app runs and is drivable on a smoke case; record any
+*new* gotchas. Agree the **stop rule** explicitly (blind-hunt duration + proof artifact).
 
 **Phase 1 — Recon.** Parallel read-only sub-agents (one per subsystem) → anchored edit maps in `NOTES.md`.
 
@@ -146,12 +153,15 @@ saw the work happen.
 
 ## Package policy (installs)
 
-**Never install a language package (npm / pip / gem / cargo …) without explicit user
-approval.** Prefer stdlib. OS packages via the system manager (`apt-get`) are fine.
-Allow-list (safe, no approval — else ask): **`playwright`** (Node browser driver for the
-recorder/`play-deck`; browsers pre-provided — the skill's only non-OS dep) and
-**`poppler-utils`** (OS/apt: `pdftotext`+`pdftoppm` for spec PDFs). Anything else: stop
-and ask. The user amends this list to extend it.
+**Provisioning a dep the repo already declares is fine — adding a NEW one needs approval.**
+Installing what's already in the repo manifest (`package.json`, `requirements.txt`, lockfile
+— e.g. `npm ci`, `pip install -r`, or a single declared devDependency like `jsdom`) is
+readiness, not a new dependency; do it. **Adding an undeclared language package** (npm / pip
+/ gem / cargo …) requires explicit user approval — prefer stdlib. OS packages via the system
+manager (`apt-get`) are fine. Allow-list (undeclared but safe, no approval — else ask):
+**`playwright`** (Node browser driver; browsers pre-provided) and **`poppler-utils`** (OS/apt:
+`pdftotext`+`pdftoppm` for spec PDFs). Never install a dep the repo config marks **vendored**.
+Anything else: stop and ask; the user amends this list to extend it.
 
 ## Repo config & pre-requisites
 
