@@ -125,6 +125,21 @@ const VELA_TESTS = [
   { name: "generateSlide is function", fn: () => typeof generateSlide === "function" },
   { name: "executeTool is function", fn: () => typeof executeTool === "function" },
   { name: "ALT_DIRECTIONS has 4 items", fn: () => Array.isArray(ALT_DIRECTIONS) && ALT_DIRECTIONS.length === 4 },
+  { name: "preserveImages is function", fn: () => typeof preserveImages === "function" },
+  { name: "edit_slide keeps image when patch echoes [IMAGE] placeholder", fn: () => {
+    const bigsrc = "data:image/png;base64," + "A".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "heading", text: "Old" }, { type: "image", src: bigsrc }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "New" }, { type: "image", src: "[IMAGE]" }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    return b[0].text === "New" && b[1].type === "image" && b[1].src === bigsrc;
+  }},
+  { name: "edit_slide re-appends image when patch drops it", fn: () => {
+    const bigsrc = "data:image/png;base64," + "B".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "heading", text: "Old" }, { type: "image", src: bigsrc }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "Only heading now" }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    return b.some((x) => x.type === "image" && x.src === bigsrc);
+  }},
 
   // ── v10: Teacher Mode Engine ──
   { name: "buildTeacherPrompt is function", fn: () => typeof buildTeacherPrompt === "function" },

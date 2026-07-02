@@ -113,6 +113,34 @@ function restoreImageSrcs(improved, originalBlocks) {
   }
 }
 
+// Guard an edited slide against image loss. The model only ever sees image
+// blocks as the "[IMAGE]" placeholder (stripImageSrcs), so an edit_slide patch
+// can (a) echo a block with src:"[IMAGE]" — clobbering the real base64 — or
+// (b) drop the image block entirely. Given the original blocks, re-attach the
+// real srcs positionally and re-append any image the edit dropped, so editing a
+// slide can reposition/restyle around an image but never destroys it.
+function preserveImages(slide, originalBlocks) {
+  if (!slide?.blocks || !originalBlocks) return;
+  // 1. Re-attach real srcs onto image blocks the patch kept (fills placeholders).
+  restoreImageSrcs(slide, originalBlocks);
+  // 2. Re-append any original image the patch dropped outright.
+  const kept = new Set();
+  const collect = (blocks) => { for (const b of (blocks || [])) {
+    if (b.type === "image" && b.src) kept.add(b.src);
+    if (b.type === "grid" && b.items) for (const gi of b.items) collect(gi.blocks || []);
+  }};
+  collect(slide.blocks);
+  const origImages = [];
+  const gather = (blocks) => { for (const b of (blocks || [])) {
+    if (b.type === "image" && b.src) origImages.push(b);
+    if (b.type === "grid" && b.items) for (const gi of b.items) gather(gi.blocks || []);
+  }};
+  gather(originalBlocks);
+  for (const img of origImages) {
+    if (!kept.has(img.src)) { slide.blocks.push(JSON.parse(JSON.stringify(img))); kept.add(img.src); }
+  }
+}
+
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
@@ -184,6 +212,8 @@ function executeTool(name, input, ws, attachedImages) {
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
       const patch = input.patch || {};
+      // Snapshot original blocks so an edit can never destroy existing images.
+      const _origBlocks = JSON.parse(JSON.stringify(slide.blocks || []));
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
         if (k === "blocks" && Array.isArray(v)) {
@@ -211,6 +241,8 @@ function executeTool(name, input, ws, attachedImages) {
           slide[k] = v;
         }
       }
+      // If the patch touched blocks, guarantee no existing image was lost.
+      if (Array.isArray(patch.blocks)) preserveImages(slide, _origBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
