@@ -487,8 +487,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) { e.preventDefault(); setOpen(false); setPinned(false); return; }
               if (e.key === "Enter" && search.trim()) {
                 e.preventDefault();
-                // Jump to the first slide matching the search, then close.
-                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { handleJump(g.id, first.slideIdx); setOpen(false); setPinned(false); return; } }
+                // Jump to the first slide matching the search; if the match was a
+                // section title only (no slide matched), jump to that section's
+                // first slide. Then close.
+                let target = null;
+                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { target = { id: g.id, idx: first.slideIdx }; break; } }
+                if (!target && grouped.length) target = { id: grouped[0].id, idx: grouped[0].slides[0]?.slideIdx ?? 0 };
+                if (target) { handleJump(target.id, target.idx); setOpen(false); setPinned(false); }
               }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
@@ -555,7 +560,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
 
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{totalSlides ? Math.min(globalIndex + 1, totalSlides) : 0}/{totalSlides}</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or Ctrl-E</span>
         </div>
       </div>

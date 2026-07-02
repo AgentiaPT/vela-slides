@@ -1622,10 +1622,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a block followed by its inline comments
   const renderBlockWithComments = (b, i) => {
-    // A hidden block is omitted entirely in presentation/PDF — no layout
-    // footprint — while still editable (and dimmed) in the editor so it can be
-    // unhidden. Useful for a slide title kept only as TOC guidance. (CR)
-    if (b?.hidden && presenting) return [];
+    // A hidden block is omitted entirely wherever the slide isn't being edited —
+    // presentation, PDF export, thumbnails — with no layout footprint, while
+    // still shown (dimmed) in the editor so it can be unhidden. `presenting`
+    // alone misses the PDF path (which renders non-editable but not "presenting").
+    if (b?.hidden && (presenting || !(editable && onEdit))) return [];
     const block = renderBlockItem(b, i);
     const comments = renderInlineComments(i);
     if (!comments) return [block];

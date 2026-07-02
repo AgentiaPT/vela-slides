@@ -2678,6 +2678,25 @@ def test_study_notes():
     else:
         fail("turbo → unturbo round-trip studyNotes.text")
 
+    # 7b. Turbo round-trips slide.hidden (position 11), incl. hidden-without-studyNotes.
+    hdeck = copy.deepcopy(deck)
+    hslides = hdeck["lanes"][0]["items"][0]["slides"]
+    hslides[0]["hidden"] = True            # slide 0 has studyNotes + hidden
+    if len(hslides) > 1:
+        hslides[1].pop("studyNotes", None)
+        hslides[1]["hidden"] = True        # slide 1 hidden, no studyNotes
+    hround = unturbo_deck(copy.deepcopy(turbo_deck(copy.deepcopy(hdeck))))
+    hout = hround["lanes"][0]["items"][0]["slides"]
+    cond = hout[0].get("hidden") is True
+    if len(hout) > 1:
+        cond = cond and hout[1].get("hidden") is True
+    # a non-hidden slide must NOT gain hidden
+    non_hidden_ok = all(("hidden" not in s) for s in hout[2:]) if len(hout) > 2 else True
+    if cond and non_hidden_ok:
+        ok("turbo → unturbo round-trip preserves slide.hidden")
+    else:
+        fail("turbo → unturbo round-trip slide.hidden", f"hout hidden flags={[s.get('hidden') for s in hout]}")
+
     # 8. Part-file presence checks
     slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
     if "function StaticStudyPanel" in slides_src and "function StudentPanel" in slides_src:

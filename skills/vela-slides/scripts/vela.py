@@ -899,12 +899,16 @@ def turbo_deck(deck):
             s.get("duration", 0),
             [_turbo_encode_block(b, palette) for b in s.get("blocks", [])]
         ]
-        # Optional position 10: studyNotes (offline student content).
-        # Backward compatible — old decoders reading new decks ignore extras;
-        # new decoders reading old decks handle missing position via len() guard.
+        # Optional tail (backward compatible — old decoders ignore extras; new
+        # decoders guard on len()): position 10 = studyNotes, position 11 = hidden.
+        # A slide hidden but without studyNotes still emits "" at 10 so hidden
+        # keeps its fixed slot 11.
         sn = s.get("studyNotes")
-        if sn:
-            arr.append(sn)
+        hidden = bool(s.get("hidden"))
+        if sn or hidden:
+            arr.append(sn if sn else "")
+            if hidden:
+                arr.append(1)
         return arr
 
     def encode_item(item):
@@ -954,9 +958,12 @@ def unturbo_deck(data):
         if s[7]: result["padding"] = s[7]
         if s[8]: result["duration"] = s[8]
         result["blocks"] = [_turbo_decode_block(b, palette) for b in s[9]]
-        # Optional position 10: studyNotes (backward compatible with length-10 turbo)
+        # Optional tail: position 10 studyNotes, position 11 hidden (backward
+        # compatible with length-10/11 turbo).
         if len(s) > 10 and s[10]:
             result["studyNotes"] = s[10]
+        if len(s) > 11 and s[11]:
+            result["hidden"] = True
         return result
 
     def decode_item(item):

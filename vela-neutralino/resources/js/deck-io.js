@@ -213,10 +213,14 @@ export const deckIO = {
   // in-memory deck (from the NEW_DECK dispatch), so we only seed the file and
   // re-point — we do NOT push the empty deck back into the app.
   async createDeck(title) {
-    if (!state.folder) return null;
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
+    // On ANY failure to allocate the new file, drop currentPath so the app's
+    // autosave has nowhere to write — the previously-open deck is never
+    // overwritten by the new deck's content. (The new deck simply isn't
+    // persisted until the user opens/creates a real deck.)
+    if (!state.folder) { state.currentPath = null; return null; }
     state.switching = true;
     try {
       await stopWatcher();
@@ -229,6 +233,7 @@ export const deckIO = {
       return path;
     } catch (e) {
       console.error("[deck-io] createDeck failed:", e);
+      state.currentPath = null;
       return null;
     } finally {
       state.switching = false;

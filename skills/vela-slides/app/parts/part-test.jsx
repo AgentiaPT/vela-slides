@@ -14,6 +14,7 @@ const VELA_TESTS = [
   { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
   { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
   { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
+  { name: "A dialog actually marks a default button", fn: () => NewDeckDialog.toString().includes("data-default-btn") },
   { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
   { name: "AgentSettings Re-scan is gated + awaited (no silent no-op)", fn: () => { const s = AgentSettingsDialog.toString(); return s.includes("canScan") && s.includes("__velaAgents.refresh") && s.includes("scanning"); } },
   { name: "New Deck calls __velaCreateDeck bridge (no overwrite)", fn: () => App.toString().includes("__velaCreateDeck") },
@@ -153,6 +154,30 @@ const VELA_TESTS = [
     const b = ws.lanes[0].items[0].slides[0].blocks;
     return b.some((x) => x.type === "image" && x.src === bigsrc);
   }},
+  { name: "stripImageSrcs tags images by index [IMAGE:n]", fn: () => {
+    const s = stripImageSrcs({ blocks: [{ type: "image", src: "x".repeat(300) }, { type: "grid", items: [{ blocks: [{ type: "image", src: "y".repeat(300) }] }] }] });
+    return s.blocks[0].src === "[IMAGE:0]" && s.blocks[1].items[0].blocks[0].src === "[IMAGE:1]";
+  }},
+  { name: "edit_slide restores grid-nested image (no corruption/dup)", fn: () => {
+    const bigsrc = "data:image/png;base64," + "G".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "heading", text: "Old" }, { type: "grid", items: [{ blocks: [{ type: "image", src: bigsrc }] }] }] }] }] }] };
+    // model returns a DIFFERENT block count echoing the grid image by index → replace branch
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "New" }, { type: "text", text: "x" }, { type: "grid", items: [{ blocks: [{ type: "image", src: "[IMAGE:0]" }] }] }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    const gridImg = b.find((x) => x.type === "grid")?.items?.[0]?.blocks?.[0];
+    const topImgs = b.filter((x) => x.type === "image");
+    return gridImg?.src === bigsrc && topImgs.length === 0;
+  }},
+  { name: "edit_slide keeps RIGHT image by identity on multi-image reorder", fn: () => {
+    const srcA = "data:image/png;base64," + "A".repeat(300);
+    const srcB = "data:image/png;base64," + "B".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: srcA }, { type: "image", src: srcB }] }] }] }] };
+    // model keeps only image index 1 (B) after a heading
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "image", src: "[IMAGE:1]" }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    const imgs = b.filter((x) => x.type === "image").map((x) => x.src);
+    return b[1].type === "image" && b[1].src === srcB && imgs.includes(srcA) && imgs.filter((s) => s === srcB).length === 1;
+  }},
 
   // ── v10: Teacher Mode Engine ──
   { name: "buildTeacherPrompt is function", fn: () => typeof buildTeacherPrompt === "function" },
@@ -237,6 +262,17 @@ const VELA_TESTS = [
   { name: "buildBlankSlide handles no previous slide", fn: () => {
     const blank = buildBlankSlide(null);
     return Array.isArray(blank.blocks) && blank.blocks.length === 0;
+  }},
+  { name: "buildBlankSlide drops non-block content + hidden (truly blank)", fn: () => {
+    const blank = buildBlankSlide({ bg: "#111", accent: "#222", layout: "cols", L: [{ type: "heading", text: "x" }], R: [{ type: "text", text: "y" }], quote: "q", author: "a", bullets: ["b"], hidden: true });
+    return blank.bg === "#111" && blank.accent === "#222" && blank.blocks.length === 0 && !blank.L && !blank.R && !blank.quote && !blank.author && !blank.bullets && !blank.layout && !blank.hidden;
+  }},
+  { name: "NEW_DECK and LOAD wipe undo history (no cross-deck undo)", fn: () => {
+    const h = { past: [init, init], present: init, future: [init] };
+    const rN = reducer(h, { type: "NEW_DECK", title: "B" });
+    const rL = reducer(h, { type: "LOAD", payload: { deckTitle: "C", lanes: [], selectedId: null, slideIndex: 0 } });
+    return rN.past.length === 0 && rN.future.length === 0 && rN.present.deckTitle === "B"
+        && rL.past.length === 0 && rL.future.length === 0;
   }},
 
   // ── v10: Reducer — Teacher Mode & veraMode ──

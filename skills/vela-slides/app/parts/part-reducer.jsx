@@ -4,6 +4,9 @@ const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: nul
 
 const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
+// Actions that replace the whole deck — undo across them is data-loss, so their
+// history is wiped rather than kept.
+const RESET_HISTORY = new Set(["NEW_DECK", "LOAD"]);
 
 function innerReducer(state, a) {
   const mapItems = (fn) => ({ ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map(fn) })) });
@@ -277,6 +280,10 @@ function reducer(hist, a) {
   }
   const newPresent = innerReducer(hist.present, a);
   if (newPresent === hist.present) return hist;
+  // Deck-replacing actions must also WIPE undo history: otherwise undo after a
+  // New Deck / deck-switch restores the previous deck's content into the
+  // now-current (different) file and autosave clobbers it — data loss.
+  if (RESET_HISTORY.has(a.type)) return { past: [], present: newPresent, future: [] };
   if (NO_HISTORY.has(a.type)) return { ...hist, present: newPresent };
   return { past: [...hist.past, hist.present].slice(-MAX_HISTORY), present: newPresent, future: [] };
 }

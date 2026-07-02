@@ -57,14 +57,19 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 
 
 
-// Build a blank slide that reuses the previous slide's styling/def but has no
-// content — the "Add blank slide (no AI)" affordance.
+// Build a blank slide that reuses the previous slide's visual styling but has NO
+// content — the "Add blank slide (no AI)" affordance. Copy only theme/layout
+// scalars via an allowlist; copying the whole slide would carry over content
+// fields the renderer reads independently of `blocks` (L/R for cols, quote/
+// author, bullets, image) or an inherited hidden flag, so the "blank" slide
+// wouldn't be blank.
 function buildBlankSlide(prevSlide) {
-  if (!prevSlide) return { blocks: [] };
-  const clone = JSON.parse(JSON.stringify(prevSlide));
-  delete clone.comments; delete clone.studyNotes; delete clone.title; delete clone.notes;
-  clone.blocks = [];
-  return clone;
+  const slide = { blocks: [] };
+  if (!prevSlide) return slide;
+  for (const k of ["bg", "bgGradient", "color", "accent", "mutedColor", "font", "padding", "align", "valign", "duration", "transition"]) {
+    if (prevSlide[k] != null) slide[k] = JSON.parse(JSON.stringify(prevSlide[k]));
+  }
+  return slide;
 }
 
 const adderChip = (primary) => ({ fontSize: 11, fontFamily: FONT.mono, fontWeight: 600, padding: "3px 9px", borderRadius: 5, cursor: "pointer", border: `1px solid ${primary ? T.accent : T.borderLight}`, background: primary ? T.accent + "18" : "transparent", color: primary ? T.accent : T.text, whiteSpace: "nowrap", lineHeight: 1.4 });
@@ -492,12 +497,12 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
     <div key={key} onClick={() => { setVal(""); setAddingBefore(beforeId); }} style={{ padding: "5px 12px", fontSize: 12, color: T.textDim, cursor: "pointer", fontFamily: FONT.mono, opacity: 0.6 }}>+ section</div>
   ) : (
     <div key={key} onClick={() => { setVal(""); setAddingBefore(beforeId); }}
-      style={{ height: 10, margin: "-4px 12px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0, transition: "opacity .15s", position: "relative", zIndex: 1 }}
+      style={{ height: 8, margin: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0, transition: "opacity .15s", position: "relative" }}
       onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
       onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
       title="Insert a section here"
-    ><span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, background: T.bg, padding: "0 6px" }}>+ section</span>
-      <span style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 1, background: T.accent + "40", zIndex: -1 }} /></div>
+    ><span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, background: T.bg, padding: "0 6px", position: "relative", zIndex: 1 }}>+ section</span>
+      <span style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 1, background: T.accent + "40" }} /></div>
   );
 
   return (

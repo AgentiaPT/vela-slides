@@ -3275,10 +3275,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a block followed by its inline comments
   const renderBlockWithComments = (b, i) => {
-    // A hidden block is omitted entirely in presentation/PDF — no layout
-    // footprint — while still editable (and dimmed) in the editor so it can be
-    // unhidden. Useful for a slide title kept only as TOC guidance. (CR)
-    if (b?.hidden && presenting) return [];
+    // A hidden block is omitted entirely wherever the slide isn't being edited —
+    // presentation, PDF export, thumbnails — with no layout footprint, while
+    // still shown (dimmed) in the editor so it can be unhidden. `presenting`
+    // alone misses the PDF path (which renders non-editable but not "presenting").
+    if (b?.hidden && (presenting || !(editable && onEdit))) return [];
     const block = renderBlockItem(b, i);
     const comments = renderInlineComments(i);
     if (!comments) return [block];
@@ -3358,6 +3359,9 @@ const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: nul
 
 const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
+// Actions that replace the whole deck — undo across them is data-loss, so their
+// history is wiped rather than kept.
+const RESET_HISTORY = new Set(["NEW_DECK", "LOAD"]);
 
 function innerReducer(state, a) {
   const mapItems = (fn) => ({ ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map(fn) })) });
@@ -3631,6 +3635,10 @@ function reducer(hist, a) {
   }
   const newPresent = innerReducer(hist.present, a);
   if (newPresent === hist.present) return hist;
+  // Deck-replacing actions must also WIPE undo history: otherwise undo after a
+  // New Deck / deck-switch restores the previous deck's content into the
+  // now-current (different) file and autosave clobbers it — data loss.
+  if (RESET_HISTORY.has(a.type)) return { past: [], present: newPresent, future: [] };
   if (NO_HISTORY.has(a.type)) return { ...hist, present: newPresent };
   return { past: [...hist.past, hist.present].slice(-MAX_HISTORY), present: newPresent, future: [] };
 }
@@ -3732,31 +3740,47 @@ function parseJSONResponse(text) {
   try { return JSON.parse(clean); } catch { return null; }
 }
 
+// Collect image blocks in document order, recursing into grid cells so the
+// index matches stripImageSrcs's "[IMAGE:n]" numbering.
+function gatherImageBlocks(blocks) {
+  const out = [];
+  const walk = (bs) => { for (const b of (bs || [])) {
+    if (b.type === "image") out.push(b);
+    if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
+  }};
+  walk(blocks);
+  return out;
+}
+
 function restoreImageSrcs(improved, originalBlocks) {
   if (!improved?.blocks || !originalBlocks) return;
-  const origImages = originalBlocks.filter((b) => b.type === "image");
-  let imgIdx = 0;
-  for (let bi = 0; bi < improved.blocks.length; bi++) {
-    const b = improved.blocks[bi];
-    if (b.type === "image" && origImages[imgIdx]) { b.src = origImages[imgIdx].src; imgIdx++; }
-    if (b.type === "grid" && b.items) {
-      for (const gi of b.items) {
-        for (const gb of gi.blocks || []) {
-          if (gb.type === "image" && origImages[imgIdx]) { gb.src = origImages[imgIdx].src; imgIdx++; }
-        }
-      }
+  // Grid-recursive so grid-nested images aren't left as literal placeholders.
+  const origImages = gatherImageBlocks(originalBlocks);
+  let posIdx = 0; // positional fallback for any untagged placeholder
+  const walk = (bs) => { for (const b of (bs || [])) {
+    if (b.type === "image") {
+      // Prefer the "[IMAGE:n]" tag so a reordered/partially-kept set restores
+      // the RIGHT original image by identity, not by position.
+      const m = typeof b.src === "string" && b.src.match(/^\[IMAGE:(\d+)\]$/);
+      if (m) { const oi = origImages[Number(m[1])]; if (oi) b.src = oi.src; }
+      else if (origImages[posIdx]) { b.src = origImages[posIdx].src; }
+      posIdx++;
     }
-    // Restore links from original blocks at same index
-    if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
+    if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
+  }};
+  walk(improved.blocks);
+  // Restore top-level links from the original at the same index.
+  for (let bi = 0; bi < improved.blocks.length; bi++) {
+    if (originalBlocks[bi]?.link && !improved.blocks[bi].link) improved.blocks[bi].link = originalBlocks[bi].link;
   }
 }
 
 // Guard an edited slide against image loss. The model only ever sees image
-// blocks as the "[IMAGE]" placeholder (stripImageSrcs), so an edit_slide patch
-// can (a) echo a block with src:"[IMAGE]" — clobbering the real base64 — or
-// (b) drop the image block entirely. Given the original blocks, re-attach the
-// real srcs positionally and re-append any image the edit dropped, so editing a
-// slide can reposition/restyle around an image but never destroys it.
+// blocks as the "[IMAGE:n]" placeholder (stripImageSrcs), so an edit_slide patch
+// can (a) echo a placeholder — which we restore to the real base64 by its index
+// (identity, so reordered/partial sets keep the right picture) — or (b) drop the
+// image block entirely, in which case we re-append the original. Net: editing a
+// slide can reposition/restyle around images but never destroys them.
 function preserveImages(slide, originalBlocks) {
   if (!slide?.blocks || !originalBlocks) return;
   // 1. Re-attach real srcs onto image blocks the patch kept (fills placeholders).
@@ -3768,21 +3792,18 @@ function preserveImages(slide, originalBlocks) {
     if (b.type === "grid" && b.items) for (const gi of b.items) collect(gi.blocks || []);
   }};
   collect(slide.blocks);
-  const origImages = [];
-  const gather = (blocks) => { for (const b of (blocks || [])) {
-    if (b.type === "image" && b.src) origImages.push(b);
-    if (b.type === "grid" && b.items) for (const gi of b.items) gather(gi.blocks || []);
-  }};
-  gather(originalBlocks);
-  for (const img of origImages) {
-    if (!kept.has(img.src)) { slide.blocks.push(JSON.parse(JSON.stringify(img))); kept.add(img.src); }
+  for (const img of gatherImageBlocks(originalBlocks)) {
+    if (img.src && !kept.has(img.src)) { slide.blocks.push(JSON.parse(JSON.stringify(img))); kept.add(img.src); }
   }
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
+  // Tag each image with its document-order index so the model's echo can be
+  // matched back to the exact original image (see restoreImageSrcs).
+  let idx = 0;
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src) b.src = `[IMAGE:${idx++}]`;
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
@@ -5333,8 +5354,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) { e.preventDefault(); setOpen(false); setPinned(false); return; }
               if (e.key === "Enter" && search.trim()) {
                 e.preventDefault();
-                // Jump to the first slide matching the search, then close.
-                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { handleJump(g.id, first.slideIdx); setOpen(false); setPinned(false); return; } }
+                // Jump to the first slide matching the search; if the match was a
+                // section title only (no slide matched), jump to that section's
+                // first slide. Then close.
+                let target = null;
+                for (const g of grouped) { const first = g.slides.find((s) => s.visible); if (first) { target = { id: g.id, idx: first.slideIdx }; break; } }
+                if (!target && grouped.length) target = { id: grouped[0].id, idx: grouped[0].slides[0]?.slideIdx ?? 0 };
+                if (target) { handleJump(target.id, target.idx); setOpen(false); setPinned(false); }
               }
               if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
             }}
@@ -5401,7 +5427,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
 
         {/* Footer */}
         <div style={{ padding: "8px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between" }}>
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{globalIndex + 1}/{totalSlides}</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{totalSlides ? Math.min(globalIndex + 1, totalSlides) : 0}/{totalSlides}</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>hover or Ctrl-E</span>
         </div>
       </div>
@@ -7170,14 +7196,19 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 
 
 
-// Build a blank slide that reuses the previous slide's styling/def but has no
-// content — the "Add blank slide (no AI)" affordance.
+// Build a blank slide that reuses the previous slide's visual styling but has NO
+// content — the "Add blank slide (no AI)" affordance. Copy only theme/layout
+// scalars via an allowlist; copying the whole slide would carry over content
+// fields the renderer reads independently of `blocks` (L/R for cols, quote/
+// author, bullets, image) or an inherited hidden flag, so the "blank" slide
+// wouldn't be blank.
 function buildBlankSlide(prevSlide) {
-  if (!prevSlide) return { blocks: [] };
-  const clone = JSON.parse(JSON.stringify(prevSlide));
-  delete clone.comments; delete clone.studyNotes; delete clone.title; delete clone.notes;
-  clone.blocks = [];
-  return clone;
+  const slide = { blocks: [] };
+  if (!prevSlide) return slide;
+  for (const k of ["bg", "bgGradient", "color", "accent", "mutedColor", "font", "padding", "align", "valign", "duration", "transition"]) {
+    if (prevSlide[k] != null) slide[k] = JSON.parse(JSON.stringify(prevSlide[k]));
+  }
+  return slide;
 }
 
 const adderChip = (primary) => ({ fontSize: 11, fontFamily: FONT.mono, fontWeight: 600, padding: "3px 9px", borderRadius: 5, cursor: "pointer", border: `1px solid ${primary ? T.accent : T.borderLight}`, background: primary ? T.accent + "18" : "transparent", color: primary ? T.accent : T.text, whiteSpace: "nowrap", lineHeight: 1.4 });
@@ -7605,12 +7636,12 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
     <div key={key} onClick={() => { setVal(""); setAddingBefore(beforeId); }} style={{ padding: "5px 12px", fontSize: 12, color: T.textDim, cursor: "pointer", fontFamily: FONT.mono, opacity: 0.6 }}>+ section</div>
   ) : (
     <div key={key} onClick={() => { setVal(""); setAddingBefore(beforeId); }}
-      style={{ height: 10, margin: "-4px 12px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0, transition: "opacity .15s", position: "relative", zIndex: 1 }}
+      style={{ height: 8, margin: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0, transition: "opacity .15s", position: "relative" }}
       onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
       onMouseLeave={(e) => e.currentTarget.style.opacity = 0}
       title="Insert a section here"
-    ><span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, background: T.bg, padding: "0 6px" }}>+ section</span>
-      <span style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 1, background: T.accent + "40", zIndex: -1 }} /></div>
+    ><span style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, background: T.bg, padding: "0 6px", position: "relative", zIndex: 1 }}>+ section</span>
+      <span style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 1, background: T.accent + "40" }} /></div>
   );
 
   return (
@@ -8082,6 +8113,7 @@ const VELA_TESTS = [
   { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
   { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
   { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
+  { name: "A dialog actually marks a default button", fn: () => NewDeckDialog.toString().includes("data-default-btn") },
   { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
   { name: "AgentSettings Re-scan is gated + awaited (no silent no-op)", fn: () => { const s = AgentSettingsDialog.toString(); return s.includes("canScan") && s.includes("__velaAgents.refresh") && s.includes("scanning"); } },
   { name: "New Deck calls __velaCreateDeck bridge (no overwrite)", fn: () => App.toString().includes("__velaCreateDeck") },
@@ -8221,6 +8253,30 @@ const VELA_TESTS = [
     const b = ws.lanes[0].items[0].slides[0].blocks;
     return b.some((x) => x.type === "image" && x.src === bigsrc);
   }},
+  { name: "stripImageSrcs tags images by index [IMAGE:n]", fn: () => {
+    const s = stripImageSrcs({ blocks: [{ type: "image", src: "x".repeat(300) }, { type: "grid", items: [{ blocks: [{ type: "image", src: "y".repeat(300) }] }] }] });
+    return s.blocks[0].src === "[IMAGE:0]" && s.blocks[1].items[0].blocks[0].src === "[IMAGE:1]";
+  }},
+  { name: "edit_slide restores grid-nested image (no corruption/dup)", fn: () => {
+    const bigsrc = "data:image/png;base64," + "G".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "heading", text: "Old" }, { type: "grid", items: [{ blocks: [{ type: "image", src: bigsrc }] }] }] }] }] }] };
+    // model returns a DIFFERENT block count echoing the grid image by index → replace branch
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "New" }, { type: "text", text: "x" }, { type: "grid", items: [{ blocks: [{ type: "image", src: "[IMAGE:0]" }] }] }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    const gridImg = b.find((x) => x.type === "grid")?.items?.[0]?.blocks?.[0];
+    const topImgs = b.filter((x) => x.type === "image");
+    return gridImg?.src === bigsrc && topImgs.length === 0;
+  }},
+  { name: "edit_slide keeps RIGHT image by identity on multi-image reorder", fn: () => {
+    const srcA = "data:image/png;base64," + "A".repeat(300);
+    const srcB = "data:image/png;base64," + "B".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: srcA }, { type: "image", src: srcB }] }] }] }] };
+    // model keeps only image index 1 (B) after a heading
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "image", src: "[IMAGE:1]" }] } }, ws);
+    const b = ws.lanes[0].items[0].slides[0].blocks;
+    const imgs = b.filter((x) => x.type === "image").map((x) => x.src);
+    return b[1].type === "image" && b[1].src === srcB && imgs.includes(srcA) && imgs.filter((s) => s === srcB).length === 1;
+  }},
 
   // ── v10: Teacher Mode Engine ──
   { name: "buildTeacherPrompt is function", fn: () => typeof buildTeacherPrompt === "function" },
@@ -8305,6 +8361,17 @@ const VELA_TESTS = [
   { name: "buildBlankSlide handles no previous slide", fn: () => {
     const blank = buildBlankSlide(null);
     return Array.isArray(blank.blocks) && blank.blocks.length === 0;
+  }},
+  { name: "buildBlankSlide drops non-block content + hidden (truly blank)", fn: () => {
+    const blank = buildBlankSlide({ bg: "#111", accent: "#222", layout: "cols", L: [{ type: "heading", text: "x" }], R: [{ type: "text", text: "y" }], quote: "q", author: "a", bullets: ["b"], hidden: true });
+    return blank.bg === "#111" && blank.accent === "#222" && blank.blocks.length === 0 && !blank.L && !blank.R && !blank.quote && !blank.author && !blank.bullets && !blank.layout && !blank.hidden;
+  }},
+  { name: "NEW_DECK and LOAD wipe undo history (no cross-deck undo)", fn: () => {
+    const h = { past: [init, init], present: init, future: [init] };
+    const rN = reducer(h, { type: "NEW_DECK", title: "B" });
+    const rL = reducer(h, { type: "LOAD", payload: { deckTitle: "C", lanes: [], selectedId: null, slideIndex: 0 } });
+    return rN.past.length === 0 && rN.future.length === 0 && rN.present.deckTitle === "B"
+        && rL.past.length === 0 && rL.future.length === 0;
   }},
 
   // ── v10: Reducer — Teacher Mode & veraMode ──
@@ -14545,9 +14612,20 @@ function ModalBackdrop({ onClose, extraKeys, defaultAction, children }) {
   }, [onClose, extraKeys, defaultAction]);
   // Give the primary button focus (and a visible ring) so Enter/Space activate
   // it natively and it reads as the default. Dialogs mark it with data-default-btn.
+  // Don't steal focus from a text field the dialog auto-focused for typing
+  // (e.g. New Deck's name input) — there, Enter is handled by the input instead.
   useEffect(() => {
-    const btn = boxRef.current?.querySelector("[data-default-btn]");
-    if (btn) { const t = setTimeout(() => btn.focus(), 30); return () => clearTimeout(t); }
+    const box = boxRef.current;
+    const btn = box?.querySelector("[data-default-btn]");
+    if (!btn) return;
+    const active = document.activeElement;
+    if (active && box.contains(active) && ["INPUT", "TEXTAREA"].includes(active.tagName)) return;
+    const t = setTimeout(() => {
+      const a = document.activeElement;
+      if (a && box.contains(a) && ["INPUT", "TEXTAREA"].includes(a.tagName)) return;
+      btn.focus();
+    }, 40);
+    return () => clearTimeout(t);
   }, []);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -14638,8 +14716,8 @@ function ChangelogDialog({ onClose }) {
 
 // ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Opened from the top-left stats badge. The badge shows the *visible* totals
-// (hidden slides don't play, so they don't count toward time/slide count); this
-// dialog reports both the visible totals and the totals including hidden slides.
+// (hidden slides are excluded from the count/timing but remain in the deck);
+// this dialog reports both the visible totals and the totals including hidden.
 function StatsDialog({ onClose, sections, slidesVisible, slidesAll, timeVisible, timeAll, hiddenCount }) {
   const row = (label, a, b) => (
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
@@ -14848,7 +14926,7 @@ function NewDeckDialog({ onClose, onSubmit }) {
       {/* Actions */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <button onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
-        <button onClick={submit}
+        <button onClick={submit} data-default-btn
           style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
           {"🚀"} Create & Build
         </button>
@@ -15881,7 +15959,8 @@ export default function App() {
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
   // Hidden slides are excluded from the headline total time and slide count
-  // (they don't play). The stats dialog reports both including and excluding.
+  // (the eye toggle hides a slide from the count/timing; it remains in the deck
+  // and still presents/exports). The stats dialog reports both with and without.
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (isSlideVisible(sl) ? (sl.duration || 0) : 0), 0), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
   const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides || []).filter(isSlideVisible).length, 0), 0);

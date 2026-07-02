@@ -94,31 +94,47 @@ function parseJSONResponse(text) {
   try { return JSON.parse(clean); } catch { return null; }
 }
 
+// Collect image blocks in document order, recursing into grid cells so the
+// index matches stripImageSrcs's "[IMAGE:n]" numbering.
+function gatherImageBlocks(blocks) {
+  const out = [];
+  const walk = (bs) => { for (const b of (bs || [])) {
+    if (b.type === "image") out.push(b);
+    if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
+  }};
+  walk(blocks);
+  return out;
+}
+
 function restoreImageSrcs(improved, originalBlocks) {
   if (!improved?.blocks || !originalBlocks) return;
-  const origImages = originalBlocks.filter((b) => b.type === "image");
-  let imgIdx = 0;
-  for (let bi = 0; bi < improved.blocks.length; bi++) {
-    const b = improved.blocks[bi];
-    if (b.type === "image" && origImages[imgIdx]) { b.src = origImages[imgIdx].src; imgIdx++; }
-    if (b.type === "grid" && b.items) {
-      for (const gi of b.items) {
-        for (const gb of gi.blocks || []) {
-          if (gb.type === "image" && origImages[imgIdx]) { gb.src = origImages[imgIdx].src; imgIdx++; }
-        }
-      }
+  // Grid-recursive so grid-nested images aren't left as literal placeholders.
+  const origImages = gatherImageBlocks(originalBlocks);
+  let posIdx = 0; // positional fallback for any untagged placeholder
+  const walk = (bs) => { for (const b of (bs || [])) {
+    if (b.type === "image") {
+      // Prefer the "[IMAGE:n]" tag so a reordered/partially-kept set restores
+      // the RIGHT original image by identity, not by position.
+      const m = typeof b.src === "string" && b.src.match(/^\[IMAGE:(\d+)\]$/);
+      if (m) { const oi = origImages[Number(m[1])]; if (oi) b.src = oi.src; }
+      else if (origImages[posIdx]) { b.src = origImages[posIdx].src; }
+      posIdx++;
     }
-    // Restore links from original blocks at same index
-    if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
+    if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
+  }};
+  walk(improved.blocks);
+  // Restore top-level links from the original at the same index.
+  for (let bi = 0; bi < improved.blocks.length; bi++) {
+    if (originalBlocks[bi]?.link && !improved.blocks[bi].link) improved.blocks[bi].link = originalBlocks[bi].link;
   }
 }
 
 // Guard an edited slide against image loss. The model only ever sees image
-// blocks as the "[IMAGE]" placeholder (stripImageSrcs), so an edit_slide patch
-// can (a) echo a block with src:"[IMAGE]" — clobbering the real base64 — or
-// (b) drop the image block entirely. Given the original blocks, re-attach the
-// real srcs positionally and re-append any image the edit dropped, so editing a
-// slide can reposition/restyle around an image but never destroys it.
+// blocks as the "[IMAGE:n]" placeholder (stripImageSrcs), so an edit_slide patch
+// can (a) echo a placeholder — which we restore to the real base64 by its index
+// (identity, so reordered/partial sets keep the right picture) — or (b) drop the
+// image block entirely, in which case we re-append the original. Net: editing a
+// slide can reposition/restyle around images but never destroys them.
 function preserveImages(slide, originalBlocks) {
   if (!slide?.blocks || !originalBlocks) return;
   // 1. Re-attach real srcs onto image blocks the patch kept (fills placeholders).
@@ -130,21 +146,18 @@ function preserveImages(slide, originalBlocks) {
     if (b.type === "grid" && b.items) for (const gi of b.items) collect(gi.blocks || []);
   }};
   collect(slide.blocks);
-  const origImages = [];
-  const gather = (blocks) => { for (const b of (blocks || [])) {
-    if (b.type === "image" && b.src) origImages.push(b);
-    if (b.type === "grid" && b.items) for (const gi of b.items) gather(gi.blocks || []);
-  }};
-  gather(originalBlocks);
-  for (const img of origImages) {
-    if (!kept.has(img.src)) { slide.blocks.push(JSON.parse(JSON.stringify(img))); kept.add(img.src); }
+  for (const img of gatherImageBlocks(originalBlocks)) {
+    if (img.src && !kept.has(img.src)) { slide.blocks.push(JSON.parse(JSON.stringify(img))); kept.add(img.src); }
   }
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
+  // Tag each image with its document-order index so the model's echo can be
+  // matched back to the exact original image (see restoreImageSrcs).
+  let idx = 0;
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src) b.src = `[IMAGE:${idx++}]`;
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};

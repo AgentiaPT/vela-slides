@@ -21,9 +21,20 @@ function ModalBackdrop({ onClose, extraKeys, defaultAction, children }) {
   }, [onClose, extraKeys, defaultAction]);
   // Give the primary button focus (and a visible ring) so Enter/Space activate
   // it natively and it reads as the default. Dialogs mark it with data-default-btn.
+  // Don't steal focus from a text field the dialog auto-focused for typing
+  // (e.g. New Deck's name input) — there, Enter is handled by the input instead.
   useEffect(() => {
-    const btn = boxRef.current?.querySelector("[data-default-btn]");
-    if (btn) { const t = setTimeout(() => btn.focus(), 30); return () => clearTimeout(t); }
+    const box = boxRef.current;
+    const btn = box?.querySelector("[data-default-btn]");
+    if (!btn) return;
+    const active = document.activeElement;
+    if (active && box.contains(active) && ["INPUT", "TEXTAREA"].includes(active.tagName)) return;
+    const t = setTimeout(() => {
+      const a = document.activeElement;
+      if (a && box.contains(a) && ["INPUT", "TEXTAREA"].includes(a.tagName)) return;
+      btn.focus();
+    }, 40);
+    return () => clearTimeout(t);
   }, []);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -114,8 +125,8 @@ function ChangelogDialog({ onClose }) {
 
 // ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Opened from the top-left stats badge. The badge shows the *visible* totals
-// (hidden slides don't play, so they don't count toward time/slide count); this
-// dialog reports both the visible totals and the totals including hidden slides.
+// (hidden slides are excluded from the count/timing but remain in the deck);
+// this dialog reports both the visible totals and the totals including hidden.
 function StatsDialog({ onClose, sections, slidesVisible, slidesAll, timeVisible, timeAll, hiddenCount }) {
   const row = (label, a, b) => (
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
@@ -324,7 +335,7 @@ function NewDeckDialog({ onClose, onSubmit }) {
       {/* Actions */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <button onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
-        <button onClick={submit}
+        <button onClick={submit} data-default-btn
           style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
           {"🚀"} Create & Build
         </button>
@@ -1357,7 +1368,8 @@ export default function App() {
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
   // Hidden slides are excluded from the headline total time and slide count
-  // (they don't play). The stats dialog reports both including and excluding.
+  // (the eye toggle hides a slide from the count/timing; it remains in the deck
+  // and still presents/exports). The stats dialog reports both with and without.
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (isSlideVisible(sl) ? (sl.duration || 0) : 0), 0), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
   const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides || []).filter(isSlideVisible).length, 0), 0);
