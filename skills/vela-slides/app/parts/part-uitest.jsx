@@ -600,6 +600,40 @@ uiSuite("Content", [
   }},
 ]);
 
+// ── Block Hide Suite (CR12) ──────────────────────────────────────────
+// Per-block "hide" toggle: a hidden block is absent when presenting (and on
+// every non-editor surface — thumbnails/PDF) but stays ghosted in the editor
+// so it can be un-hidden. These are logic-level assertions on the sanitizer
+// (the authoritative import path) plus a DOM check of the editor toolbar.
+uiSuite("Block Hide (CR12)", [
+  { name: "sanitizeBlock coerces hidden:true", fn: async () => {
+    const out = sanitizeBlock({ type: "heading", text: "Guide title", hidden: true });
+    if (!out) throw new Error("sanitizeBlock returned null for a valid heading");
+    if (out.hidden !== true) throw new Error(`expected hidden===true, got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock coerces truthy hidden to boolean true", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x", hidden: 1 });
+    if (out.hidden !== true) throw new Error(`expected hidden===true (boolean), got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock coerces falsy hidden to boolean false", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x", hidden: 0 });
+    if (out.hidden !== false) throw new Error(`expected hidden===false (boolean), got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock leaves hidden absent when not set", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x" });
+    if ("hidden" in out) throw new Error("hidden key should stay absent when not provided");
+  }},
+  { name: "visible block round-trips without a hidden flag", fn: async () => {
+    const out = sanitizeBlock({ type: "heading", text: "Shown", hidden: false });
+    if (out.hidden !== false) throw new Error(`expected hidden===false, got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "editor has no stray hidden blocks by default", fn: async () => {
+    // Demo deck ships no hidden blocks — the ghost marker attribute must be absent.
+    const ghosts = _$$("[data-block-hidden='1']");
+    if (ghosts.length !== 0) throw new Error(`unexpected ${ghosts.length} hidden-block marker(s) in default deck`);
+  }},
+]);
+
 // ── New Deck Dialog Suite ────────────────────────────────────────────
 uiSuite("New Deck", [
   { name: "New Deck dialog opens", fn: async () => {

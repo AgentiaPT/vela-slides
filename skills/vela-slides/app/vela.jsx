@@ -3210,7 +3210,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
+    <div key={i} data-block-type={b.type} data-block-hidden={b.hidden ? "1" : undefined} style={{ position: "relative", opacity: b.hidden ? 0.4 : 1, ...(b.link ? { cursor: "pointer" } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
@@ -3221,8 +3221,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
+        <button onClick={(e) => { e.stopPropagation(); handleBlockChange(i, { hidden: !b.hidden }); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.hidden ? T.amber : T.bgPanel, border: `1px solid ${b.hidden ? T.amber : T.border}`, color: b.hidden ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.hidden ? "Show block" : "Hide in presenter"}>{b.hidden ? "🙈" : "👁"}</button>
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
+      {/* Hidden-block label (edit mode) — reads as hidden while editing so it can be toggled back */}
+      {b.hidden && !presenting && hoveredBlock !== i && <div style={{ position: "absolute", top: -2, left: -2, display: "flex", alignItems: "center", gap: 2, padding: "1px 5px", borderRadius: 4, background: T.amber, fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", zIndex: 6, pointerEvents: "none", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title="Hidden in presenter">🙈 hidden</div>}
       {/* Block edit popup */}
       {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
@@ -3276,6 +3279,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a block followed by its inline comments
   const renderBlockWithComments = (b, i) => {
+    // CR12: a hidden block is removed from the flex flow entirely (returns []) on
+    // every non-editor surface — presenter, thumbnails, PDF, alt-slide previews —
+    // so it neither renders nor leaves a layout gap. It stays visible (ghosted) only
+    // in the live editor (editable+onEdit and not presenting) so it can be un-hidden.
+    if (b.hidden && !(editable && onEdit && !presenting)) return [];
     const block = renderBlockItem(b, i);
     const comments = renderInlineComments(i);
     if (!comments) return [block];
@@ -8892,6 +8900,40 @@ uiSuite("Content", [
     if (counters.length === 0) throw new Error("No slide counter (N/M format) found");
     const [n, m] = counters[0].textContent.trim().split("/").map((s) => parseInt(s.trim()));
     if (n < 1 || m < 1 || n > m) throw new Error(`Invalid counter: ${n}/${m}`);
+  }},
+]);
+
+// ── Block Hide Suite (CR12) ──────────────────────────────────────────
+// Per-block "hide" toggle: a hidden block is absent when presenting (and on
+// every non-editor surface — thumbnails/PDF) but stays ghosted in the editor
+// so it can be un-hidden. These are logic-level assertions on the sanitizer
+// (the authoritative import path) plus a DOM check of the editor toolbar.
+uiSuite("Block Hide (CR12)", [
+  { name: "sanitizeBlock coerces hidden:true", fn: async () => {
+    const out = sanitizeBlock({ type: "heading", text: "Guide title", hidden: true });
+    if (!out) throw new Error("sanitizeBlock returned null for a valid heading");
+    if (out.hidden !== true) throw new Error(`expected hidden===true, got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock coerces truthy hidden to boolean true", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x", hidden: 1 });
+    if (out.hidden !== true) throw new Error(`expected hidden===true (boolean), got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock coerces falsy hidden to boolean false", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x", hidden: 0 });
+    if (out.hidden !== false) throw new Error(`expected hidden===false (boolean), got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "sanitizeBlock leaves hidden absent when not set", fn: async () => {
+    const out = sanitizeBlock({ type: "text", text: "x" });
+    if ("hidden" in out) throw new Error("hidden key should stay absent when not provided");
+  }},
+  { name: "visible block round-trips without a hidden flag", fn: async () => {
+    const out = sanitizeBlock({ type: "heading", text: "Shown", hidden: false });
+    if (out.hidden !== false) throw new Error(`expected hidden===false, got ${JSON.stringify(out.hidden)}`);
+  }},
+  { name: "editor has no stray hidden blocks by default", fn: async () => {
+    // Demo deck ships no hidden blocks — the ghost marker attribute must be absent.
+    const ghosts = _$$("[data-block-hidden='1']");
+    if (ghosts.length !== 0) throw new Error(`unexpected ${ghosts.length} hidden-block marker(s) in default deck`);
   }},
 ]);
 
