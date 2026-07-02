@@ -45,9 +45,8 @@ re-paying that cost.
    round ≥ the agreed duration surfaces zero new CR-linked bugs.
 6. **Verify with eyes, sample before declaring done.** The proof artifact is a full
    end-of-sprint **HTML demo deck** with embedded recordings of the real app (see
-   *Proof artifact* below). Never trust a recording blindly — extract sample frames
-   and *look* at them; a driver bug (wrong key, mode never entered) silently produces
-   a demo that proves nothing.
+   *Proof artifact*). Never trust a recording blindly — *look* at frames captured while
+   driving; a driver bug (wrong key, clip never played) silently proves nothing.
 7. **Don't fight the environment.** Detect a capability once (signing keys, network,
    missing binaries); if an op is impossible here, record it as a known limitation and
    move on — don't burn turns retrying "command not found" or an empty credential.
@@ -83,39 +82,36 @@ the **stop rule** explicitly (bug-hunt duration + proof artifact).
 
 ## Proof artifact — the end-of-sprint demo
 
-Deliver **one HTML slide deck** that is a complete end-of-sprint review — stunning,
-no fluff — not just a reel of clips. HTML is the universal medium: renders in any
-browser, needs no toolchain, plays offline, easy to sample. Its arc:
-
-1. **Open — theme & story.** A sprint name/codename and the one-line theme that ties
-   the changes together. Why this batch, as a narrative.
-2. **Scope — the issue list.** Every change request, grouped, so the audience sees the
-   whole surface at a glance.
-3. **Delivery — burndown & numbers.** Progress vs total (shipped / in-flight),
-   an approximate burndown, and the headline metrics (changes shipped, tests added &
-   passing, bugs found & fixed, CR bugs remaining).
-4. **Quality — bugs found & fixed.** What the adversarial hunt caught and how it was
-   fixed + regression-tested. Honesty here is the credibility of the whole demo.
-5. **Live walkthrough — the proof.** One section per change: intent + an **embedded
-   recorded demo** of the *real* app doing it. This is the heart of the deck.
-6. **Close — totals & what's next.**
+Deliver **one HTML slide deck** that is a complete end-of-sprint review — stunning, no
+fluff — not just a reel of clips. HTML is the universal medium: any browser, no
+toolchain, plays offline. The arc: **(1) Open** — sprint name/codename + one-line theme;
+**(2) Scope** — every change request, grouped; **(3) Delivery** — progress vs total, a
+burndown, headline numbers (shipped, tests, bugs found & fixed, remaining); **(4)
+Quality** — what the hunt caught + how it was fixed (honesty = credibility); **(5) Live
+walkthrough** — one slide per change: intent + an **embedded recording of the real app**
+(the heart of the deck); **(6) Close** — totals & next.
 
 The slide chrome is **app-independent** and pre-built — you supply only recordings and
 text, so it drops onto any browser-based app. Use the bundled scaffold:
 
 - **`assets/demo/`** — a self-contained HTML deck (no CDN, no build). Edit `deck.js`
   (the only content file; slide types incl. `video`) and open `index.html`.
-- **`assets/record-demo.mjs`** — generic recorder: `node record-demo.mjs <app-url>
-  <out-dir> <scenario.mjs>`. It records one `.webm` per change **and** a screenshot at
-  every beat, then scaffolds the deck. The only app-specific file is `scenario.mjs`
-  (exports `boot(page)` + `clips[]`).
-- **Frame-check before shipping (hard gate).** *Inspect* the per-beat screenshots:
-  feature visible, right screen, interaction landed? A green suite is **not** proof the
-  demo shows the feature — the recording is a separate artifact and can silently be
-  wrong (wrong key, mode never entered). Ship only once frames confirm **every** change
-  is on screen. (On the `claude-code-cloud-default` profile use these screenshots, not
-  `ffmpeg` frame extraction — its bundled ffmpeg is a stripped recorder. See
-  `references/agent-profiles.md`.)
+- **`assets/record-demo.mjs`** — generic per-change recorder: `node record-demo.mjs
+  <app-url> <out-dir> <scenario.mjs>`. Records one `.webm` per change **and** a
+  screenshot at every beat, then scaffolds the deck. The only app-specific file is
+  `scenario.mjs` (exports `boot(page)` + `clips[]`).
+- **`assets/play-deck.mjs`** — records the finished deck as **one integrated video**
+  (`node play-deck.mjs <deck-dir> [out.webm]`), dwelling per slide and letting each
+  embedded clip play once. This single run-through is the **final deliverable**.
+- **Frame-check before shipping (hard gate).** *Inspect* the screenshots both scripts
+  take **while driving**: feature visible, right screen, interaction landed? A green
+  suite is **not** proof the demo shows the feature — the recording is a separate
+  artifact that can silently be wrong (wrong key, mode never entered, clip never
+  autoplayed). Ship only once frames confirm **every** change is on screen. Note: a
+  Playwright-recorded VP8 `.webm` has no duration header, so you **cannot** verify it by
+  re-opening/seeking it afterwards — the during-drive screenshots are the check (not
+  `ffmpeg` frame extraction; the bundled ffmpeg is a stripped recorder — see
+  `references/agent-profiles.md`).
 
 ## Stop rule (both required)
 

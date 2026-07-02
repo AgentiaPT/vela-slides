@@ -13,6 +13,29 @@ Claude Code's default cloud/remote-execution environment (fresh container per se
 outbound HTTPS via a proxy). Verify with the probes at the bottom; update if versions
 drift.
 
+### Detection markers (identify the profile fast)
+Check these **stable** signals first — if they hold, you're in this profile and can
+trust the facts below without re-probing everything. Match on the *markers*, not exact
+version numbers (those drift).
+
+| Marker | Expected | Meaning |
+|--------|----------|---------|
+| `$PLAYWRIGHT_BROWSERS_PATH` | `/opt/pw-browsers` | pre-installed browser bundle |
+| dir `/opt/pw-browsers/chromium-*` + `ffmpeg-*` | present | pinned Chromium + recorder ffmpeg |
+| `$HTTPS_PROXY` / `$HTTP_PROXY` | set (agent proxy) | outbound is proxied |
+| file `/root/.ccr/ca-bundle.crt` + `/root/.ccr/README.md` | present | agent-proxy CA + tool docs |
+| git user email | `noreply@anthropic.com`, unsigned | commits show "Unverified" |
+| CWD | fresh clone under a per-session path | ephemeral container |
+
+One-liner (prints `claude-code-cloud-default` when it matches):
+```bash
+[ "$PLAYWRIGHT_BROWSERS_PATH" = /opt/pw-browsers ] && [ -d /opt/pw-browsers ] \
+  && [ -n "$HTTPS_PROXY" ] && [ -f /root/.ccr/ca-bundle.crt ] \
+  && echo claude-code-cloud-default || echo "profile: unknown — re-probe"
+```
+If markers partially match (e.g. `/opt/pw-browsers` but no proxy), you're in a *variant*
+— reuse the browser facts, re-probe the network/git facts, and note the divergence.
+
 ### Network
 - Outbound HTTPS works **through the agent proxy** (`$HTTPS_PROXY`), but public
   **JS/CSS CDNs are blocked** (esm.sh, unpkg, the Playwright browser CDN, most font
@@ -37,6 +60,12 @@ drift.
 - **Frame-check the right way:** take `page.screenshot()` at each beat *while driving*
   the app. Those PNGs are your frame samples (exact, labelled, no ffmpeg). Segment the
   demo into separate per-feature clips (one context each) instead of concatenating.
+- **Recorded webm has no duration header** — Playwright's VP8 output isn't seekable and
+  `video.currentTime` reads 0, so you can't verify it by re-opening/seeking. Verify with
+  the during-drive screenshots, not post-hoc playback.
+- **Embedded clips need autoplay** — launch Chromium with
+  `--autoplay-policy=no-user-gesture-required` or muted `<video>` clips won't play while
+  recording, and the demo captures black boxes.
 
 ### Git / signing
 - Commits are authored `Claude <noreply@anthropic.com>` but **cannot be GPG/SSH-signed**
