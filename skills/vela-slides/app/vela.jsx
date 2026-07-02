@@ -3754,16 +3754,20 @@ function gatherImageBlocks(blocks) {
 
 function restoreImageSrcs(improved, originalBlocks) {
   if (!improved?.blocks || !originalBlocks) return;
-  // Grid-recursive so grid-nested images aren't left as literal placeholders.
-  const origImages = gatherImageBlocks(originalBlocks);
-  let posIdx = 0; // positional fallback for any untagged placeholder
+  // Only images with a real src are tagged by stripImageSrcs, so the "[IMAGE:n]"
+  // index counts truthy-src images — origImages MUST filter the same way or the
+  // indices diverge (a leading empty-src image would shift every tag by one).
+  // Grid-recursive so grid-nested images resolve too.
+  const origImages = gatherImageBlocks(originalBlocks).filter((b) => b.src);
+  let posIdx = 0; // positional fallback for untagged/out-of-range placeholders
   const walk = (bs) => { for (const b of (bs || [])) {
     if (b.type === "image") {
       // Prefer the "[IMAGE:n]" tag so a reordered/partially-kept set restores
       // the RIGHT original image by identity, not by position.
       const m = typeof b.src === "string" && b.src.match(/^\[IMAGE:(\d+)\]$/);
-      if (m) { const oi = origImages[Number(m[1])]; if (oi) b.src = oi.src; }
-      else if (origImages[posIdx]) { b.src = origImages[posIdx].src; }
+      const oi = (m && origImages[Number(m[1])]) || origImages[posIdx];
+      if (oi) b.src = oi.src;
+      else if (m) b.src = ""; // tagged but nothing to restore — blank, never leave the literal token (the sanitizer would nuke it anyway)
       posIdx++;
     }
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
@@ -4158,7 +4162,7 @@ ${ICON_LIST}
 Use icons GENEROUSLY — in bullets, headings, badges, callouts, metrics, grids.
 
 
-IMPORTANT: For image blocks, keep src as "keep-original" — do not modify image data.`;
+IMPORTANT: For image blocks, keep the "src" value EXACTLY as given (e.g. "[IMAGE:0]") — echo the same token back; never modify, invent, or drop it.`;
 }
 
 function extractSlideImages(lanes, selectedId, slideIndex) {
@@ -4351,7 +4355,7 @@ ${BLOCK_REFERENCE}
 
 ${ICON_LIST}
 
-IMPORTANT: For image blocks, keep src as "keep-original".`;
+IMPORTANT: For image blocks, keep the "src" value EXACTLY as given (e.g. "[IMAGE:0]") — echo the same token back; never modify, invent, or drop it.`;
 
 // ━━━ Slide Design API (shared by improve + alternatives) ━━━━━━━━━━
 async function callSlideDesignAPI(screenshotBase64, slideJson, conceptTitle, slideNum, totalSlides, sysPrompt, temperature = 0.3, userMsgOverride = null, _callType = "improve") {
@@ -8266,6 +8270,22 @@ const VELA_TESTS = [
     const gridImg = b.find((x) => x.type === "grid")?.items?.[0]?.blocks?.[0];
     const topImgs = b.filter((x) => x.type === "image");
     return gridImg?.src === bigsrc && topImgs.length === 0;
+  }},
+  { name: "edit_slide index stays aligned past a leading empty-src image", fn: () => {
+    const real = "data:image/png;base64," + "R".repeat(300);
+    // an empty-src image block precedes the real one — indices must not shift
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: "" }, { type: "image", src: real }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "text", text: "x" }, { type: "image", src: "[IMAGE:0]" }] } }, ws);
+    const imgs = ws.lanes[0].items[0].slides[0].blocks.filter((x) => x.type === "image");
+    return imgs.length === 1 && imgs[0].src === real;
+  }},
+  { name: "edit_slide blanks (never leaves literal) an out-of-range [IMAGE:n]", fn: () => {
+    const real = "data:image/png;base64," + "R".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: real }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "text", text: "x" }, { type: "image", src: "[IMAGE:9]" }] } }, ws);
+    const imgs = ws.lanes[0].items[0].slides[0].blocks.filter((x) => x.type === "image");
+    // out-of-range tag → positional fallback restores the real image (posIdx 0), never the literal token
+    return imgs.every((i) => i.src !== "[IMAGE:9]") && imgs.some((i) => i.src === real);
   }},
   { name: "edit_slide keeps RIGHT image by identity on multi-image reorder", fn: () => {
     const srcA = "data:image/png;base64," + "A".repeat(300);

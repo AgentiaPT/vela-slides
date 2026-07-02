@@ -168,6 +168,22 @@ const VELA_TESTS = [
     const topImgs = b.filter((x) => x.type === "image");
     return gridImg?.src === bigsrc && topImgs.length === 0;
   }},
+  { name: "edit_slide index stays aligned past a leading empty-src image", fn: () => {
+    const real = "data:image/png;base64," + "R".repeat(300);
+    // an empty-src image block precedes the real one — indices must not shift
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: "" }, { type: "image", src: real }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "text", text: "x" }, { type: "image", src: "[IMAGE:0]" }] } }, ws);
+    const imgs = ws.lanes[0].items[0].slides[0].blocks.filter((x) => x.type === "image");
+    return imgs.length === 1 && imgs[0].src === real;
+  }},
+  { name: "edit_slide blanks (never leaves literal) an out-of-range [IMAGE:n]", fn: () => {
+    const real = "data:image/png;base64," + "R".repeat(300);
+    const ws = { lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Deck", slides: [{ blocks: [{ type: "image", src: real }] }] }] }] };
+    executeTool("edit_slide", { item_name: "Deck", slide_index: 0, patch: { blocks: [{ type: "heading", text: "H" }, { type: "text", text: "x" }, { type: "image", src: "[IMAGE:9]" }] } }, ws);
+    const imgs = ws.lanes[0].items[0].slides[0].blocks.filter((x) => x.type === "image");
+    // out-of-range tag → positional fallback restores the real image (posIdx 0), never the literal token
+    return imgs.every((i) => i.src !== "[IMAGE:9]") && imgs.some((i) => i.src === real);
+  }},
   { name: "edit_slide keeps RIGHT image by identity on multi-image reorder", fn: () => {
     const srcA = "data:image/png;base64," + "A".repeat(300);
     const srcB = "data:image/png;base64," + "B".repeat(300);
