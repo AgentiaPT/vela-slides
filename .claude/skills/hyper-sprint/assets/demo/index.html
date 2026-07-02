@@ -17,9 +17,20 @@
   body{background:#05070f;color:var(--fg);font-family:var(--font);overflow:hidden}
   #stage{position:fixed;inset:0;display:grid;place-items:center}
   .slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
-    gap:22px;padding:7vh 9vw;background:var(--bg);animation:fade .35s ease}
+    gap:22px;padding:7vh 9vw;background:var(--bg);animation:fade .4s ease}
   .slide.on{display:flex}
-  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  /* Walkthrough slides get a loud "new chapter" entrance so each CR demo is unmistakable */
+  .slide-video{background:linear-gradient(180deg,#0e1730,#0b1020);overflow:hidden}
+  .slide-video::before{content:"";position:absolute;top:0;left:0;height:7px;width:100%;
+    background:linear-gradient(90deg,var(--accent),#a78bfa);transform-origin:left;animation:sweep .5s cubic-bezier(.2,.7,.2,1)}
+  @keyframes sweep{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  .chap{display:flex;align-items:center;gap:16px;animation:chapIn .45s cubic-bezier(.2,.7,.2,1)}
+  @keyframes chapIn{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
+  .chap .n{font-size:15px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
+    color:#05070f;background:var(--accent);padding:7px 13px;border-radius:9px;white-space:nowrap}
+  .slide-video video{animation:popIn .5s .14s both}
+  @keyframes popIn{from{opacity:0;transform:scale(.96) translateY(10px)}to{opacity:1;transform:none}}
   .kicker{color:var(--accent);font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:14px}
   h1{font-size:min(7vw,64px);line-height:1.05;margin:0}
   h2{font-size:min(4.4vw,40px);margin:0}
@@ -88,12 +99,12 @@
       case 'chart': return `${k}<h2>${esc(s.title)}</h2>${chart(s)}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
       case 'retro': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:2"><div class="card"><h3 style="color:var(--ok)">What worked</h3><ul>${list(s.worked)}</ul></div><div class="card"><h3 style="color:var(--warn)">Next sprint — improve</h3><ul>${list(s.improve)}</ul></div></div>`;
       case 'bullets': return `${k}<h2>${esc(s.title)}</h2><ul>${list(s.items)}</ul>`;
-      case 'video': return `${k}<h2>${esc(s.title)}</h2><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
+      case 'video': return `<div class="chap"><span class="n">${esc(s.kicker||'Live')}</span><h2 style="margin:0">${esc(s.title)}</h2></div><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
       default: return `${k}<h2>${esc(s.title||'')}</h2><p>${esc(s.body||'')}</p>`;
     }
   }
   const slides = D.slides||[];
-  stage.innerHTML = slides.map(s=>`<section class="slide">${render(s)}</section>`).join('');
+  stage.innerHTML = slides.map(s=>`<section class="slide slide-${esc(s.type)}">${render(s)}</section>`).join('');
   const els=[...stage.children]; let i=0;
   function show(n){ i=Math.max(0,Math.min(els.length-1,n)); els.forEach((e,x)=>e.classList.toggle('on',x===i));
     document.getElementById('hud').textContent=`${i+1} / ${els.length}`;
