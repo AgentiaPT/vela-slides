@@ -2718,6 +2718,100 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
+# ━━━ Hidden slide/block round-trip Tests (v12.76) ━━━━━━━━━━━━━━━━
+def test_hidden_roundtrip():
+    print("\n── Hidden slide/block round-trip (v12.76) Tests ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers (hidden)", str(e))
+        return
+
+    def deck_with_hidden():
+        return {
+            "deckTitle": "Hidden Test",
+            "lanes": [{
+                "title": "Main",
+                "items": [{
+                    "title": "Topic",
+                    "status": "done",
+                    "importance": "must",
+                    "slides": [
+                        {
+                            "title": "Visible",
+                            "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+                            "duration": 60,
+                            "blocks": [
+                                {"type": "heading", "text": "Shown", "size": "2xl"},
+                                {"type": "text", "text": "Concealed block", "hidden": True},
+                            ],
+                        },
+                        {
+                            "title": "Concealed slide",
+                            "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+                            "duration": 30,
+                            "hidden": True,
+                            "blocks": [{"type": "text", "text": "plain"}],
+                        },
+                    ],
+                }],
+            }],
+        }
+
+    def slide0(d): return d["lanes"][0]["items"][0]["slides"][0]
+    def slide1(d): return d["lanes"][0]["items"][0]["slides"][1]
+
+    # 1. Compact round-trip: slide-level hidden survives full → compact → full
+    deck = deck_with_hidden()
+    rt = expand_deck(compact_deck(copy.deepcopy(deck)))
+    if slide1(rt).get("hidden") is True:
+        ok("compact round-trip preserves slide-level hidden")
+    else:
+        fail("compact round-trip preserves slide-level hidden", f"got {slide1(rt).get('hidden')!r}")
+    # Visible slide must NOT gain a hidden flag
+    if not slide0(rt).get("hidden"):
+        ok("compact round-trip leaves visible slide unhidden")
+    else:
+        fail("compact round-trip leaves visible slide unhidden")
+
+    # 2. Compact round-trip: block-level hidden survives full → compact → full
+    blk = slide0(rt)["blocks"][1]
+    if blk.get("hidden") is True and blk.get("type") == "text" and blk.get("text") == "Concealed block":
+        ok("compact round-trip preserves block-level hidden (+ data)")
+    else:
+        fail("compact round-trip preserves block-level hidden", f"got {blk!r}")
+
+    # 3. Turbo round-trip: slide-level hidden survives full → turbo → full
+    deck = deck_with_hidden()
+    trt = unturbo_deck(copy.deepcopy(turbo_deck(copy.deepcopy(deck))))
+    if slide1(trt).get("hidden") is True:
+        ok("turbo round-trip preserves slide-level hidden")
+    else:
+        fail("turbo round-trip preserves slide-level hidden", f"got {slide1(trt).get('hidden')!r}")
+    if not slide0(trt).get("hidden"):
+        ok("turbo round-trip leaves visible slide unhidden")
+    else:
+        fail("turbo round-trip leaves visible slide unhidden")
+
+    # 4. Turbo round-trip: block-level hidden survives full → turbo → full
+    tblk = slide0(trt)["blocks"][1]
+    if tblk.get("hidden") is True and tblk.get("type") == "text" and tblk.get("text") == "Concealed block":
+        ok("turbo round-trip preserves block-level hidden (+ data)")
+    else:
+        fail("turbo round-trip preserves block-level hidden", f"got {tblk!r}")
+
+    # 5. Turbo positional alignment: hidden slide WITHOUT studyNotes still decodes
+    #    (position 10 placeholder must keep position 11 aligned).
+    turbo = turbo_deck(copy.deepcopy(deck_with_hidden()))
+    s1_arr = turbo[1][0][1][0][3][1]  # lanes[0].items[0].slides[1] positional array
+    if len(s1_arr) > 11 and s1_arr[10] is None and s1_arr[11] is True:
+        ok("turbo emits placeholder at pos 10 so hidden lands at pos 11")
+    else:
+        fail("turbo hidden positional alignment", f"got array len={len(s1_arr)}: {s1_arr!r}")
+
+
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
@@ -3051,6 +3145,7 @@ if __name__ == "__main__":
         test_server_hardening()
         test_block_primitives()
         test_study_notes()
+        test_hidden_roundtrip()
         test_pdf_title_cards()
     if run_integration:
         test_integration()

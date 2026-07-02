@@ -34,6 +34,15 @@ const velaAIAvailable = () => {
 };
 const VELA_AI_UNAVAILABLE_MSG = "AI features not enabled — no API channel detected";
 
+// True ONLY in the Claude.ai hosted-artifact runtime: not local serve.py, not the
+// Neutralino desktop shell (which sets window.__velaAgentReady), and running inside an
+// iframe. Exposed as a function because window state (agent detection) can flip after
+// first render — same reason velaAIAvailable is a function. Gates artifact-only surfaces
+// like token/cost stats. (v12.76)
+const velaIsArtifactMode = () =>
+  (typeof window !== "undefined") && !VELA_LOCAL_MODE &&
+  window.__velaAgentReady == null && window.self !== window.top;
+
 // React hook: re-renders the caller when AI availability changes. velaAIAvailable()
 // is a plain read of window.__velaAgentReady, which the Neutralino shell flips
 // asynchronously once agent detection finishes and announces via a
@@ -88,8 +97,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.75";
+const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
+  { v: "12.76", d: "Editing & presenter UX batch (sprint 7-1): hide/unhide slides and individual blocks (excluded from counts/time and presenter, shown in a detailed stats dialog); insert sections at any position; drag sections to reorder and drop slides into empty sections; a clearer slide-add menu (blank / AI / section); modal dialogs get a default button + Enter-to-confirm; header shows slide/section counts with minute-rounded time; presenter TOC toggles with Ctrl+E and jumps to the first search match; AI slide edits preserve existing images; Export produces a .vela file; token/cost stats are limited to the hosted-artifact runtime; and desktop title reads 'Vela Slides' with a Check-for-updates action and a working agent Re-scan." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -845,6 +855,9 @@ function sanitizeBlock(block) {
   if (Array.isArray(clean.quadrants)) {
     for (const q of clean.quadrants) { scrubColorFields(q); scrubLayoutFields(q); }
   }
+  // Block visibility flag (CR12). Spread preserves it; harden the type. Applies to
+  // blocks in blocks/L/R and nested grid-cell blocks (all routed through here). (v12.76)
+  if ("hidden" in clean) clean.hidden = !!clean.hidden;
   return clean;
 }
 
@@ -935,6 +948,8 @@ function sanitizeSlide(slide) {
     const s = typeof clean.bgImage === "string" ? sanitizeImageDataUri(sanitizeUrl(clean.bgImage, ["data:"])) : "";
     if (s) clean.bgImage = s; else delete clean.bgImage;
   }
+  // Slide visibility flag (CR5). Spread already preserves it; harden the type. (v12.76)
+  if ("hidden" in clean) clean.hidden = !!clean.hidden;
   return clean;
 }
 
@@ -1088,8 +1103,10 @@ const FONT = { display: "'Sora', sans-serif", body: "'DM Sans', sans-serif", mon
 // presentation mode and exported to PDF so the deck exports exactly as presented.
 function buildTitleCardSlide(item, lane, branding) {
   const accent = branding?.accentColor || T.accent;
-  const slideCount = (item.slides || []).length;
-  const totalTime = (item.slides || []).reduce((a, s) => a + (s.duration || 0), 0);
+  // Hidden slides don't count toward the presented count/time on the title card (CR5).
+  const visibleSlides = (item.slides || []).filter((s) => !s.hidden);
+  const slideCount = visibleSlides.length;
+  const totalTime = visibleSlides.reduce((a, s) => a + (s.duration || 0), 0);
   const timeStr = totalTime > 0 ? `${Math.floor(totalTime / 60)}m ${totalTime % 60}s` : "";
   return {
     _virtual: true,
@@ -1181,7 +1198,11 @@ const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (cons
 const findItem = (lanes, id) => { for (const l of lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
 const fmtSize = (b) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(2)}MB`;
 const fmtTime = (s) => { if (!s || s <= 0) return ""; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
-const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
+// Whole-minute duration for header/title surfaces (CR6). (v12.76)
+const fmtMin = (s) => `${Math.round((s || 0) / 60)}m`;
+// Sum slide durations; hidden slides are excluded by default (CR5). Pass
+// includeHidden=true for detailed stats that should count everything. (v12.76)
+const sumDurations = (slides, includeHidden = false) => (slides || []).reduce((s, sl) => s + ((!includeHidden && sl.hidden) ? 0 : (sl.duration || 0)), 0);
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -3357,6 +3378,10 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+    // Insert a new module (section) at an arbitrary position in the target lane (CR4/CR10).
+    // Same shape as ADD_ITEM, but splices at a.index and re-indexes order to i+1 (mirrors
+    // DRAG_REORDER's reindex). Undoable — deliberately not in NO_HISTORY. (v12.76)
+    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); const newItem = { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }; return { ...state, lanes: state.lanes.map((l) => { if (l.id !== a.laneId) return l; const items = [...l.items]; const idx = Math.max(0, Math.min(typeof a.index === "number" ? a.index : items.length, items.length)); items.splice(idx, 0, newItem); return { ...l, items: items.map((it, i) => ({ ...it, order: i + 1 })) }; }) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -3410,7 +3435,7 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, hidden: s.hidden, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });

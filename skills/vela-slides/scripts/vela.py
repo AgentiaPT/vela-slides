@@ -552,6 +552,11 @@ def _ci(palette, val):
 
 def _turbo_encode_block(block, palette):
     """Encode a single block to positional array."""
+    # Hidden blocks (CR12) route through the verbatim passthrough (tid 99) so the
+    # `hidden` flag and all block data survive the positional encode losslessly,
+    # without threading `hidden` through every per-type encoder.
+    if block.get("hidden"):
+        return [99, block]
     t = block.get("type", "")
     tid = _BLOCK_TYPE_IDS.get(t, 99)
 
@@ -903,8 +908,15 @@ def turbo_deck(deck):
         # Backward compatible — old decoders reading new decks ignore extras;
         # new decoders reading old decks handle missing position via len() guard.
         sn = s.get("studyNotes")
+        hidden = bool(s.get("hidden"))
         if sn:
             arr.append(sn)
+        # Optional position 11: hidden slide flag (CR5). If studyNotes is absent we
+        # must still emit position 10 (placeholder) so position 11 stays aligned.
+        if hidden:
+            if not sn:
+                arr.append(None)
+            arr.append(True)
         return arr
 
     def encode_item(item):
@@ -957,6 +969,9 @@ def unturbo_deck(data):
         # Optional position 10: studyNotes (backward compatible with length-10 turbo)
         if len(s) > 10 and s[10]:
             result["studyNotes"] = s[10]
+        # Optional position 11: hidden slide flag (CR5)
+        if len(s) > 11 and s[11]:
+            result["hidden"] = True
         return result
 
     def decode_item(item):

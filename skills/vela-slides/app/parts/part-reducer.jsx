@@ -27,6 +27,10 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+    // Insert a new module (section) at an arbitrary position in the target lane (CR4/CR10).
+    // Same shape as ADD_ITEM, but splices at a.index and re-indexes order to i+1 (mirrors
+    // DRAG_REORDER's reindex). Undoable — deliberately not in NO_HISTORY. (v12.76)
+    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); const newItem = { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }; return { ...state, lanes: state.lanes.map((l) => { if (l.id !== a.laneId) return l; const items = [...l.items]; const idx = Math.max(0, Math.min(typeof a.index === "number" ? a.index : items.length, items.length)); items.splice(idx, 0, newItem); return { ...l, items: items.map((it, i) => ({ ...it, order: i + 1 })) }; }) }; }
     case "IMPORT_CONCEPTS": {
       let lanes = state.lanes.length > 0 ? [...state.lanes] : [{ id: uid(), title: "Imported", items: [] }];
       const laneId = lanes[0].id;
@@ -80,7 +84,7 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, hidden: s.hidden, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
