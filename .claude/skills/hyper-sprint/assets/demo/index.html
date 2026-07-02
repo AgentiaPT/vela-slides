@@ -57,6 +57,26 @@
   const stage = document.getElementById('stage');
   const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const list = a => (a||[]).map(x=>`<li>${esc(x)}</li>`).join('');
+  function chart(s){
+    const W=920,H=340,pl=54,pr=20,pt=16,pb=34, iw=W-pl-pr, ih=H-pt-pb;
+    const xmax=s.xmax||Math.max(...(s.actual||[]).map(p=>p[0]),1);
+    const ymax=s.ymax||Math.max(...(s.actual||[]).flatMap(p=>[p[1]]), ...(s.ideal||[]).map(p=>p[1]),1);
+    const X=x=>pl+iw*(x/xmax), Y=y=>pt+ih*(1-y/ymax);
+    const poly=(pts,extra)=>`<polyline fill="none" ${extra} points="${pts.map(p=>`${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ')}"/>`;
+    const gx=[]; for(let i=0;i<=ymax;i+=Math.ceil(ymax/4)) gx.push(i);
+    const grid=gx.map(v=>`<line x1="${pl}" y1="${Y(v)}" x2="${W-pr}" y2="${Y(v)}" stroke="#1c2540"/><text x="${pl-8}" y="${Y(v)+4}" fill="#93a0c8" font-size="12" text-anchor="end">${v}</text>`).join('');
+    const marks=(s.markers||[]).map(m=>`<line x1="${X(m.x)}" y1="${pt}" x2="${X(m.x)}" y2="${pt+ih}" stroke="#f59e0b" stroke-dasharray="3 3" opacity=".7"/><text x="${X(m.x)}" y="${pt+12}" fill="#f59e0b" font-size="11" text-anchor="middle">${esc(m.label)}</text>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:min(84vw,920px)">
+      ${grid}
+      <line x1="${pl}" y1="${pt+ih}" x2="${W-pr}" y2="${pt+ih}" stroke="#3a466b"/>
+      ${marks}
+      ${s.ideal?poly(s.ideal,'stroke="#93a0c8" stroke-width="2" stroke-dasharray="6 5"'):''}
+      ${poly(s.actual||[],'stroke="var(--accent)" stroke-width="3"')}
+      <text x="${W-pr}" y="${pt+ih+26}" fill="#93a0c8" font-size="12" text-anchor="end">${esc(s.xlabel||'elapsed min')}</text>
+      <text x="${pl}" y="${pt+ih+26}" fill="#93a0c8" font-size="12">0</text>
+      <text x="${pl+iw/2}" y="${pt+ih+26}" fill="#93a0c8" font-size="12" text-anchor="middle">- - ideal · <tspan fill="#7c9cff">actual ${esc(s.unit||'')}</tspan></text>
+    </svg>`;
+  }
   function render(s){
     const k = s.kicker?`<div class="kicker">${esc(s.kicker)}</div>`:'';
     switch(s.type){
@@ -65,6 +85,8 @@
       case 'metrics': return `${k}<h2>${esc(s.title)}</h2><div class="metrics" style="--cols:${(s.items||[]).length||4}">${(s.items||[]).map(m=>`<div class="metric"><div class="v">${esc(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join('')}</div>`;
       case 'burndown': return `${k}<h2>${esc(s.title)}</h2><div>${(s.bars||[]).map(b=>`<div class="bar"><div class="lab">${esc(b.label)}</div><div class="track"><div class="fill" style="width:${Math.max(0,Math.min(100,b.value))}%;background:${b.color||'var(--accent)'}"></div></div><div style="flex:0 0 3ch;text-align:right">${b.value}%</div></div>`).join('')}</div>${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
       case 'bugs': return `${k}<h2>${esc(s.title)}</h2><ul>${(s.items||[]).map(b=>`<li><span class="sev ${b.sev||'m'}">${(b.sev||'m').toUpperCase()}</span>${esc(b.text)}</li>`).join('')}</ul>`;
+      case 'chart': return `${k}<h2>${esc(s.title)}</h2>${chart(s)}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'retro': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:2"><div class="card"><h3 style="color:var(--ok)">What worked</h3><ul>${list(s.worked)}</ul></div><div class="card"><h3 style="color:var(--warn)">Next sprint — improve</h3><ul>${list(s.improve)}</ul></div></div>`;
       case 'bullets': return `${k}<h2>${esc(s.title)}</h2><ul>${list(s.items)}</ul>`;
       case 'video': return `${k}<h2>${esc(s.title)}</h2><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
       default: return `${k}<h2>${esc(s.title||'')}</h2><p>${esc(s.body||'')}</p>`;

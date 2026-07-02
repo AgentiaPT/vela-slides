@@ -72,46 +72,48 @@ the **stop rule** explicitly (bug-hunt duration + proof artifact).
 
 **Phase 1 — Recon.** Parallel read-only sub-agents (one per subsystem) → anchored edit maps in `NOTES.md`.
 
-**Phase 2 — Plan.** Cluster by file-locality into task-tracked work items; sequence so colliding edits don't overlap.
+**Phase 2 — Plan.** Cluster by file-locality into task-tracked work items; sequence so colliding edits don't overlap; give each cluster a rough effort estimate (the burndown's ideal line) and note the start time.
 
 **Phase 3 — Implement (per cluster).** Edit from notes → unit + e2e tests → full suite green → commit. Repeat.
 
 **Phase 4 — Adversarial hunt.** Diverse-lens hunters ×2 rounds → dedupe → fix + regression test (re-run suite each fix) → one confirming pass. Loop until a round is dry.
 
-**Phase 5 — Proof & handoff.** Build the demo deck (below), frame-check it, deliver. Report final status vs the full list.
+**Phase 5 — Proof, retro & handoff.** Build the demo deck (below) incl. a real burndown and a retro from session stats; frame-check; deliver. Report final status vs the full list.
 
 ## Proof artifact — the end-of-sprint demo
 
 Deliver **one HTML slide deck** that is a complete end-of-sprint review — stunning, no
 fluff — not just a reel of clips. HTML is the universal medium: any browser, no
-toolchain, plays offline. The arc: **(1) Open** — sprint name/codename + one-line theme;
-**(2) Scope** — every change request, grouped; **(3) Delivery** — progress vs total, a
-burndown, headline numbers (shipped, tests, bugs found & fixed, remaining); **(4)
-Quality** — what the hunt caught + how it was fixed (honesty = credibility); **(5) Live
-walkthrough** — one slide per change: intent + an **embedded recording of the real app**
-(the heart of the deck); **(6) Close** — totals & next.
+toolchain, plays offline. Arc: Open (theme/codename) → Scope (issue list) → **Burndown**
+(real, below) → **Session stats & retro** (below) → Quality (bugs found & fixed) → **Live
+walkthrough** (one embedded real-app clip per change — the heart) → Close.
+
+**Real burndown (coding-agent flavour).** A "16/16 = 100%" bar is a scoreboard, not a
+burndown. The per-cluster effort estimates (Phase 2) are the *ideal* line; commit
+timestamps give the *actual*. Plot work-remaining = *open CRs + open defects* over
+elapsed time, and show the honest shape — features burn down, then the **bug-hunt adds
+scope** (defects found after "done") so the line bumps *up* before zero. Where rework,
+not features, dominated is the insight.
+
+**Session stats & retro.** Mine what the session produced — availability is
+**profile-dependent** (`assets/sprint-stats.py` degrades gracefully): git gives the
+commit timeline / fix-vs-test ratio; the transcript gives tool calls, sub-agents,
+errors, timestamps (`claude-code-cloud-*`); token/cost + task list are often absent
+headless. Turn it into a stats slide + a **retro**: what worked and concrete
+**self-recommendations for next sprint**.
 
 The slide chrome is **app-independent** and pre-built — you supply only recordings and
-text, so it drops onto any browser-based app. Use the bundled scaffold:
+text, so it drops onto any browser-based app. The bundled pipeline
+(`assets/record-demo.mjs` per-change clips → edit `deck.js` → `assets/sprint-stats.py` →
+`assets/play-deck.mjs` for the integrated video) and full slide-type/gotcha reference
+live in **`references/demo-deck.md`**.
 
-- **`assets/demo/`** — a self-contained HTML deck (no CDN, no build). Edit `deck.js`
-  (the only content file; slide types incl. `video`) and open `index.html`.
-- **`assets/record-demo.mjs`** — generic per-change recorder: `node record-demo.mjs
-  <app-url> <out-dir> <scenario.mjs>`. Records one `.webm` per change **and** a
-  screenshot at every beat, then scaffolds the deck. The only app-specific file is
-  `scenario.mjs` (exports `boot(page)` + `clips[]`).
-- **`assets/play-deck.mjs`** — records the finished deck as **one integrated video**
-  (`node play-deck.mjs <deck-dir> [out.webm]`), dwelling per slide and letting each
-  embedded clip play once. This single run-through is the **final deliverable**.
-- **Frame-check before shipping (hard gate).** *Inspect* the screenshots both scripts
-  take **while driving**: feature visible, right screen, interaction landed? A green
-  suite is **not** proof the demo shows the feature — the recording is a separate
-  artifact that can silently be wrong (wrong key, mode never entered, clip never
-  autoplayed). Ship only once frames confirm **every** change is on screen. Note: a
-  Playwright-recorded VP8 `.webm` has no duration header, so you **cannot** verify it by
-  re-opening/seeking it afterwards — the during-drive screenshots are the check (not
-  `ffmpeg` frame extraction; the bundled ffmpeg is a stripped recorder — see
-  `references/agent-profiles.md`).
+**Frame-check before shipping (hard gate).** Both recorders screenshot **while
+driving** — *inspect* those PNGs: feature visible, right screen, interaction landed? A
+green suite is **not** proof the demo shows the feature; a recording can silently be
+wrong (wrong key, clip never autoplayed). Ship only once frames confirm **every** change
+is on screen. (Playwright's VP8 `.webm` isn't seekable — verify via the during-drive
+screenshots, not post-hoc playback or `ffmpeg`; see `references/agent-profiles.md`.)
 
 ## Stop rule (both required)
 
