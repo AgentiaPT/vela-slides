@@ -261,5 +261,41 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
         self.assertIn("useAIAvailable", imports_jsx)
 
 
+class Sprint71DesktopChanges(unittest.TestCase):
+    """CR9 window title, CR13 create-deck-no-overwrite, CR7 manual update check."""
+
+    def test_window_title_is_vela_slides(self):
+        cfg = json.loads(read("vela-neutralino", "neutralino.config.json"))
+        self.assertEqual(cfg["modes"]["window"]["title"], "Vela Slides")
+        self.assertEqual(cfg["applicationName"], "Vela Slides")
+
+    def test_index_html_title_is_vela_slides(self):
+        html = read("vela-neutralino", "resources", "index.html")
+        self.assertIn("<title>Vela Slides</title>", html)
+
+    def test_create_deck_bridge_wired(self):
+        deck_io = read("vela-neutralino", "resources", "js", "deck-io.js")
+        boot = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        app = read("skills", "vela-slides", "app", "parts", "part-app.jsx")
+        # deck-io exposes createDeck; it re-points currentPath under the switching guard.
+        self.assertIn("async createDeck(", deck_io)
+        self.assertIn("state.switching = true", deck_io)
+        # nl-boot exposes the bridge; the app calls it on New Deck.
+        self.assertIn("window.__velaCreateDeck", boot)
+        self.assertIn("__velaCreateDeck", app)
+
+    def test_manual_update_check_bridge(self):
+        boot = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        upd = read("vela-neutralino", "resources", "js", "update-check.js")
+        app = read("skills", "vela-slides", "app", "parts", "part-app.jsx")
+        self.assertIn("window.__velaCheckForUpdate", boot)
+        self.assertIn("force: true", boot)
+        # checkForUpdate honours a force option and returns a result.
+        self.assertIn("opts.force", upd)
+        self.assertIn("updateAvailable", upd)
+        # About dialog surfaces the button gated on the bridge.
+        self.assertIn("__velaCheckForUpdate", app)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

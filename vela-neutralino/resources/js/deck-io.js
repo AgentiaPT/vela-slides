@@ -164,6 +164,16 @@ function onWatchEvent(evt) {
     .catch((e) => console.warn("[deck-io] external reload failed:", e));
 }
 
+// Pick a collision-free `<name>.vela` path inside the current folder.
+async function uniqueDeckPath(title) {
+  const safe = String(title || "untitled").normalize("NFD").replace(/[^\w\s.-]/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "untitled";
+  let existing = new Set();
+  try { existing = new Set((await listDecks()).map((d) => d.name.toLowerCase())); } catch {}
+  let name = `${safe}.vela`, n = 1;
+  while (existing.has(name.toLowerCase())) name = `${safe}-${++n}.vela`;
+  return `${state.folder}/${name}`;
+}
+
 export const deckIO = {
   async init() {
     let folder = await getStoredFolder();
@@ -196,6 +206,34 @@ export const deckIO = {
   listDecks,
   openDeck,
   saveCurrent,
+  // Create a NEW deck file in the current folder and point currentPath at it, so
+  // "New deck" never overwrites the deck that was open. Uses the same switching
+  // guard as openDeck: pending saves for the previous deck are cancelled and
+  // dropped so they can't land in either file. The app already holds the fresh
+  // in-memory deck (from the NEW_DECK dispatch), so we only seed the file and
+  // re-point — we do NOT push the empty deck back into the app.
+  async createDeck(title) {
+    if (!state.folder) return null;
+    if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+    state.pendingDeck = null;
+    state.pendingPath = null;
+    state.switching = true;
+    try {
+      await stopWatcher();
+      const path = await uniqueDeckPath(title);
+      state.lastWriteAt = Date.now();
+      await Neutralino.filesystem.writeFile(path, JSON.stringify({ deckTitle: title || "Untitled", lanes: [] }, null, 2));
+      state.currentPath = path;
+      await Neutralino.storage.setData(LAST_DECK_KEY, path);
+      startWatcher();
+      return path;
+    } catch (e) {
+      console.error("[deck-io] createDeck failed:", e);
+      return null;
+    } finally {
+      state.switching = false;
+    }
+  },
   async lastDeckPath() {
     try {
       const keys = await Neutralino.storage.getKeys();

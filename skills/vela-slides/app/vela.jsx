@@ -102,7 +102,7 @@ const velaClipboardReadSlide = async () => {
 
 const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
-  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. The presenter TOC/slide-search pane now toggles with Ctrl-E (was T): opening focuses the search box so you can type immediately, pressing Enter jumps to the first matching slide and closes the pane, clicking a result also closes it, and Ctrl-E toggles it shut again. Dialogs now have a proper default action: Enter confirms/closes and the primary button takes focus with a visible ring (Escape still cancels). The About/version dialog gains a Check for updates action (desktop, reusing the existing update checker). The token/cost badge is now shown only in the hosted Claude.ai artifact runtime, where usage is actually metered — it is hidden in the desktop and local-server runtimes. Deck export is now labelled Export Vela and writes a .vela file (the same envelope; import still accepts .json and .vela)." },
+  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. The presenter TOC/slide-search pane now toggles with Ctrl-E (was T): opening focuses the search box so you can type immediately, pressing Enter jumps to the first matching slide and closes the pane, clicking a result also closes it, and Ctrl-E toggles it shut again. Dialogs now have a proper default action: Enter confirms/closes and the primary button takes focus with a visible ring (Escape still cancels). The About/version dialog gains a Check for updates action (desktop, reusing the existing update checker). The token/cost badge is now shown only in the hosted Claude.ai artifact runtime, where usage is actually metered — it is hidden in the desktop and local-server runtimes. Deck export is now labelled Export Vela and writes a .vela file (the same envelope; import still accepts .json and .vela). The AI-agent settings Re-scan button no longer silently does nothing — it is disabled when agent detection isn't available and shows a busy state while re-scanning otherwise. Creating a new deck in the desktop app now allocates a fresh file and never overwrites the deck that was open. The desktop window/app title reads \"Vela Slides\"." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -8083,6 +8083,8 @@ const VELA_TESTS = [
   { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
   { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
   { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
+  { name: "AgentSettings Re-scan is gated + awaited (no silent no-op)", fn: () => { const s = AgentSettingsDialog.toString(); return s.includes("canScan") && s.includes("__velaAgents.refresh") && s.includes("scanning"); } },
+  { name: "New Deck calls __velaCreateDeck bridge (no overwrite)", fn: () => App.toString().includes("__velaCreateDeck") },
   { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
     const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
     const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });
@@ -15099,6 +15101,18 @@ function AgentSettingsDialog({ onClose }) {
   const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
   const [trusted, setTrusted] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Re-scan was a silent no-op: it called an optional-chained global with no
+  // await and no feedback, so it "did nothing" (and did literally nothing in the
+  // artifact/local-server runtimes where the bridge doesn't exist). Gate it on
+  // the bridge, await it, and show a busy state.
+  const canScan = typeof window !== "undefined" && typeof window.__velaAgents?.refresh === "function";
+  const rescan = async () => {
+    if (!canScan || scanning) return;
+    setScanning(true);
+    try { await window.__velaAgents.refresh(); } catch {} finally { setScanning(false); }
+  };
 
   async function loadTrusted() {
     if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
@@ -15128,13 +15142,13 @@ function AgentSettingsDialog({ onClose }) {
   }
 
   return (
-    <ModalBackdrop onClose={onClose}>
+    <ModalBackdrop onClose={onClose} defaultAction={onClose}>
       <div style={{ maxHeight: "70vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Active agent</span>
-          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+          <button onClick={rescan} disabled={!canScan || scanning} style={{ ...S.btn({ fontSize: 10, padding: "3px 8px", color: canScan ? T.textMuted : T.textDim }), opacity: canScan ? 1 : 0.5, cursor: canScan ? "pointer" : "not-allowed" }} title={canScan ? "Re-scan for installed AI agents" : "Agent detection is only available in the desktop app"}>{scanning ? "Scanning…" : "Re-scan"}</button>
         </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
@@ -16112,7 +16126,14 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog onClose={() => setShowStats(false)} sections={total} slidesVisible={slideCountVisible} slidesAll={slideCountAll} timeVisible={deckTime} timeAll={deckTimeAll} hiddenCount={hiddenCount} />}
-      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
+      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => {
+        // Desktop: allocate a NEW file (and re-point currentPath) BEFORE the new
+        // deck's autosave can fire, so creating a deck never overwrites the one
+        // that was open. No-op in artifact/local-server runtimes (bridge absent).
+        try { window.__velaCreateDeck?.(title); } catch {}
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);

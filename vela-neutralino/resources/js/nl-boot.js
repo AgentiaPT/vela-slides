@@ -167,6 +167,15 @@ async function boot() {
   // Save hook: Vela calls this on every state change. deck-io debounces.
   window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
 
+  // New-deck hook: the app calls this when the user creates a deck so a fresh
+  // file is allocated and made current BEFORE autosave runs — otherwise the new
+  // deck's content would overwrite the previously-open file.
+  window.__velaCreateDeck = (title) => deckIO.createDeck(title);
+
+  // Manual "Check for updates" from the About dialog — force past the once-a-day
+  // throttle and return the result so the dialog can report it.
+  window.__velaCheckForUpdate = () => checkForUpdate(configStore, { force: true });
+
   setMsg("Transpiling Vela…");
   await loadVela();
 

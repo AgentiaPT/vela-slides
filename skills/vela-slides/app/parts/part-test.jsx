@@ -15,6 +15,8 @@ const VELA_TESTS = [
   { name: "velaArtifactMode is a boolean-returning function", fn: () => typeof velaArtifactMode === "function" && typeof velaArtifactMode() === "boolean" },
   { name: "ModalBackdrop supports Enter default action", fn: () => { const s = ModalBackdrop.toString(); return s.includes("defaultAction") && s.includes("Enter") && s.includes("data-default-btn"); } },
   { name: "CostBadge gated on artifact mode", fn: () => App.toString().includes("velaArtifactMode") },
+  { name: "AgentSettings Re-scan is gated + awaited (no silent no-op)", fn: () => { const s = AgentSettingsDialog.toString(); return s.includes("canScan") && s.includes("__velaAgents.refresh") && s.includes("scanning"); } },
+  { name: "New Deck calls __velaCreateDeck bridge (no overwrite)", fn: () => App.toString().includes("__velaCreateDeck") },
   { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
     const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
     const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });

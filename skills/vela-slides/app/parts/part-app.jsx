@@ -577,6 +577,18 @@ function AgentSettingsDialog({ onClose }) {
   const [info, setInfo] = useState(() => (typeof window !== "undefined" ? window.__velaAgentInfo : null));
   const [trusted, setTrusted] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Re-scan was a silent no-op: it called an optional-chained global with no
+  // await and no feedback, so it "did nothing" (and did literally nothing in the
+  // artifact/local-server runtimes where the bridge doesn't exist). Gate it on
+  // the bridge, await it, and show a busy state.
+  const canScan = typeof window !== "undefined" && typeof window.__velaAgents?.refresh === "function";
+  const rescan = async () => {
+    if (!canScan || scanning) return;
+    setScanning(true);
+    try { await window.__velaAgents.refresh(); } catch {} finally { setScanning(false); }
+  };
 
   async function loadTrusted() {
     if (typeof window.__velaTrustAdmin?.listForCurrentFolder !== "function") return;
@@ -606,13 +618,13 @@ function AgentSettingsDialog({ onClose }) {
   }
 
   return (
-    <ModalBackdrop onClose={onClose}>
+    <ModalBackdrop onClose={onClose} defaultAction={onClose}>
       <div style={{ maxHeight: "70vh", overflow: "auto", color: T.text, fontFamily: FONT.body }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, marginBottom: 14 }}>AI agent settings</h2>
 
         <div style={{ fontSize: 12, color: T.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Active agent</span>
-          <button onClick={() => { try { window.__velaAgents?.refresh?.(); } catch {} }} style={S.btn({ fontSize: 10, padding: "3px 8px", color: T.textMuted })}>Re-scan</button>
+          <button onClick={rescan} disabled={!canScan || scanning} style={{ ...S.btn({ fontSize: 10, padding: "3px 8px", color: canScan ? T.textMuted : T.textDim }), opacity: canScan ? 1 : 0.5, cursor: canScan ? "pointer" : "not-allowed" }} title={canScan ? "Re-scan for installed AI agents" : "Agent detection is only available in the desktop app"}>{scanning ? "Scanning…" : "Re-scan"}</button>
         </div>
         <div style={{ padding: "10px 14px", background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 18 }}>
           <div style={{ fontWeight: 600 }}>{info?.label || "—"} <span style={{ fontWeight: 400, color: info?.available ? T.accent : "#f87171", fontSize: 11, marginLeft: 6 }}>{info?.available ? "available" : "not detected"}</span></div>
@@ -1590,7 +1602,14 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog onClose={() => setShowStats(false)} sections={total} slidesVisible={slideCountVisible} slidesAll={slideCountAll} timeVisible={deckTime} timeAll={deckTimeAll} hiddenCount={hiddenCount} />}
-      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
+      {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => {
+        // Desktop: allocate a NEW file (and re-point currentPath) BEFORE the new
+        // deck's autosave can fire, so creating a deck never overwrites the one
+        // that was open. No-op in artifact/local-server runtimes (bridge absent).
+        try { window.__velaCreateDeck?.(title); } catch {}
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
