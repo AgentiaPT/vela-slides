@@ -67,6 +67,21 @@ If markers partially match (e.g. `/opt/pw-browsers` but no proxy), you're in a *
   `--autoplay-policy=no-user-gesture-required` or muted `<video>` clips won't play while
   recording, and the demo captures black boxes.
 
+### Reading a spec PDF *with its screenshots*
+Change-request specs often arrive as a PDF where the important detail is in **embedded
+screenshots**, not the text. Reading the PDF directly gives you the prose but not
+reliable image fidelity (and needs page-chunking over ~10pp). Instead extract both, then
+*look* at the pages — `poppler-utils` is preinstalled (`apt-get install -y poppler-utils`
+if a variant lacks it):
+```bash
+pdfinfo spec.pdf                                   # page count
+pdftotext -layout spec.pdf spec.txt                # accurate text (layout preserved)
+pdftoppm -png -r 100 spec.pdf out/page             # one PNG per page — the screenshots
+```
+Then `Read` each `out/page-*.png` so the actual UI screenshots are in context, and pair
+them with `spec.txt` to build the change list. Bump `-r` (DPI) if a screenshot is too
+small to read.
+
 ### Git / signing
 - Commits are authored `Claude <noreply@anthropic.com>` but **cannot be GPG/SSH-signed**
   (`ssh-keygen` absent, signing key empty) → GitHub shows "Unverified". Known, expected;

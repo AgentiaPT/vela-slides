@@ -66,7 +66,8 @@ re-paying that cost.
 `references/agent-profiles.md` — e.g. `claude-code-cloud-default`) and reuse its known
 browser/ffmpeg/network/git facts instead of rediscovering them. Parse the change list
 into discrete, testable items; note any that don't make sense or need a UX decision and
-ask *now*, batched. Read repo conventions. Run the build + test suite clean. Prove the
+ask *now*, batched. If the spec is an image-heavy PDF, rasterize its pages and read the
+screenshots — don't rely on text alone (recipe in `references/agent-profiles.md`). Read repo conventions. Run the build + test suite clean. Prove the
 app runs and is drivable on a smoke case; record any *new* gotchas in `NOTES.md`. Agree
 the **stop rule** explicitly (bug-hunt duration + proof artifact).
 
