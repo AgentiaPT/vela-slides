@@ -86,3 +86,7 @@ tests/contact-slide.json
 _site/
 # Local security-audit PoCs — never publish to public repo (disclosure policy)
 security-audit/
+
+# Sprint working files (hyper-sprint tooling — not shipped)
+NOTES.md
+scripts_local/
