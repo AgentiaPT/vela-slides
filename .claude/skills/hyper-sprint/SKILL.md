@@ -43,14 +43,11 @@ re-paying that cost.
    regression tests → **one** confirming pass. Loop-until-dry means *until a full
    round finds nothing new*, not "run five more passes named final." Stop when a
    round ≥ the agreed duration surfaces zero new CR-linked bugs.
-6. **Verify with eyes, sample before declaring done.** The proof artifact is an
-   **HTML deck** (self-contained, opens in any browser — no app-specific format) that
-   frames each change and **embeds a recorded demo** of the real app doing it. Never
-   trust a recording blindly: **extract sample frames** (e.g. `ffmpeg -i demo.mp4
-   -vf fps=1 frame_%03d.png`) and *look* at them to confirm each claimed feature is
-   actually on screen before handing it over. A driver bug (wrong key, wrong DOM
-   node, mode never entered) silently produces a demo that proves nothing — cheaper
-   to catch by sampling than by a user rejecting it.
+6. **Verify with eyes, sample before declaring done.** The proof artifact is a full
+   end-of-sprint **HTML demo deck** with embedded recordings of the real app (see
+   *Proof artifact* below). Never trust a recording blindly — extract sample frames
+   and *look* at them; a driver bug (wrong key, mode never entered) silently produces
+   a demo that proves nothing.
 7. **Don't fight the environment.** Detect a capability once (signing keys, network
    policy, missing binaries). If an operation is impossible here, record it as a
    known limitation and move on — never burn turns retrying an op that returned
@@ -90,28 +87,37 @@ round is dry.
 **Phase 5 — Proof & handoff.** Build the demo deck (see below), sample its frames to
 confirm every feature shows, then deliver it. Report final status vs the full list.
 
-## Proof artifact (the demo)
+## Proof artifact — the end-of-sprint demo
 
-Deliver an **HTML slide deck** as the demo's backbone — one section per change:
-title/intent, then the evidence. It's the universal medium: renders in any browser,
-needs no toolchain, and is easy to sample and screenshot.
+Deliver **one HTML slide deck** that is a complete end-of-sprint review — stunning,
+no fluff — not just a reel of clips. HTML is the universal medium: renders in any
+browser, needs no toolchain, plays offline, easy to sample. Its arc:
 
-1. **Record each change live.** Drive the *real* app (headless browser recorder, or a
-   screen capture) performing the change end-to-end. Save short clips (`.mp4`/`.webm`)
-   or an image sequence. Prefer many small clips over one long take — a re-record then
-   costs one feature, not the whole demo.
-2. **Embed, don't just link.** Put the clips inline in the HTML (`<video controls>` or
-   an animated sequence) beside the callout for that change, so the deck is
-   self-contained and plays offline.
-3. **Frame-check before shipping (gate).** For every clip, extract frames
-   (`ffmpeg -i clip.mp4 -vf fps=1 out_%03d.png`) and inspect them: is the feature
-   visible, is the right mode/screen shown, did the interaction land? A green test
-   suite is *not* proof the demo shows the feature — the recording is a separate
-   artifact and can silently be wrong. Only mark the sprint done once frames confirm
-   **every** change is on screen.
-4. **Open with the story, close with the numbers.** Sprint theme → change list → live
-   evidence per change → bugs found & fixed → totals (shipped / tests / bugs). Concise
-   callouts, no filler.
+1. **Open — theme & story.** A sprint name/codename and the one-line theme that ties
+   the changes together. Why this batch, as a narrative.
+2. **Scope — the issue list.** Every change request, grouped, so the audience sees the
+   whole surface at a glance.
+3. **Delivery — burndown & numbers.** Progress vs total (shipped / in-flight),
+   an approximate burndown, and the headline metrics (changes shipped, tests added &
+   passing, bugs found & fixed, CR bugs remaining).
+4. **Quality — bugs found & fixed.** What the adversarial hunt caught and how it was
+   fixed + regression-tested. Honesty here is the credibility of the whole demo.
+5. **Live walkthrough — the proof.** One section per change: intent + an **embedded
+   recorded demo** of the *real* app doing it. This is the heart of the deck.
+6. **Close — totals & what's next.**
+
+Building the live walkthrough:
+
+- **Record each change live.** Drive the *real* app (headless browser recorder or
+  screen capture) end-to-end. Save short clips (`.mp4`/`.webm`) — many small clips
+  beat one long take, so a re-record costs one feature, not the whole demo.
+- **Embed, don't just link.** Clips go inline (`<video controls>` / image sequence)
+  beside each callout, so the deck is self-contained.
+- **Frame-check before shipping (hard gate).** For every clip, extract frames
+  (`ffmpeg -i clip.mp4 -vf fps=1 out_%03d.png`) and *inspect* them: feature visible,
+  right mode/screen, interaction landed? A green suite is **not** proof the demo shows
+  the feature — the recording is a separate artifact and can silently be wrong. Mark
+  the sprint done only once frames confirm **every** change is on screen.
 
 ## Stop rule (both required)
 
