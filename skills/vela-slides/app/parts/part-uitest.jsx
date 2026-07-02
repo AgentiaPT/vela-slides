@@ -1565,6 +1565,80 @@ function computeDeckFingerprint() {
 }
 
 // Fingerprint: "title|slideCount" — matches demo deck as assembled
+// \u2500\u2500 Presenter TOC + hidden nav (CR5/CR16) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Pure-logic tests: the presenter must treat `hidden` slides as not part of the
+// presentation. nextVisibleIndex() drives next/prev skipping; the visible-count
+// computation feeds the "N / M" counter and the TOC first-match feeds Enter-jump.
+uiSuite("Presenter TOC + hidden nav (CR5/CR16)", [
+  { name: "nextVisibleIndex skips a hidden slide going forward", fn: async () => {
+    const arr = [{}, { hidden: true }, {}]; // 0 visible, 1 hidden, 2 visible
+    if (nextVisibleIndex(arr, 0, 1) !== 2) throw new Error(`expected 2, got ${nextVisibleIndex(arr, 0, 1)}`);
+    return true;
+  }},
+  { name: "nextVisibleIndex skips consecutive hidden slides going forward", fn: async () => {
+    const arr = [{}, { hidden: true }, { hidden: true }, {}];
+    if (nextVisibleIndex(arr, 0, 1) !== 3) throw new Error(`expected 3, got ${nextVisibleIndex(arr, 0, 1)}`);
+    return true;
+  }},
+  { name: "nextVisibleIndex skips a hidden slide going backward", fn: async () => {
+    const arr = [{}, { hidden: true }, {}];
+    if (nextVisibleIndex(arr, 2, -1) !== 0) throw new Error(`expected 0, got ${nextVisibleIndex(arr, 2, -1)}`);
+    return true;
+  }},
+  { name: "nextVisibleIndex returns -1 when no visible slide ahead (cross-module signal)", fn: async () => {
+    const arr = [{}, { hidden: true }]; // nothing visible after index 0
+    if (nextVisibleIndex(arr, 0, 1) !== -1) throw new Error(`expected -1, got ${nextVisibleIndex(arr, 0, 1)}`);
+    return true;
+  }},
+  { name: "nextVisibleIndex treats missing/undefined entries as visible (e.g. title card)", fn: async () => {
+    const arr = [{ _virtual: true }, {}]; // virtual title card has no hidden flag
+    if (nextVisibleIndex(arr, 1, -1) !== 0) throw new Error(`expected 0, got ${nextVisibleIndex(arr, 1, -1)}`);
+    return true;
+  }},
+  { name: "visible count/position excludes hidden slides (counter N / M)", fn: async () => {
+    // Two modules; module A: [vis, hidden, vis], module B: [vis]. Current = B, idx 0.
+    const lanes = [{ items: [
+      { id: "A", slides: [{}, { hidden: true }, {}] },
+      { id: "B", slides: [{}] },
+    ] }];
+    const conceptId = "B", slideIndex = 0, presOffset = 0;
+    let offset = 0, total = 0, found = false;
+    const realIdx = Math.max(0, slideIndex - presOffset);
+    for (const l of lanes) for (const item of l.items) {
+      const its = item.slides || [];
+      const visCount = its.reduce((n, s) => n + (s && s.hidden ? 0 : 1), 0);
+      if (item.id === conceptId) { for (let i = 0; i < its.length && i < realIdx; i++) if (!its[i] || !its[i].hidden) offset++; found = true; }
+      else if (!found) offset += visCount;
+      total += visCount;
+    }
+    // A contributes 2 visible (not 3); B's slide is position 3 of 3 visible.
+    if (total !== 3) throw new Error(`expected total 3 visible, got ${total}`);
+    if (offset !== 2) throw new Error(`expected position offset 2 (-> "03 / 03"), got ${offset}`);
+    return true;
+  }},
+  { name: "first-visible-match for a search query skips hidden + non-matching (Enter jump)", fn: async () => {
+    // Replicate PresenterTOC grouped: hidden excluded entirely, `visible` = title match.
+    const q = "roadmap";
+    const items = [{ id: "m1", slides: [
+      { blocks: [{ type: "heading", text: "Intro" }] },
+      { hidden: true, blocks: [{ type: "heading", text: "Roadmap (draft, hidden)" }] },
+      { blocks: [{ type: "heading", text: "Roadmap 2026" }] },
+    ] }];
+    const grouped = items.map((item) => ({
+      id: item.id,
+      slides: (item.slides || [])
+        .map((s, i) => ({ s, i }))
+        .filter(({ s }) => !s || !s.hidden)
+        .map(({ s, i }) => ({ slideIdx: i, visible: getSlideTitle(s, i).toLowerCase().includes(q) })),
+    }));
+    const first = grouped.flatMap((g) => g.slides.filter((s) => s.visible).map((s) => ({ id: g.id, slideIdx: s.slideIdx })))[0];
+    if (!first) throw new Error("no first match found");
+    // Must land on the VISIBLE "Roadmap 2026" at original index 2, not the hidden draft at 1.
+    if (first.id !== "m1" || first.slideIdx !== 2) throw new Error(`expected {m1,2}, got ${JSON.stringify(first)}`);
+    return true;
+  }},
+]);
+
 const DEMO_DECK_FP_TITLE = "Vela Slides \u2014 Live Demo";
 
 function VelaUITestRunner() {
