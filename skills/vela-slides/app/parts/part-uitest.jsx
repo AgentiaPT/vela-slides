@@ -1425,6 +1425,117 @@ uiSuite("List Ops (reducer)", [
   }},
 ]);
 
+// ── Vera image preservation (CR11) ───────────────────────────────────
+// Pure-logic tests for restoreImageSrcs + the edit_slide/set_slides tool
+// paths. The AI never sees real image data (stripImageSrcs replaces long srcs
+// with the "keep-original" sentinel), so the engine must re-attach originals
+// even when the model blanks, moves, or drops the image block entirely.
+uiSuite("Vera image preservation (CR11)", [
+  { name: "restoreImageSrcs re-attaches real src when model echoes sentinel", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "A".repeat(400);
+    const original = [
+      { type: "heading", text: "Title" },
+      { type: "image", src: bigSrc, caption: "Chart" },
+    ];
+    // Model returns the image with the sentinel (what it saw via stripImageSrcs).
+    const improved = { blocks: [
+      { type: "heading", text: "New Title" },
+      { type: "image", src: "keep-original", caption: "Chart" },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[1].src !== bigSrc) throw new Error("sentinel not replaced with real src");
+    if (improved.blocks[0].text !== "New Title") throw new Error("non-image edit clobbered");
+    return true;
+  }},
+  { name: "restoreImageSrcs restores by appearance when image is MOVED", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "B".repeat(400);
+    const original = [
+      { type: "image", src: bigSrc },
+      { type: "heading", text: "H" },
+    ];
+    // Model reorders: heading first, image now last, src blanked to sentinel.
+    const improved = { blocks: [
+      { type: "heading", text: "H" },
+      { type: "image", src: "keep-original" },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[1].src !== bigSrc) throw new Error("moved image not restored by appearance");
+    return true;
+  }},
+  { name: "restoreImageSrcs re-appends image the model DROPPED", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "C".repeat(400);
+    const original = [
+      { type: "heading", text: "H" },
+      { type: "image", src: bigSrc, caption: "Keep me" },
+    ];
+    // Model dropped the image block entirely.
+    const improved = { blocks: [ { type: "heading", text: "H2" } ] };
+    restoreImageSrcs(improved, original);
+    const imgs = improved.blocks.filter((b) => b.type === "image");
+    if (imgs.length !== 1) throw new Error(`expected image re-appended, got ${imgs.length}`);
+    if (imgs[0].src !== bigSrc) throw new Error("re-appended image lost its src");
+    if (imgs[0].caption !== "Keep me") throw new Error("re-appended image lost metadata");
+    return true;
+  }},
+  { name: "restoreImageSrcs restores images inside grid cells", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "D".repeat(400);
+    const original = [
+      { type: "grid", items: [ { blocks: [ { type: "image", src: bigSrc } ] } ] },
+    ];
+    const improved = { blocks: [
+      { type: "grid", items: [ { blocks: [ { type: "image", src: "keep-original" } ] } ] },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[0].items[0].blocks[0].src !== bigSrc) throw new Error("grid-cell image not restored");
+    return true;
+  }},
+  { name: "restoreImageSrcs is a no-op for image-free slides", fn: async () => {
+    const original = [ { type: "heading", text: "A" }, { type: "text", text: "B" } ];
+    const improved = { blocks: [ { type: "heading", text: "A2" }, { type: "text", text: "B2" } ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks.length !== 2) throw new Error("image-free edit changed block count");
+    if (improved.blocks[0].text !== "A2" || improved.blocks[1].text !== "B2") throw new Error("image-free edit content altered");
+    if (improved.blocks.some((b) => b.type === "image")) throw new Error("phantom image injected");
+    return true;
+  }},
+  { name: "stripImageSrcs replaces long src with the keep-original sentinel", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "E".repeat(400);
+    const stripped = stripImageSrcs({ blocks: [ { type: "image", src: bigSrc }, { type: "image", src: "short.png" } ] });
+    if (stripped.blocks[0].src !== "keep-original") throw new Error("long src not sentinel-ized");
+    if (stripped.blocks[1].src !== "short.png") throw new Error("short src should be left intact");
+    return true;
+  }},
+  { name: "edit_slide tool path preserves image through a blocks rewrite", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "F".repeat(400);
+    const ws = { lanes: [ { title: "L", items: [ { id: "x1", title: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Old" }, { type: "image", src: bigSrc, caption: "C" } ] },
+    ] } ] } ] };
+    // Model replaces blocks (different count) and blanks the image src.
+    executeTool("edit_slide", { item_name: "Mod", slide_index: 0, patch: { blocks: [
+      { type: "heading", text: "New" },
+      { type: "text", text: "Body" },
+      { type: "image", src: "keep-original", caption: "C" },
+    ] } }, ws, null);
+    const blocks = ws.lanes[0].items[0].slides[0].blocks;
+    const img = blocks.find((b) => b.type === "image");
+    if (!img) throw new Error("edit_slide dropped the image");
+    if (img.src !== bigSrc) throw new Error("edit_slide did not restore real src");
+    return true;
+  }},
+  { name: "set_slides tool path preserves image at matching index", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "G".repeat(400);
+    const ws = { lanes: [ { title: "L", items: [ { id: "x2", title: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Old" }, { type: "image", src: bigSrc } ] },
+    ] } ] } ] };
+    executeTool("set_slides", { item_name: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Reworked" }, { type: "image", src: "keep-original" } ] },
+    ] }, ws, null);
+    const img = ws.lanes[0].items[0].slides[0].blocks.find((b) => b.type === "image");
+    if (!img || img.src !== bigSrc) throw new Error("set_slides did not preserve image src");
+    return true;
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

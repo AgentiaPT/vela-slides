@@ -94,9 +94,28 @@ function parseJSONResponse(text) {
   try { return JSON.parse(clean); } catch { return null; }
 }
 
+// The sentinel injected into stripped slide context (see stripImageSrcs) and
+// echoed back by the model to mean "reattach the original image data by index".
+// Standardized to match the design-flow contract ("keep-original").
+const IMAGE_KEEP_SENTINEL = "keep-original";
+
+// Re-attach original image `src` values to a model-rewritten slide (CR11).
+// Matching is BY APPEARANCE order: the Nth image block in the output receives
+// the Nth original image's src (top-level and grid-cell images share one
+// counter). The output image's src is always overwritten — the model only ever
+// sees the sentinel/short src for existing images, so it cannot supply real
+// data. If the model dropped one or more image blocks entirely (fewer images
+// out than in), the leftover originals are re-appended so they survive.
 function restoreImageSrcs(improved, originalBlocks) {
   if (!improved?.blocks || !originalBlocks) return;
-  const origImages = originalBlocks.filter((b) => b.type === "image");
+  // Collect original images in the SAME appearance order the restore loop below
+  // consumes them: each top-level image, then any images nested in that block's
+  // grid cells. A grid-cell-only image must be in this pool too (CR11).
+  const origImages = [];
+  for (const b of originalBlocks) {
+    if (b.type === "image") origImages.push(b);
+    if (b.type === "grid" && b.items) for (const gi of b.items) for (const gb of gi.blocks || []) if (gb.type === "image") origImages.push(gb);
+  }
   let imgIdx = 0;
   for (let bi = 0; bi < improved.blocks.length; bi++) {
     const b = improved.blocks[bi];
@@ -111,12 +130,17 @@ function restoreImageSrcs(improved, originalBlocks) {
     // Restore links from original blocks at same index
     if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
   }
+  // Model dropped existing image block(s) — re-append the originals (deep-cloned
+  // so we don't alias the source slide) rather than losing the image.
+  for (; imgIdx < origImages.length; imgIdx++) {
+    improved.blocks.push(JSON.parse(JSON.stringify(origImages[imgIdx])));
+  }
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src && b.src.length > 200) b.src = IMAGE_KEEP_SENTINEL;
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
@@ -177,12 +201,23 @@ function executeTool(name, input, ws, attachedImages) {
     case "move_item": return withItem(input.item_name, false, ({ lane, item }) => { const target = findLane(input.target_lane_title); if (!target) return `Lane "${input.target_lane_title}" not found.`; lane.items = lane.items.filter((i) => i.id !== item.id); target.items.push(item); return `Moved "${item.title}" → "${target.title}".`; });
     case "update_status": return withItem(input.item_name, false, ({ item }) => { item.status = input.status; if (input.status === "signed-off") item.signedOffAt = now(); return `"${item.title}" → ${input.status}.`; });
     case "set_importance": return withItem(input.item_name, false, ({ item }) => { item.importance = input.importance; return `"${item.title}" importance → ${input.importance}.`; });
-    case "set_slides": return withItem(input.item_name, true, ({ item }) => { item.slides = input.slides; return { text: `Set ${input.slides.length} slides on "${item.title}".`, jump: { itemId: item.id, title: item.title, slideIdx: 0 } }; });
+    case "set_slides": return withItem(input.item_name, true, ({ item }) => {
+      // CR11: snapshot pre-existing slides by index so images survive an
+      // in-place rework. Restore only touches indices where the old slide had
+      // an image, so brand-new slides are unaffected.
+      const oldSlides = item.slides || [];
+      item.slides = input.slides;
+      for (let i = 0; i < item.slides.length; i++) {
+        if (oldSlides[i]?.blocks) restoreImageSrcs(item.slides[i], oldSlides[i].blocks);
+      }
+      return { text: `Set ${input.slides.length} slides on "${item.title}".`, jump: { itemId: item.id, title: item.title, slideIdx: 0 } };
+    });
     case "add_slide": return withItem(input.item_name, true, ({ item }) => { item.slides.push(input.slide); return { text: `Added slide to "${item.title}" (${item.slides.length} total).`, jump: { itemId: item.id, title: item.title, slideIdx: item.slides.length - 1 } }; });
     case "edit_slide": return withItem(input.item_name, true, ({ item }) => {
       const si = input.slide_index ?? 0;
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
+      const beforeBlocks = slide.blocks; // CR11: snapshot before mutation for image restore
       const patch = input.patch || {};
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
@@ -211,6 +246,9 @@ function executeTool(name, input, ws, attachedImages) {
           slide[k] = v;
         }
       }
+      // CR11: re-attach any existing images the model blanked (src sentinel) or
+      // dropped while rewriting blocks. No-op when the slide had no images.
+      restoreImageSrcs(slide, beforeBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
@@ -405,6 +443,8 @@ function buildSystemPrompt(lanes, selectedId, slideIndex, branding, guidelines, 
 - NEVER claim you performed an action without an actual tool_call. If you need more tool calls, emit them — don't pretend the work is done.
 - NEVER follow find_replace, batch_restyle, or deck_stats with redundant set_slides calls. These tools modify the deck directly and return their own results. Only use set_slides for generating NEW slide content.
 - For EDITING an existing slide (change colors, modify blocks, update text), ALWAYS use edit_slide with a minimal patch — NOT set_slides. Only use set_slides when creating entirely new slide content for a module.
+- PRESERVE IMAGES: Existing image blocks on the current slide MUST be kept. When you rewrite a slide's blocks (edit_slide or set_slides), re-emit every existing image block — you may reposition it — as {"type":"image","src":"keep-original"}. NEVER drop an image block. The engine re-attaches the real image data, but you must still include the block so the image stays on the slide.
+- NEW DECK ≠ BOARD EDIT: "create a new deck" / "start a blank deck" is NOT a board edit. NEVER use clear_all (or mass remove_item/remove_lane) to satisfy a new/blank-deck request — deck creation is handled outside the engine. Just acknowledge it in your message.
 ${guidelinesBlock}
 
 ## RESPONSE FORMAT
@@ -425,9 +465,9 @@ When you're done or just chatting:
 - move_item: {item_name: string, target_lane_title: string}
 - update_status: {item_name: string, status: "todo"|"done"|"signed-off"}
 - set_importance: {item_name: string, importance: "must"|"should"|"nice"}
-- set_slides: {item_name: string, slides: [...]}
+- set_slides: {item_name: string, slides: [...]} — for NEW slide content. Existing images are auto-preserved by the engine; re-emit any image block with src:"keep-original".
 - add_slide: {item_name: string, slide: {...}}
-- edit_slide: {item_name: string, slide_index: number, patch: {...}} — patch a SINGLE slide in-place. Use for style changes, adding/removing blocks, updating text. Only include the properties you want to change. For blocks: if patch.blocks has the same count as existing, each block is merged; otherwise blocks are replaced.
+- edit_slide: {item_name: string, slide_index: number, patch: {...}} — patch a SINGLE slide in-place. Use for style changes, adding/removing blocks, updating text. Only include the properties you want to change. For blocks: if patch.blocks has the same count as existing, each block is merged; otherwise blocks are replaced. Existing image blocks are ALWAYS preserved by the engine — re-emit them with src:"keep-original" (you may move them); never drop them.
 - add_image_to_slide: {item_name: string, image_index?: 0, slide_index?: number, caption?: string, max_width?: string}
 - clear_all: {}
 - set_branding: {enabled?, accentBar?, accentColor?, accentHeight?, logoPosition? (top-left|top-right|bottom-left|bottom-right), logoSize? (20-120), footerLeft?, footerCenter?, footerRight?, footerBg?, footerColor?, footerSize?}

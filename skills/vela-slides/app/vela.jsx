@@ -3725,9 +3725,28 @@ function parseJSONResponse(text) {
   try { return JSON.parse(clean); } catch { return null; }
 }
 
+// The sentinel injected into stripped slide context (see stripImageSrcs) and
+// echoed back by the model to mean "reattach the original image data by index".
+// Standardized to match the design-flow contract ("keep-original").
+const IMAGE_KEEP_SENTINEL = "keep-original";
+
+// Re-attach original image `src` values to a model-rewritten slide (CR11).
+// Matching is BY APPEARANCE order: the Nth image block in the output receives
+// the Nth original image's src (top-level and grid-cell images share one
+// counter). The output image's src is always overwritten — the model only ever
+// sees the sentinel/short src for existing images, so it cannot supply real
+// data. If the model dropped one or more image blocks entirely (fewer images
+// out than in), the leftover originals are re-appended so they survive.
 function restoreImageSrcs(improved, originalBlocks) {
   if (!improved?.blocks || !originalBlocks) return;
-  const origImages = originalBlocks.filter((b) => b.type === "image");
+  // Collect original images in the SAME appearance order the restore loop below
+  // consumes them: each top-level image, then any images nested in that block's
+  // grid cells. A grid-cell-only image must be in this pool too (CR11).
+  const origImages = [];
+  for (const b of originalBlocks) {
+    if (b.type === "image") origImages.push(b);
+    if (b.type === "grid" && b.items) for (const gi of b.items) for (const gb of gi.blocks || []) if (gb.type === "image") origImages.push(gb);
+  }
   let imgIdx = 0;
   for (let bi = 0; bi < improved.blocks.length; bi++) {
     const b = improved.blocks[bi];
@@ -3742,12 +3761,17 @@ function restoreImageSrcs(improved, originalBlocks) {
     // Restore links from original blocks at same index
     if (originalBlocks[bi]?.link && !b.link) b.link = originalBlocks[bi].link;
   }
+  // Model dropped existing image block(s) — re-append the originals (deep-cloned
+  // so we don't alias the source slide) rather than losing the image.
+  for (; imgIdx < origImages.length; imgIdx++) {
+    improved.blocks.push(JSON.parse(JSON.stringify(origImages[imgIdx])));
+  }
 }
 
 function stripImageSrcs(slideJson) {
   const clone = JSON.parse(JSON.stringify(slideJson));
   const walk = (blocks) => { if (!blocks) return; for (const b of blocks) {
-    if (b.type === "image" && b.src && b.src.length > 200) b.src = "[IMAGE]";
+    if (b.type === "image" && b.src && b.src.length > 200) b.src = IMAGE_KEEP_SENTINEL;
     if (b.link) delete b.link;
     if (b.type === "grid" && b.items) for (const gi of b.items) walk(gi.blocks || []);
   }};
@@ -3808,12 +3832,23 @@ function executeTool(name, input, ws, attachedImages) {
     case "move_item": return withItem(input.item_name, false, ({ lane, item }) => { const target = findLane(input.target_lane_title); if (!target) return `Lane "${input.target_lane_title}" not found.`; lane.items = lane.items.filter((i) => i.id !== item.id); target.items.push(item); return `Moved "${item.title}" → "${target.title}".`; });
     case "update_status": return withItem(input.item_name, false, ({ item }) => { item.status = input.status; if (input.status === "signed-off") item.signedOffAt = now(); return `"${item.title}" → ${input.status}.`; });
     case "set_importance": return withItem(input.item_name, false, ({ item }) => { item.importance = input.importance; return `"${item.title}" importance → ${input.importance}.`; });
-    case "set_slides": return withItem(input.item_name, true, ({ item }) => { item.slides = input.slides; return { text: `Set ${input.slides.length} slides on "${item.title}".`, jump: { itemId: item.id, title: item.title, slideIdx: 0 } }; });
+    case "set_slides": return withItem(input.item_name, true, ({ item }) => {
+      // CR11: snapshot pre-existing slides by index so images survive an
+      // in-place rework. Restore only touches indices where the old slide had
+      // an image, so brand-new slides are unaffected.
+      const oldSlides = item.slides || [];
+      item.slides = input.slides;
+      for (let i = 0; i < item.slides.length; i++) {
+        if (oldSlides[i]?.blocks) restoreImageSrcs(item.slides[i], oldSlides[i].blocks);
+      }
+      return { text: `Set ${input.slides.length} slides on "${item.title}".`, jump: { itemId: item.id, title: item.title, slideIdx: 0 } };
+    });
     case "add_slide": return withItem(input.item_name, true, ({ item }) => { item.slides.push(input.slide); return { text: `Added slide to "${item.title}" (${item.slides.length} total).`, jump: { itemId: item.id, title: item.title, slideIdx: item.slides.length - 1 } }; });
     case "edit_slide": return withItem(input.item_name, true, ({ item }) => {
       const si = input.slide_index ?? 0;
       if (!item.slides[si]) return { text: `Slide ${si + 1} not found in "${item.title}" (has ${item.slides.length} slides).` };
       const slide = item.slides[si];
+      const beforeBlocks = slide.blocks; // CR11: snapshot before mutation for image restore
       const patch = input.patch || {};
       // Merge top-level slide properties
       for (const [k, v] of Object.entries(patch)) {
@@ -3842,6 +3877,9 @@ function executeTool(name, input, ws, attachedImages) {
           slide[k] = v;
         }
       }
+      // CR11: re-attach any existing images the model blanked (src sentinel) or
+      // dropped while rewriting blocks. No-op when the slide had no images.
+      restoreImageSrcs(slide, beforeBlocks);
       return { text: `Edited slide ${si + 1} of "${item.title}" (patched: ${Object.keys(patch).join(", ")}).`, jump: { itemId: item.id, title: item.title, slideIdx: si } };
     });
     case "add_image_to_slide": return withItem(input.item_name, true, ({ item }) => {
@@ -4036,6 +4074,8 @@ function buildSystemPrompt(lanes, selectedId, slideIndex, branding, guidelines, 
 - NEVER claim you performed an action without an actual tool_call. If you need more tool calls, emit them — don't pretend the work is done.
 - NEVER follow find_replace, batch_restyle, or deck_stats with redundant set_slides calls. These tools modify the deck directly and return their own results. Only use set_slides for generating NEW slide content.
 - For EDITING an existing slide (change colors, modify blocks, update text), ALWAYS use edit_slide with a minimal patch — NOT set_slides. Only use set_slides when creating entirely new slide content for a module.
+- PRESERVE IMAGES: Existing image blocks on the current slide MUST be kept. When you rewrite a slide's blocks (edit_slide or set_slides), re-emit every existing image block — you may reposition it — as {"type":"image","src":"keep-original"}. NEVER drop an image block. The engine re-attaches the real image data, but you must still include the block so the image stays on the slide.
+- NEW DECK ≠ BOARD EDIT: "create a new deck" / "start a blank deck" is NOT a board edit. NEVER use clear_all (or mass remove_item/remove_lane) to satisfy a new/blank-deck request — deck creation is handled outside the engine. Just acknowledge it in your message.
 ${guidelinesBlock}
 
 ## RESPONSE FORMAT
@@ -4056,9 +4096,9 @@ When you're done or just chatting:
 - move_item: {item_name: string, target_lane_title: string}
 - update_status: {item_name: string, status: "todo"|"done"|"signed-off"}
 - set_importance: {item_name: string, importance: "must"|"should"|"nice"}
-- set_slides: {item_name: string, slides: [...]}
+- set_slides: {item_name: string, slides: [...]} — for NEW slide content. Existing images are auto-preserved by the engine; re-emit any image block with src:"keep-original".
 - add_slide: {item_name: string, slide: {...}}
-- edit_slide: {item_name: string, slide_index: number, patch: {...}} — patch a SINGLE slide in-place. Use for style changes, adding/removing blocks, updating text. Only include the properties you want to change. For blocks: if patch.blocks has the same count as existing, each block is merged; otherwise blocks are replaced.
+- edit_slide: {item_name: string, slide_index: number, patch: {...}} — patch a SINGLE slide in-place. Use for style changes, adding/removing blocks, updating text. Only include the properties you want to change. For blocks: if patch.blocks has the same count as existing, each block is merged; otherwise blocks are replaced. Existing image blocks are ALWAYS preserved by the engine — re-emit them with src:"keep-original" (you may move them); never drop them.
 - add_image_to_slide: {item_name: string, image_index?: 0, slide_index?: number, caption?: string, max_width?: string}
 - clear_all: {}
 - set_branding: {enabled?, accentBar?, accentColor?, accentHeight?, logoPosition? (top-left|top-right|bottom-left|bottom-right), logoSize? (20-120), footerLeft?, footerCenter?, footerRight?, footerBg?, footerColor?, footerSize?}
@@ -9724,6 +9764,117 @@ uiSuite("List Ops (reducer)", [
     if (s.lanes[0].items[0].slides[0].hidden !== true) throw new Error("hidden not preserved through non-merge path");
     s = innerReducer(s, { type: "UPDATE_SLIDE", id: "m1", index: 0, patch: { hidden: false }, merge: true });
     if (s.lanes[0].items[0].slides[0].hidden !== false) throw new Error("unhide failed");
+    return true;
+  }},
+]);
+
+// ── Vera image preservation (CR11) ───────────────────────────────────
+// Pure-logic tests for restoreImageSrcs + the edit_slide/set_slides tool
+// paths. The AI never sees real image data (stripImageSrcs replaces long srcs
+// with the "keep-original" sentinel), so the engine must re-attach originals
+// even when the model blanks, moves, or drops the image block entirely.
+uiSuite("Vera image preservation (CR11)", [
+  { name: "restoreImageSrcs re-attaches real src when model echoes sentinel", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "A".repeat(400);
+    const original = [
+      { type: "heading", text: "Title" },
+      { type: "image", src: bigSrc, caption: "Chart" },
+    ];
+    // Model returns the image with the sentinel (what it saw via stripImageSrcs).
+    const improved = { blocks: [
+      { type: "heading", text: "New Title" },
+      { type: "image", src: "keep-original", caption: "Chart" },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[1].src !== bigSrc) throw new Error("sentinel not replaced with real src");
+    if (improved.blocks[0].text !== "New Title") throw new Error("non-image edit clobbered");
+    return true;
+  }},
+  { name: "restoreImageSrcs restores by appearance when image is MOVED", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "B".repeat(400);
+    const original = [
+      { type: "image", src: bigSrc },
+      { type: "heading", text: "H" },
+    ];
+    // Model reorders: heading first, image now last, src blanked to sentinel.
+    const improved = { blocks: [
+      { type: "heading", text: "H" },
+      { type: "image", src: "keep-original" },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[1].src !== bigSrc) throw new Error("moved image not restored by appearance");
+    return true;
+  }},
+  { name: "restoreImageSrcs re-appends image the model DROPPED", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "C".repeat(400);
+    const original = [
+      { type: "heading", text: "H" },
+      { type: "image", src: bigSrc, caption: "Keep me" },
+    ];
+    // Model dropped the image block entirely.
+    const improved = { blocks: [ { type: "heading", text: "H2" } ] };
+    restoreImageSrcs(improved, original);
+    const imgs = improved.blocks.filter((b) => b.type === "image");
+    if (imgs.length !== 1) throw new Error(`expected image re-appended, got ${imgs.length}`);
+    if (imgs[0].src !== bigSrc) throw new Error("re-appended image lost its src");
+    if (imgs[0].caption !== "Keep me") throw new Error("re-appended image lost metadata");
+    return true;
+  }},
+  { name: "restoreImageSrcs restores images inside grid cells", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "D".repeat(400);
+    const original = [
+      { type: "grid", items: [ { blocks: [ { type: "image", src: bigSrc } ] } ] },
+    ];
+    const improved = { blocks: [
+      { type: "grid", items: [ { blocks: [ { type: "image", src: "keep-original" } ] } ] },
+    ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks[0].items[0].blocks[0].src !== bigSrc) throw new Error("grid-cell image not restored");
+    return true;
+  }},
+  { name: "restoreImageSrcs is a no-op for image-free slides", fn: async () => {
+    const original = [ { type: "heading", text: "A" }, { type: "text", text: "B" } ];
+    const improved = { blocks: [ { type: "heading", text: "A2" }, { type: "text", text: "B2" } ] };
+    restoreImageSrcs(improved, original);
+    if (improved.blocks.length !== 2) throw new Error("image-free edit changed block count");
+    if (improved.blocks[0].text !== "A2" || improved.blocks[1].text !== "B2") throw new Error("image-free edit content altered");
+    if (improved.blocks.some((b) => b.type === "image")) throw new Error("phantom image injected");
+    return true;
+  }},
+  { name: "stripImageSrcs replaces long src with the keep-original sentinel", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "E".repeat(400);
+    const stripped = stripImageSrcs({ blocks: [ { type: "image", src: bigSrc }, { type: "image", src: "short.png" } ] });
+    if (stripped.blocks[0].src !== "keep-original") throw new Error("long src not sentinel-ized");
+    if (stripped.blocks[1].src !== "short.png") throw new Error("short src should be left intact");
+    return true;
+  }},
+  { name: "edit_slide tool path preserves image through a blocks rewrite", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "F".repeat(400);
+    const ws = { lanes: [ { title: "L", items: [ { id: "x1", title: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Old" }, { type: "image", src: bigSrc, caption: "C" } ] },
+    ] } ] } ] };
+    // Model replaces blocks (different count) and blanks the image src.
+    executeTool("edit_slide", { item_name: "Mod", slide_index: 0, patch: { blocks: [
+      { type: "heading", text: "New" },
+      { type: "text", text: "Body" },
+      { type: "image", src: "keep-original", caption: "C" },
+    ] } }, ws, null);
+    const blocks = ws.lanes[0].items[0].slides[0].blocks;
+    const img = blocks.find((b) => b.type === "image");
+    if (!img) throw new Error("edit_slide dropped the image");
+    if (img.src !== bigSrc) throw new Error("edit_slide did not restore real src");
+    return true;
+  }},
+  { name: "set_slides tool path preserves image at matching index", fn: async () => {
+    const bigSrc = "data:image/png;base64," + "G".repeat(400);
+    const ws = { lanes: [ { title: "L", items: [ { id: "x2", title: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Old" }, { type: "image", src: bigSrc } ] },
+    ] } ] } ] };
+    executeTool("set_slides", { item_name: "Mod", slides: [
+      { blocks: [ { type: "heading", text: "Reworked" }, { type: "image", src: "keep-original" } ] },
+    ] }, ws, null);
+    const img = ws.lanes[0].items[0].slides[0].blocks.find((b) => b.type === "image");
+    if (!img || img.src !== bigSrc) throw new Error("set_slides did not preserve image src");
     return true;
   }},
 ]);
