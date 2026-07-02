@@ -167,6 +167,24 @@ async function boot() {
   // Save hook: Vela calls this on every state change. deck-io debounces.
   window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
 
+  // Forced update check (About dialog "Check for updates"). Bypasses the 24h
+  // throttle and always shows a result — including an "up to date" notice.
+  window.__velaCheckForUpdates = () => checkForUpdate(configStore, { force: true });
+
+  // Create a brand-new deck file in the current decks folder and switch to it.
+  // deck-io retargets its currentPath to the new file BEFORE we push the deck
+  // in, so the previously-open file is never touched by the next autosave.
+  window.__velaCreateDeck = async (title) => {
+    const { path, deck } = await deckIO.createDeck(null, title);
+    if (window.__velaReceiveDeckUpdate) {
+      window.__velaReceiveDeckUpdate(deck);
+    } else {
+      // App not mounted yet — hand the deck to the startup patch instead.
+      window.__velaStartupPatch = deck;
+    }
+    return path;
+  };
+
   setMsg("Transpiling Vela…");
   await loadVela();
 

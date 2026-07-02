@@ -127,6 +127,106 @@ async function flushSave() {
   }
 }
 
+// Derive a filesystem-safe base name from a deck title. Falls back to
+// "untitled" so we never produce an empty or dot-only filename.
+function slugify(title) {
+  const base = String(title == null ? "" : title)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "untitled";
+}
+
+// Minimal, schema-valid starter deck (deckTitle + one lane/item/slide with the
+// required `blocks` and `duration` keys). Mirrors the structure documented in
+// CLAUDE.md so the running app can load it without complaint.
+function newDeckObject(title) {
+  const t = (title && String(title).trim()) || "Untitled Deck";
+  return {
+    deckTitle: t,
+    lanes: [
+      {
+        title: "Section 1",
+        items: [
+          {
+            title: "Module 1",
+            status: "todo",
+            slides: [
+              {
+                bg: "#0f172a",
+                color: "#e2e8f0",
+                accent: "#3b82f6",
+                duration: 60,
+                blocks: [{ type: "heading", text: t }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// Create a brand-new deck file WITHOUT touching the currently-open one.
+//
+// Today "new deck" only reset in-memory state, so the next debounced autosave
+// (saveCurrent → flushSave) overwrote the file we had open. Here we allocate a
+// fresh, non-colliding `.vela` file in `folder` (default: the folder of the
+// current deck), write a starter deck to it, and retarget currentPath to it so
+// every subsequent autosave lands on the NEW file. The previously-open file is
+// left byte-for-byte untouched.
+//
+// Path safety: the target folder is derived from currentPath()/state.folder,
+// both already-allowed fsGuard roots — we do NOT register any new root, so the
+// guard is not weakened. The final write still passes through the fsGuard
+// wrapper (which rejects "..") like every other write in this module.
+async function createDeck(folder, title) {
+  const dir = norm(
+    folder ||
+      (state.currentPath
+        ? state.currentPath.replace(/\/[^/]+$/, "")
+        : state.folder)
+  );
+  if (!dir) throw new Error("no target folder for the new deck");
+
+  // Find a filename that does not collide with an existing entry (case-
+  // insensitive — the decks folder may live on a case-insensitive volume).
+  const entries = await Neutralino.filesystem.readDirectory(dir);
+  const taken = new Set(
+    entries.filter((e) => e.type === "FILE").map((e) => e.entry.toLowerCase())
+  );
+  const slug = slugify(title);
+  let name = `${slug}.vela`;
+  for (let i = 2; taken.has(name.toLowerCase()); i++) {
+    name = `${slug}-${i}.vela`;
+  }
+  const path = `${dir}/${name}`;
+  const deck = newDeckObject(title);
+
+  // Cooperate with the deck-switch guard exactly like openDeck(): cancel any
+  // pending stale-deck save BEFORE retargeting currentPath, and reject saves
+  // for the duration of the switch so a debounced autosave holding the OLD
+  // deck can't capture the NEW path mid-flight and clobber the fresh file.
+  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+  state.pendingDeck = null;
+  state.pendingPath = null;
+  state.switching = true;
+  try {
+    await stopWatcher();
+    // Tag as our own write so the watcher's echo-suppression skips it.
+    state.lastWriteAt = Date.now();
+    await Neutralino.filesystem.writeFile(path, JSON.stringify(deck, null, 2));
+    state.currentPath = path;
+    await Neutralino.storage.setData(LAST_DECK_KEY, path);
+    if (state.onDeckLoaded) state.onDeckLoaded(deck, path);
+    startWatcher();
+    return { path, deck };
+  } finally {
+    state.switching = false;
+  }
+}
+
 async function startWatcher() {
   if (!state.folder || state.watcherId != null) return;
   try {
@@ -195,6 +295,7 @@ export const deckIO = {
   },
   listDecks,
   openDeck,
+  createDeck,
   saveCurrent,
   async lastDeckPath() {
     try {

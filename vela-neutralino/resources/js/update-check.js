@@ -220,61 +220,154 @@ function showUpdateModal(info, isSecurity) {
   });
 }
 
+// A minimal single-button notice — used to give a forced ("Check for updates")
+// check visible feedback when there is no update to show (already up to date,
+// or the check couldn't complete). Reuses the update-notice styles. Pure DOM,
+// textContent-only.
+function showInfoModal(title, message) {
+  installStyles();
+  return new Promise((resolve) => {
+    let host = document.getElementById("vela-update-notice");
+    if (host) host.remove();
+    host = document.createElement("div");
+    host.id = "vela-update-notice";
+    host.setAttribute("role", "dialog");
+    host.setAttribute("aria-modal", "true");
+
+    const box = document.createElement("div");
+    box.className = "box normal";
+
+    const h2 = document.createElement("h2");
+    h2.className = "normal";
+    h2.textContent = title;
+    box.appendChild(h2);
+
+    const p = document.createElement("p");
+    p.textContent = message;
+    box.appendChild(p);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const ok = document.createElement("button");
+    ok.className = "primary";
+    ok.textContent = "OK";
+    ok.onclick = () => { cleanup(); resolve("ok"); };
+    actions.appendChild(ok);
+    box.appendChild(actions);
+
+    host.appendChild(box);
+    document.body.appendChild(host);
+
+    setTimeout(() => { try { ok.focus(); } catch {} }, 30);
+    requestAnimationFrame(() => host.classList.add("open"));
+
+    host.addEventListener("click", (e) => {
+      if (e.target === host) { cleanup(); resolve("ok"); }
+    });
+
+    function onKey(e) {
+      if (e.key === "Escape") { e.preventDefault(); cleanup(); resolve("ok"); }
+    }
+    document.addEventListener("keydown", onKey, true);
+
+    function cleanup() {
+      document.removeEventListener("keydown", onKey, true);
+      host.classList.remove("open");
+      setTimeout(() => { try { host.remove(); } catch {} }, 150);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-export async function checkForUpdate(configStore) {
+export async function checkForUpdate(configStore, { force = false } = {}) {
   if (checking) return;
   checking = true;
   try {
-    await _check(configStore);
+    await _check(configStore, force);
   } finally {
     checking = false;
   }
 }
 
-async function _check(configStore) {
+async function _check(configStore, force = false) {
   const config = await configStore.get();
-  if (!shouldCheck(config)) return;
+  // The 24h throttle is a background-boot politeness measure. A forced check
+  // is an explicit user action (About dialog "Check for updates") and must
+  // always hit the network and give visible feedback.
+  if (!force && !shouldCheck(config)) return;
 
   const current = typeof NL_APPVERSION === "string" ? NL_APPVERSION : null;
-  if (!current || !parseSemver(current)) return;
+  if (!current || !parseSemver(current)) {
+    if (force) await showInfoModal("Can't check for updates", "Vela couldn't determine its current version.");
+    return;
+  }
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 10000);
   let res;
   try {
     res = await fetch(MANIFEST_URL, { signal: ac.signal });
+  } catch {
+    if (force) await showInfoModal("Update check failed", "Vela couldn't reach the update server. Check your connection and try again later.");
+    return;
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) return;
+  if (!res.ok) {
+    if (force) await showInfoModal("Update check failed", "The update server returned an error. Please try again later.");
+    return;
+  }
 
   const cl = res.headers.get("content-length");
-  if (cl && Number(cl) > MAX_MANIFEST_BYTES) return;
+  if (cl && Number(cl) > MAX_MANIFEST_BYTES) {
+    if (force) await showInfoModal("Update check failed", "The update information looked invalid. Please try again later.");
+    return;
+  }
 
   const text = await res.text();
-  if (text.length > MAX_MANIFEST_BYTES) return;
+  if (text.length > MAX_MANIFEST_BYTES) {
+    if (force) await showInfoModal("Update check failed", "The update information looked invalid. Please try again later.");
+    return;
+  }
 
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return; }
+  try { parsed = JSON.parse(text); } catch {
+    if (force) await showInfoModal("Update check failed", "The update information looked invalid. Please try again later.");
+    return;
+  }
   const manifest = validateManifest(parsed);
-  if (!manifest) return;
+  if (!manifest) {
+    if (force) await showInfoModal("Update check failed", "The update information looked invalid. Please try again later.");
+    return;
+  }
 
   await configStore.patch({ lastUpdateCheck: Date.now() });
 
-  if (compareSemver(current, manifest.latest) >= 0) return;
+  if (compareSemver(current, manifest.latest) >= 0) {
+    if (force) await showInfoModal("You're up to date", "Vela v" + current + " is the latest version.");
+    return;
+  }
 
   const releaseUrl = buildReleaseUrl(manifest.latest);
-  if (!releaseUrl) return;
+  if (!releaseUrl) {
+    if (force) await showInfoModal("Update check failed", "The update information looked invalid. Please try again later.");
+    return;
+  }
 
   const isSecurity = compareSemver(current, manifest.minSafeVersion) < 0;
 
-  if (!isSecurity) {
-    if (config.dismissedVersion === manifest.latest) return;
-  } else {
-    if (isSecurityDismissed(config, manifest.minSafeVersion)) return;
+  // A forced check reflects explicit user intent, so we show the update modal
+  // even if this version was previously dismissed. The background boot check
+  // still honours the dismissal so we don't nag.
+  if (!force) {
+    if (!isSecurity) {
+      if (config.dismissedVersion === manifest.latest) return;
+    } else {
+      if (isSecurityDismissed(config, manifest.minSafeVersion)) return;
+    }
   }
 
   const result = await showUpdateModal(
