@@ -10,6 +10,14 @@ const VELA_TESTS = [
   { name: "fmtTime works", fn: () => fmtTime(90) !== "" && fmtTime(0) === "" && fmtTime(3600).includes("1h") },
   { name: "fmtTime humanizes (no raw minutes)", fn: () => !fmtTime(13620).includes("227") && fmtTime(13620).includes("h") },
   { name: "sumDurations works", fn: () => sumDurations([{ duration: 60 }, { duration: 30 }]) === 90 && sumDurations([]) === 0 },
+  { name: "fmtMins rounds to whole minutes (no seconds)", fn: () => fmtMins(718) === "12m" && !fmtMins(718).includes("s") && fmtMins(0) === "" && fmtMins(30) === "1m" && fmtMins(3720) === "1h 2m" },
+  { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
+  { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
+    const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });
+    return r.lanes[0].items[0].slides[0].hidden === true;
+  }},
+  { name: "sanitizeBlock preserves block.hidden", fn: () => sanitizeBlock({ type: "heading", text: "T", hidden: true })?.hidden === true },
   { name: "uid() returns unique IDs", fn: () => { const a = uid(), b = uid(); return a !== b && a.length > 0; } },
   { name: "now() returns ISO string", fn: () => now().includes("T") && now().includes("Z") },
   { name: "fmtSize works", fn: () => fmtSize(1024).includes("KB") },

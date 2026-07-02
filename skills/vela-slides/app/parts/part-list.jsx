@@ -278,8 +278,8 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               borderRadius: "0 3px 3px 0", marginBottom: 1,
               display: "flex", alignItems: "center",
               overflow: "hidden", whiteSpace: "nowrap",
-              transition: "background .12s, color .12s",
-              position: "relative",
+              transition: "background .12s, color .12s, opacity .12s",
+              position: "relative", opacity: s.hidden ? 0.4 : 1,
             }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
@@ -297,8 +297,16 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
                 style={{ ...S.input({ padding: "1px 4px", fontSize: 12, border: `1px solid ${T.accent}` }), flex: 1, minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
             )}
+            <span
+              className="slide-eye-toggle"
+              onClick={(e) => { e.stopPropagation(); dispatch({ type: "UPDATE_SLIDE", id: item.id, index: si, patch: { hidden: !s.hidden }, merge: true }); }}
+              title={s.hidden ? "Hidden — click to show (excluded from time & count)" : "Visible — click to hide"}
+              style={{ flexShrink: 0, marginLeft: 4, display: "inline-flex", alignItems: "center", cursor: "pointer", color: isActive ? T.accent : T.textDim, opacity: s.hidden ? 1 : 0.3, transition: "opacity .12s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 1 : 0.3}
+            >{getIcon(s.hidden ? "EyeOff" : "Eye", { size: 12 })}</span>
           </div>
           <SlideAdder item={item} insertIndex={si + 1} laneId={laneId} dispatch={dispatch} guidelines={guidelines} compact={si !== item.slides.length - 1} />
         </React.Fragment>;

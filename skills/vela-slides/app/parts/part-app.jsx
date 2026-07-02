@@ -75,6 +75,40 @@ function ChangelogDialog({ onClose }) {
   );
 }
 
+// ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Opened from the top-left stats badge. The badge shows the *visible* totals
+// (hidden slides don't play, so they don't count toward time/slide count); this
+// dialog reports both the visible totals and the totals including hidden slides.
+function StatsDialog({ onClose, sections, slidesVisible, slidesAll, timeVisible, timeAll, hiddenCount }) {
+  const row = (label, a, b) => (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
+      <span style={{ fontFamily: FONT.body, fontSize: 12, color: T.textMuted }}>{label}</span>
+      <span style={{ display: "flex", gap: 18, alignItems: "baseline" }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, minWidth: 70, textAlign: "right" }}>{a}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: hiddenCount > 0 ? T.accent : T.textDim, minWidth: 70, textAlign: "right" }}>{b}</span>
+      </span>
+    </div>
+  );
+  return (
+    <ModalBackdrop onClose={onClose} defaultAction={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>Deck stats</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 18, marginBottom: 2 }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.textDim, minWidth: 70, textAlign: "right" }}>Shown</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.textDim, minWidth: 70, textAlign: "right" }}>+ Hidden</span>
+      </div>
+      {row("Slides", slidesVisible, slidesAll)}
+      {row("Total time", fmtTime(timeVisible) || "0s", fmtTime(timeAll) || "0s")}
+      {row("Sections", sections, sections)}
+      {hiddenCount > 0
+        ? <div style={{ marginTop: 12, fontFamily: FONT.body, fontSize: 11, color: T.textMuted }}>{hiddenCount} hidden slide{hiddenCount === 1 ? "" : "s"} excluded from the headline time and count.</div>
+        : <div style={{ marginTop: 12, fontFamily: FONT.body, fontSize: 11, color: T.textDim }}>No hidden slides. Toggle a slide's 👁 to hide it from the count and presentation.</div>}
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Comments Panel (review sidebar) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function CommentsPanel({ state, dispatch, isMobile }) {
   const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
@@ -795,6 +829,7 @@ export default function App() {
   const [jsonModal, setJsonModal] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -1272,8 +1307,14 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
-  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
-  const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (s.duration || 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
+  // Hidden slides are excluded from the headline total time and slide count
+  // (they don't play). The stats dialog reports both including and excluding.
+  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (isSlideVisible(sl) ? (sl.duration || 0) : 0), 0), 0), 0);
+  const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
+  const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides || []).filter(isSlideVisible).length, 0), 0);
+  const slideCountAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0);
+  const hiddenCount = slideCountAll - slideCountVisible;
+  const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (isSlideVisible(s) ? (s.duration || 0) : 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
 
   // ━━━ Mobile helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const showList = isMobile ? mobileTab === "list" : !(tocCollapsed && selectedConcept);
@@ -1314,7 +1355,7 @@ export default function App() {
         ) : (
           <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
-        {!isMobile && (deckTime > 0 || total > 0) && <span title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)} slides · ${total} sections`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4 }}>{deckTime > 0 ? `⏱${fmtTime(deckTime)} · ` : ""}{state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)}sl · {total}§</span>}
+        {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtMins(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§</span>}
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
@@ -1510,6 +1551,7 @@ export default function App() {
       {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
+      {showStats && <StatsDialog onClose={() => setShowStats(false)} sections={total} slidesVisible={slideCountVisible} slidesAll={slideCountAll} timeVisible={deckTime} timeAll={deckTimeAll} hiddenCount={hiddenCount} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {

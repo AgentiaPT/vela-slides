@@ -90,7 +90,7 @@ const velaClipboardReadSlide = async () => {
 
 const VELA_VERSION = "12.76";
 const VELA_CHANGELOG = [
-  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. More to follow in this release." },
+  { v: "12.76", d: "Authoring & presenter UX batch (sprint 7-1): AI slide edits no longer drop existing images — an edit can reposition or restyle around an image but the picture is always preserved. Section reorder by mouse drag-and-drop now lands reliably (the drop position is computed from the drop itself instead of trailing hover state). Slides can be dragged into an empty section. The slide-list add control is now a readable menu — Add blank slide (no AI, reuses the previous slide's styling), Add slide with AI, or Add section — and new sections can be inserted at any position, not only at the end. Slides can be hidden/shown with an eye toggle — hidden slides are excluded from the headline time and slide count, and the top-left stats badge (now rounded to whole minutes so the slide count fits) opens a dialog showing totals both with and without hidden slides. Individual slide elements can also be hidden: a hidden block is kept in the editor (for TOC/layout guidance) but omitted from presentation and PDF with no layout footprint. More to follow in this release." },
   { v: "12.75", d: "Editing UX batch: a searchable icon picker (Lucide names + emoji) for swapping or adding icons on most blocks; a per-item hover toolbar (delete, link) on every multi-item block via a shared ItemChrome component; a dashed '+ add' affordance that appends a style-matching item inline without an AI round-trip; image paste is now layout-aware, routing the image beside existing content or stacked below based on the slide's content and the image's aspect ratio. Side-by-side image layouts (image-right / image-left) now follow the slide's vertical alignment and size to the content column instead of the reverse, so a tall side image no longer shrinks the body text or overflows past the heading. Linked zoomable blocks (image, svg, flow, funnel, cycle) let the link take precedence over zoom. Design-variant tiles apply live and keep the strip open for click-through comparison, with an 'Original' revert option. Improve now runs in the background and survives navigation instead of being cancelled. Local dev server (serve.py): fixed an HTML script-tag boundary issue where literal script-closing sequences inside the inlined JS source could terminate the embedding script block early; added a regression test." },
   { v: "12.74", d: "Desktop AI UX: AI action buttons (Improve, Alternatives, Vera) now enable themselves as soon as agent detection finishes, instead of staying greyed out until the first Vera message. AI availability is now read through a hook that subscribes to the shell's detection event, so every gated control re-renders on the same signal. Artifact/server runtimes are unaffected (they never emit the event)." },
   { v: "12.73", d: "Desktop AI robustness: the slide Improve and Alternatives actions no longer hang when html2canvas can't load (the desktop webview blocks the CDN via CSP and has no network). The loader now fails safe — returning no screenshot so these actions fall back to layout-stats-only — and Improve, which already uses layout stats, no longer attempts the (unused) screenshot load at all. No change in artifact/server runtimes where the library loads normally." },
@@ -1182,7 +1182,12 @@ const allItemIds = (lanes) => { const ids = []; for (const l of lanes) for (cons
 const findItem = (lanes, id) => { for (const l of lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
 const fmtSize = (b) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(2)}MB`;
 const fmtTime = (s) => { if (!s || s <= 0) return ""; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
+// Duration rounded to whole minutes (no seconds) — for the compact top-bar stat,
+// so the slide count has room. <1min rounds up to 1m so a short deck isn't "0m".
+const fmtMins = (s) => { if (!s || s <= 0) return ""; const total = Math.max(1, Math.round(s / 60)); const h = Math.floor(total / 60); const m = total % 60; return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`; };
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
+// Slide predicates for hidden-aware stats.
+const isSlideVisible = (sl) => !sl || !sl.hidden;
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -3190,7 +3195,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}) }}
+    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.hidden && !presenting ? { opacity: 0.4 } : {}), ...(b.link ? { cursor: "pointer" } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
@@ -3201,6 +3206,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
+        <button onClick={(e) => { e.stopPropagation(); handleBlockChange(i, { hidden: !b.hidden }); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.hidden ? st.accent : T.bgPanel, border: `1px solid ${b.hidden ? st.accent : T.border}`, color: b.hidden ? "#fff" : T.textDim, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.hidden ? "Hidden in presentation — click to show" : "Hide element in presentation (kept in editor for TOC/layout guidance)"}>{getIcon(b.hidden ? "EyeOff" : "Eye", { size: 11 })}</button>
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
@@ -3256,6 +3262,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a block followed by its inline comments
   const renderBlockWithComments = (b, i) => {
+    // A hidden block is omitted entirely in presentation/PDF — no layout
+    // footprint — while still editable (and dimmed) in the editor so it can be
+    // unhidden. Useful for a slide title kept only as TOC guidance. (CR)
+    if (b?.hidden && presenting) return [];
     const block = renderBlockItem(b, i);
     const comments = renderInlineComments(i);
     if (!comments) return [block];
@@ -6271,7 +6281,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
   });
 
-  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]);
+  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes","hidden"]);
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
@@ -7356,8 +7366,8 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               borderRadius: "0 3px 3px 0", marginBottom: 1,
               display: "flex", alignItems: "center",
               overflow: "hidden", whiteSpace: "nowrap",
-              transition: "background .12s, color .12s",
-              position: "relative",
+              transition: "background .12s, color .12s, opacity .12s",
+              position: "relative", opacity: s.hidden ? 0.4 : 1,
             }}
             onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
             onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
@@ -7375,8 +7385,16 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
                 style={{ ...S.input({ padding: "1px 4px", fontSize: 12, border: `1px solid ${T.accent}` }), flex: 1, minWidth: 0 }}
               />
             ) : (
-              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+              <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
             )}
+            <span
+              className="slide-eye-toggle"
+              onClick={(e) => { e.stopPropagation(); dispatch({ type: "UPDATE_SLIDE", id: item.id, index: si, patch: { hidden: !s.hidden }, merge: true }); }}
+              title={s.hidden ? "Hidden — click to show (excluded from time & count)" : "Visible — click to hide"}
+              style={{ flexShrink: 0, marginLeft: 4, display: "inline-flex", alignItems: "center", cursor: "pointer", color: isActive ? T.accent : T.textDim, opacity: s.hidden ? 1 : 0.3, transition: "opacity .12s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 1 : 0.3}
+            >{getIcon(s.hidden ? "EyeOff" : "Eye", { size: 12 })}</span>
           </div>
           <SlideAdder item={item} insertIndex={si + 1} laneId={laneId} dispatch={dispatch} guidelines={guidelines} compact={si !== item.slides.length - 1} />
         </React.Fragment>;
@@ -8035,6 +8053,14 @@ const VELA_TESTS = [
   { name: "fmtTime works", fn: () => fmtTime(90) !== "" && fmtTime(0) === "" && fmtTime(3600).includes("1h") },
   { name: "fmtTime humanizes (no raw minutes)", fn: () => !fmtTime(13620).includes("227") && fmtTime(13620).includes("h") },
   { name: "sumDurations works", fn: () => sumDurations([{ duration: 60 }, { duration: 30 }]) === 90 && sumDurations([]) === 0 },
+  { name: "fmtMins rounds to whole minutes (no seconds)", fn: () => fmtMins(718) === "12m" && !fmtMins(718).includes("s") && fmtMins(0) === "" && fmtMins(30) === "1m" && fmtMins(3720) === "1h 2m" },
+  { name: "isSlideVisible excludes hidden", fn: () => isSlideVisible({}) === true && isSlideVisible({ hidden: true }) === false && isSlideVisible({ hidden: false }) === true },
+  { name: "UPDATE_SLIDE persists hidden flag through sanitize", fn: () => {
+    const s = { lanes: [{ id: "l1", items: [{ id: "i1", slides: [{ blocks: [], duration: 20 }] }] }], selectedId: "i1", slideIndex: 0 };
+    const r = innerReducer(s, { type: "UPDATE_SLIDE", id: "i1", index: 0, patch: { hidden: true }, merge: true });
+    return r.lanes[0].items[0].slides[0].hidden === true;
+  }},
+  { name: "sanitizeBlock preserves block.hidden", fn: () => sanitizeBlock({ type: "heading", text: "T", hidden: true })?.hidden === true },
   { name: "uid() returns unique IDs", fn: () => { const a = uid(), b = uid(); return a !== b && a.length > 0; } },
   { name: "now() returns ISO string", fn: () => now().includes("T") && now().includes("Z") },
   { name: "fmtSize works", fn: () => fmtSize(1024).includes("KB") },
@@ -14538,6 +14564,40 @@ function ChangelogDialog({ onClose }) {
   );
 }
 
+// ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Opened from the top-left stats badge. The badge shows the *visible* totals
+// (hidden slides don't play, so they don't count toward time/slide count); this
+// dialog reports both the visible totals and the totals including hidden slides.
+function StatsDialog({ onClose, sections, slidesVisible, slidesAll, timeVisible, timeAll, hiddenCount }) {
+  const row = (label, a, b) => (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "7px 0", borderTop: `1px solid ${T.border}` }}>
+      <span style={{ fontFamily: FONT.body, fontSize: 12, color: T.textMuted }}>{label}</span>
+      <span style={{ display: "flex", gap: 18, alignItems: "baseline" }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, minWidth: 70, textAlign: "right" }}>{a}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: hiddenCount > 0 ? T.accent : T.textDim, minWidth: 70, textAlign: "right" }}>{b}</span>
+      </span>
+    </div>
+  );
+  return (
+    <ModalBackdrop onClose={onClose} defaultAction={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <span style={{ fontFamily: FONT.display, fontSize: 16, fontWeight: 700, color: T.text }}>Deck stats</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 18, marginBottom: 2 }}>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.textDim, minWidth: 70, textAlign: "right" }}>Shown</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.textDim, minWidth: 70, textAlign: "right" }}>+ Hidden</span>
+      </div>
+      {row("Slides", slidesVisible, slidesAll)}
+      {row("Total time", fmtTime(timeVisible) || "0s", fmtTime(timeAll) || "0s")}
+      {row("Sections", sections, sections)}
+      {hiddenCount > 0
+        ? <div style={{ marginTop: 12, fontFamily: FONT.body, fontSize: 11, color: T.textMuted }}>{hiddenCount} hidden slide{hiddenCount === 1 ? "" : "s"} excluded from the headline time and count.</div>
+        : <div style={{ marginTop: 12, fontFamily: FONT.body, fontSize: 11, color: T.textDim }}>No hidden slides. Toggle a slide's 👁 to hide it from the count and presentation.</div>}
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Comments Panel (review sidebar) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function CommentsPanel({ state, dispatch, isMobile }) {
   const [filter, setFilter] = useState("open"); // "all" | "open" | "resolved"
@@ -15258,6 +15318,7 @@ export default function App() {
   const [jsonModal, setJsonModal] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -15735,8 +15796,14 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
-  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
-  const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (s.duration || 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
+  // Hidden slides are excluded from the headline total time and slide count
+  // (they don't play). The stats dialog reports both including and excluding.
+  const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (isSlideVisible(sl) ? (sl.duration || 0) : 0), 0), 0), 0);
+  const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + i.slides.reduce((b, sl) => b + (sl.duration || 0), 0), 0), 0);
+  const slideCountVisible = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides || []).filter(isSlideVisible).length, 0), 0);
+  const slideCountAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0);
+  const hiddenCount = slideCountAll - slideCountVisible;
+  const maxModuleTime = React.useMemo(() => { let m = 0; for (const l of state.lanes) for (const i of l.items) { const t = i.slides.reduce((a, s) => a + (isSlideVisible(s) ? (s.duration || 0) : 0), 0); if (t > m) m = t; } return m || 1; }, [state.lanes]);
 
   // ━━━ Mobile helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const showList = isMobile ? mobileTab === "list" : !(tocCollapsed && selectedConcept);
@@ -15777,7 +15844,7 @@ export default function App() {
         ) : (
           <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
-        {!isMobile && (deckTime > 0 || total > 0) && <span title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)} slides · ${total} sections`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4 }}>{deckTime > 0 ? `⏱${fmtTime(deckTime)} · ` : ""}{state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + (i.slides?.length || 0), 0), 0)}sl · {total}§</span>}
+        {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTime > 0 ? fmtTime(deckTime) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 2, minWidth: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtMins(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§</span>}
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
@@ -15973,6 +16040,7 @@ export default function App() {
       {iconPicker && <IconPicker value={iconPicker.value} onPick={(name) => { iconPicker.onPick(name || undefined); setIconPicker(null); }} onClose={() => setIconPicker(null)} />}
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
+      {showStats && <StatsDialog onClose={() => setShowStats(false)} sections={total} slidesVisible={slideCountVisible} slidesAll={slideCountAll} timeVisible={deckTime} timeAll={deckTimeAll} hiddenCount={hiddenCount} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={({ title, prompt, images }) => { dispatch({ type: "NEW_DECK", title, prompt, images }); if (isMobile) setMobileTab("chat"); }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
