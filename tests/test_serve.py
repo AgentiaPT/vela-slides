@@ -37,6 +37,7 @@ from serve import (
     VelaLocalServer,
     ThreadedHTTPServer,
 )
+import agent_backend
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -1098,6 +1099,185 @@ class TestEdgeCases(FolderServerTestBase):
         self.assertTrue(all(r == 200 for r in save_results))
         self.assertTrue(all(r == 200 for r in poll_results),
                         f"All polls should return 200, got: {poll_results}")
+
+
+# ── AI channel backend (agent_backend.py) ─────────────────────────────
+class TestAgentBackendSerialisation(unittest.TestCase):
+    """Prompt/arg/parse logic — no real `claude` spawn."""
+
+    def test_single_user_turn_collapses(self):
+        # The common Vera case: one user message -> raw content, no role tags.
+        self.assertEqual(
+            agent_backend.serialise_messages([{"role": "user", "content": "hello"}]),
+            "hello",
+        )
+
+    def test_multi_turn_is_role_tagged(self):
+        out = agent_backend.serialise_messages([
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "yo"},
+        ])
+        self.assertIn("<USER>", out)
+        self.assertIn("<ASSISTANT>", out)
+
+    def test_non_string_content_kept_as_json(self):
+        out = agent_backend.serialise_messages([{"role": "user", "content": [{"type": "text", "text": "x"}]}])
+        self.assertIn('"type"', out)
+
+    def test_args_disable_all_tools_and_json(self):
+        args = agent_backend._claude_args("SYS")
+        self.assertIn("-p", args)
+        self.assertIn("--output-format", args)
+        self.assertIn("--disallowed-tools", args)
+        # Every tool the Go gatekeeper disables must be present here too.
+        tools = args[args.index("--disallowed-tools") + 1]
+        for t in ["Bash", "Edit", "Write", "Read", "WebFetch", "Task"]:
+            self.assertIn(t, tools)
+
+    def test_system_prompt_passed_through(self):
+        args = agent_backend._claude_args("VERA SYSTEM")
+        self.assertIn("--system-prompt", args)
+        self.assertEqual(args[args.index("--system-prompt") + 1], "VERA SYSTEM")
+
+    def test_no_system_prompt_when_empty(self):
+        self.assertNotIn("--system-prompt", agent_backend._claude_args(""))
+
+    def test_parse_claude_json(self):
+        out = agent_backend._parse_claude(json.dumps({
+            "result": "ANSWER", "model": "claude-x",
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        }))
+        self.assertEqual(out["reply"], "ANSWER")
+        self.assertEqual(out["model"], "claude-x")
+        self.assertEqual(out["stats"]["input_tokens"], 5)
+
+    def test_parse_claude_non_json_fallback(self):
+        out = agent_backend._parse_claude("plain text\x1b[0m answer")
+        self.assertEqual(out["reply"], "plain text answer")  # ANSI stripped
+        self.assertEqual(out["model"], "claude-code")
+
+    def test_run_completion_missing_binary(self):
+        orig = agent_backend.resolve_agent_bin
+        agent_backend.resolve_agent_bin = lambda: None
+        try:
+            r = agent_backend.run_completion("s", [{"role": "user", "content": "x"}])
+            self.assertFalse(r["ok"])
+            self.assertIn("not found", r["error"])
+        finally:
+            agent_backend.resolve_agent_bin = orig
+
+
+class TestAgentBackendChannel(unittest.TestCase):
+    """The loopback channel HTTP contract part-engine.jsx speaks. run_completion
+    is stubbed so no real agent is launched."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig = agent_backend.run_completion
+        agent_backend.run_completion = staticmethod(
+            lambda system, messages, **kw: {"ok": True, "reply": "STUB:" + (messages[0]["content"] if messages else ""), "model": "stub", "stats": {}}
+        )
+        cls.server = agent_backend.make_channel_server(port=0)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        agent_backend.run_completion = cls._orig
+        agent_backend.stop_channel_server(cls.server)
+
+    def _post(self, path, body, origin=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Content-Type": "application/json"}
+        if origin:
+            headers["Origin"] = origin
+        conn.request("POST", path, json.dumps(body), headers)
+        r = conn.getresponse()
+        data = r.read()
+        conn.close()
+        return r.status, data, r
+
+    def test_health(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/health")
+        r = conn.getresponse()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(json.loads(r.read())["ok"])
+        conn.close()
+
+    def test_action_complete(self):
+        status, data, _ = self._post("/action", {
+            "action": "complete", "system": "SYS",
+            "messages": [{"role": "user", "content": "ping"}],
+        })
+        self.assertEqual(status, 200)
+        body = json.loads(data)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["reply"], "STUB:ping")
+
+    def test_action_unknown_action(self):
+        status, data, _ = self._post("/action", {"action": "delete_everything"})
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_unknown_path_404(self):
+        status, _, _ = self._post("/nope", {})
+        self.assertEqual(status, 404)
+
+    def test_cors_echoes_origin(self):
+        # A file:// harness sends Origin: null; a serve.py page sends its
+        # localhost origin. Both must be echoed so the browser fetch succeeds.
+        _, _, r = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "x"}],
+        }, origin="null")
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "null")
+
+    def test_options_preflight(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("OPTIONS", "/action", headers={"Origin": "http://localhost:3030"})
+        r = conn.getresponse()
+        self.assertEqual(r.status, 204)
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "http://localhost:3030")
+        self.assertIn("POST", r.getheader("Access-Control-Allow-Methods"))
+        conn.close()
+
+
+class TestServeChannelIntegration(unittest.TestCase):
+    """VelaLocalServer wiring of the channel (start/stop, disabled when port 0)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def test_channel_disabled_when_port_zero(self):
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0, no_auth=True)
+        self.assertEqual(srv._start_channel(), "")
+        self.assertIsNone(srv._channel_server)
+
+    def test_channel_starts_and_stops(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        free_port = s.getsockname()[1]
+        s.close()
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=free_port, no_auth=True)
+        status = srv._start_channel()
+        try:
+            self.assertIsNotNone(srv._channel_server)
+            self.assertIn("agent", status)  # "(agent: ...)" or "(agent ... NOT FOUND)"
+            bound = srv._channel_server.server_address[1]
+            conn = http.client.HTTPConnection("127.0.0.1", bound, timeout=5)
+            conn.request("GET", "/health")
+            self.assertEqual(conn.getresponse().status, 200)
+            conn.close()
+        finally:
+            srv._stop_channel()
+            self.assertIsNone(srv._channel_server)
 
 
 if __name__ == "__main__":

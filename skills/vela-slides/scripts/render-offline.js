@@ -23,7 +23,7 @@ const REPO = path.resolve(__dirname, '..', '..', '..'); // skills/vela-slides/sc
 const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
 const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
 
-function build(deckPath, outDir) {
+function build(deckPath, outDir, opts = {}) {
   if (!fs.existsSync(VELA_JSX)) throw new Error('vela.jsx not found — run concat.py first');
   const Babel = require(path.join(VENDOR, 'babel.min.js'));
   const deck = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
@@ -33,6 +33,15 @@ function build(deckPath, outDir) {
   jsx = jsx.replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, '');
   jsx = jsx.replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, '');
   jsx = jsx.replace(/^export\s+default\s+function\s+/m, 'function ');
+  // AI channel wiring (optional): flip the app into local mode and point it at a
+  // running agent_backend channel server (python3 agent_backend.py serve). Vera's
+  // AI calls then route to the local `claude` CLI instead of the Anthropic API —
+  // the same VELA_CHANNEL_PORT branch serve.py uses (part-engine.jsx).
+  const channelPort = parseInt(opts.channelPort || 0, 10);
+  if (channelPort > 0) {
+    jsx = jsx.replace('const VELA_LOCAL_MODE = false;', 'const VELA_LOCAL_MODE = true;');
+    jsx = jsx.replace('const VELA_CHANNEL_PORT = 0;', `const VELA_CHANNEL_PORT = ${channelPort};`);
+  }
   // Inject the deck via the STARTUP_PATCH sentinel (same mechanism as assemble.py).
   const marker = 'const STARTUP_PATCH = null;';
   if (!jsx.includes(marker)) throw new Error('STARTUP_PATCH marker missing in vela.jsx');
@@ -64,9 +73,12 @@ function build(deckPath, outDir) {
 }
 
 if (require.main === module) {
-  const [deckPath, outDir] = process.argv.slice(2);
-  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir>'); process.exit(2); }
-  const r = build(deckPath, outDir);
-  console.log(`built ${r.html} (app.js ${r.bytes} bytes)`);
+  const argv = process.argv.slice(2);
+  const ci = argv.indexOf('--channel-port');
+  const channelPort = ci >= 0 ? argv.splice(ci, 2)[1] : 0;
+  const [deckPath, outDir] = argv;
+  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir> [--channel-port N]'); process.exit(2); }
+  const r = build(deckPath, outDir, { channelPort });
+  console.log(`built ${r.html} (app.js ${r.bytes} bytes)${channelPort ? ` [AI channel :${channelPort}]` : ''}`);
 }
 module.exports = { build };

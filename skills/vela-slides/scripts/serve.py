@@ -833,6 +833,7 @@ class VelaLocalServer:
         self.no_open = no_open
         self._vendor_available = False
         self._force_kill = replace
+        self._channel_server = None  # loopback AI channel (agent_backend), if started
 
         # Auth state
         self._no_auth = no_auth
@@ -1310,6 +1311,12 @@ class VelaLocalServer:
         # Template hot reload
         self._start_template_watcher()
 
+        # Local AI channel — routes Vera's AI calls to the `claude` CLI so the
+        # served deck can use AI with no Anthropic API key (part-engine.jsx's
+        # VELA_CHANNEL_PORT branch). Best-effort: a bind failure or missing
+        # agent never blocks the deck browser itself.
+        self._channel_status = self._start_channel()
+
         # Count decks
         deck_count = len([f for f in os.listdir(self.folder_path) if f.endswith(DECK_EXT) and os.path.isfile(os.path.join(self.folder_path, f))])
 
@@ -1327,7 +1334,7 @@ class VelaLocalServer:
         else:
             print(f"  Auth:    Token (see {self.RUNTIME_FILE}, or check browser)")
         if self.channel_port:
-            print(f"  Channel: http://localhost:{self.channel_port}")
+            print(f"  Channel: http://localhost:{self.channel_port}  {self._channel_status}")
         if self.host == "0.0.0.0" and self._no_auth:
             print(f"  ⚠️  WARNING: Listening on all interfaces WITHOUT authentication!")
             print(f"     Anyone on your network can read/write decks.")
@@ -1346,8 +1353,36 @@ class VelaLocalServer:
             with self._lock:
                 for w in self._deck_watchers.values():
                     w.stop()
+            self._stop_channel()
             httpd.shutdown()
             self._remove_runtime_files()
+
+    def _start_channel(self):
+        """Start the loopback AI channel on self.channel_port. Returns a short
+        status string for the banner. Never raises — the deck browser must come
+        up even if the agent CLI is absent or the port is busy."""
+        if not self.channel_port:
+            return ""
+        try:
+            import agent_backend
+        except ImportError as e:
+            return f"(disabled: {e})"
+        try:
+            self._channel_server, _ = agent_backend.start_channel_server(self.channel_port, self.host)
+        except OSError as e:
+            self._channel_server = None
+            return f"(disabled: {e})"
+        info = agent_backend.agent_available()
+        return f"(agent: {info['bin']} {info['version']})" if info["available"] else f"(agent {info['bin']} NOT FOUND)"
+
+    def _stop_channel(self):
+        if self._channel_server is not None:
+            try:
+                import agent_backend
+                agent_backend.stop_channel_server(self._channel_server)
+            except Exception:
+                pass
+            self._channel_server = None
 
 
 
