@@ -1124,15 +1124,19 @@ class TestAgentBackendSerialisation(unittest.TestCase):
         out = agent_backend.serialise_messages([{"role": "user", "content": [{"type": "text", "text": "x"}]}])
         self.assertIn('"type"', out)
 
-    def test_args_disable_all_tools_and_json(self):
+    def test_args_lock_down_every_capability(self):
         args = agent_backend._claude_args("SYS")
         self.assertIn("-p", args)
         self.assertIn("--output-format", args)
-        self.assertIn("--disallowed-tools", args)
-        # Every tool the Go gatekeeper disables must be present here too.
-        tools = args[args.index("--disallowed-tools") + 1]
-        for t in ["Bash", "Edit", "Write", "Read", "WebFetch", "Task"]:
-            self.assertIn(t, tools)
+        # Positive allowlist of NOTHING (stronger than a denylist).
+        self.assertEqual(args[args.index("--tools") + 1], "")
+        # No MCP servers, no user/project settings (hooks/plugins/permissions).
+        self.assertIn("--strict-mcp-config", args)
+        self.assertEqual(args[args.index("--setting-sources") + 1], "")
+        # With no tools there is nothing to permit — the dangerous bypass and any
+        # denylist/allow flag must be absent.
+        for bad in ("--dangerously-skip-permissions", "--disallowed-tools", "--allow-all-tools"):
+            self.assertNotIn(bad, args)
 
     def test_system_prompt_passed_through(self):
         args = agent_backend._claude_args("VERA SYSTEM")
@@ -1240,6 +1244,82 @@ class TestAgentBackendChannel(unittest.TestCase):
         self.assertEqual(r.status, 204)
         self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "http://localhost:3030")
         self.assertIn("POST", r.getheader("Access-Control-Allow-Methods"))
+        # The token header is non-simple, so the preflight MUST allow it or the
+        # browser blocks the real POST ("Failed to fetch").
+        self.assertIn("x-vela-token", r.getheader("Access-Control-Allow-Headers"))
+        conn.close()
+
+    def test_forbidden_origin_rejected(self):
+        # A random website the user is browsing must not be able to drive the
+        # channel (drive-by cost/abuse) — rejected before any spawn.
+        status, data, r = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "x"}],
+        }, origin="https://evil.example.com")
+        self.assertEqual(status, 403)
+        self.assertIsNone(r.getheader("Access-Control-Allow-Origin"))
+
+    def test_forbidden_host_rejected(self):
+        # DNS-rebinding: a malicious domain resolving to 127.0.0.1 is refused by
+        # the Host check even though the socket is loopback.
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("GET", "/health", skip_host=True)
+        conn.putheader("Host", "evil.example.com")
+        conn.endheaders()
+        r = conn.getresponse()
+        self.assertEqual(r.status, 403)
+        conn.close()
+
+    def test_make_channel_server_forces_loopback(self):
+        # Even asked to bind all interfaces, the channel stays on loopback.
+        srv = agent_backend.make_channel_server(port=0, host="0.0.0.0")
+        try:
+            self.assertEqual(srv.server_address[0], "127.0.0.1")
+        finally:
+            srv.server_close()
+
+
+class TestAgentBackendChannelToken(unittest.TestCase):
+    """A token-gated channel: /action needs the token (another local user can't
+    spend the victim's `claude`); /health stays open."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig = agent_backend.run_completion
+        agent_backend.run_completion = staticmethod(lambda system, messages, **kw: {"ok": True, "reply": "OK", "stats": {}})
+        cls.server = agent_backend.make_channel_server(port=0, token="s3cret-token")
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        agent_backend.run_completion = cls._orig
+        agent_backend.stop_channel_server(cls.server)
+
+    def _post(self, token):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Content-Type": "application/json"}
+        if token is not None:
+            headers["x-vela-token"] = token
+        conn.request("POST", "/action", json.dumps({"action": "complete", "messages": []}), headers)
+        r = conn.getresponse()
+        r.read()
+        conn.close()
+        return r.status
+
+    def test_missing_token_rejected(self):
+        self.assertEqual(self._post(None), 401)
+
+    def test_wrong_token_rejected(self):
+        self.assertEqual(self._post("nope"), 401)
+
+    def test_correct_token_accepted(self):
+        self.assertEqual(self._post("s3cret-token"), 200)
+
+    def test_health_open_without_token(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/health")
+        self.assertEqual(conn.getresponse().status, 200)
         conn.close()
 
 
@@ -1278,6 +1358,51 @@ class TestServeChannelIntegration(unittest.TestCase):
         finally:
             srv._stop_channel()
             self.assertIsNone(srv._channel_server)
+
+
+class TestBackendParity(unittest.TestCase):
+    """The Python channel backend and the Neutralino Go gatekeeper launch the
+    SAME `claude` with the SAME lockdown. These assert the two sources cannot
+    silently drift on the security-critical contract — if you change one, this
+    fails until the other matches."""
+
+    @classmethod
+    def setUpClass(cls):
+        go_path = os.path.abspath(os.path.join(os.path.dirname(SCRIPTS_DIR), "..", "..",
+                                  "vela-neutralino", "extensions", "agent", "main.go"))
+        if os.path.exists(go_path):
+            with open(go_path, encoding="utf-8") as f:
+                cls.go = f.read()
+        else:
+            cls.go = None
+        cls.py = agent_backend._claude_args("SYS")
+
+    def _require_go(self):
+        if self.go is None:
+            self.skipTest("Go gatekeeper source not present in this checkout")
+
+    def test_python_and_go_lockdown_flags_match(self):
+        self._require_go()
+        # Each hardening flag must appear in BOTH backends (Go quoted-literal form
+        # and Python arg list). If either drops one, the two have drifted.
+        self.assertEqual(self.py[self.py.index("--tools") + 1], "")
+        self.assertIn('"--tools", ""', self.go)
+        self.assertIn("--strict-mcp-config", self.py)
+        self.assertIn('"--strict-mcp-config"', self.go)
+        self.assertEqual(self.py[self.py.index("--setting-sources") + 1], "")
+        self.assertIn('"--setting-sources", ""', self.go)
+
+    def test_neither_backend_weakens_the_sandbox(self):
+        self._require_go()
+        for bad in ("--dangerously-skip-permissions", "--disallowed-tools",
+                    "--allow-all-tools", "--allow-tool"):
+            self.assertNotIn(bad, self.py, f"Python backend must not use {bad}")
+            self.assertNotIn(f'"{bad}"', self.go, f"Go gatekeeper must not use {bad}")
+
+    def test_both_pass_system_via_system_prompt(self):
+        self._require_go()
+        self.assertIn("--system-prompt", self.py)
+        self.assertIn('"--system-prompt"', self.go)
 
 
 if __name__ == "__main__":

@@ -834,6 +834,11 @@ class VelaLocalServer:
         self._vendor_available = False
         self._force_kill = replace
         self._channel_server = None  # loopback AI channel (agent_backend), if started
+        # Per-server token gating the AI channel's /action. Injected into the
+        # rendered page (itself behind serve.py auth) and handed to the channel
+        # in-process — never on argv — so another local user cannot spend this
+        # user's `claude` credits via the loopback endpoint.
+        self._channel_token = secrets.token_urlsafe(32)
 
         # Auth state
         self._no_auth = no_auth
@@ -962,6 +967,8 @@ class VelaLocalServer:
         # Enable local mode
         vela_jsx = vela_jsx.replace("const VELA_LOCAL_MODE = false;", "const VELA_LOCAL_MODE = true;", 1)
         vela_jsx = vela_jsx.replace("const VELA_CHANNEL_PORT = 0;", f"const VELA_CHANNEL_PORT = {self.channel_port};", 1)
+        # token_urlsafe is [A-Za-z0-9_-] only — safe to inline in a JS string.
+        vela_jsx = vela_jsx.replace('const VELA_CHANNEL_TOKEN = "";', f'const VELA_CHANNEL_TOKEN = "{self._channel_token}";', 1)
 
         # Neutralize HTML script-data tokens inside the JS source before it is
         # inlined into <script type="text/babel">. vela.jsx legitimately holds
@@ -1368,7 +1375,10 @@ class VelaLocalServer:
         except ImportError as e:
             return f"(disabled: {e})"
         try:
-            self._channel_server, _ = agent_backend.start_channel_server(self.channel_port, self.host)
+            # Force loopback even if serve.py is on 0.0.0.0: the channel spawns
+            # the user's `claude`, so it must never be exposed on the LAN. A
+            # remote browser couldn't use it anyway (it fetches its own 127.0.0.1).
+            self._channel_server, _ = agent_backend.start_channel_server(self.channel_port, "127.0.0.1", self._channel_token)
         except OSError as e:
             self._channel_server = None
             return f"(disabled: {e})"

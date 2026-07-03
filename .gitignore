@@ -28,6 +28,9 @@ dist/
 build/
 *.log
 
+# Go gatekeeper build output (never commit binaries)
+vela-neutralino/extensions/agent/vela-agent
+
 # Node / pnpm
 node_modules/
 .pnpm-store/

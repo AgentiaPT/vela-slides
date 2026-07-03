@@ -29,6 +29,7 @@ Usage:
   python3 agent_backend.py complete < payload.json       # one-shot (stdin JSON -> stdout JSON)
   python3 agent_backend.py check                          # report claude availability
 """
+import hmac
 import json
 import os
 import re
@@ -42,12 +43,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # request (matches the Go gatekeeper's provider allowlist).
 AGENT_BIN = os.environ.get("VELA_AGENT_BIN", "claude")
 
-# Every tool disabled: the agent is a text completer, nothing more. Kept
-# character-for-character in sync with vela-neutralino/extensions/agent/main.go.
-DISALLOWED_TOOLS = "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Task"
+# The claude-code lockdown flags. This is the SECURITY CONTRACT shared with the
+# Neutralino gatekeeper (vela-neutralino/extensions/agent/main.go) — the parity
+# test in tests/test_serve.py fails CI if the two sources drift:
+#   --tools ""            positive allowlist of NOTHING: every built-in tool off
+#                         (strictly stronger than a denylist, which misses new /
+#                         MCP / custom tools).
+#   --strict-mcp-config   ignore ALL MCP server configs (none are passed), so no
+#                         MCP tool can be reached even via prompt injection.
+#   --setting-sources ""  load no user/project/local settings — no hooks, no
+#                         plugins, no permission overrides, no extra MCP.
+# The result is a pure text completion: it cannot read/write files, run bash, or
+# reach the network on its own, regardless of what the prompt asks for. Because
+# there are no tools, there is nothing to permit — so --dangerously-skip-
+# permissions is deliberately NOT used (it would only weaken the posture).
+CLAUDE_LOCKDOWN = ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
 
 DEFAULT_TIMEOUT = 180       # seconds; a normal completion
 CREATE_TIMEOUT = 300        # seconds; "create" calls generate whole decks
+MAX_SSE_CLIENTS = 4         # cap concurrent /events streams (loopback DoS guard)
 
 _ANSI_RE = re.compile("\x1b\\[[0-9;]*[A-Za-z]")
 _BRAILLE_RE = re.compile("[⠀-⣿]")
@@ -86,15 +100,10 @@ def serialise_messages(messages):
 def _claude_args(system):
     """Locked argument template for `claude`. Vera's instructions go through the
     real --system-prompt (replacing Claude Code's default agent prompt, so Vera
-    behaviour drives the model); the conversation itself goes on stdin. No flag
-    ever grants a tool."""
-    args = ["-p", "--output-format", "json", "--disallowed-tools", DISALLOWED_TOOLS]
-    # In print mode with every tool disabled there is nothing to prompt for, but
-    # a non-root desktop still benefits from the belt-and-suspenders flag (parity
-    # with the Neutralino gatekeeper). Claude refuses it under root/sudo, so skip
-    # it there — the disallowed-tools lock already makes this a pure completion.
-    if getattr(os, "geteuid", lambda: 1)() != 0:
-        args.insert(3, "--dangerously-skip-permissions")
+    behaviour drives the model); the conversation itself goes on stdin. Every
+    tool, MCP server, and settings source is disabled (CLAUDE_LOCKDOWN) — no flag
+    ever grants a capability."""
+    args = ["-p", "--output-format", "json"] + list(CLAUDE_LOCKDOWN)
     if system:
         args += ["--system-prompt", system]
     return args
@@ -176,6 +185,44 @@ def run_completion(system, messages, call_type="chat", timeout=None):
 #   GET  /events  -> keep-alive SSE (the frontend only opens this to recover a
 #                    LATE reply after a timeout; we answer /action synchronously,
 #                    so this just stays open and never has to push one).
+#
+# SECURITY: this endpoint spawns the user's `claude` (their credentials, their
+# spend). It MUST NOT be reachable by anything but the local Vela page:
+#   - the socket binds loopback only (make_channel_server forces 127.0.0.1),
+#   - the Host header must be loopback — blocks DNS-rebinding, where a malicious
+#     domain resolving to 127.0.0.1 tries to POST from a page the user visits,
+#   - the Origin (when the browser sends one) must be loopback or "null" — a
+#     random website the user is browsing cannot drive the channel or read its
+#     response (no permissive CORS is handed to a foreign origin).
+# Same defense model as serve.py (_check_host) and the Go gatekeeper
+# (allowedOrigin). Residual surface is a pure text completion (CLAUDE_LOCKDOWN).
+
+_LOOPBACK_HOSTS = frozenset(["localhost", "127.0.0.1", "::1", "[::1]"])
+_LOOPBACK_ORIGIN_PREFIXES = ("http://localhost", "http://127.0.0.1", "http://[::1]")
+
+
+def _host_only(host_header):
+    """Strip the port from a Host/authority, keeping IPv6 brackets intact."""
+    if not host_header:
+        return ""
+    h = host_header.strip()
+    if h.startswith("["):  # [::1]:port  ->  [::1]
+        return h[: h.index("]") + 1] if "]" in h else h
+    return h.rsplit(":", 1)[0] if ":" in h else h
+
+
+def _is_loopback_host(host_header):
+    return _host_only(host_header).lower() in _LOOPBACK_HOSTS
+
+
+def _is_allowed_origin(origin):
+    # Absent Origin: a non-browser client (curl, the frontend's own fetch on some
+    # engines) — allowed; it carries no ambient browser authority. "null":
+    # file:// harness. Otherwise it must be a loopback web origin.
+    if origin is None or origin == "" or origin == "null":
+        return True
+    return origin.lower().startswith(_LOOPBACK_ORIGIN_PREFIXES)
+
 
 class _ChannelHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -183,14 +230,26 @@ class _ChannelHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # quiet — the server prints its own lines
         pass
 
+    def _guard(self):
+        """Reject off-machine / cross-site callers before any work. Returns True
+        when the request may proceed."""
+        if not _is_loopback_host(self.headers.get("Host")):
+            self._json(403, {"ok": False, "error": "forbidden host"})
+            return False
+        if not _is_allowed_origin(self.headers.get("Origin")):
+            self._json(403, {"ok": False, "error": "forbidden origin"})
+            return False
+        return True
+
     def _cors(self):
         origin = self.headers.get("Origin")
-        # Loopback-only server; echo the caller's origin (a serve.py page on
-        # another localhost port, or a file:// harness whose origin is "null").
-        self.send_header("Access-Control-Allow-Origin", origin or "*")
-        self.send_header("Vary", "Origin")
+        # Only ever echo an allowed (loopback / null) origin — never a foreign
+        # one — so a leaked port cannot be replayed from a browser page elsewhere.
+        if origin and _is_allowed_origin(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, x-vela-token")
 
     def _json(self, code, obj):
         body = json.dumps(obj).encode("utf-8")
@@ -200,15 +259,20 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self._cors()
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def do_OPTIONS(self):
+        if not self._guard():
+            return
         self.send_response(204)
         self._cors()
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
+        if not self._guard():
+            return
         if self.path == "/health":
             self._json(200, {"ok": True, "agent": AGENT_BIN})
         elif self.path == "/events":
@@ -220,26 +284,52 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         # Minimal keep-alive SSE. We always answer /action synchronously, so no
         # "reply" event is ever pushed here; this endpoint exists only so the
         # frontend's EventSource (late-reply recovery) connects cleanly instead
-        # of erroring/reconnecting in a loop.
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self._cors()
-        self.end_headers()
+        # of erroring/reconnecting in a loop. Concurrency is capped so a local
+        # process cannot exhaust server threads by opening many streams.
+        srv = self.server
+        with srv._sse_lock:
+            if srv._sse_count >= MAX_SSE_CLIENTS:
+                self._json(503, {"ok": False, "error": "too many event streams"})
+                return
+            srv._sse_count += 1
         try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self._cors()
+            self.end_headers()
             self.wfile.write(b": vela channel\n\n")
             self.wfile.flush()
-            stop = getattr(self.server, "_stop_event", None)
-            while not (stop and stop.is_set()):
-                if stop and stop.wait(15):
+            stop = srv._stop_event
+            waited = 0
+            # Bounded lifetime (just over the client's own 120s cleanup) so a
+            # stream is never held open indefinitely.
+            while not stop.is_set() and waited < 130:
+                if stop.wait(15):
                     break
+                waited += 15
                 self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+        finally:
+            with srv._sse_lock:
+                srv._sse_count -= 1
 
     def do_POST(self):
+        if not self._guard():
+            return
+        # Token gate (defense-in-depth for a multi-user host): /action spawns the
+        # user's `claude`. When a token is configured, only a caller that read it
+        # from the serve.py-rendered page (itself behind serve.py's auth) can
+        # invoke it — another local user cannot. Constant-time compare. /health
+        # and /events carry nothing sensitive and stay open. Preflight OPTIONS
+        # cannot carry the header, so it is checked here on the real POST only.
+        token = getattr(self.server, "_token", None)
+        if token and not hmac.compare_digest(self.headers.get("x-vela-token", ""), token):
+            self._json(401, {"ok": False, "error": "unauthorized"})
+            return
         if self.path != "/action":
             self._json(404, {"ok": False, "error": "not found"})
             return
@@ -250,6 +340,9 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         try:
             req = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError):
+            self._json(400, {"ok": False, "error": "bad json"})
+            return
+        if not isinstance(req, dict):
             self._json(400, {"ok": False, "error": "bad json"})
             return
         action = req.get("action", "complete")
@@ -263,18 +356,32 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         self._json(200 if result.get("ok") else 500, result)
 
 
-def make_channel_server(port=8787, host="127.0.0.1"):
+def make_channel_server(port=8787, host="127.0.0.1", token=None):
     """Build (but do not start) the loopback channel server. Returns the server;
-    read the actual port from `server.server_address[1]` (pass 0 for ephemeral)."""
+    read the actual port from `server.server_address[1]` (pass 0 for ephemeral).
+
+    The bind host is FORCED to loopback: this endpoint launches the user's
+    `claude`, so it must never be exposed on a routable interface even if the
+    caller passes 0.0.0.0. A remote browser could not use the channel anyway —
+    the page fetches 127.0.0.1, which resolves to the client, not the server.
+
+    `token` (when set) gates /action. Pass it in-process (serve.py) or via the
+    VELA_CHANNEL_TOKEN env var (the CLI) — NEVER on argv, which `ps` exposes to
+    other local users."""
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        host = "127.0.0.1"
     httpd = ThreadingHTTPServer((host, port), _ChannelHandler)
     httpd.daemon_threads = True
     httpd._stop_event = threading.Event()
+    httpd._sse_lock = threading.Lock()
+    httpd._sse_count = 0
+    httpd._token = token or None
     return httpd
 
 
-def start_channel_server(port=8787, host="127.0.0.1"):
+def start_channel_server(port=8787, host="127.0.0.1", token=None):
     """Start the channel server in a daemon thread. Returns (server, thread)."""
-    httpd = make_channel_server(port, host)
+    httpd = make_channel_server(port, host, token)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd, thread
@@ -316,7 +423,10 @@ def _cli(argv):
             port = int(argv[argv.index("--port") + 1])
         if "--host" in argv:
             host = argv[argv.index("--host") + 1]
-        httpd = make_channel_server(port, host)
+        # Token from the env only — never argv (ps is world-readable). Empty =
+        # no /action auth (fine for a single-user dev box / tests).
+        token = os.environ.get("VELA_CHANNEL_TOKEN") or None
+        httpd = make_channel_server(port, host, token)
         actual = httpd.server_address[1]
         info = agent_available()
         status = f"{info['bin']} {info['version']}" if info["available"] else f"{info['bin']} NOT FOUND"

@@ -41,6 +41,9 @@ function build(deckPath, outDir, opts = {}) {
   if (channelPort > 0) {
     jsx = jsx.replace('const VELA_LOCAL_MODE = false;', 'const VELA_LOCAL_MODE = true;');
     jsx = jsx.replace('const VELA_CHANNEL_PORT = 0;', `const VELA_CHANNEL_PORT = ${channelPort};`);
+    // token_urlsafe/hex chars only — no quote/backslash — safe in a JS string.
+    const tok = String(opts.channelToken || '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (tok) jsx = jsx.replace('const VELA_CHANNEL_TOKEN = "";', `const VELA_CHANNEL_TOKEN = "${tok}";`);
   }
   // Inject the deck via the STARTUP_PATCH sentinel (same mechanism as assemble.py).
   const marker = 'const STARTUP_PATCH = null;';
@@ -74,11 +77,13 @@ function build(deckPath, outDir, opts = {}) {
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
+  const ti = argv.indexOf('--channel-token');
+  const channelToken = ti >= 0 ? argv.splice(ti, 2)[1] : (process.env.VELA_CHANNEL_TOKEN || '');
   const ci = argv.indexOf('--channel-port');
   const channelPort = ci >= 0 ? argv.splice(ci, 2)[1] : 0;
   const [deckPath, outDir] = argv;
-  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir> [--channel-port N]'); process.exit(2); }
-  const r = build(deckPath, outDir, { channelPort });
+  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir> [--channel-port N] [--channel-token T]'); process.exit(2); }
+  const r = build(deckPath, outDir, { channelPort, channelToken });
   console.log(`built ${r.html} (app.js ${r.bytes} bytes)${channelPort ? ` [AI channel :${channelPort}]` : ''}`);
 }
 module.exports = { build };

@@ -227,7 +227,17 @@ node skills/vela-slides/scripts/render-offline.js <deck.vela> /tmp/vout        #
 node skills/vela-slides/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
 node skills/vela-slides/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
 node skills/vela-slides/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
+node skills/vela-slides/scripts/vela-drive.js ai       examples/vela-demo.vela --json /tmp/ai.json         # test AI vs local `claude` CLI
 ```
+
+**AI integration testing:** the `ai` mode drives real Vera/AI features against
+the local `claude` CLI. It starts `agent_backend.py` — a loopback channel that
+spawns `claude -p` locked to a pure text completion (`--tools "" --strict-mcp-config
+--setting-sources ""`: no tools, MCP, or hooks) — builds an agent-mode render,
+and asserts deck mutations. That lockdown is the security contract shared with
+the Neutralino gatekeeper (`vela-neutralino/extensions/agent/main.go`), enforced
+by a parity test in `tests/test_serve.py`. `vela server` starts the same channel
+automatically (loopback-only, `--channel-port`).
 
 Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;

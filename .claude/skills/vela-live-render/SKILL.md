@@ -42,7 +42,26 @@ node skills/vela-slides/scripts/vela-drive.js uitests /tmp/vout/render.html --js
 # 3c. Record a demo video (webm). scenario.js: module.exports = async (page, h) => {...}
 #     helpers h = { key, click, type, wait, shot, caption, clearCaption, page }
 node skills/vela-slides/scripts/vela-drive.js video /tmp/vout/render.html /tmp/vid --script scenario.js
+
+# 3d. Test AI integration against the local `claude` CLI (real round-trips).
+#     One command: starts the tool-sandboxed channel backend (agent_backend.py)
+#     on a free loopback port, builds an agent-mode render, boots it, and runs
+#     the real Vera engine helpers (callClaudeAPI, callVera, generateSlide),
+#     asserting deck mutations. Each probe is a paid claude call — dev/QA only.
+node skills/vela-slides/scripts/vela-drive.js ai examples/vela-demo.vela --json /tmp/ai.json
+#     limit which probes run: --only ping,veraAddSlide
 ```
+
+## AI integration testing (mode: `ai`)
+The `ai` mode is how you verify Vera/AI features actually work in this
+container. It wires the app's local-mode channel (`VELA_CHANNEL_PORT`) to
+`agent_backend.py`, which spawns `claude -p` locked down to a pure text
+completion (`--tools "" --strict-mcp-config --setting-sources ""` — no tools,
+no MCP, no hooks; same contract as the Neutralino gatekeeper, enforced by a
+parity test). To add a feature check, add a probe to `AI_PROBES` in
+`vela-drive.js` (call the real engine global and assert the result). To wire
+AI into any other harness mode, build with `render-offline.js … --channel-port
+<port>` while a channel is running.
 
 ## Gotchas already solved (don't rediscover)
 - **Never inline the 1.1MB monolith as `<script type="text/babel">`** — it contains
