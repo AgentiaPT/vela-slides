@@ -129,6 +129,36 @@ const AI_PROBES = {
     });
     return { pass: r.ok, detail: r.ok ? `blocks=${JSON.stringify(r.blocks)}` : (r.err || 'no slide') };
   },
+  // The real user path: click the 🤖 Vera button, type a request, press Enter,
+  // and assert the DECK changed via the header slide-count stat (driven by the
+  // app's own state — not a mock, not localStorage). This exercises the UI the
+  // artifact / desktop user sees; only the AI transport (local claude) differs.
+  async veraChatUI(page) {
+    // header pill renders "<n>sl · <m>§" from slideCountVisible — read it.
+    const readSlides = () => page.evaluate(() => {
+      for (const el of document.querySelectorAll('span')) {
+        const m = (el.textContent || '').match(/(\d+)sl\s*·\s*\d+§/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return null;
+    });
+    await page.click('button:has-text("Vera")');
+    await page.waitForTimeout(500);
+    const ta = page.locator('textarea').first();
+    const enabled = await ta.isEditable();          // aiOk / velaAIAvailable → user can type
+    const before = await readSlides();
+    await ta.click();
+    await ta.fill("Add one new slide whose only block is a big heading that says HELLO FROM VERA");
+    await ta.press('Enter');                         // the real send path
+    let after = before, waited = 0;
+    while (waited < 180000) {
+      const c = await readSlides();
+      if (c != null && before != null && c > before) { after = c; break; }
+      await page.waitForTimeout(1500); waited += 1500;
+    }
+    return { pass: !!enabled && before != null && after === before + 1,
+      detail: `input=${enabled} slides ${before}→${after}` };
+  },
 };
 
 async function runAI() {
