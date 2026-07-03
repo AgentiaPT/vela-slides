@@ -3399,6 +3399,13 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
+      // loaded deck has selectedId=null, which the presentation blank-gate treats as
+      // "not ready" and renders blank. Auto-select the first module so the shared deck
+      // opens straight into its first slide. Editor behavior is unchanged (flag off).
+      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;
         for (const l of loaded.lanes) { const it = l.items.find((i) => i.id === loaded.selectedId); if (it) { maxSlides = it.slides?.length || 0; break; } }
@@ -14991,17 +14998,16 @@ function escapeForScriptContext(jsonStr) {
 // text-babel host; the standalone output supplies React/lucide as UMD globals
 // instead via a shim (mirrors render-offline.js's proven transform).
 //
-// NOTE (considered and rejected): flipping VELA_PRESENTATION_MODE the same
-// way serve.py flips VELA_LOCAL_MODE would be a one-line change here, but the
-// existing read-only-viewer gate (part-app.jsx: `if (VELA_PRESENTATION_MODE
-// && (!state.selectedId || !state.lanes.length)) return <blank/>`) requires a
-// `selectedId` that a fresh STARTUP_PATCH load never sets — validateAndSanitizeDeck
-// (part-imports.jsx) always returns `selectedId: null`, and nothing in the
-// STARTUP_PATCH apply path (part-imports.jsx `applyStartupPatch` / part-reducer.jsx
-// `LOAD`) auto-selects the first module. Flipping the flag here would ship a
-// permanently BLANK export. Fixing that needs a reducer/imports change, which
-// is out of this file's ownership for this change — the exported HTML boots
-// the full editor UI instead (same as render-offline.js's proven harness).
+// The exported deck is meant to be SHARED (GitHub Pages / email), so it must open
+// as a read-only PRESENTATION, not the editor. We flip VELA_PRESENTATION_MODE to
+// true in the source (see flipPresentationMode below): that boots fullscreen present
+// (init.fullscreen = VELA_PRESENTATION_MODE) with the editor chrome + test runners
+// suppressed. The read-only-viewer blank-gate (part-app.jsx: `if
+// (VELA_PRESENTATION_MODE && (!state.selectedId || !state.lanes.length)) return
+// <blank/>`) needs a selected module, which a fresh STARTUP_PATCH load doesn't set —
+// so the LOAD reducer (part-reducer.jsx) now auto-selects the first module when
+// VELA_PRESENTATION_MODE is on. Together these make the export open on its first
+// slide with zero edit chrome.
 function stripEsmImportsForStandalone(jsx) {
   return jsx
     .replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, "")
@@ -15042,6 +15048,15 @@ function spliceStartupPatch(jsx, deckObj) {
   return jsx.slice(0, valueStart) + deckJson + jsx.slice(i);
 }
 
+// Flip the read-only-viewer flag so the exported HTML boots as a presentation
+// (fullscreen, no editor chrome / test runners) rather than the editor. The source
+// declares `const VELA_PRESENTATION_MODE = false;` exactly once (part-imports.jsx).
+function flipPresentationMode(jsx) {
+  const decl = "const VELA_PRESENTATION_MODE = false;";
+  if (jsx.indexOf(decl) === -1) throw new Error("VELA_PRESENTATION_MODE declaration not found in source");
+  return jsx.replace(decl, "const VELA_PRESENTATION_MODE = true;");
+}
+
 const MADE_WITH_VELA_FOOTER_HTML =
   "<div id=\"vela-standalone-footer\" style=\"position:fixed;right:10px;bottom:8px;z-index:99999;" +
   "font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;" +
@@ -15061,6 +15076,7 @@ function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
   let jsx = stripEsmImportsForStandalone(jsxSource);
   jsx = spliceStartupPatch(jsx, deckObj);
+  jsx = flipPresentationMode(jsx);
   const shim =
     "const { useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;\n" +
     "const _LucideAll = window.lucideReact;\n" +
