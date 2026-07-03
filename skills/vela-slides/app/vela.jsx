@@ -15561,6 +15561,68 @@ function NewDeckDialog({ onClose, onSubmit }) {
   );
 }
 
+// ━━━ Generate Deck From Source Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Paste README markdown / URL-fetched text / PDF-extracted text and get a
+// full deck in one shot. Reuses the exact same NEW_DECK → _bootstrap →
+// callVera pipeline as NewDeckDialog above — the only difference is the
+// prompt is a template wrapping pasted source material instead of a short
+// free-text ask. The app never fetches URLs itself; the user pastes text.
+const SOURCE_DECK_MAX_CHARS = 60000; // stay well under callVera's MAX_MESSAGES_BYTES (200KB) budget
+function SourceDeckDialog({ onClose, onSubmit }) {
+  const [name, setName] = useState("");
+  const [source, setSource] = useState("");
+  const truncated = source.length > SOURCE_DECK_MAX_CHARS;
+  const clipped = truncated ? source.slice(0, SOURCE_DECK_MAX_CHARS) : source;
+
+  const submit = () => {
+    if (!clipped.trim()) return;
+    const wrapped = `Read the following source material (e.g. a README, article, or extracted document) and generate a complete, well-structured Vela deck that covers it end-to-end. Organize the content into sections (lanes) → modules (items) → slides, using headings, bullets, and whichever block types fit the content (tables for data, timeline for chronology, flow for processes, etc).${truncated ? " Note: the source below was truncated to fit context limits — cover what is present as fully as possible." : ""}\n\nSource material:\n\n${clipped}`;
+    onSubmit({ title: name.trim() || "Untitled", prompt: wrapped, images: [] });
+    onClose();
+  };
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 22 }}>📄</span>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Generate Deck from Source</span>
+        </div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+
+      {/* Deck name */}
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Deck Name <span style={{ fontWeight: 400, color: T.textDim }}>— optional</span></label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Presentation"
+          style={{ width: "100%", padding: "10px 12px", fontSize: 15, fontFamily: FONT.body, fontWeight: 600, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" }} />
+      </div>
+
+      {/* Source material */}
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Source Material <span style={{ fontWeight: 400, color: T.textDim }}>— paste a README, article, or PDF-extracted text</span></label>
+        <textarea autoFocus value={source} onChange={(e) => setSource(e.target.value)}
+          placeholder={"Paste README markdown, URL-fetched text, or PDF-extracted text here…\n\nVera will read it and build a complete deck: sections → modules → slides."}
+          rows={14}
+          style={{ width: "100%", padding: "10px 12px", fontSize: 13, fontFamily: FONT.mono, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+          <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.textDim }}>Vera generates slides directly from this text — the app does not fetch URLs itself.</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 10, color: truncated ? T.red : T.textDim, flexShrink: 0, marginLeft: 8 }}>{source.length.toLocaleString()} / {SOURCE_DECK_MAX_CHARS.toLocaleString()}{truncated ? " (truncated)" : ""}</span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
+        <button onClick={submit} disabled={!clipped.trim()}
+          style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: clipped.trim() ? T.accent : T.border, border: "none", borderRadius: 6, cursor: clipped.trim() ? "pointer" : "default", opacity: clipped.trim() ? 1 : 0.6, display: "flex", alignItems: "center", gap: 6 }}>
+          {"🚀"} Generate Deck
+        </button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Keyboard Shortcuts Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const _questionKey = (e) => e.key === "?";
 function ShortcutHelp({ onClose }) {
@@ -16111,6 +16173,7 @@ export default function App() {
   const [showChangelog, setShowChangelog] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
+  const [sourceDeckDialog, setSourceDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
@@ -16673,6 +16736,9 @@ export default function App() {
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           {/* New Deck */}
           <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
+          {/* Generate deck from pasted source (README/URL-text/PDF-text) — visible but disabled when AI is unavailable */}
+          <button onClick={() => { if (aiOk) setSourceDeckDialog(true); }} disabled={!aiOk} title={aiOk ? "Paste a README / article / PDF text and generate a full deck" : VELA_AI_UNAVAILABLE_MSG}
+            style={S.btn({ padding: "4px 10px", fontSize: 14, color: aiOk ? T.accent : T.textDim + "60", display: "flex", alignItems: "center", gap: 4, borderRadius: 4, opacity: aiOk ? 1 : 0.5, cursor: aiOk ? "pointer" : "not-allowed" })}>{"📄"} From Source</button>
           {/* Import */}
           <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
           {/* Export dropdown */}
@@ -16708,6 +16774,7 @@ export default function App() {
           <div style={{ position: "absolute", top: 4, right: 0, zIndex: 9999, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "6px 0", minWidth: 200 }}>
             {total > 0 && deckTime > 0 && <div style={{ padding: "6px 14px", fontFamily: FONT.mono, fontSize: 10, fontWeight: 600, borderBottom: `1px solid ${T.border}` }}><span style={{ color: T.accent }}>{"⏱"} {fmtTime(deckTime)}</span></div>}
             <button onClick={() => { setNewDeckDialog(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.accent, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer", fontWeight: 600 }}>{"⛵"} New Deck</button>
+            <button onClick={() => { if (aiOk) { setSourceDeckDialog(true); setMobileMenu(false); } }} disabled={!aiOk} title={aiOk ? undefined : VELA_AI_UNAVAILABLE_MSG} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: aiOk ? T.accent : T.textDim + "60", fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: aiOk ? "pointer" : "not-allowed" }}>{"📄"} Generate from Source</button>
             <button onClick={() => { fileInputRef.current?.click(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📥"} Import</button>
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.green, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer", fontWeight: 600 }}>{"▶"} Present</button>}
@@ -16843,6 +16910,17 @@ export default function App() {
         // deck never overwrites the one currently open (CR). If allocation FAILS
         // (returns null), abort — proceeding would let the blank deck autosave
         // over the open file. No-op / always-proceed elsewhere (artifact, serve).
+        if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
+          let path = null;
+          try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
+          if (!path) { alert("Couldn't create a new deck file in this folder — your current deck was left untouched."); return; }
+        }
+        dispatch({ type: "NEW_DECK", title, prompt, images });
+        if (isMobile) setMobileTab("chat");
+      }} />}
+      {sourceDeckDialog && <SourceDeckDialog onClose={() => setSourceDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
+        // Same NEW_DECK pipeline as NewDeckDialog (see comment above) — the desktop
+        // new-file allocation guard applies identically here.
         if (typeof window !== "undefined" && typeof window.__velaNewDeckFile === "function") {
           let path = null;
           try { path = await window.__velaNewDeckFile(title || "Untitled"); } catch {}
