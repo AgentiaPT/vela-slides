@@ -94,7 +94,11 @@ function ChangelogDialog({ onClose }) {
       {VELA_CHANGELOG.slice(0, 3).map((c, i) => (
         <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.border}` : "none" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: i === 0 ? T.accent : T.textDim, flexShrink: 0, minWidth: 32 }}>v{c.v}</span>
-          <span style={{ fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>{c.d}</span>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>
+            {Array.isArray(c.d)
+              ? <ul style={{ margin: 0, paddingLeft: 16 }}>{c.d.map((b, j) => <li key={j} style={{ marginBottom: 2 }}>{b}</li>)}</ul>
+              : c.d}
+          </div>
         </div>
       ))}
       {/* \u2500\u2500 Dependencies (collapsible) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}

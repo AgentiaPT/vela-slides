@@ -151,6 +151,7 @@ tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
 - `VELA_VERSION` lives in `skills/vela-slides/app/parts/part-imports.jsx` (format: `major.minor`, e.g. `"10.2"` → `"10.3"`)
 - Increment the minor version for each change. Bump major only for large rewrites.
 - Also update `VELA_CHANGELOG` in the same file with a brief description of the change.
+- **Changelog entries MUST be concise bullets — never walls of text.** Prefer a short array of terse points (`d: ["…", "…"]`), which the About dialog renders as a bulleted list; a single trivial change may stay a one-line string (`d: "…"`). Keep each bullet to one line, no marketing prose. **Never include sensitive information or exploit/reproduction detail** — security entries follow the *Security-Fix Disclosure Discipline* below (class of issue + what the fix does only). The About "Recent Changes" list is user-facing, so bloated entries make it unusable.
 - SKILL.md `version` should match `VELA_VERSION` when app code changes.
 
 If you forget, CI will fail with:
