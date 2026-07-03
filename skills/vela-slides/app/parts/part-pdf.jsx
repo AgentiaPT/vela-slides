@@ -3666,4 +3666,268 @@ function exportMarkdown(state, opts = {}) {
   URL.revokeObjectURL(url);
 }
 
+// ━━━ Standalone HTML Export ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// One shareable .html: the transpiled app + the current deck, inlined; React/
+// ReactDOM/lucide-react load from a CDN with SHA-pinned SRI (small output,
+// supply-chain-safe, needs network at open time — acceptable tradeoff vs.
+// embedding ~800KB of UMD bundles in every export). The pure string-transform
+// below is delimited by comment markers and regex-extracted verbatim by
+// tests/test_standalone_html.cjs so it can be unit-tested with the vendored
+// Babel outside the browser — do not reshape it without checking that test.
+// STANDALONE_HTML_PURE_START
+// SRI = sha384 base64 of vela-neutralino/resources/vendor/{react,react-dom,
+// lucide-react}.min.js (byte-identical to these npm-canonical jsdelivr URLs).
+const VELA_STANDALONE_LIBS = [
+  { src: "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js", integrity: "sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" },
+  { src: "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js", integrity: "sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" },
+  { src: "https://cdn.jsdelivr.net/npm/lucide-react@0.344.0/dist/umd/lucide-react.min.js", integrity: "sha384-EQEJvIFEf8npkbAdLZg6nG0ZK4cOAdEhtoe9EDUq7a0abTM5sG7ufDwzmJBsHVVf" },
+];
+
+// Escape a JSON string for safe inline embedding inside a <script> block — the
+// same 5-char rule as assemble.py/serve.py/nl-boot.js's escape_for_script_context()
+// (independently duplicated per-language by existing convention in this repo;
+// kept in sync by review, not shared code).
+function escapeForScriptContext(jsonStr) {
+  return jsonStr
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+// Strip the ESM imports the app source needs when running under a bundler /
+// text-babel host; the standalone output supplies React/lucide as UMD globals
+// instead via a shim (mirrors render-offline.js's proven transform).
+//
+// NOTE (considered and rejected): flipping VELA_PRESENTATION_MODE the same
+// way serve.py flips VELA_LOCAL_MODE would be a one-line change here, but the
+// existing read-only-viewer gate (part-app.jsx: `if (VELA_PRESENTATION_MODE
+// && (!state.selectedId || !state.lanes.length)) return <blank/>`) requires a
+// `selectedId` that a fresh STARTUP_PATCH load never sets — validateAndSanitizeDeck
+// (part-imports.jsx) always returns `selectedId: null`, and nothing in the
+// STARTUP_PATCH apply path (part-imports.jsx `applyStartupPatch` / part-reducer.jsx
+// `LOAD`) auto-selects the first module. Flipping the flag here would ship a
+// permanently BLANK export. Fixing that needs a reducer/imports change, which
+// is out of this file's ownership for this change — the exported HTML boots
+// the full editor UI instead (same as render-offline.js's proven harness).
+function stripEsmImportsForStandalone(jsx) {
+  return jsx
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, "")
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, "")
+    .replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, "")
+    .replace(/^export\s+default\s+function\s+/m, "function ");
+}
+
+// Replace the value bound to `const STARTUP_PATCH = ...;` with the current
+// deck, whether the source holds the pristine `null` sentinel (Neutralino:
+// freshly fetched vela.jsx) or an already-embedded deck object (artifact/
+// serve.py: scraped from the live text/babel tag, patched at load time with
+// whatever deck was open then — export always wants the deck open NOW). A
+// plain regex can't safely find the end of an embedded JSON object (its
+// string values may themselves contain `;`/`{`/`}`), so this walks the
+// source respecting string/escape boundaries to find the top-level
+// statement-terminating `;`.
+function spliceStartupPatch(jsx, deckObj) {
+  const marker = "const STARTUP_PATCH = ";
+  const idx = jsx.indexOf(marker);
+  if (idx === -1) throw new Error("STARTUP_PATCH marker not found in source");
+  const valueStart = idx + marker.length;
+  let i = valueStart, depth = 0, inStr = null;
+  for (; i < jsx.length; i++) {
+    const c = jsx[i];
+    if (inStr) {
+      if (c === "\\") { i++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { inStr = c; continue; }
+    if (c === "{" || c === "[" || c === "(") { depth++; continue; }
+    if (c === "}" || c === "]" || c === ")") { depth--; continue; }
+    if (c === ";" && depth === 0) break;
+  }
+  if (i >= jsx.length) throw new Error("STARTUP_PATCH statement terminator not found");
+  const deckJson = escapeForScriptContext(JSON.stringify(deckObj));
+  return jsx.slice(0, valueStart) + deckJson + jsx.slice(i);
+}
+
+const MADE_WITH_VELA_FOOTER_HTML =
+  "<div id=\"vela-standalone-footer\" style=\"position:fixed;right:10px;bottom:8px;z-index:99999;" +
+  "font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;" +
+  "background:rgba(15,23,42,0.72);padding:4px 10px;border-radius:999px;" +
+  "pointer-events:none;letter-spacing:.02em;user-select:none\">Made with Vela ⛵</div>";
+
+function escapeHtmlText(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+// The pure, testable transform. `babel` is a Babel-standalone-shaped object
+// (window.Babel in-browser, or the vendored babel.min.js required in a Node
+// test) — passed in rather than read off a global so this can be unit-tested
+// outside the browser. Returns the full standalone HTML document string.
+function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
+  const { footer = false, babel } = opts;
+  if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
+  let jsx = stripEsmImportsForStandalone(jsxSource);
+  jsx = spliceStartupPatch(jsx, deckObj);
+  const shim =
+    "const { useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;\n" +
+    "const _LucideAll = window.lucideReact;\n" +
+    "const { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown } = window.lucideReact;\n";
+  const tail =
+    "\ntry { window.App = App; window._createRoot(document.getElementById(\"root\")).render(React.createElement(App)); window.__velaBooted = true; }" +
+    " catch (e) { window.__velaBootError = String(e && e.stack || e); }\n";
+  const src = shim + jsx + tail;
+  const { code } = babel.transform(src, { presets: [["react", { runtime: "classic" }]], comments: false });
+  // Neutralize </script and <!-- in the COMPILED output before inlining — the
+  // proven serve.py transform (a backslash inside a JS string/regex literal is
+  // inert at runtime but hides the token from the HTML tokenizer). Several of
+  // the app's own XSS-regression-test strings contain literal `</script` and
+  // would otherwise truncate this very <script> block. NEVER inline
+  // un-neutralized compiled output.
+  const safeCode = code.replace(/<\/(?=script)/gi, "<\\/").replace(/<!--/g, "<\\!--");
+  const title = escapeHtmlText((deckObj && deckObj.deckTitle) || "Vela Deck");
+  const libTag = (l) => `<script src="${l.src}" integrity="${l.integrity}" crossorigin="anonymous"></script>`;
+  const [reactLib, reactDomLib, lucideLib] = VELA_STANDALONE_LIBS;
+  // `window.react = window.React` MUST run between the react.min.js and
+  // lucide-react.min.js tags: lucide's UMD wrapper reads the browser-global
+  // fallback `a.react` (lowercase) synchronously at its OWN top-level
+  // evaluation time (classic <script src> executes in document order), not
+  // lazily — putting the shim after all 3 tags (as a naive reading of the
+  // CDN+SRI shape might suggest) leaves `window.react` undefined when
+  // lucide-react.min.js runs, and it silently destructures `undefined`
+  // (`TypeError: reading 'forwardRef'`). Same ordering render-offline.js /
+  // serve.py / index.html already use for the non-standalone runtimes.
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>html,body{margin:0;height:100%;background:#0f172a}#root{height:100vh}</style>
+${libTag(reactLib)}
+<script>window.react=window.React;</script>
+${libTag(reactDomLib)}
+${libTag(lucideLib)}
+<script>window.lucideReact=window.LucideReact;window._createRoot=window.ReactDOM.createRoot;</script>
+</head><body><div id="root"></div>
+<script>${safeCode}</script>
+${footer ? MADE_WITH_VELA_FOOTER_HTML : ""}
+</body></html>`;
+}
+// STANDALONE_HTML_PURE_END
+
+// Per-runtime acquisition of the app's own JSX source. Neutralino serves its
+// own pristine vela.jsx same-origin (STARTUP_PATCH still `null`); artifact/
+// serve.py wrap the (already deck-patched) source in a `text/babel` script
+// tag — assemble.py/serve.py state that both the local preview AND the
+// Claude.ai artifact viewer use this wrapping (see assemble.py's own
+// docstring), so scraping its textContent is the only same-origin route in
+// those runtimes. spliceStartupPatch() above re-splices the CURRENT deck over
+// whichever value is already there.
+async function getStandaloneJsxSource() {
+  if (typeof Neutralino !== "undefined") {
+    const res = await fetch("vela.jsx");
+    if (!res.ok) throw new Error(`fetch vela.jsx failed: ${res.status}`);
+    return await res.text();
+  }
+  const tag = document.querySelector('script[type="text/babel"]');
+  if (tag && tag.textContent && tag.textContent.includes("STARTUP_PATCH")) return tag.textContent;
+  throw new Error("App source not found (no vela.jsx and no script[type=text/babel] tag)");
+}
+
+// Gate reason for the export menu entry — null means available. Checked at
+// render time (cheap: two typeof checks + a DOM query) so the button can be
+// visible-but-disabled with an explanatory title instead of silently no-oping.
+function velaStandaloneExportGateReason() {
+  if (typeof window === "undefined" || typeof window.Babel === "undefined") return "Babel not available in this runtime";
+  if (typeof Neutralino !== "undefined") return null; // Neutralino: vela.jsx always fetchable same-origin
+  if (typeof document !== "undefined" && document.querySelector('script[type="text/babel"]')) return null;
+  return "App source not available in this runtime";
+}
+
+// ━━━ Standalone HTML Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function StandaloneHtmlModal({ state, onClose }) {
+  const [footer, setFooter] = useState(true);
+  const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
+  const [errorMsg, setErrorMsg] = useState("");
+  const gateReason = useMemo(() => velaStandaloneExportGateReason(), []);
+
+  const doExport = useCallback(async () => {
+    setPhase("exporting");
+    setErrorMsg("");
+    try {
+      const jsxSource = await getStandaloneJsxSource();
+      const save = extractSave(state);
+      const deckTitle = state.deckTitle || "Untitled";
+      const deck = { deckTitle, lanes: save.lanes || [] };
+      if (save.branding) deck.branding = save.branding;
+      if (save.guidelines) deck.guidelines = save.guidelines;
+      const html = buildStandaloneHtml(jsxSource, deck, { footer, babel: window.Babel });
+      const safeTitle = deckTitle.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60) || "vela-deck";
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url;
+      a.download = `${safeTitle}-standalone.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setPhase("done");
+    } catch (err) {
+      setErrorMsg((err && err.message) || String(err));
+      setPhase("error");
+    }
+  }, [footer, state]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, width: "min(440px, 94vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 14 }}>🌐</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: 1 }}>EXPORT STANDALONE HTML</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 4px", lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ padding: "20px 16px" }}>
+          {phase === "choose" && <>
+            <div style={{ fontFamily: FONT.body, fontSize: 13, color: T.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+              One self-contained .html file with this deck baked in — drop it on GitHub Pages, attach it to an email, or open it locally. React/lucide load from a SHA-pinned CDN, so it needs network the first time it's opened.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Made with Vela footer</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Small badge · bottom-right corner</span>
+              </div>
+              <button onClick={() => setFooter((v) => !v)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: footer ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: footer ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>
+            {gateReason && <div style={{ marginBottom: 16, padding: "8px 12px", background: `${T.red}15`, border: `1px solid ${T.red}40`, borderRadius: 8, fontFamily: FONT.mono, fontSize: 11, color: T.red }}>{gateReason}</div>}
+            <button onClick={doExport} disabled={!!gateReason} title={gateReason || "Export standalone HTML"} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: gateReason ? T.border : T.accent, color: gateReason ? T.textDim : "#fff", border: "none", borderRadius: 6,
+              cursor: gateReason ? "not-allowed" : "pointer", letterSpacing: 1, opacity: gateReason ? 0.6 : 1,
+            }}>
+              EXPORT HTML
+            </button>
+          </>}
+          {phase === "exporting" && <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT.mono, fontSize: 12, color: T.textMuted }}>Building…</div>}
+          {phase === "done" && <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 12, color: T.green, marginBottom: 12 }}>✅ Downloaded</div>
+            <button onClick={onClose} style={{ padding: "8px 16px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Close</button>
+          </div>}
+          {phase === "error" && <div style={{ textAlign: "center", padding: "10px 0" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.red, marginBottom: 12 }}>{errorMsg}</div>
+            <button onClick={() => setPhase("choose")} style={{ padding: "8px 16px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, background: T.border, color: T.text, border: "none", borderRadius: 6, cursor: "pointer" }}>Back</button>
+          </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 

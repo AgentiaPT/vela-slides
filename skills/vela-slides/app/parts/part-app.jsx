@@ -872,6 +872,7 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
+  const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
   const [iconPicker, setIconPicker] = useState(null); // { value, onPick } — searchable icon picker
@@ -1444,6 +1445,7 @@ export default function App() {
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
+                {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 <button onClick={() => { setJsonModal(jsonModal ? null : 'copy'); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}>{"{ }"} Copy / Paste JSON</button>
               </div>
@@ -1489,6 +1491,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
+            {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { if (!soReason) { setStandaloneExport(true); setMobileMenu(false); } }} disabled={!!soReason} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: soReason ? "not-allowed" : "pointer" }}>{"🌐"} Standalone HTML</button>; })()}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
@@ -1609,6 +1612,7 @@ export default function App() {
         if (isMobile) setMobileTab("chat");
       }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {standaloneExport && <StandaloneHtmlModal state={state} onClose={() => setStandaloneExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
         if (result) {

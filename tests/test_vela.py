@@ -467,6 +467,31 @@ def test_security():
     else:
         fail("Sprint 7-1 UX logic suite", f"missing: {uxlogic_script}")
 
+    # 9d2. Standalone HTML export machinery (buildStandaloneHtml et al., part-pdf.jsx):
+    # splices the current deck into the app's own JSX, transpiles with the vendored
+    # Babel, and neutralizes </script>/<!-- in the COMPILED output before inlining
+    # alongside 3 CDN <script> tags pinned by SRI. Drives the REAL functions (regex-
+    # extracted from part-pdf.jsx) against the real vela.jsx + demo deck.
+    standalone_script = os.path.join(REPO_ROOT, "tests", "test_standalone_html.cjs")
+    if os.path.exists(standalone_script):
+        try:
+            r = subprocess.run(["node", standalone_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"Standalone HTML export machinery suite ({count} checks)")
+            elif r.returncode == 2:
+                skip("Standalone HTML export machinery suite", "missing vela.jsx/vendor babel — run concat.py")
+            else:
+                fail("Standalone HTML export machinery suite",
+                     f"node tests/test_standalone_html.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("Standalone HTML export machinery suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("Standalone HTML export machinery suite", "timeout after 60s")
+    else:
+        fail("Standalone HTML export machinery suite", f"missing: {standalone_script}")
+
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the
     # strip (or omitting bidi/zero-width) fails this check (red).
