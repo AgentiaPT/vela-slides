@@ -3,7 +3,7 @@
 Read this in **Phase 0** when running the `hyper-sprint` skill on the **Claude Code
 cloud / remote-execution** environment (profile `claude-code-cloud-default`). It records
 the stable environment facts *and the readiness shortcuts* so a sprint never re-pays the
-bring-up cost. Pair it with the repo config (`hyper-sprint.md`).
+bring-up cost. Pair it with the repo config (`.hyper-sprint/config.md`).
 
 ## TL;DR — the env is pre-provisioned; keep readiness under ~25s
 

@@ -9,7 +9,7 @@ description: >-
   and gates completion on an independent BLIND validation by the best model. Use
   when handed a list of changes/issues (a PDF, ticket list, or spec) to implement,
   test, and prove working end-to-end — stop rule "a blind best-model hunt finds no
-  bugs + a demo/proof artifact". Repo-agnostic; reads a root `hyper-sprint.md` for
+  bugs + a demo/proof artifact". Repo-agnostic; reads a root `.hyper-sprint/config.md` for
   repo facts; front-loads app/browser readiness so verification never stalls.
 ---
 
@@ -145,7 +145,7 @@ biases the final gate). Three separate roles:
 ## Phases
 
 **Phase 0a — Intake (orchestrator; stays in the hub, it drives planning).** Read the repo's
-**`hyper-sprint.md`** at the repo root if present (base branch, build/test + app-boot commands,
+**`.hyper-sprint/config.md`** at the repo root if present (base branch, build/test + app-boot commands,
 vendored/declared deps, conventions, stop rule) — honor it over guesses. Identify the **agent
 profile** (`references/agent-profiles.md`) and reuse its known facts. Parse the change list into
 discrete, testable items; ask *now* (batched) about any that don't make sense or need a UX
@@ -259,7 +259,7 @@ Anything else: stop and ask; the user amends this list to extend it.
 
 ## Repo config & pre-requisites
 
-Prefer a root **`hyper-sprint.md`** (stack-agnostic — any agent framework reads it) carrying
+Prefer a root **`.hyper-sprint/config.md`** (stack-agnostic — any agent framework reads it) carrying
 the repo facts: base branch, build/test + app-boot commands, vendored deps to never install,
 conventions, and the default stop rule. If it's absent, the caller should provide:
 

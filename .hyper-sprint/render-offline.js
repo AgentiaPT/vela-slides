@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────
-// hyper-sprint.render-offline.js — repo asset shipped WITH hyper-sprint.md.
+// hyper-sprint.render-offline.js — repo asset shipped WITH .hyper-sprint/config.md.
 //
 // Builds a fully OFFLINE, runnable render of the Vela app so the hyper-sprint
 // readiness gate / demo recorder can boot & drive it in real Chromium without
 // the blocked React/lucide CDNs. Lives at the repo ROOT (self-locating) so it
-// travels with hyper-sprint.md and is present on every branch — unlike
+// travels with .hyper-sprint/config.md and is present on every branch — unlike
 // skills/vela-slides/scripts/render-offline.js, which only exists where the
 // offline-harness commit has landed.
 //
