@@ -1,6 +1,6 @@
 ---
 name: playwright-cli-setup
-description: Drive a live Vela app in a real browser via Playwright CLI (@playwright/cli) offline in-container, for ad-hoc/interactive browser testing & exploration — screenshot, repro a bug, presenter/gallery flows, run bench/vela-interaction-bench.sh, verify UX. Prefer over writing throwaway Playwright scripts: warm browser, inspect state+output between steps. Covers container setup (blocked CDNs, file:// block, pinned Chromium) and per-agent session isolation for parallel browser tests.
+description: THE DEFAULT tool for ad-hoc / interactive Vela browser work — explore or test the app, screenshot a state, reproduce a bug, poke a selector, drive presenter/gallery flows, verify a UX change, run bench/vela-interaction-bench.sh. Drives a live offline Vela render via Playwright CLI (@playwright/cli), a persistent warm browser you steer one command at a time (open, snapshot, click, press, eval), inspecting state + output between steps. Prefer this over the committed `vela-drive.js` scripts (skill: vela-live-render) — those are for repeatable, committed automation only (CI, benchmark, recorded demo), NOT one-off exploration. Also prefer over writing throwaway Playwright .js files. Covers container setup (blocked CDNs, file:// block, pinned Chromium) and per-agent session isolation for parallel browser tests.
 allowed-tools: Bash(npx playwright-cli*), Bash(npm install*), Bash(node skills/vela-slides/scripts/*), Bash(node_modules/.bin/playwright-cli*), Read, Write, Edit, Glob, Grep
 ---
 
