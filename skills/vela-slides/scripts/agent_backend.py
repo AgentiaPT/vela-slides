@@ -324,13 +324,15 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         return True
 
     def _cors(self):
-        # Echo a REBUILT canonical origin (from allowlisted parts), never the raw
-        # request header — so no CR/LF from the caller can reach the response
-        # header, and only a loopback/null origin is ever reflected.
-        safe = _canonical_allowed_origin(self.headers.get("Origin"))
-        if safe is not None:
-            self.send_header("Access-Control-Allow-Origin", safe)
-            self.send_header("Vary", "Origin")
+        # Access control is enforced by _guard (a foreign Host or Origin is 403'd
+        # before this runs) and the /action token — NOT by the CORS value. So the
+        # Allow-Origin we emit is a CONSTANT "*", never the request's Origin: a
+        # literal cannot carry CR/LF from the caller into the response header (no
+        # HTTP response splitting), and no credentials are ever used, so "*" is
+        # safe. We still gate on _is_allowed_origin so a foreign origin that
+        # reaches an error response gets no CORS grant at all.
+        if _is_allowed_origin(self.headers.get("Origin")):
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, x-vela-token")
 

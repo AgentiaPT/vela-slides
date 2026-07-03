@@ -1186,12 +1186,15 @@ class TestAgentBackendSerialisation(unittest.TestCase):
                 seen["file"] = f.read()
             return type("P", (), {"returncode": 0, "stdout": '{"result":"ok"}', "stderr": ""})()
 
-        orig = agent_backend.subprocess.run
+        orig_run = agent_backend.subprocess.run
+        orig_bin = agent_backend.resolve_agent_bin
         agent_backend.subprocess.run = fake_run
+        agent_backend.resolve_agent_bin = lambda: "/usr/bin/claude-fake"  # CI has no claude
         try:
             agent_backend.run_completion("SECRET-SYSTEM-PROMPT", [{"role": "user", "content": "hi"}])
         finally:
-            agent_backend.subprocess.run = orig
+            agent_backend.subprocess.run = orig_run
+            agent_backend.resolve_agent_bin = orig_bin
         self.assertNotIn("SECRET-SYSTEM-PROMPT", seen["argv"])
         self.assertIn("--system-prompt-file", seen["argv"])
         self.assertEqual(seen["file"], "SECRET-SYSTEM-PROMPT")
@@ -1299,20 +1302,21 @@ class TestAgentBackendChannel(unittest.TestCase):
         status, _, _ = self._post("/nope", {})
         self.assertEqual(status, 404)
 
-    def test_cors_echoes_origin(self):
-        # A file:// harness sends Origin: null; a serve.py page sends its
-        # localhost origin. Both must be echoed so the browser fetch succeeds.
+    def test_cors_allows_loopback_origin(self):
+        # An allowed origin (file:// harness null, or a localhost page) gets a
+        # CORS grant so its fetch can read the response. The value is a constant
+        # "*" (access control is done by the guard + token, not the CORS value).
         _, _, r = self._post("/action", {
             "action": "complete", "messages": [{"role": "user", "content": "x"}],
         }, origin="null")
-        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "null")
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "*")
 
     def test_options_preflight(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         conn.request("OPTIONS", "/action", headers={"Origin": "http://localhost:3030"})
         r = conn.getresponse()
         self.assertEqual(r.status, 204)
-        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "http://localhost:3030")
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "*")
         self.assertIn("POST", r.getheader("Access-Control-Allow-Methods"))
         # The token header is non-simple, so the preflight MUST allow it or the
         # browser blocks the real POST ("Failed to fetch").
