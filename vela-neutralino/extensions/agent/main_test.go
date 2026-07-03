@@ -42,28 +42,47 @@ func contains(s []string, v string) bool {
 }
 
 func TestSendArgsClaudeDisablesAllTools(t *testing.T) {
-	a := sendArgs("claude-code", "PROMPT", "")
-	if !contains(a, "-p") || !contains(a, "--disallowed-tools") {
-		t.Fatal("claude must run print mode with disallowed-tools")
+	a := sendArgs("claude-code", "PROMPT", "", "")
+	if !contains(a, "-p") {
+		t.Fatal("claude must run print mode")
 	}
-	idx := indexOf(a, "--disallowed-tools")
-	tools := a[idx+1]
-	for _, want := range []string{"Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch"} {
-		if !strings.Contains(tools, want) {
-			t.Fatalf("claude must disable %s", want)
+	// Positive allowlist of NOTHING (stronger than a denylist): --tools "".
+	idx := indexOf(a, "--tools")
+	if idx < 0 || a[idx+1] != "" {
+		t.Fatal(`claude must pass --tools "" to disable every built-in tool`)
+	}
+	// No MCP servers, no user/project settings (hooks/plugins/permissions).
+	if !contains(a, "--strict-mcp-config") {
+		t.Fatal("claude must pass --strict-mcp-config (no MCP tools)")
+	}
+	sIdx := indexOf(a, "--setting-sources")
+	if sIdx < 0 || a[sIdx+1] != "" {
+		t.Fatal(`claude must pass --setting-sources "" (no hooks/plugins/settings)`)
+	}
+	// With no tools there is nothing to permit — the dangerous bypass and a
+	// tool-granting flag must both be absent.
+	for _, bad := range []string{"--dangerously-skip-permissions", "--allow-all-tools", "--allow-tool", "--disallowed-tools"} {
+		if contains(a, bad) {
+			t.Fatalf("claude must not pass %s", bad)
 		}
 	}
-	if contains(a, "--allow-all-tools") {
-		t.Fatal("claude must never allow-all-tools")
-	}
-	// claude takes the prompt on stdin, never as an arg.
+	// claude takes the conversation on stdin, never as an arg.
 	if contains(a, "PROMPT") {
 		t.Fatal("claude prompt must not be an argv element")
+	}
+	// A non-empty system prompt is passed through the real --system-prompt.
+	withSys := sendArgs("claude-code", "", "", "VERA_SYS")
+	pIdx := indexOf(withSys, "--system-prompt")
+	if pIdx < 0 || withSys[pIdx+1] != "VERA_SYS" {
+		t.Fatal("claude must pass Vera's system prompt via --system-prompt")
+	}
+	if contains(sendArgs("claude-code", "", "", ""), "--system-prompt") {
+		t.Fatal("claude --system-prompt must be absent when system is empty")
 	}
 }
 
 func TestSendArgsCopilotDeniesEveryTool(t *testing.T) {
-	a := sendArgs("copilot-cli", "PROMPT", "gpt-5.2")
+	a := sendArgs("copilot-cli", "PROMPT", "gpt-5.2", "")
 	if a[0] != "-p" || a[1] != "PROMPT" {
 		t.Fatal("copilot prompt must be the single -p argv element")
 	}
@@ -81,7 +100,7 @@ func TestSendArgsCopilotDeniesEveryTool(t *testing.T) {
 	if !contains(a, "--model") || !contains(a, "gpt-5.2") {
 		t.Fatal("copilot --model should pass through when set")
 	}
-	if contains(sendArgs("copilot-cli", "x", ""), "--model") {
+	if contains(sendArgs("copilot-cli", "x", "", ""), "--model") {
 		t.Fatal("copilot --model should be absent when unset")
 	}
 }

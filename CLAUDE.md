@@ -236,7 +236,19 @@ node skills/vela-slides/scripts/render-offline.js <deck.vela> /tmp/vout        #
 node skills/vela-slides/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
 node skills/vela-slides/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
 node skills/vela-slides/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
+node skills/vela-slides/scripts/vela-drive.js ai       examples/vela-demo.vela --json /tmp/ai.json         # test AI vs local `claude` CLI
 ```
+
+**AI integration testing:** the `ai` mode drives real Vera/AI features against
+the local `claude` CLI. It starts `agent_backend.py` — a loopback channel that
+spawns `claude -p` locked to a pure text completion (`--tools "" --strict-mcp-config
+--setting-sources ""`: no tools, MCP, or hooks) — builds an agent-mode render,
+and asserts deck mutations. That lockdown is the security contract shared with
+the Neutralino gatekeeper (`vela-neutralino/extensions/agent/main.go`), enforced
+by a parity test in `tests/test_serve.py`. **AI is OFF by default** — it spawns
+the user's `claude` (their credentials/spend), so it is strictly opt-in:
+`vela server start <folder> --ai` (loopback-only, token-gated), or the `ai`
+harness mode / `render-offline.js --channel-port …` for dev/testing.
 
 Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;

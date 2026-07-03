@@ -86,10 +86,16 @@ class GatekeeperInvariants(unittest.TestCase):
 
     def test_all_tools_disabled(self):
         # Check the quoted argument literals (real args), not comment mentions.
-        self.assertIn('"--disallowed-tools"', self.go)  # claude
+        # claude: positive allowlist of NOTHING + no MCP + no settings sources.
+        self.assertIn('"--tools", ""', self.go)
+        self.assertIn('"--strict-mcp-config"', self.go)
+        self.assertIn('"--setting-sources", ""', self.go)
         self.assertIn('"--deny-tool"', self.go)         # copilot
         self.assertNotIn('"--allow-all-tools"', self.go)
         self.assertNotIn('"--allow-tool"', self.go)
+        # With no tools there is nothing to permit — the dangerous bypass must be
+        # gone from the launch args entirely.
+        self.assertNotIn('"--dangerously-skip-permissions"', self.go)
 
     def test_token_auth_present(self):
         self.assertIn("x-vela-token", self.go)

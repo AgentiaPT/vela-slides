@@ -37,6 +37,7 @@ from serve import (
     VelaLocalServer,
     ThreadedHTTPServer,
 )
+import agent_backend
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -863,12 +864,13 @@ class TestHTMLGeneration(unittest.TestCase):
         if cls._tmpdir:
             shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
-    def _make_server(self, deck_data, channel_port=0):
+    def _make_server(self, deck_data, channel_port=0, ai_enabled=False):
         """Helper to create a folder-mode server and write a deck file."""
         deck_path = os.path.join(self._tmpdir, "gen.vela")
         with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(deck_data, f)
-        server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=channel_port, no_auth=True)
+        server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=channel_port,
+                                 no_auth=True, ai_enabled=ai_enabled)
         return server
 
     def test_prepare_html_contains_deck(self):
@@ -936,10 +938,21 @@ class TestHTMLGeneration(unittest.TestCase):
         html = server._build_html_for_deck(deck_path, "export.vela").decode("utf-8")
         self.assertIn("Test Deck", html)
 
-    def test_prepare_html_channel_port_injected(self):
-        server = self._make_server(SAMPLE_DECK, channel_port=9999)
+    def test_prepare_html_channel_port_injected_when_ai_enabled(self):
+        server = self._make_server(SAMPLE_DECK, channel_port=9999, ai_enabled=True)
         html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertIn("VELA_CHANNEL_PORT = 9999", html)
+        # Token is injected only in AI mode (page is behind serve.py auth).
+        self.assertNotIn('VELA_CHANNEL_TOKEN = "";', html)
+
+    def test_prepare_html_ai_off_by_default(self):
+        # Default (no --ai): the channel must NOT be wired into the page, even if
+        # a channel_port is configured. Port 0 → velaAIAvailable() is false.
+        server = self._make_server(SAMPLE_DECK, channel_port=9999, ai_enabled=False)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
+        self.assertIn("VELA_CHANNEL_PORT = 0", html)
+        self.assertNotIn("VELA_CHANNEL_PORT = 9999", html)
+        self.assertIn('VELA_CHANNEL_TOKEN = "";', html)  # left empty
 
 
 # ── 8. Edge Cases ────────────────────────────────────────────────────
@@ -1098,6 +1111,394 @@ class TestEdgeCases(FolderServerTestBase):
         self.assertTrue(all(r == 200 for r in save_results))
         self.assertTrue(all(r == 200 for r in poll_results),
                         f"All polls should return 200, got: {poll_results}")
+
+
+# ── AI channel backend (agent_backend.py) ─────────────────────────────
+class TestAgentBackendSerialisation(unittest.TestCase):
+    """Prompt/arg/parse logic — no real `claude` spawn."""
+
+    def test_single_user_turn_collapses(self):
+        # The common Vera case: one user message -> raw content, no role tags.
+        self.assertEqual(
+            agent_backend.serialise_messages([{"role": "user", "content": "hello"}]),
+            "hello",
+        )
+
+    def test_multi_turn_is_role_tagged(self):
+        out = agent_backend.serialise_messages([
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "yo"},
+        ])
+        self.assertIn("<USER>", out)
+        self.assertIn("<ASSISTANT>", out)
+
+    def test_non_string_content_kept_as_json(self):
+        out = agent_backend.serialise_messages([{"role": "user", "content": [{"type": "text", "text": "x"}]}])
+        self.assertIn('"type"', out)
+
+    def test_args_lock_down_every_capability(self):
+        args = agent_backend._claude_args("/tmp/sys.txt")
+        self.assertIn("-p", args)
+        self.assertIn("--output-format", args)
+        # Positive allowlist of NOTHING (stronger than a denylist).
+        self.assertEqual(args[args.index("--tools") + 1], "")
+        # No MCP servers, no user/project settings (hooks/plugins/permissions).
+        self.assertIn("--strict-mcp-config", args)
+        self.assertEqual(args[args.index("--setting-sources") + 1], "")
+        # With no tools there is nothing to permit — the dangerous bypass and any
+        # denylist/allow flag must be absent.
+        for bad in ("--dangerously-skip-permissions", "--disallowed-tools", "--allow-all-tools"):
+            self.assertNotIn(bad, args)
+
+    def test_system_prompt_passed_by_file_never_argv(self):
+        # The system prompt is delivered by FILE PATH, so no request value ever
+        # reaches the command line (CodeQL: no uncontrolled command line).
+        args = agent_backend._claude_args("/tmp/vera-sys.txt")
+        self.assertIn("--system-prompt-file", args)
+        self.assertEqual(args[args.index("--system-prompt-file") + 1], "/tmp/vera-sys.txt")
+        self.assertNotIn("--system-prompt", args)  # never the argv-value form
+
+    def test_no_system_prompt_when_empty(self):
+        self.assertNotIn("--system-prompt-file", agent_backend._claude_args(None))
+
+    def test_canonical_origin_rebuilds_and_blocks_crlf(self):
+        c = agent_backend._canonical_allowed_origin
+        # Allowed origins are rebuilt from parsed parts (exact echo for these).
+        self.assertEqual(c("http://localhost:3030"), "http://localhost:3030")
+        self.assertEqual(c("http://127.0.0.1:8811"), "http://127.0.0.1:8811")
+        self.assertEqual(c("null"), "null")
+        # Not echoed: absent, foreign, look-alike, non-http.
+        for bad in (None, "", "https://evil.com", "http://localhost.evil.com", "file://x"):
+            self.assertIsNone(c(bad))
+        # A CR/LF-laced Origin can never reach the response header.
+        self.assertIsNone(c("http://localhost\r\nSet-Cookie: x=1"))
+
+    def test_run_completion_keeps_system_off_argv(self):
+        # End-to-end: whatever the caller sends as `system`, run_completion must
+        # never place it on the child's argv — it goes to a temp file.
+        seen = {}
+
+        def fake_run(argv, **kw):
+            seen["argv"] = argv
+            # the system prompt must be in the temp file, not on argv
+            sf = argv[argv.index("--system-prompt-file") + 1]
+            with open(sf, encoding="utf-8") as f:
+                seen["file"] = f.read()
+            return type("P", (), {"returncode": 0, "stdout": '{"result":"ok"}', "stderr": ""})()
+
+        orig_run = agent_backend.subprocess.run
+        orig_bin = agent_backend.resolve_agent_bin
+        agent_backend.subprocess.run = fake_run
+        agent_backend.resolve_agent_bin = lambda: "/usr/bin/claude-fake"  # CI has no claude
+        try:
+            agent_backend.run_completion("SECRET-SYSTEM-PROMPT", [{"role": "user", "content": "hi"}])
+        finally:
+            agent_backend.subprocess.run = orig_run
+            agent_backend.resolve_agent_bin = orig_bin
+        self.assertNotIn("SECRET-SYSTEM-PROMPT", seen["argv"])
+        self.assertIn("--system-prompt-file", seen["argv"])
+        self.assertEqual(seen["file"], "SECRET-SYSTEM-PROMPT")
+
+    def test_parse_claude_json(self):
+        out = agent_backend._parse_claude(json.dumps({
+            "result": "ANSWER", "model": "claude-x",
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        }))
+        self.assertEqual(out["reply"], "ANSWER")
+        self.assertEqual(out["model"], "claude-x")
+        self.assertEqual(out["stats"]["input_tokens"], 5)
+
+    def test_parse_claude_non_json_fallback(self):
+        out = agent_backend._parse_claude("plain text\x1b[0m answer")
+        self.assertEqual(out["reply"], "plain text answer")  # ANSI stripped
+        self.assertEqual(out["model"], "claude-code")
+
+    def test_run_completion_missing_binary(self):
+        orig = agent_backend.resolve_agent_bin
+        agent_backend.resolve_agent_bin = lambda: None
+        try:
+            r = agent_backend.run_completion("s", [{"role": "user", "content": "x"}])
+            self.assertFalse(r["ok"])
+            self.assertIn("not found", r["error"])
+        finally:
+            agent_backend.resolve_agent_bin = orig
+
+    @unittest.skipUnless(os.name == "posix", "world-writable bits are POSIX-only")
+    def test_resolve_agent_bin_rejects_world_writable(self):
+        # A PATH-planted / world-writable `claude` shim must not be launched.
+        d = tempfile.mkdtemp()
+        try:
+            binp = os.path.join(d, "claude")
+            with open(binp, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(binp, 0o777)  # world-writable file → untrusted
+            orig = agent_backend.shutil.which
+            agent_backend.shutil.which = lambda name: binp
+            try:
+                self.assertIsNone(agent_backend.resolve_agent_bin())
+                os.chmod(binp, 0o755)  # now trusted (dir is 0700)
+                self.assertEqual(agent_backend.resolve_agent_bin(), binp)
+            finally:
+                agent_backend.shutil.which = orig
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class TestAgentBackendChannel(unittest.TestCase):
+    """The loopback channel HTTP contract part-engine.jsx speaks. run_completion
+    is stubbed so no real agent is launched."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig = agent_backend.run_completion
+        agent_backend.run_completion = staticmethod(
+            lambda system, messages, **kw: {"ok": True, "reply": "STUB:" + (messages[0]["content"] if messages else ""), "model": "stub", "stats": {}}
+        )
+        cls.server = agent_backend.make_channel_server(port=0)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        agent_backend.run_completion = cls._orig
+        agent_backend.stop_channel_server(cls.server)
+
+    def _post(self, path, body, origin=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Content-Type": "application/json"}
+        if origin:
+            headers["Origin"] = origin
+        conn.request("POST", path, json.dumps(body), headers)
+        r = conn.getresponse()
+        data = r.read()
+        conn.close()
+        return r.status, data, r
+
+    def test_health(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/health")
+        r = conn.getresponse()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(json.loads(r.read())["ok"])
+        conn.close()
+
+    def test_action_complete(self):
+        status, data, _ = self._post("/action", {
+            "action": "complete", "system": "SYS",
+            "messages": [{"role": "user", "content": "ping"}],
+        })
+        self.assertEqual(status, 200)
+        body = json.loads(data)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["reply"], "STUB:ping")
+
+    def test_action_unknown_action(self):
+        status, data, _ = self._post("/action", {"action": "delete_everything"})
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_unknown_path_404(self):
+        status, _, _ = self._post("/nope", {})
+        self.assertEqual(status, 404)
+
+    def test_cors_allows_loopback_origin(self):
+        # An allowed origin (file:// harness null, or a localhost page) gets a
+        # CORS grant so its fetch can read the response. The value is a constant
+        # "*" (access control is done by the guard + token, not the CORS value).
+        _, _, r = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "x"}],
+        }, origin="null")
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "*")
+
+    def test_options_preflight(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("OPTIONS", "/action", headers={"Origin": "http://localhost:3030"})
+        r = conn.getresponse()
+        self.assertEqual(r.status, 204)
+        self.assertEqual(r.getheader("Access-Control-Allow-Origin"), "*")
+        self.assertIn("POST", r.getheader("Access-Control-Allow-Methods"))
+        # The token header is non-simple, so the preflight MUST allow it or the
+        # browser blocks the real POST ("Failed to fetch").
+        self.assertIn("x-vela-token", r.getheader("Access-Control-Allow-Headers"))
+        conn.close()
+
+    def test_forbidden_origin_rejected(self):
+        # A random website the user is browsing must not be able to drive the
+        # channel (drive-by cost/abuse) — rejected before any spawn.
+        status, data, r = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "x"}],
+        }, origin="https://evil.example.com")
+        self.assertEqual(status, 403)
+        self.assertIsNone(r.getheader("Access-Control-Allow-Origin"))
+
+    def test_origin_prefix_bypass_rejected(self):
+        # A host that merely STARTS WITH "localhost"/"127.0.0.1" must not pass the
+        # loopback check (this was a naive-startswith bug — now parsed exactly).
+        for bad in ("http://localhost.evil.com", "http://127.0.0.1.evil.com", "http://localhostx"):
+            status, _, _ = self._post("/action", {
+                "action": "complete", "messages": [{"role": "user", "content": "x"}],
+            }, origin=bad)
+            self.assertEqual(status, 403, f"{bad} must be rejected")
+
+    def test_forbidden_host_rejected(self):
+        # DNS-rebinding: a malicious domain resolving to 127.0.0.1 is refused by
+        # the Host check even though the socket is loopback.
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.putrequest("GET", "/health", skip_host=True)
+        conn.putheader("Host", "evil.example.com")
+        conn.endheaders()
+        r = conn.getresponse()
+        self.assertEqual(r.status, 403)
+        conn.close()
+
+    def test_make_channel_server_forces_loopback(self):
+        # Even asked to bind all interfaces, the channel stays on loopback.
+        srv = agent_backend.make_channel_server(port=0, host="0.0.0.0")
+        try:
+            self.assertEqual(srv.server_address[0], "127.0.0.1")
+        finally:
+            srv.server_close()
+
+
+class TestAgentBackendChannelToken(unittest.TestCase):
+    """A token-gated channel: /action needs the token (another local user can't
+    spend the victim's `claude`); /health stays open."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig = agent_backend.run_completion
+        agent_backend.run_completion = staticmethod(lambda system, messages, **kw: {"ok": True, "reply": "OK", "stats": {}})
+        cls.server = agent_backend.make_channel_server(port=0, token="s3cret-token")
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        agent_backend.run_completion = cls._orig
+        agent_backend.stop_channel_server(cls.server)
+
+    def _post(self, token):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Content-Type": "application/json"}
+        if token is not None:
+            headers["x-vela-token"] = token
+        conn.request("POST", "/action", json.dumps({"action": "complete", "messages": []}), headers)
+        r = conn.getresponse()
+        r.read()
+        conn.close()
+        return r.status
+
+    def test_missing_token_rejected(self):
+        self.assertEqual(self._post(None), 401)
+
+    def test_wrong_token_rejected(self):
+        self.assertEqual(self._post("nope"), 401)
+
+    def test_correct_token_accepted(self):
+        self.assertEqual(self._post("s3cret-token"), 200)
+
+    def test_health_open_without_token(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/health")
+        self.assertEqual(conn.getresponse().status, 200)
+        conn.close()
+
+
+class TestServeChannelIntegration(unittest.TestCase):
+    """VelaLocalServer wiring of the channel (start/stop, disabled when port 0)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def test_channel_off_by_default(self):
+        # AI must be OFF unless explicitly enabled — even with a channel_port set.
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=8787, no_auth=True)
+        self.assertFalse(srv.ai_enabled)
+        self.assertIn("OFF", srv._start_channel())
+        self.assertIsNone(srv._channel_server)
+
+    def test_channel_disabled_when_port_zero(self):
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0, no_auth=True, ai_enabled=True)
+        self.assertEqual(srv._start_channel(), "")
+        self.assertIsNone(srv._channel_server)
+
+    def test_channel_starts_and_stops(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        free_port = s.getsockname()[1]
+        s.close()
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=free_port, no_auth=True, ai_enabled=True)
+        status = srv._start_channel()
+        try:
+            self.assertIsNotNone(srv._channel_server)
+            self.assertIn("agent", status)  # "(agent: ...)" or "(agent ... NOT FOUND)"
+            bound = srv._channel_server.server_address[1]
+            conn = http.client.HTTPConnection("127.0.0.1", bound, timeout=5)
+            conn.request("GET", "/health")
+            self.assertEqual(conn.getresponse().status, 200)
+            conn.close()
+        finally:
+            srv._stop_channel()
+            self.assertIsNone(srv._channel_server)
+
+
+class TestBackendParity(unittest.TestCase):
+    """The Python channel backend and the Neutralino Go gatekeeper launch the
+    SAME `claude` with the SAME lockdown. These assert the two sources cannot
+    silently drift on the security-critical contract — if you change one, this
+    fails until the other matches."""
+
+    @classmethod
+    def setUpClass(cls):
+        go_path = os.path.abspath(os.path.join(os.path.dirname(SCRIPTS_DIR), "..", "..",
+                                  "vela-neutralino", "extensions", "agent", "main.go"))
+        if os.path.exists(go_path):
+            with open(go_path, encoding="utf-8") as f:
+                cls.go = f.read()
+        else:
+            cls.go = None
+        cls.py = agent_backend._claude_args("SYS")
+
+    def _require_go(self):
+        if self.go is None:
+            self.skipTest("Go gatekeeper source not present in this checkout")
+
+    def test_python_and_go_lockdown_flags_match(self):
+        self._require_go()
+        # Each hardening flag must appear in BOTH backends (Go quoted-literal form
+        # and Python arg list). If either drops one, the two have drifted.
+        self.assertEqual(self.py[self.py.index("--tools") + 1], "")
+        self.assertIn('"--tools", ""', self.go)
+        self.assertIn("--strict-mcp-config", self.py)
+        self.assertIn('"--strict-mcp-config"', self.go)
+        self.assertEqual(self.py[self.py.index("--setting-sources") + 1], "")
+        self.assertIn('"--setting-sources", ""', self.go)
+
+    def test_neither_backend_weakens_the_sandbox(self):
+        self._require_go()
+        for bad in ("--dangerously-skip-permissions", "--disallowed-tools",
+                    "--allow-all-tools", "--allow-tool"):
+            self.assertNotIn(bad, self.py, f"Python backend must not use {bad}")
+            self.assertNotIn(f'"{bad}"', self.go, f"Go gatekeeper must not use {bad}")
+
+    def test_both_deliver_system_as_authoritative_prompt(self):
+        # Both backends make Vera's instructions the real system prompt (not
+        # inline text). The TRANSPORT intentionally differs: Python passes it by
+        # FILE (--system-prompt-file) so no request value touches the argv (CodeQL
+        # uncontrolled-command-line); the Go desktop passes --system-prompt (argv
+        # is not a web-response concern there). Neither may regress to inline.
+        self._require_go()
+        self.assertIn("--system-prompt-file", self.py)
+        self.assertNotIn("--system-prompt", self.py)  # value form never on argv
+        self.assertIn('"--system-prompt"', self.go)
 
 
 if __name__ == "__main__":
