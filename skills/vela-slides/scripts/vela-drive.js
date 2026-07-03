@@ -18,9 +18,13 @@
 // ─────────────────────────────────────────────────────────────────────────
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const net = require('net');
+const { spawn } = require('child_process');
 const { chromium } = require('/home/user/vela-slides/node_modules/playwright');
 
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const SCRIPTS = __dirname;
 const args = process.argv.slice(2);
 const mode = args[0];
 const htmlPath = args[1] && path.resolve(args[1]);
@@ -49,8 +53,158 @@ async function waitBoot(page, timeout = 20000) {
   throw new Error('boot timeout');
 }
 
+// ─── AI-integration harness (mode: ai) ──────────────────────────────────
+// Orchestrates a full offline AI run against the local `claude` CLI:
+//   1. start the Python channel backend (agent_backend.py) on a free loopback
+//      port — the ONE place that spawns claude, tool-sandboxed;
+//   2. build an agent-mode render pointed at that port (render-offline.build);
+//   3. boot it in Chromium and exercise the real Vera engine functions the app
+//      uses, asserting deck mutations — no mocks, the actual claude round-trips.
+// Reuses launch()/waitBoot() and render-offline's build() so nothing is
+// duplicated. This is a dev/QA tool (each probe is a real, paid claude call),
+// not a CI gate.
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+}
+
+async function startChannel(port, token) {
+  // Token via env, never argv (ps is world-readable to other local users).
+  const proc = spawn('python3', [path.join(SCRIPTS, 'agent_backend.py'), 'serve', '--port', String(port)],
+    { stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { VELA_CHANNEL_TOKEN: token }) });
+  let out = '';
+  proc.stdout.on('data', d => { out += d; });
+  proc.stderr.on('data', d => { out += d; });
+  // Wait for /health to answer (agent detection runs a `claude --version`).
+  const start = Date.now();
+  while (Date.now() - start < 20000) {
+    const ok = await new Promise(res => {
+      const r = require('http').get({ host: '127.0.0.1', port, path: '/health', timeout: 1500 },
+        resp => { resp.resume(); res(resp.statusCode === 200); });
+      r.on('error', () => res(false)); r.on('timeout', () => { r.destroy(); res(false); });
+    });
+    if (ok) return { proc, banner: out.trim() };
+    await new Promise(r => setTimeout(r, 300));
+  }
+  proc.kill('SIGTERM');
+  throw new Error('channel did not become healthy:\n' + out);
+}
+
+// The probes: each returns { name, pass, detail }. They call the real engine
+// helpers exposed as globals in the classic-script build (callClaudeAPI,
+// callVera, generateSlide) — the exact functions the chat/TOC/quick-edit UIs use.
+const AI_PROBES = {
+  async ping(page) {
+    const txt = await page.evaluate(() => callClaudeAPI(
+      'You are terse. Reply with ONLY the uppercase word requested, no punctuation.',
+      [{ role: 'user', content: 'Say the word WIRED' }], { _callType: 'chat', timeoutMs: 120000 }));
+    return { pass: /WIRED/.test(txt), detail: JSON.stringify(txt).slice(0, 80) };
+  },
+  async veraAddSlide(page) {
+    const r = await page.evaluate(async () => {
+      const lanes = [{ title: 'Intro', items: [{ id: 'm1', title: 'Module 1',
+        slides: [{ bg: '#0f172a', color: '#e2e8f0', accent: '#3b82f6', blocks: [{ type: 'heading', text: 'Hello' }] }] }] }];
+      const before = lanes[0].items[0].slides.length;
+      const tools = [];
+      const res = await callVera("Add exactly one new slide whose only block is a heading with text 'ADDED BY AI'.",
+        lanes, 'm1', 0, null, [], null, '', (tc) => { if (tc && tc.type === 'calling') tools.push(tc.name); }, [], null);
+      const after = res.lanes ? res.lanes[0].items[0].slides.length : before;
+      const texts = res.lanes ? res.lanes[0].items[0].slides.flatMap(s => (s.blocks || []).map(b => b.text)) : [];
+      return { before, after, tools, texts };
+    });
+    return { pass: r.after === r.before + 1 && r.texts.some(t => /ADDED BY AI/i.test(t || '')),
+      detail: `${r.before}→${r.after} tools=${JSON.stringify(r.tools)}` };
+  },
+  async generateSlide(page) {
+    const r = await page.evaluate(async () => {
+      try {
+        const slide = await generateSlide('Team Values', 5, 'A slide titled Team Values with three bullets', null, '', null);
+        const blocks = slide && slide.blocks ? slide.blocks.map(b => b.type) : null;
+        return { ok: !!(slide && slide.blocks && slide.blocks.length), blocks };
+      } catch (e) { return { ok: false, err: String(e && e.message || e) }; }
+    });
+    return { pass: r.ok, detail: r.ok ? `blocks=${JSON.stringify(r.blocks)}` : (r.err || 'no slide') };
+  },
+  // The real user path: click the 🤖 Vera button, type a request, press Enter,
+  // and assert the DECK changed via the header slide-count stat (driven by the
+  // app's own state — not a mock, not localStorage). This exercises the UI the
+  // artifact / desktop user sees; only the AI transport (local claude) differs.
+  async veraChatUI(page) {
+    // header pill renders "<n>sl · <m>§" from slideCountVisible — read it.
+    const readSlides = () => page.evaluate(() => {
+      for (const el of document.querySelectorAll('span')) {
+        const m = (el.textContent || '').match(/(\d+)sl\s*·\s*\d+§/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return null;
+    });
+    await page.click('button:has-text("Vera")');
+    await page.waitForTimeout(500);
+    const ta = page.locator('textarea').first();
+    const enabled = await ta.isEditable();          // aiOk / velaAIAvailable → user can type
+    const before = await readSlides();
+    await ta.click();
+    await ta.fill("Add one new slide whose only block is a big heading that says HELLO FROM VERA");
+    await ta.press('Enter');                         // the real send path
+    let after = before, waited = 0;
+    while (waited < 180000) {
+      const c = await readSlides();
+      if (c != null && before != null && c > before) { after = c; break; }
+      await page.waitForTimeout(1500); waited += 1500;
+    }
+    return { pass: !!enabled && before != null && after === before + 1,
+      detail: `input=${enabled} slides ${before}→${after}` };
+  },
+};
+
+async function runAI() {
+  const deck = args[1];
+  if (!deck) { console.error('usage: node vela-drive.js ai <deck.vela> [--only ping,veraAddSlide,generateSlide]'); process.exit(2); }
+  const { build } = require(path.join(SCRIPTS, 'render-offline.js'));
+  const only = (flag('only', null) || '').split(',').map(s => s.trim()).filter(Boolean);
+  const names = only.length ? only : Object.keys(AI_PROBES);
+
+  const port = await freePort();
+  const token = require('crypto').randomBytes(24).toString('hex');
+  console.log(`[ai] starting channel on 127.0.0.1:${port} …`);
+  const channel = await startChannel(port, token);
+  console.log('[ai] ' + channel.banner);
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-ai-'));
+  build(path.resolve(deck), outDir, { channelPort: port, channelToken: token });
+  const html = path.join(outDir, 'render.html');
+
+  const { browser, page, logs } = await launch(null, { width: 1280, height: 800 });
+  const results = [];
+  try {
+    await page.goto('file://' + html, { waitUntil: 'load', timeout: 30000 });
+    await waitBoot(page);
+    const avail = await page.evaluate(() => (typeof velaAIAvailable === 'function' ? velaAIAvailable() : false));
+    if (!avail) throw new Error('velaAIAvailable() is false — channel not wired into the render');
+    for (const name of names) {
+      const probe = AI_PROBES[name];
+      if (!probe) { results.push({ name, pass: false, detail: 'unknown probe' }); continue; }
+      process.stdout.write(`[ai] ${name} … `);
+      try { const r = await probe(page); results.push({ name, ...r }); console.log(r.pass ? `✅ ${r.detail}` : `❌ ${r.detail}`); }
+      catch (e) { results.push({ name, pass: false, detail: String(e && e.message || e) }); console.log(`❌ ${e.message || e}`); }
+    }
+  } finally {
+    await browser.close();
+    channel.proc.kill('SIGTERM');
+  }
+  const passed = results.filter(r => r.pass).length, failed = results.length - passed;
+  console.log(`\nAI ${passed} passed, ${failed} failed, ${results.length} total`);
+  const jf = flag('json', null); if (jf) fs.writeFileSync(jf, JSON.stringify(results, null, 2));
+  logs.filter(l => /pageerror/i.test(l)).slice(-4).forEach(l => console.log(' ', l));
+  process.exit(failed ? 1 : 0);
+}
+
 async function main() {
-  if (!mode || !htmlPath) { console.error('usage: node vela-drive.js <boot|shot|uitests|video> <render.html> ...'); process.exit(2); }
+  if (mode === 'ai') return runAI();
+  if (!mode || !htmlPath) { console.error('usage: node vela-drive.js <boot|shot|uitests|video|ai> <render.html|deck.vela> ...'); process.exit(2); }
   const viewport = { width: parseInt(flag('w', '1280'), 10), height: parseInt(flag('h', '800'), 10) };
 
   if (mode === 'boot' || mode === 'shot') {

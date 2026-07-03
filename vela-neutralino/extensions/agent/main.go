@@ -82,21 +82,37 @@ func providerAllowed(id string) bool {
 }
 
 // sendArgs returns the locked argument template for a provider. The prompt is
-// only embedded for copilot (which has no stdin path); claude reads stdin.
+// only embedded for copilot (which has no stdin path); claude reads stdin and
+// takes its (Vera) system prompt through --system-prompt.
 //
-// Neither template ever grants a tool: claude disables them all explicitly,
-// copilot denies each capability and is never given --allow-tool /
-// --allow-all-tools.
-func sendArgs(id, prompt, model string) []string {
+// Neither template ever grants a tool. The claude lockdown is the SECURITY
+// CONTRACT shared with the Python backend (skills/vela-slides/scripts/
+// agent_backend.py, CLAUDE_LOCKDOWN) — a parity test (tests/test_serve.py)
+// fails CI if the two drift:
+//   --tools ""            positive allowlist of NOTHING — every built-in tool
+//                         off (stronger than a denylist, which misses new / MCP
+//                         / custom tools).
+//   --strict-mcp-config   ignore ALL MCP server configs (none passed) — no MCP
+//                         tool reachable even via prompt injection.
+//   --setting-sources ""  load no user/project/local settings — no hooks, no
+//                         plugins, no permission overrides, no extra MCP.
+// With no tools there is nothing to permit, so --dangerously-skip-permissions is
+// deliberately NOT used. copilot denies each capability and is never given
+// --allow-tool / --allow-all-tools.
+func sendArgs(id, prompt, model, system string) []string {
 	switch id {
 	case "claude-code":
-		return []string{
+		a := []string{
 			"-p",
 			"--output-format", "json",
-			"--dangerously-skip-permissions",
-			"--disallowed-tools",
-			"Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Task",
+			"--tools", "",
+			"--strict-mcp-config",
+			"--setting-sources", "",
 		}
+		if system != "" {
+			a = append(a, "--system-prompt", system)
+		}
+		return a
 	case "copilot-cli":
 		a := []string{
 			"-p", prompt,
@@ -404,12 +420,19 @@ func newServer(token, nlPort string) http.Handler {
 			return
 		}
 		p := providers[req.Provider]
-		prompt := serialiseConversation(req.System, req.Messages)
-		stdin := ""
-		if !p.PromptViaArg {
-			stdin = prompt
+		var stdin string
+		var args []string
+		if p.PromptViaArg {
+			// copilot: no stdin / system-prompt path — the whole transcript
+			// (system + turns) becomes the single -p argument.
+			prompt := serialiseConversation(req.System, req.Messages)
+			args = sendArgs(req.Provider, prompt, req.Model, "")
+		} else {
+			// claude: Vera's system prompt goes through --system-prompt so it is
+			// authoritative; only the conversation turns go on stdin.
+			stdin = serialiseConversation("", req.Messages)
+			args = sendArgs(req.Provider, "", req.Model, req.System)
 		}
-		args := sendArgs(req.Provider, prompt, req.Model)
 
 		timeout := 180 * time.Second
 		if req.CallType == "create" {
