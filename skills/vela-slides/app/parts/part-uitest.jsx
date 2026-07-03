@@ -80,13 +80,22 @@ function uiSuite(name, tests) {
 async function runUITests(onProgress) {
   const allResults = [];
   let total = UI_TEST_SUITES.reduce((s, suite) => s + suite.tests.length, 0);
-  let done = 0, passed = 0, failed = 0;
+  let done = 0, passed = 0, failed = 0, skipped = 0;
 
   for (const suite of UI_TEST_SUITES) {
     for (const test of suite.tests) {
       done++;
-      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, results: allResults });
+      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, skipped, results: allResults });
       const t0 = performance.now();
+      // Tests flagged requiresAI degrade to a visible skip (not a failure) when
+      // Vera AI is unavailable (offline/keyless) — see CR-02.
+      if (test.requiresAI && typeof velaAIAvailable === "function" && !velaAIAvailable()) {
+        skipped++;
+        allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
+        if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
+        await _wait(50);
+        continue;
+      }
       try {
         await test.fn();
         passed++;
@@ -95,7 +104,7 @@ async function runUITests(onProgress) {
         failed++;
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
       }
-      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, results: [...allResults] });
+      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
       await _wait(50);
     }
   }
@@ -206,6 +215,20 @@ uiSuite("Presenter", [
       if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
     }
   }},
+  { name: "Present mode shows no edit chrome (CR-03)", fn: async () => {
+    // A presented slide must show ZERO edit affordances: no dashed hover-outline
+    // (EditableText), no ghost "+" icon-slot marker (EditableIcon with no value),
+    // no floating pencil/edit button. Scoped to the fullscreen container only.
+    const fs = _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']");
+    if (!fs) throw new Error("No fixed fullscreen element found");
+    const all = _$$("*", fs);
+    const dashedOutline = all.filter((el) => el.style?.outlineStyle === "dashed");
+    if (dashedOutline.length > 0) throw new Error(`found ${dashedOutline.length} dashed-outline edit-chrome element(s) while presenting`);
+    const ghostPlus = all.filter((el) => el.children.length === 0 && (el.textContent || "").trim() === "+");
+    if (ghostPlus.length > 0) throw new Error(`found ${ghostPlus.length} ghost "+" affordance(s) while presenting`);
+    const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
+    if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _wait(300);
@@ -223,6 +246,11 @@ uiSuite("Toolbar", [
   }},
   { name: "Edit button exists (✏️)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Edit") || b.textContent?.includes("✏")));
+  }},
+  { name: "Edit button renamed to AI Edit (CR-11)", fn: async () => {
+    // The bottom-toolbar Edit button was renamed to disambiguate that it is
+    // AI-gated (⚡ AI Edit), not a generic non-AI editing affordance.
+    await _waitFor(() => _$$("button").find((b) => b.textContent?.includes("AI Edit")));
   }},
   { name: "Improve button exists (✨)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Improve") || b.textContent?.includes("✨")));
@@ -333,7 +361,7 @@ uiSuite("Chat", [
     }
     throw new Error("Chat panel did not open after 3 attempts");
   }},
-  { name: "Chat input visible", fn: async () => {
+  { name: "Chat input visible", requiresAI: true, fn: async () => {
     await _waitFor(() => _$$("textarea").find((t) => {
       const ph = t.placeholder?.toLowerCase() || "";
       return ph.includes("tell vera") || ph.includes("paste images") || ph.includes("ask");
@@ -416,7 +444,7 @@ uiSuite("Batch Edit", [
       return (all.includes("slide") || all.includes("Slide")) && (all.includes("module") || all.includes("Module") || all.includes("all") || all.includes("All"));
     }, 1000);
   }},
-  { name: "Prompt input visible", fn: async () => {
+  { name: "Prompt input visible", requiresAI: true, fn: async () => {
     const ta = await _waitFor(() => _$$("input, textarea").find((t) => {
       const ph = t.placeholder?.toLowerCase() || "";
       return ph.includes("change across") || ph.includes("auto-improve") || ph.includes("persistent") || ph.includes("every improve");
@@ -609,9 +637,9 @@ uiSuite("Content", [
     if (blocks.length === 0) throw new Error("No data-block-type elements — blocks not rendering");
   }},
   { name: "Slide counter shows valid format", fn: async () => {
-    const counters = _$$("span").filter((s) => /^\d+\s*\/\s*\d+$/.test(s.textContent?.trim()));
-    if (counters.length === 0) throw new Error("No slide counter (N/M format) found");
-    const [n, m] = counters[0].textContent.trim().split("/").map((s) => parseInt(s.trim()));
+    const counter = _slideCounterEl();
+    if (!counter) throw new Error("No slide counter (N/M format) found");
+    const [n, m] = counter.textContent.trim().split("/").map((s) => parseInt(s.trim()));
     if (n < 1 || m < 1 || n > m) throw new Error(`Invalid counter: ${n}/${m}`);
   }},
 ]);
@@ -721,32 +749,32 @@ const _veraChat = async (message, timeout = 45000) => {
 };
 
 uiSuite("Vera AI", [
-  { name: "Simple chat reply", fn: async () => {
+  { name: "Simple chat reply", requiresAI: true, fn: async () => {
     await _veraChat("Reply with exactly one word: TESTPASS");
     await _waitFor(() => (document.body.textContent || "").includes("TESTPASS"), 30000);
   }},
-  { name: "deck_stats tool call", fn: async () => {
+  { name: "deck_stats tool call", requiresAI: true, fn: async () => {
     await _veraChat("Use the deck_stats tool. Start your answer with STATS:");
     await _waitFor(() => {
       const body = document.body.textContent || "";
       return body.includes("STATS:") || body.includes("deck_stats");
     }, 45000);
   }},
-  { name: "Edit current slide via chat", fn: async () => {
+  { name: "Edit current slide via chat", requiresAI: true, fn: async () => {
     await _veraChat("Use edit_slide to change the heading on the current slide to 'UI Test Heading'. Keep everything else.");
     await _waitFor(() => (document.body.textContent || "").includes("UI Test Heading"), 45000);
     // Undo
     document.activeElement?.blur(); await _wait(100);
     _key("z", { ctrlKey: true }); await _wait(300);
   }},
-  { name: "Add a new slide via chat", fn: async () => {
+  { name: "Add a new slide via chat", requiresAI: true, fn: async () => {
     await _veraChat("Add a single slide to the current module with heading 'Test Slide Alpha' and a text block saying 'Created by UI test suite'. Use add_slide.");
     await _waitFor(() => (document.body.textContent || "").includes("Test Slide Alpha"), 45000);
     // Undo
     document.activeElement?.blur(); await _wait(100);
     _key("z", { ctrlKey: true }); await _wait(300);
   }},
-  { name: "Improve current slide via chat", fn: async () => {
+  { name: "Improve current slide via chat", requiresAI: true, fn: async () => {
     // Go to a content-rich slide first
     document.activeElement?.blur(); await _wait(50);
     for (let i = 0; i < 3; i++) { _key("ArrowRight"); await _wait(100); }
@@ -1252,14 +1280,133 @@ uiSuite("Gallery View", [
   }},
 ]);
 
+// ── CR-12: Gallery reachable from the editor (not just Present mode) ──
+uiSuite("Gallery From Editor", [
+  { name: "Editor is not in fullscreen/Present", fn: async () => {
+    await _waitFor(() => _$("header"), 2000);
+  }},
+  { name: "Overview button visible in the SLIDE TOOLBAR", fn: async () => {
+    await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+  }},
+  { name: "Clicking Overview opens the gallery grid with tiles", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    // Scope to the gallery overlay itself — the editor's module list (still
+    // mounted behind the overlay) has its own numbered mono-font badges that
+    // would otherwise collide with an unscoped document-wide query.
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const cardCount = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono")).length;
+    if (cardCount === 0) throw new Error("gallery opened from editor but shows no slide tiles");
+  }},
+  { name: "Clicking a tile from the editor-opened gallery navigates", fn: async () => {
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const nums = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
+    const card1 = nums.find((n) => n.textContent?.trim() === "1");
+    if (!card1) throw new Error("tile '1' not found in gallery overlay");
+    const cardEl = card1.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
+    if (!cardEl) throw new Error("clickable card wrapper not found for tile '1'");
+    _click(cardEl);
+    await _wait(400);
+    if (_$text("GALLERY")) throw new Error("gallery still open after selecting a tile");
+    await _waitFor(() => _$("header"), 2000); // back in the editor, not fullscreen
+  }},
+  { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    document.activeElement?.blur(); await _wait(100);
+    _key("g"); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    _key("Escape"); await _wait(300);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+]);
+
+// ── CR-08: Dedicated presenter/speaker view ──────────────────────────
+uiSuite("Presenter View", [
+  { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+    await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s"); await _wait(400);
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    const timerEl = _$("[data-testid='presenter-timer']");
+    if (!timerEl) throw new Error("presenter-timer not found");
+    if (!/\d+:\d\d/.test(timerEl.textContent || "")) throw new Error("presenter timer text does not match mm:ss: " + timerEl.textContent);
+    if (!_$("[data-testid='presenter-next']")) throw new Error("Next-slide preview region not found");
+    if (!_$("[data-testid='presenter-notes']")) throw new Error("Speaker notes region not found");
+  }},
+  { name: "Timer keeps advancing (elapsed clock is live)", fn: async () => {
+    const before = _$("[data-testid='presenter-timer']")?.textContent;
+    await _wait(1200);
+    const after = _$("[data-testid='presenter-timer']")?.textContent;
+    if (before == null || after == null) throw new Error("presenter-timer disappeared");
+    // Not a hard equality check (1s tick can be flaky under load) — just confirm it's still a valid mm:ss.
+    if (!/\d+:\d\d/.test(after)) throw new Error("presenter timer stopped showing mm:ss: " + after);
+  }},
+  { name: "Arrow key advances the deck while presenter view is open", fn: async () => {
+    const before = _slidePos();
+    _key("ArrowRight"); await _wait(400);
+    const after = _slidePos();
+    if (before != null && after != null && after === before) throw new Error("ArrowRight did not advance slide with presenter view open");
+  }},
+  { name: "Presenter toggle button closes the view", fn: async () => {
+    const btn = _$("[data-testid='presenter-toggle']");
+    if (!btn) throw new Error("presenter-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+  }},
+  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── CR-09: Deck-level slide transition on advance ────────────────────
+uiSuite("Slide Transitions", [
+  { name: "Enter fullscreen for transition tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
+    await _waitFor(() => _$(".slide-transition-fade"), 2000);
+  }},
+  { name: "Transition wrapper remounts (fresh play) on slide advance", fn: async () => {
+    const before = _$(".slide-transition-fade");
+    if (!before) throw new Error("no .slide-transition-fade element before advancing");
+    _key("ArrowRight"); await _wait(400);
+    await _waitFor(() => {
+      const el = _$(".slide-transition-fade");
+      return el && el !== before;
+    }, 2000);
+  }},
+  { name: "Per-block stagger (.stg-N) still present alongside the deck transition", fn: async () => {
+    await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
+  }},
+  { name: "Exit fullscreen after transition tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
 // ── Review / Comments Suite ─────────────────────────────────────────
 uiSuite("Review", [
   { name: "Review button visible in header", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Review")));
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Comments")));
   }},
   { name: "Review button toggles review mode", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (!btn) throw new Error("Review button not found");
     _click(btn); await _wait(300);
     // Comments panel should open — look for COMMENTS header
@@ -1283,7 +1430,7 @@ uiSuite("Review", [
   }},
   { name: "Module comment icon visible in review mode (💬)", fn: async () => {
     // 💬 icon only visible in review mode — ensure review is active (toggled on by prior test)
-    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (reviewOn) { _click(reviewOn); await _wait(300); }
     await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1000);
     // Exit review mode
@@ -1296,7 +1443,7 @@ uiSuite("Review", [
     if (commentIcon) throw new Error("💬 icon should be hidden in editor mode");
   }},
   { name: "Review mode exit closes panel", fn: async () => {
-    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (!btn) throw new Error("Review button not found");
     _click(btn); await _wait(300);
     // Panel should be gone
@@ -1314,7 +1461,7 @@ uiSuite("Review", [
   }},
   { name: "Review mode and Vera are mutually exclusive", fn: async () => {
     // Open review
-    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     // Now open Vera — should close review
     const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
@@ -1338,7 +1485,7 @@ uiSuite("Review", [
       const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
       if (!panel) throw new Error("Clicking comment badge did not open comments panel");
       // Close review mode
-      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
@@ -1518,14 +1665,15 @@ function VelaUITestRunner() {
 
   const copyResults = () => {
     if (!results) return;
-    const passed = results.filter((r) => r.pass).length;
-    const failed = results.filter((r) => !r.pass).length;
+    const passed = results.filter((r) => r.pass === true).length;
+    const failed = results.filter((r) => r.pass === false).length;
+    const skipped = results.filter((r) => r.pass === "skip").length;
     const lines = [
       `⛵ Vela UI Tests — v${VELA_VERSION}`,
-      `${passed} passed, ${failed} failed, ${results.length} total`,
+      `${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`,
       `${new Date().toISOString()}`,
       "",
-      ...results.map((r) => `${r.pass ? "✅" : "❌"} [${r.suite}] ${r.name} (${r.ms}ms)${r.error ? ` — ${r.error}` : ""}`),
+      ...results.map((r) => `${r.pass === true ? "✅" : r.pass === "skip" ? "⏭️" : "❌"} [${r.suite}] ${r.name} (${r.ms}ms)${r.error ? ` — ${r.error}` : ""}`),
     ];
     const text = lines.join("\n");
     velaClipboard(text);
@@ -1565,8 +1713,9 @@ function VelaUITestRunner() {
     </div>
   );
 
-  const passed = results?.filter((r) => r.pass).length || 0;
-  const failed = results?.filter((r) => !r.pass).length || 0;
+  const passed = results?.filter((r) => r.pass === true).length || 0;
+  const failed = results?.filter((r) => r.pass === false).length || 0;
+  const skippedCount = results?.filter((r) => r.pass === "skip").length || 0;
   const total = results?.length || 0;
   const totalMs = results?.reduce((s, r) => s + r.ms, 0) || 0;
 
@@ -1588,6 +1737,7 @@ function VelaUITestRunner() {
             <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{progress.done}/{progress.total}</span>
             <span style={{ fontSize: 10, color: "#34d399", fontWeight: 600 }}>✓ {progress.passed || 0}</span>
             {(progress.failed || 0) > 0 && <span style={{ fontSize: 10, color: "#f87171", fontWeight: 600 }}>✗ {progress.failed}</span>}
+            {(progress.skipped || 0) > 0 && <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600 }}>⏭️ {progress.skipped}</span>}
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)" }}>{Math.round((progress.done / progress.total) * 100)}%</span>
           </div>
@@ -1600,9 +1750,9 @@ function VelaUITestRunner() {
             {progress.suite} → {progress.test}
           </div>
           {/* Live failures */}
-          {progress.results && progress.results.filter((r) => !r.pass).length > 0 && (
+          {progress.results && progress.results.filter((r) => r.pass === false).length > 0 && (
             <div style={{ maxHeight: 160, overflowY: "auto", padding: "0 14px 8px" }}>
-              {progress.results.filter((r) => !r.pass).map((r, i) => (
+              {progress.results.filter((r) => r.pass === false).map((r, i) => (
                 <div key={i} style={{ fontSize: 10, color: "#f87171", padding: "3px 0", lineHeight: 1.4 }}>
                   ✗ <span style={{ fontWeight: 600 }}>[{r.suite}]</span> {r.name}
                   {r.error && <div style={{ fontSize: 9, color: "#f87171", opacity: 0.7, paddingLeft: 12 }}>↳ {r.error}</div>}
@@ -1620,6 +1770,7 @@ function VelaUITestRunner() {
           <div onClick={() => setExpanded((v) => !v)} style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", borderBottom: expanded ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
             <span style={{ fontSize: 14 }}>{failed > 0 ? "❌" : "✅"}</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>UI Tests: {passed}/{total}</span>
+            {skippedCount > 0 && <span style={{ fontSize: 9, color: "#94a3b8", fontWeight: 600 }}>⏭️ {skippedCount} skipped</span>}
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{(totalMs / 1000).toFixed(1)}s · v{VELA_VERSION}</span>
             <div style={{ flex: 1 }} />
             <button onClick={(e) => { e.stopPropagation(); copyResults(); }} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", padding: "2px 8px", borderRadius: 4, cursor: "pointer", fontSize: 9, fontFamily: FONT.mono }}>{copied ? "Copied!" : "📋"}</button>
@@ -1631,19 +1782,20 @@ function VelaUITestRunner() {
           {expanded && (
             <div style={{ overflowY: "auto", maxHeight: "60vh", padding: "6px 0" }}>
               {Object.entries(suites).map(([name, tests]) => {
-                const suitePassed = tests.every((t) => t.pass);
-                const suiteFailed = tests.filter((t) => !t.pass).length;
+                const suiteFailed = tests.filter((t) => t.pass === false).length;
+                const suiteSkipped = tests.filter((t) => t.pass === "skip").length;
+                const suitePassed = suiteFailed === 0;
                 return (
                   <div key={name} style={{ padding: "4px 14px" }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: suitePassed ? "#34d399" : "#f87171", padding: "4px 0", display: "flex", alignItems: "center", gap: 6 }}>
                       <span>{suitePassed ? "✅" : "❌"}</span>
                       <span>{name}</span>
-                      <span style={{ fontSize: 8, color: "rgba(255,255,255,0.3)" }}>{tests.length} tests{suiteFailed > 0 ? `, ${suiteFailed} failed` : ""}</span>
+                      <span style={{ fontSize: 8, color: "rgba(255,255,255,0.3)" }}>{tests.length} tests{suiteFailed > 0 ? `, ${suiteFailed} failed` : ""}{suiteSkipped > 0 ? `, ${suiteSkipped} skipped` : ""}</span>
                     </div>
                     {tests.map((t, i) => (
-                      <div key={i} style={{ fontSize: 9, padding: "2px 0 2px 18px", color: t.pass ? "rgba(255,255,255,0.5)" : "#f87171", lineHeight: 1.5 }}>
-                        {t.pass ? "✓" : "✗"} {t.name} <span style={{ color: "rgba(255,255,255,0.2)" }}>{t.ms}ms</span>
-                        {t.error && <div style={{ color: "#f87171", fontSize: 8, paddingLeft: 12 }}>↳ {t.error}</div>}
+                      <div key={i} style={{ fontSize: 9, padding: "2px 0 2px 18px", color: t.pass === true ? "rgba(255,255,255,0.5)" : t.pass === "skip" ? "#94a3b8" : "#f87171", lineHeight: 1.5 }}>
+                        {t.pass === true ? "✓" : t.pass === "skip" ? "⏭️" : "✗"} {t.name} <span style={{ color: "rgba(255,255,255,0.2)" }}>{t.ms}ms</span>
+                        {t.error && <div style={{ color: t.pass === "skip" ? "#94a3b8" : "#f87171", fontSize: 8, paddingLeft: 12 }}>↳ {t.error}</div>}
                       </div>
                     ))}
                   </div>

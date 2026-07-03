@@ -94,7 +94,11 @@ function ChangelogDialog({ onClose }) {
       {VELA_CHANGELOG.slice(0, 3).map((c, i) => (
         <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.border}` : "none" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: i === 0 ? T.accent : T.textDim, flexShrink: 0, minWidth: 32 }}>v{c.v}</span>
-          <span style={{ fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>{c.d}</span>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>
+            {Array.isArray(c.d)
+              ? <ul style={{ margin: 0, paddingLeft: 16 }}>{c.d.map((b, j) => <li key={j} style={{ marginBottom: 2 }}>{b}</li>)}</ul>
+              : c.d}
+          </div>
         </div>
       ))}
       {/* \u2500\u2500 Dependencies (collapsible) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
@@ -219,39 +223,11 @@ function CommentsPanel({ state, dispatch, isMobile }) {
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [images, setImages] = useState([]); // [{dataUrl, fileName}]
-  const fileRef = useRef(null);
 
-  const addImages = (files) => {
-    for (const file of files) {
-      if (!file.type?.startsWith("image/")) continue;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const compressed = await compressSlideImage(reader.result);
-        setImages((prev) => [...prev, { dataUrl: compressed, fileName: file.name }]);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handlePaste = (e) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files = [];
-    for (const item of items) { const f = item.getAsFile?.(); if (f?.type?.startsWith("image/")) files.push(f); }
-    if (files.length > 0) { e.preventDefault(); addImages(files); }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const files = [];
-    for (const item of (e.dataTransfer?.files || [])) { if (item.type?.startsWith("image/")) files.push(item); }
-    if (files.length) addImages(files);
-  };
-
+  // No prompt is fine — that just creates a fresh, blank deck (in a new file).
+  // A prompt (short ask or a long pasted README/outline) hands it to Vera to build.
   const submit = () => {
-    if (!name.trim() && !prompt.trim() && images.length === 0) return;
-    onSubmit({ title: name.trim() || "Untitled", prompt: prompt.trim(), images: images.map((i) => i.dataUrl) });
+    onSubmit({ title: name.trim() || "Untitled", prompt: prompt.trim(), images: [] });
     onClose();
   };
 
@@ -273,40 +249,13 @@ function NewDeckDialog({ onClose, onSubmit }) {
           style={{ width: "100%", padding: "10px 12px", fontSize: 15, fontFamily: FONT.body, fontWeight: 600, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" }} />
       </div>
 
-      {/* Prompt */}
-      <div style={{ marginBottom: 14 }}>
-        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Starting Prompt <span style={{ fontWeight: 400, color: T.textDim }}>— what should Vera build?</span></label>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={"e.g. Create a 10-slide pitch deck on AI agents\nwith sections: Intro, Architecture, Demo, Roadmap"}
-          onPaste={handlePaste}
-          rows={4}
-          style={{ width: "100%", padding: "10px 12px", fontSize: 14, fontFamily: FONT.body, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }} />
-      </div>
-
-      {/* Image upload */}
+      {/* Prompt — optional; also the place to paste long source (README / notes / outline) */}
       <div style={{ marginBottom: 18 }}>
-        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Reference Images <span style={{ fontWeight: 400, color: T.textDim }}>— optional, paste or drop</span></label>
-        <div onDrop={handleDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
-          style={{ border: `1px dashed ${T.border}`, borderRadius: 8, padding: images.length > 0 ? "8px" : "16px 12px", background: T.bgInput, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minHeight: 50, cursor: "pointer" }}
-          onClick={() => { if (images.length === 0) fileRef.current?.click(); }}>
-          <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
-            onChange={(e) => { addImages(Array.from(e.target.files || [])); e.target.value = ""; }} />
-          {images.length === 0 && (
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>📷 Click, paste, or drop images here</span>
-            </div>
-          )}
-          {images.map((img, i) => (
-            <div key={i} style={{ position: "relative", width: 56, height: 56, borderRadius: 6, overflow: "hidden", border: `1px solid ${T.border}`, flexShrink: 0 }}>
-              <img src={img.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              <button onClick={(e) => { e.stopPropagation(); setImages((prev) => prev.filter((_, j) => j !== i)); }}
-                style={{ position: "absolute", top: 1, right: 1, width: 16, height: 16, borderRadius: "50%", background: "rgba(0,0,0,0.7)", color: "#fff", border: "none", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>✕</button>
-            </div>
-          ))}
-          {images.length > 0 && (
-            <button onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-              style={{ width: 56, height: 56, borderRadius: 6, border: `1px dashed ${T.border}`, background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: T.textDim, flexShrink: 0 }}>+</button>
-          )}
-        </div>
+        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Starting Prompt <span style={{ fontWeight: 400, color: T.textDim }}>— optional; leave empty for a blank deck</span></label>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={"e.g. Create a 10-slide pitch deck on AI agents with sections: Intro, Architecture, Demo, Roadmap.\n\nOr paste a whole README / article / outline here and Vera will build a deck from it.\n\nHave images or files? Drop them in this deck's folder and reference them by name in your prompt."}
+          rows={10}
+          style={{ width: "100%", padding: "10px 12px", fontSize: 14, fontFamily: FONT.body, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }} />
+        <div style={{ marginTop: 6, fontFamily: FONT.mono, fontSize: 10, color: T.textDim }}>Tip: paste long source text directly. To use attachments, drop the files into this deck's folder and mention them by filename so Vera can reference them.</div>
       </div>
 
       {/* Actions */}
@@ -872,6 +821,7 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
+  const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
   const [iconPicker, setIconPicker] = useState(null); // { value, onPick } — searchable icon picker
@@ -1235,12 +1185,15 @@ export default function App() {
     }
   }, [state.lanes, state.selectedId]);
 
-  // Auto-create default lane if none exist
+  // An empty deck should be immediately editable: seed a first section so the
+  // user can add slides right away (no "create deck" / "add section" step).
+  // Gated by loaded.current so it never races initial hydration; skipped while
+  // an AI build is pending/streaming — Vera populates the deck itself then.
   useEffect(() => {
-    if (loaded.current && state.lanes.length === 0) {
-      dispatch({ type: "ADD_LANE", title: "Main" });
-    }
-  }, [state.lanes.length]);
+    if (!loaded.current || state.lanes.length !== 0) return;
+    if (state._bootstrap || state.chatLoading) return;
+    dispatch({ type: "INSERT_ITEM", title: "New section" });
+  }, [state.lanes.length, state._bootstrap, state.chatLoading]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
   // In LOCAL_MODE the file on disk is the source of truth (synced via
@@ -1444,6 +1397,7 @@ export default function App() {
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
+                {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 <button onClick={() => { setJsonModal(jsonModal ? null : 'copy'); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}>{"{ }"} Copy / Paste JSON</button>
               </div>
@@ -1489,6 +1443,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
+            {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { if (!soReason) { setStandaloneExport(true); setMobileMenu(false); } }} disabled={!!soReason} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: soReason ? "not-allowed" : "pointer" }}>{"🌐"} Standalone HTML</button>; })()}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
@@ -1504,9 +1459,9 @@ export default function App() {
           {total === 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 12, padding: 20 }}>
               <div style={{ fontSize: 36, opacity: 0.15 }}>⛵</div>
-              <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, textAlign: "center", lineHeight: 1.7, maxWidth: 280 }}>Start a new deck, ask <span style={{ color: T.accent, cursor: "pointer" }} onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }}>Vera</span>, or drop a <span style={{ color: T.accent }}>.json</span> / <span style={{ color: T.accent }}>.vela</span> file.</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, textAlign: "center", lineHeight: 1.7, maxWidth: 280 }}>Your deck is ready. Add a section to start, ask <span style={{ color: T.accent, cursor: "pointer" }} onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }}>Vera</span>, or drop a <span style={{ color: T.accent }}>.json</span> / <span style={{ color: T.accent }}>.vela</span> file.</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setNewDeckDialog(true)} style={{ padding: "8px 18px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{"⛵"} New Deck</button>
+                <button onClick={() => { dispatch({ type: "INSERT_ITEM", title: "New section" }); if (isMobile) setMobileTab("list"); }} style={{ padding: "8px 18px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{"＋"} Add section</button>
                 <button onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }} style={S.btn({ padding: "8px 14px", color: T.accent, border: `1px solid ${T.accent}40`, borderRadius: 6, fontSize: 14, display: "flex", alignItems: "center", gap: 4 })}>🤖 Vera</button>
               </div>
             </div>
@@ -1609,6 +1564,7 @@ export default function App() {
         if (isMobile) setMobileTab("chat");
       }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {standaloneExport && <StandaloneHtmlModal state={state} onClose={() => setStandaloneExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
         if (result) {

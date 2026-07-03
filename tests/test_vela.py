@@ -22,6 +22,7 @@ EXAMPLES = os.path.join(REPO_ROOT, "examples")
 
 passes = 0
 fails = 0
+skips = 0
 
 def ok(name):
     global passes
@@ -32,6 +33,11 @@ def fail(name, reason=""):
     global fails
     fails += 1
     print(f"  ❌ {name}{f' — {reason}' if reason else ''}")
+
+def skip(name, reason=""):
+    global skips
+    skips += 1
+    print(f"  ⏭️  {name}{f' — {reason}' if reason else ''}")
 
 
 # ━━━ Unit Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -376,6 +382,8 @@ def test_security():
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 count = m.group(1) if m else "?"
                 ok(f"SVG mXSS jsdom round-trip suite ({count} payloads)")
+            elif r.returncode == 2:
+                skip("SVG mXSS jsdom round-trip suite", "jsdom not installed — run: npm install")
             else:
                 fail("SVG mXSS jsdom round-trip suite",
                      f"node tests/test_svg_mxss.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
@@ -406,6 +414,8 @@ def test_security():
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 count = m.group(1) if m else "?"
                 ok(f"data: image sanitization suite ({count} cases)")
+            elif r.returncode == 2:
+                skip("data: image sanitization suite", "jsdom not installed — run: npm install")
             else:
                 fail("data: image sanitization suite",
                      f"node tests/test_data_image_uri.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
@@ -456,6 +466,31 @@ def test_security():
             fail("Sprint 7-1 UX logic suite", "timeout after 60s")
     else:
         fail("Sprint 7-1 UX logic suite", f"missing: {uxlogic_script}")
+
+    # 9d2. Standalone HTML export machinery (buildStandaloneHtml et al., part-pdf.jsx):
+    # splices the current deck into the app's own JSX, transpiles with the vendored
+    # Babel, and neutralizes </script>/<!-- in the COMPILED output before inlining
+    # alongside 3 CDN <script> tags pinned by SRI. Drives the REAL functions (regex-
+    # extracted from part-pdf.jsx) against the real vela.jsx + demo deck.
+    standalone_script = os.path.join(REPO_ROOT, "tests", "test_standalone_html.cjs")
+    if os.path.exists(standalone_script):
+        try:
+            r = subprocess.run(["node", standalone_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"Standalone HTML export machinery suite ({count} checks)")
+            elif r.returncode == 2:
+                skip("Standalone HTML export machinery suite", "missing vela.jsx/vendor babel — run concat.py")
+            else:
+                fail("Standalone HTML export machinery suite",
+                     f"node tests/test_standalone_html.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("Standalone HTML export machinery suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("Standalone HTML export machinery suite", "timeout after 60s")
+    else:
+        fail("Standalone HTML export machinery suite", f"missing: {standalone_script}")
 
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the
@@ -3126,7 +3161,7 @@ if __name__ == "__main__":
     total_fails = fails + (1 if extra_fails else 0)
 
     print(f"\n{'━' * 40}")
-    print(f"  ✅ {passes} passed  {'❌ ' + str(fails) + ' failed' if fails else ''}")
+    print(f"  ✅ {passes} passed  {(str(skips) + ' skipped  ') if skips else ''}{'❌ ' + str(fails) + ' failed' if fails else ''}")
     if run_all and extra_fails:
         print(f"  ❌ External test suites had failures")
     print(f"{'━' * 40}")

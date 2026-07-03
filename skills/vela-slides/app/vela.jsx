@@ -99,11 +99,13 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.80";
+const VELA_VERSION = "12.82";
 const VELA_CHANGELOG = [
-  { v: "12.80", d: "Local AI backend for the CLI: a new agent_backend.py routes Vera's AI calls to the local `claude` CLI (Claude Code print mode) over the existing loopback channel, so `vela server` can drive AI with no Anthropic API key. The agent is launched as a pure text completion with all tools, MCP servers, and settings sources disabled — it cannot touch the filesystem, shell, or network regardless of the prompt. This lockdown is now the single security contract shared with the Neutralino desktop gatekeeper (both hardened identically; a parity test blocks drift). The channel is loopback-only, rejects off-machine (Host) and cross-site (Origin) callers, gates the spawn endpoint with a per-server token, verifies the agent binary is not world-writable, caps concurrent spawns, passes the system prompt by file (never on the command line), and never reflects a request-supplied value into a response header. AI is OFF by default and strictly opt-in — `vela server start --ai` for a served session, or the offline `vela-drive ai` harness / `render-offline --channel-port` for dev-testing — so all AI features can be exercised end-to-end in a headless browser. No change to artifact runtime." },
-  { v: "12.79", d: "Security (defense-in-depth): harden the plain-text field sanitizer against incomplete single-pass HTML-tag stripping, and route PDF-export link extraction through the URL-scheme allowlist so only http/https/mailto links are embedded. Static-analysis clean-up; regression coverage added." },
-  { v: "12.78", d: "List/presenter UX batch. The slide '+ add' affordance reveals its Blank / AI / Section options on hover and hides them on mouse-out (a click still pins it open); the same faint '+ add' now appears consistently in empty sections and between slides. An empty section now shows a tall dashed drop zone (with a 'Drop slide here' cue) so a slide can actually be dropped into it — the old target was a one-line strip too thin to hit. Adding a section inserts it at that exact add-point: choosing Section between two slides splits the tail slides off into the new section, while at the top/bottom it adds an adjacent empty one; the new section opens in a focused, empty title field so you can name it immediately. The top header's slide/section stats pill keeps full width so the slide count always shows, ceding space from the deck title. Presenter mode: closing the table-of-contents/search pane returns keyboard focus to the slide canvas, so arrow-key navigation and shortcuts work again instead of being swallowed by the hidden search box." },
+  { v: "12.82", d: ["New Deck dialog is now the single entry point — removed the separate 'From Source' dialog.", "Starting Prompt is optional and takes long pasted text (README / article / outline) directly; leaving it empty creates a fresh blank deck in a new file.", "Dropped in-dialog image attachments — instead, place files in the deck's folder and reference them by name in the prompt.", "An empty deck is now immediately editable: it opens with a fresh, ready-to-name section so you can add slides right away instead of a 'New Deck' prompt."] },
+  { v: "12.81", d: ["Sprint 'Tradewinds' — share & present.", "Share: Export → Standalone HTML produces one shareable, read-only .html (no editor chrome), self-transpiled and safely inlined, loading React/lucide from a CDN with SHA-pinned integrity; optional 'Made with Vela ⛵' footer.", "Present: dedicated presenter/speaker view (current + next-slide preview, speaker notes, live elapsed timer, per-slide budget), grid gallery/overview reachable from the editor, and a tasteful deck-level slide transition.", "One-prompt: Generate Deck from Source turns a pasted README / URL text / PDF text into a full deck via the existing AI path.", "Present-mode polish: edit affordances fully suppressed while presenting, larger/higher-contrast slide counter, hover-consistent block add affordances, toolbar 'Edit' renamed 'AI Edit'.", "Test honesty: realigned UI-battery selectors, AI-dependent tests skip-with-reason when AI unavailable, jsdom-gated suites skip cleanly instead of failing."] },
+  { v: "12.80", d: ["Local AI backend: `vela server` can drive Vera via the local `claude` CLI — no Anthropic API key.", "The agent runs as a locked-down text completion — no tools, MCP, filesystem, shell, or network.", "Shares one hardened security contract with the desktop gatekeeper, enforced by a parity test.", "AI is OFF by default; opt in with `vela server start --ai`. No change to artifact runtime."] },
+  { v: "12.79", d: ["Security (defense-in-depth): hardened the plain-text field sanitizer.", "PDF-export links routed through the URL-scheme allowlist (http/https/mailto only).", "Regression coverage added."] },
+  { v: "12.78", d: ["'+ add' menu (Blank / AI / Section) reveals on hover — in empty sections and between slides.", "Empty sections show a tall drop zone so a slide can be dropped in.", "Adding a Section between slides splits the tail into it and opens it focused for naming.", "Header stats pill always shows the slide count.", "Presenter: closing the TOC/search pane restores arrow-key navigation."] },
   { v: "12.77", d: "Changelog: condense historical release notes to concise one-line summaries." },
   { v: "12.76", d: "Sprint 7-1 UX batch: section drag-reorder (drops into empty sections too); Blank/AI/Section add menu (blank inherits prior styling); hide slides/elements via eye toggle (excluded from totals, exports, presenter TOC) with a visible-vs-hidden stats dialog; header rounds duration to whole minutes; presenter TOC/search on Ctrl+E; AI edits preserve existing images; Export Vela deck file; desktop new-deck writes a fresh file, About 'Check for updates', responsive Re-scan." },
   { v: "12.75", d: "Editing UX: searchable icon picker, per-item hover toolbar, inline '+ add', layout-aware image paste; side-by-side image layouts follow vertical align and size to the content column; link-over-zoom on zoomable blocks; live design-variant tiles with Original revert; Improve runs in background; serve.py script-tag boundary fix + test." },
@@ -1244,6 +1246,7 @@ const getCss = () => `
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} .fade-in{animation:fadeIn .3s ease-out}
+@keyframes slideTransitionFade{from{opacity:0;transform:scale(0.985)}to{opacity:1;transform:scale(1)}} .slide-transition-fade{animation:slideTransitionFade .25s ease-out both}
 @keyframes navToastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes navToastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
 .nav-toast-in{animation:navToastIn .25s ease-out forwards}
@@ -2087,6 +2090,10 @@ function newItemFor(block, type) {
 // Lets the user append a placeholder item to a multi-item block without AI.
 // variant: "row" full-width dashed bar (column lists) · "chip" compact inline
 // (wrap/horizontal layouts) · "cell" grid-cell-sized dashed box.
+// Hover-reveal (CR-06): mirrors the slide-level "＋ add" affordance (AddMenu,
+// part-list.jsx) — idle at low opacity so it reads as a hint rather than
+// permanent chrome, full opacity + accent styling on hover. Same policy
+// everywhere an "+ Add X" appears (bullets, flow, table rows, steps, etc.).
 function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
   const [hover, setHover] = useState(false);
   const ac = accent || T.accent;
@@ -2098,7 +2105,8 @@ function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
     border: `1px dashed ${hover ? ac : T.border}`,
     borderRadius: variant === "cell" ? 10 : 6,
     background: hover ? `${ac}12` : "transparent",
-    transition: "color .15s, border-color .15s, background .15s",
+    opacity: hover ? 1 : 0.28,
+    transition: "opacity .15s, color .15s, border-color .15s, background .15s",
     boxSizing: "border-box", userSelect: "none",
     padding: variant === "chip" ? "4px 10px" : variant === "cell" ? 16 : "6px 12px",
     width: variant === "chip" ? "fit-content" : "100%",
@@ -2395,23 +2403,26 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Show the "+ add item" affordance only in the live editable panel
   // (never in present/thumbnail/PDF, and only when an onChange sink exists).
   const canEdit = editable && !presenting && typeof onChange === "function";
+  // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
+  // icon slot) must also never leak into Present mode — gate it the same way.
+  const textEditable = editable && !presenting;
   switch (block.type) {
 
     case "heading": {
       const headingText = (block.text || "").replace(/^\*\*\s*|\s*\*\*$/g, "").replace(/\*\*/g, "");
-      const headingIconSlot = block.icon || editable;
+      const headingIconSlot = block.icon || textEditable;
       const hs = { fontFamily: FONT.display, fontSize: SIZES[block.size || "2xl"], fontWeight: block.weight || 700, color: block.color || st.text, lineHeight: 1.2, letterSpacing: "-0.02em", textAlign: headingIconSlot ? undefined : block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, ...block.style };
       const wrapS = headingIconSlot ? { display: "flex", alignItems: "center", gap: 10, justifyContent: block.align === "center" ? "center" : block.align === "right" ? "flex-end" : undefined } : {};
       return <div className={cls} style={{ ...wrapS, ...hs }}>
-        <EditableIcon editable={editable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={headingText} editable={editable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
+        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
       </div>;
     }
 
     case "text":
-      return <EditableText className={cls} text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline
+      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline
         style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, textAlign: block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, fontStyle: block.italic ? "italic" : "normal", fontWeight: block.bold ? 600 : 400, ...block.style }} />;
 
     case "bullets":
@@ -2427,11 +2438,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
       </div></ZoomWrap>;
 
     case "code":
-      return <CodeBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
+      return <CodeBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
 
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
@@ -2459,22 +2470,22 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "callout":
-      return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
-        <EditableIcon editable={editable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div> : null}
         </EditableIcon>
-        <EditableText text={block.value} editable={editable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
-        {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
       </div>;
 
     case "quote":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", ...block.style }}>
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
           style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "xl"], fontWeight: 600, color: block.color || st.text, lineHeight: 1.4, fontStyle: "italic", maxWidth: "85%" }} />
-        {block.author && <EditableText text={block.author} editable={editable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
+        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
@@ -2492,7 +2503,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
-        {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
     }
 
@@ -2502,26 +2513,26 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgePadV = Math.max(3, Math.round(badgeFontSize * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontSize * 0.8));
       return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontSize * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
-        <EditableIcon editable={editable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} />
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} />
       </div>;
     }
 
     case "icon": {
       const sz = { sm: 20, md: 28, lg: 40, xl: 56 }[block.size || "md"] || 28;
       const iconEl = getIcon(block.name, { size: sz, color: block.color || st.accent, strokeWidth: block.strokeWidth || 1.5 });
-      if (!iconEl && !editable) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
+      if (!iconEl && !textEditable) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", gap: 6, ...block.style }}>
-        <EditableIcon editable={editable} value={block.name} size={sz} onPick={(name) => onChange?.({ name })}>
+        <EditableIcon editable={textEditable} value={block.name} size={sz} onPick={(name) => onChange?.({ name })}>
           {iconEl
             ? (block.circle !== false
               ? <IconBubble icon={block.name} size={sz} color={block.color || st.accent} bg={block.bg || `${block.color || st.accent}15`} strokeWidth={block.strokeWidth || 1.5} />
               : iconEl)
             : (block.name ? <div style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div> : null)}
         </EditableIcon>
-        {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, letterSpacing: "0.03em", textAlign: "center" }} />}
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, letterSpacing: "0.03em", textAlign: "center" }} />}
       </div>;
     }
 
@@ -2568,8 +2579,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} /> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-            {item.sublabel && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
+            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
+            {item.sublabel && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
           </ItemChrome>
         );
         if (i < items.length - 1) {
@@ -2623,12 +2634,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const brdColor = block.borderColor || st.border;
       return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
         {headers.length > 0 && <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: hdrBg }}>
-          {headers.map((h, hi) => <EditableText key={hi} text={h} editable={editable} onSave={(v) => {
+          {headers.map((h, hi) => <EditableText key={hi} text={h} editable={textEditable} onSave={(v) => {
             const nh = [...headers]; nh[hi] = v; onChange?.({ headers: nh });
           }} style={{ padding: "10px 14px", fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 700, color: hdrColor, letterSpacing: "0.03em", textTransform: "uppercase", borderRight: hi < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>}
         {rows.map((row, ri) => <div key={ri} className={stg(staggerIdx, ri + 1)} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: block.striped && ri % 2 === 1 ? `${st.accent}08` : "transparent", borderTop: `1px solid ${brdColor}` }}>
-          {(row || []).map((cell, ci) => <EditableText key={ci} text={String(cell)} editable={editable} onSave={(v) => {
+          {(row || []).map((cell, ci) => <EditableText key={ci} text={String(cell)} editable={textEditable} onSave={(v) => {
             const nr = rows.map((r, i) => i === ri ? r.map((c, j) => j === ci ? v : c) : r);
             onChange?.({ rows: nr });
           }} style={{ padding: "9px 14px", fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
@@ -2665,7 +2676,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "sm"], fontWeight: 500, color: block.labelColor || st.text }} />
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "sm"], fontWeight: 500, color: block.labelColor || st.text }} />
               {block.showValue !== false && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: col, fontWeight: 700 }}>{val}%</span>}
             </div>
             <div style={{ width: "100%", height: barH, borderRadius: barH / 2, background: trackCol, overflow: "hidden" }}>
@@ -2700,8 +2711,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: lineCol, marginTop: 4 }} />}
             </div>
             <div style={{ flex: 1, paddingTop: 3 }}>
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
-              {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
             </div>
           </ItemChrome>;
         })}
@@ -2728,7 +2739,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <span style={{ display: "flex", flexShrink: 0 }}>{getIcon(item.icon, { size: 12, color: variant === "filled" ? "#fff" : col, strokeWidth: 2 })}</span> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" />
+            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" />
           </ItemChrome>;
         })}
         {canEdit && <AddItem variant="chip" label="Add" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"tag-group"))} />}
@@ -2754,9 +2765,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: lineCol, marginTop: 4 }} />}
               </div>
               <div style={{ flex: 1 }}>
-                {item.date && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 3 }} />}
-                <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
-                {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
+                {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 3 }} />}
+                <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+                {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
               </div>
             </ItemChrome>
           ))}
@@ -2775,9 +2786,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
-              {item.date && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-              {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
+              {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
+              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
             </ItemChrome>
           ))}
         </div>
@@ -3366,7 +3377,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         })()}
         {branding?.enabled
           ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: st.muted, opacity: 0.35 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -3390,6 +3401,13 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
+      // loaded deck has selectedId=null, which the presentation blank-gate treats as
+      // "not ready" and renders blank. Auto-select the first module so the shared deck
+      // opens straight into its first slide. Editor behavior is unchanged (flag off).
+      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;
         for (const l of loaded.lanes) { const it = l.items.find((i) => i.id === loaded.selectedId); if (it) { maxSlides = it.slides?.length || 0; break; } }
@@ -3403,7 +3421,7 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
-    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId) || state.lanes[0]; if (!lane) return state; const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: state.lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
+    case "INSERT_ITEM": { let lanes = state.lanes; let lane = lanes.find((l) => l.id === a.laneId) || lanes[0]; if (!lane) { lane = { id: uid(), title: a.laneTitle || "Slides", collapsed: false, items: [] }; lanes = [...lanes, lane]; } const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
     // Insert a section at an EXACT position within a source section's slide list.
     // At a mid-list add-point the tail slides split off into the new section; at the
     // very top (idx 0) or very bottom (idx>=len) a new empty section is inserted
@@ -5565,6 +5583,61 @@ function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose, anchor }
   );
 }
 
+// ━━━ PresenterView — CR-08: single-screen speaker dashboard shown from
+// Present mode (button + 'S' key). Offline can't drive a real second
+// monitor, so this is a full-page dashboard overlay (same slot/precedent as
+// GalleryView below): current slide, a "Next ▸" preview, speaker notes
+// (slide.notes — the real per-slide field authored via the NOTES bar, not
+// the separate offline studyNotes/student-mode feature), an elapsed timer
+// running since Present mode was entered, and the slide position. Slide
+// navigation itself is handled by the existing global arrow-key handler
+// (unaffected by this overlay), so advancing the deck behind it just works.
+function fmtElapsed(totalSeconds) {
+  const s = Math.max(0, totalSeconds | 0);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+  const notes = (current?.notes || "").trim();
+  const studyNotes = (current?.studyNotes?.text || "").trim();
+  return (
+    <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
+        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
+        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
+        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
+        <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <div style={{ flex: 1, display: "flex", gap: 18, padding: 20, minHeight: 0 }}>
+        <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
+          <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+          </div>
+          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
+            {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
+            {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
+            </div>}
+          </div>
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
 function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
   const gridRef = useRef(null);
@@ -6227,6 +6300,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting && slideIndex > 0) dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
+
+  // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
+  // is entered, stops (and hides the presenter view) on exit.
+  useEffect(() => {
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    presentStartRef.current = Date.now();
+    setPresentElapsed(0);
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    return () => clearInterval(id);
+  }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
   // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
   // presented). Self-contained: only acts when fullscreen AND the current slide
@@ -6259,6 +6342,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showGallery, setShowGallery] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
+  // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
+  // next-slide preview, speaker notes, elapsed timer. Toggled from Present
+  // mode only (button + 'S' key), independent of the audience-facing slide.
+  const [showPresenterView, setShowPresenterView] = useState(false);
+  const showPresenterViewRef = useRef(false);
+  const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
+  const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -6580,7 +6671,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // S → presenter view toggle (Present mode only)
+      if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresenterView((v) => !v);
+      }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
+      if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
       // Ctrl+C → copy current slide to system clipboard
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
         const curSlides = slidesRef.current;
@@ -6956,7 +7052,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       {measureHarness}
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-        <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        {/* Deck-level transition (CR-09): key on slideIndex remounts this wrapper
+            on every slide advance, replaying the subtle fade/scale-in defined by
+            .slide-transition-fade (part-imports.jsx). Independent of the per-block
+            .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
+        <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -6972,9 +7074,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 124, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -6984,50 +7087,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
           </div>
         </div>}
-        {/* Floating Edit + New Slide in fullscreen */}
-        {!isStudent && !improving && <div style={{ position: "absolute", bottom: 20, right: 20, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          {showQuickEdit && !quickEditing && <div onClick={(e) => e.stopPropagation()} style={{ width: isMobile ? "calc(100vw - 40px)" : 320, maxWidth: 320, background: "rgba(20,20,30,0.95)", border: `1px solid ${T.accent}40`, borderRadius: 12, padding: "12px 14px", boxShadow: "0 12px 48px rgba(0,0,0,0.6)", backdropFilter: "blur(16px)", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>QUICK EDIT</span>
-              {quickEditImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
-              <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>E to toggle</span>
-              <button onClick={() => { setShowQuickEdit(false); setQuickEditImage(null); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 14, padding: 0 }}>✕</button>
-            </div>
-            <textarea autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }}
-              onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }}
-              placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors..."}
-              style={{ width: "100%", minHeight: 52, maxHeight: 80, padding: "6px 10px", fontSize: 13, fontFamily: FONT.body, background: "rgba(255,255,255,0.07)", border: `1px solid rgba(255,255,255,0.12)`, borderRadius: 6, color: "#fff", outline: "none", resize: "vertical", lineHeight: 1.4, boxSizing: "border-box" }} />
-            {quickEditImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={quickEditImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", objectFit: "cover" }} /><button onClick={() => setQuickEditImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runQuickEdit} disabled={!quickEditPrompt.trim()} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: quickEditPrompt.trim() ? T.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: quickEditPrompt.trim() ? "pointer" : "default", opacity: quickEditPrompt.trim() ? 1 : 0.4, width: "100%" }}>Apply edit</button>
-          </div>}
-          {showNewSlide && !newSlideGenerating && <div onClick={(e) => e.stopPropagation()} style={{ width: isMobile ? "calc(100vw - 40px)" : 320, maxWidth: 320, background: "rgba(20,20,30,0.95)", border: `1px solid ${T.green}40`, borderRadius: 12, padding: "12px 14px", boxShadow: "0 12px 48px rgba(0,0,0,0.6)", backdropFilter: "blur(16px)", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.green, letterSpacing: "0.05em" }}>NEW SLIDE</span>
-              {newSlideImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
-              <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>N to toggle</span>
-              <button onClick={() => { setShowNewSlide(false); setNewSlideImage(null); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 14, padding: 0 }}>✕</button>
-            </div>
-            <textarea autoFocus value={newSlidePrompt} onChange={(e) => setNewSlidePrompt(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && newSlidePrompt.trim()) { e.preventDefault(); runNewSlide(); } if (e.key === "Escape") { setShowNewSlide(false); setNewSlideImage(null); } }}
-              onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setNewSlideImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }}
-              placeholder={"Describe the slide... (paste image)\nE.g.: Title slide, comparison table..."}
-              style={{ width: "100%", minHeight: 52, maxHeight: 80, padding: "6px 10px", fontSize: 13, fontFamily: FONT.body, background: "rgba(255,255,255,0.07)", border: `1px solid rgba(255,255,255,0.12)`, borderRadius: 6, color: "#fff", outline: "none", resize: "vertical", lineHeight: 1.4, boxSizing: "border-box" }} />
-            {newSlideImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={newSlideImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", objectFit: "cover" }} /><button onClick={() => setNewSlideImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runNewSlide} disabled={!aiOk || !newSlidePrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: aiOk && newSlidePrompt.trim() ? T.green : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: aiOk && newSlidePrompt.trim() ? "pointer" : "not-allowed", opacity: aiOk && newSlidePrompt.trim() ? 1 : 0.4, width: "100%" }}>{aiOk ? "Generate slide" : "AI not enabled"}</button>
-          </div>}
-          {!showQuickEdit && !showNewSlide && !quickEditing && !newSlideGenerating && <div style={{ display: "flex", gap: 3, padding: "3px 4px", opacity: 0.6, transition: "opacity 0.3s" }} onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}>
-            <button onClick={() => { setShowNewSlide(true); setShowQuickEdit(false); }} title="New slide (N)" style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: T.green + "cc", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>+</button>
-            <button onClick={() => { if (aiOk) { setShowQuickEdit(true); setShowNewSlide(false); } }} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: aiOk ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
-            <button onClick={() => { if (aiOk && !improving && !altLoading && slides.length > 0) runImproveRef.current?.(null, "slide"); }} title={aiOk ? "Improve (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: improving ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !altLoading ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !altLoading && !improving ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✨</button>
-            <button onClick={() => { if (aiOk && !altLoading && !improving && slides.length > 0) runAlternatives(); }} title={aiOk ? "Design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !improving && !altLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
-          </div>}
-          {(quickEditing || newSlideGenerating) && <div style={{ padding: "3px 4px" }}><div style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 13, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span></div></div>}
-        </div>}
+        {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
+            view (CR-03): this branch is the audience-facing Present surface, and a
+            pencil/+ edit cluster here is edit chrome that must never be visible to
+            an audience. Equivalent Quick Edit / New Slide / Improve / Variants
+            controls already exist in the non-fullscreen editor's dialog zone and
+            SLIDE TOOLBAR strip below — exit Present (F) to reach them. */}
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showPresenterView && (() => {
+        let nextIdx = -1;
+        for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
+        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+      })()}
     </div>
   );
 
@@ -7218,7 +7292,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>✏️{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Edit</span>}</button>
+          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
@@ -7226,6 +7300,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <div style={{ width: 1, height: 22, background: T.border + "60" }} />
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -7247,6 +7323,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(260, allMods.length * 32 + 40); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 200, maxWidth: "calc(100vw - 16px)", maxHeight: 260, overflowY: "auto", zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><div style={{ padding: "4px 8px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>{allMods.length === 0 ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No other modules</div> : allMods.map((m) => <button key={m.id} onClick={() => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId: m.id, index: slideIndex }); setShowMoveToModule(false); }} style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{m.title}</button>)}</div></>; })()}
       </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
   );
 }
@@ -8632,13 +8709,22 @@ function uiSuite(name, tests) {
 async function runUITests(onProgress) {
   const allResults = [];
   let total = UI_TEST_SUITES.reduce((s, suite) => s + suite.tests.length, 0);
-  let done = 0, passed = 0, failed = 0;
+  let done = 0, passed = 0, failed = 0, skipped = 0;
 
   for (const suite of UI_TEST_SUITES) {
     for (const test of suite.tests) {
       done++;
-      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, results: allResults });
+      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, skipped, results: allResults });
       const t0 = performance.now();
+      // Tests flagged requiresAI degrade to a visible skip (not a failure) when
+      // Vera AI is unavailable (offline/keyless) — see CR-02.
+      if (test.requiresAI && typeof velaAIAvailable === "function" && !velaAIAvailable()) {
+        skipped++;
+        allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
+        if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
+        await _wait(50);
+        continue;
+      }
       try {
         await test.fn();
         passed++;
@@ -8647,7 +8733,7 @@ async function runUITests(onProgress) {
         failed++;
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
       }
-      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, results: [...allResults] });
+      if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
       await _wait(50);
     }
   }
@@ -8758,6 +8844,20 @@ uiSuite("Presenter", [
       if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
     }
   }},
+  { name: "Present mode shows no edit chrome (CR-03)", fn: async () => {
+    // A presented slide must show ZERO edit affordances: no dashed hover-outline
+    // (EditableText), no ghost "+" icon-slot marker (EditableIcon with no value),
+    // no floating pencil/edit button. Scoped to the fullscreen container only.
+    const fs = _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']");
+    if (!fs) throw new Error("No fixed fullscreen element found");
+    const all = _$$("*", fs);
+    const dashedOutline = all.filter((el) => el.style?.outlineStyle === "dashed");
+    if (dashedOutline.length > 0) throw new Error(`found ${dashedOutline.length} dashed-outline edit-chrome element(s) while presenting`);
+    const ghostPlus = all.filter((el) => el.children.length === 0 && (el.textContent || "").trim() === "+");
+    if (ghostPlus.length > 0) throw new Error(`found ${ghostPlus.length} ghost "+" affordance(s) while presenting`);
+    const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
+    if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _wait(300);
@@ -8775,6 +8875,11 @@ uiSuite("Toolbar", [
   }},
   { name: "Edit button exists (✏️)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Edit") || b.textContent?.includes("✏")));
+  }},
+  { name: "Edit button renamed to AI Edit (CR-11)", fn: async () => {
+    // The bottom-toolbar Edit button was renamed to disambiguate that it is
+    // AI-gated (⚡ AI Edit), not a generic non-AI editing affordance.
+    await _waitFor(() => _$$("button").find((b) => b.textContent?.includes("AI Edit")));
   }},
   { name: "Improve button exists (✨)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Improve") || b.textContent?.includes("✨")));
@@ -8885,7 +8990,7 @@ uiSuite("Chat", [
     }
     throw new Error("Chat panel did not open after 3 attempts");
   }},
-  { name: "Chat input visible", fn: async () => {
+  { name: "Chat input visible", requiresAI: true, fn: async () => {
     await _waitFor(() => _$$("textarea").find((t) => {
       const ph = t.placeholder?.toLowerCase() || "";
       return ph.includes("tell vera") || ph.includes("paste images") || ph.includes("ask");
@@ -8968,7 +9073,7 @@ uiSuite("Batch Edit", [
       return (all.includes("slide") || all.includes("Slide")) && (all.includes("module") || all.includes("Module") || all.includes("all") || all.includes("All"));
     }, 1000);
   }},
-  { name: "Prompt input visible", fn: async () => {
+  { name: "Prompt input visible", requiresAI: true, fn: async () => {
     const ta = await _waitFor(() => _$$("input, textarea").find((t) => {
       const ph = t.placeholder?.toLowerCase() || "";
       return ph.includes("change across") || ph.includes("auto-improve") || ph.includes("persistent") || ph.includes("every improve");
@@ -9161,9 +9266,9 @@ uiSuite("Content", [
     if (blocks.length === 0) throw new Error("No data-block-type elements — blocks not rendering");
   }},
   { name: "Slide counter shows valid format", fn: async () => {
-    const counters = _$$("span").filter((s) => /^\d+\s*\/\s*\d+$/.test(s.textContent?.trim()));
-    if (counters.length === 0) throw new Error("No slide counter (N/M format) found");
-    const [n, m] = counters[0].textContent.trim().split("/").map((s) => parseInt(s.trim()));
+    const counter = _slideCounterEl();
+    if (!counter) throw new Error("No slide counter (N/M format) found");
+    const [n, m] = counter.textContent.trim().split("/").map((s) => parseInt(s.trim()));
     if (n < 1 || m < 1 || n > m) throw new Error(`Invalid counter: ${n}/${m}`);
   }},
 ]);
@@ -9273,32 +9378,32 @@ const _veraChat = async (message, timeout = 45000) => {
 };
 
 uiSuite("Vera AI", [
-  { name: "Simple chat reply", fn: async () => {
+  { name: "Simple chat reply", requiresAI: true, fn: async () => {
     await _veraChat("Reply with exactly one word: TESTPASS");
     await _waitFor(() => (document.body.textContent || "").includes("TESTPASS"), 30000);
   }},
-  { name: "deck_stats tool call", fn: async () => {
+  { name: "deck_stats tool call", requiresAI: true, fn: async () => {
     await _veraChat("Use the deck_stats tool. Start your answer with STATS:");
     await _waitFor(() => {
       const body = document.body.textContent || "";
       return body.includes("STATS:") || body.includes("deck_stats");
     }, 45000);
   }},
-  { name: "Edit current slide via chat", fn: async () => {
+  { name: "Edit current slide via chat", requiresAI: true, fn: async () => {
     await _veraChat("Use edit_slide to change the heading on the current slide to 'UI Test Heading'. Keep everything else.");
     await _waitFor(() => (document.body.textContent || "").includes("UI Test Heading"), 45000);
     // Undo
     document.activeElement?.blur(); await _wait(100);
     _key("z", { ctrlKey: true }); await _wait(300);
   }},
-  { name: "Add a new slide via chat", fn: async () => {
+  { name: "Add a new slide via chat", requiresAI: true, fn: async () => {
     await _veraChat("Add a single slide to the current module with heading 'Test Slide Alpha' and a text block saying 'Created by UI test suite'. Use add_slide.");
     await _waitFor(() => (document.body.textContent || "").includes("Test Slide Alpha"), 45000);
     // Undo
     document.activeElement?.blur(); await _wait(100);
     _key("z", { ctrlKey: true }); await _wait(300);
   }},
-  { name: "Improve current slide via chat", fn: async () => {
+  { name: "Improve current slide via chat", requiresAI: true, fn: async () => {
     // Go to a content-rich slide first
     document.activeElement?.blur(); await _wait(50);
     for (let i = 0; i < 3; i++) { _key("ArrowRight"); await _wait(100); }
@@ -9804,14 +9909,133 @@ uiSuite("Gallery View", [
   }},
 ]);
 
+// ── CR-12: Gallery reachable from the editor (not just Present mode) ──
+uiSuite("Gallery From Editor", [
+  { name: "Editor is not in fullscreen/Present", fn: async () => {
+    await _waitFor(() => _$("header"), 2000);
+  }},
+  { name: "Overview button visible in the SLIDE TOOLBAR", fn: async () => {
+    await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+  }},
+  { name: "Clicking Overview opens the gallery grid with tiles", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    // Scope to the gallery overlay itself — the editor's module list (still
+    // mounted behind the overlay) has its own numbered mono-font badges that
+    // would otherwise collide with an unscoped document-wide query.
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const cardCount = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono")).length;
+    if (cardCount === 0) throw new Error("gallery opened from editor but shows no slide tiles");
+  }},
+  { name: "Clicking a tile from the editor-opened gallery navigates", fn: async () => {
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const nums = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
+    const card1 = nums.find((n) => n.textContent?.trim() === "1");
+    if (!card1) throw new Error("tile '1' not found in gallery overlay");
+    const cardEl = card1.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
+    if (!cardEl) throw new Error("clickable card wrapper not found for tile '1'");
+    _click(cardEl);
+    await _wait(400);
+    if (_$text("GALLERY")) throw new Error("gallery still open after selecting a tile");
+    await _waitFor(() => _$("header"), 2000); // back in the editor, not fullscreen
+  }},
+  { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    document.activeElement?.blur(); await _wait(100);
+    _key("g"); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    _key("Escape"); await _wait(300);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+]);
+
+// ── CR-08: Dedicated presenter/speaker view ──────────────────────────
+uiSuite("Presenter View", [
+  { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+    await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s"); await _wait(400);
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    const timerEl = _$("[data-testid='presenter-timer']");
+    if (!timerEl) throw new Error("presenter-timer not found");
+    if (!/\d+:\d\d/.test(timerEl.textContent || "")) throw new Error("presenter timer text does not match mm:ss: " + timerEl.textContent);
+    if (!_$("[data-testid='presenter-next']")) throw new Error("Next-slide preview region not found");
+    if (!_$("[data-testid='presenter-notes']")) throw new Error("Speaker notes region not found");
+  }},
+  { name: "Timer keeps advancing (elapsed clock is live)", fn: async () => {
+    const before = _$("[data-testid='presenter-timer']")?.textContent;
+    await _wait(1200);
+    const after = _$("[data-testid='presenter-timer']")?.textContent;
+    if (before == null || after == null) throw new Error("presenter-timer disappeared");
+    // Not a hard equality check (1s tick can be flaky under load) — just confirm it's still a valid mm:ss.
+    if (!/\d+:\d\d/.test(after)) throw new Error("presenter timer stopped showing mm:ss: " + after);
+  }},
+  { name: "Arrow key advances the deck while presenter view is open", fn: async () => {
+    const before = _slidePos();
+    _key("ArrowRight"); await _wait(400);
+    const after = _slidePos();
+    if (before != null && after != null && after === before) throw new Error("ArrowRight did not advance slide with presenter view open");
+  }},
+  { name: "Presenter toggle button closes the view", fn: async () => {
+    const btn = _$("[data-testid='presenter-toggle']");
+    if (!btn) throw new Error("presenter-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+  }},
+  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── CR-09: Deck-level slide transition on advance ────────────────────
+uiSuite("Slide Transitions", [
+  { name: "Enter fullscreen for transition tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
+    await _waitFor(() => _$(".slide-transition-fade"), 2000);
+  }},
+  { name: "Transition wrapper remounts (fresh play) on slide advance", fn: async () => {
+    const before = _$(".slide-transition-fade");
+    if (!before) throw new Error("no .slide-transition-fade element before advancing");
+    _key("ArrowRight"); await _wait(400);
+    await _waitFor(() => {
+      const el = _$(".slide-transition-fade");
+      return el && el !== before;
+    }, 2000);
+  }},
+  { name: "Per-block stagger (.stg-N) still present alongside the deck transition", fn: async () => {
+    await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
+  }},
+  { name: "Exit fullscreen after transition tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
 // ── Review / Comments Suite ─────────────────────────────────────────
 uiSuite("Review", [
   { name: "Review button visible in header", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Review")));
+    await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Comments")));
   }},
   { name: "Review button toggles review mode", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (!btn) throw new Error("Review button not found");
     _click(btn); await _wait(300);
     // Comments panel should open — look for COMMENTS header
@@ -9835,7 +10059,7 @@ uiSuite("Review", [
   }},
   { name: "Module comment icon visible in review mode (💬)", fn: async () => {
     // 💬 icon only visible in review mode — ensure review is active (toggled on by prior test)
-    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (reviewOn) { _click(reviewOn); await _wait(300); }
     await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1000);
     // Exit review mode
@@ -9848,7 +10072,7 @@ uiSuite("Review", [
     if (commentIcon) throw new Error("💬 icon should be hidden in editor mode");
   }},
   { name: "Review mode exit closes panel", fn: async () => {
-    const btn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const btn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (!btn) throw new Error("Review button not found");
     _click(btn); await _wait(300);
     // Panel should be gone
@@ -9866,7 +10090,7 @@ uiSuite("Review", [
   }},
   { name: "Review mode and Vera are mutually exclusive", fn: async () => {
     // Open review
-    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
     if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     // Now open Vera — should close review
     const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
@@ -9890,7 +10114,7 @@ uiSuite("Review", [
       const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
       if (!panel) throw new Error("Clicking comment badge did not open comments panel");
       // Close review mode
-      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Review") && (b.textContent || "").includes("💬"));
+      const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
       if (reviewBtn) { _click(reviewBtn); await _wait(300); }
     }
     // If no badge, test passes (no comments on current slide)
@@ -10070,14 +10294,15 @@ function VelaUITestRunner() {
 
   const copyResults = () => {
     if (!results) return;
-    const passed = results.filter((r) => r.pass).length;
-    const failed = results.filter((r) => !r.pass).length;
+    const passed = results.filter((r) => r.pass === true).length;
+    const failed = results.filter((r) => r.pass === false).length;
+    const skipped = results.filter((r) => r.pass === "skip").length;
     const lines = [
       `⛵ Vela UI Tests — v${VELA_VERSION}`,
-      `${passed} passed, ${failed} failed, ${results.length} total`,
+      `${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`,
       `${new Date().toISOString()}`,
       "",
-      ...results.map((r) => `${r.pass ? "✅" : "❌"} [${r.suite}] ${r.name} (${r.ms}ms)${r.error ? ` — ${r.error}` : ""}`),
+      ...results.map((r) => `${r.pass === true ? "✅" : r.pass === "skip" ? "⏭️" : "❌"} [${r.suite}] ${r.name} (${r.ms}ms)${r.error ? ` — ${r.error}` : ""}`),
     ];
     const text = lines.join("\n");
     velaClipboard(text);
@@ -10117,8 +10342,9 @@ function VelaUITestRunner() {
     </div>
   );
 
-  const passed = results?.filter((r) => r.pass).length || 0;
-  const failed = results?.filter((r) => !r.pass).length || 0;
+  const passed = results?.filter((r) => r.pass === true).length || 0;
+  const failed = results?.filter((r) => r.pass === false).length || 0;
+  const skippedCount = results?.filter((r) => r.pass === "skip").length || 0;
   const total = results?.length || 0;
   const totalMs = results?.reduce((s, r) => s + r.ms, 0) || 0;
 
@@ -10140,6 +10366,7 @@ function VelaUITestRunner() {
             <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{progress.done}/{progress.total}</span>
             <span style={{ fontSize: 10, color: "#34d399", fontWeight: 600 }}>✓ {progress.passed || 0}</span>
             {(progress.failed || 0) > 0 && <span style={{ fontSize: 10, color: "#f87171", fontWeight: 600 }}>✗ {progress.failed}</span>}
+            {(progress.skipped || 0) > 0 && <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600 }}>⏭️ {progress.skipped}</span>}
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)" }}>{Math.round((progress.done / progress.total) * 100)}%</span>
           </div>
@@ -10152,9 +10379,9 @@ function VelaUITestRunner() {
             {progress.suite} → {progress.test}
           </div>
           {/* Live failures */}
-          {progress.results && progress.results.filter((r) => !r.pass).length > 0 && (
+          {progress.results && progress.results.filter((r) => r.pass === false).length > 0 && (
             <div style={{ maxHeight: 160, overflowY: "auto", padding: "0 14px 8px" }}>
-              {progress.results.filter((r) => !r.pass).map((r, i) => (
+              {progress.results.filter((r) => r.pass === false).map((r, i) => (
                 <div key={i} style={{ fontSize: 10, color: "#f87171", padding: "3px 0", lineHeight: 1.4 }}>
                   ✗ <span style={{ fontWeight: 600 }}>[{r.suite}]</span> {r.name}
                   {r.error && <div style={{ fontSize: 9, color: "#f87171", opacity: 0.7, paddingLeft: 12 }}>↳ {r.error}</div>}
@@ -10172,6 +10399,7 @@ function VelaUITestRunner() {
           <div onClick={() => setExpanded((v) => !v)} style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", borderBottom: expanded ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
             <span style={{ fontSize: 14 }}>{failed > 0 ? "❌" : "✅"}</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>UI Tests: {passed}/{total}</span>
+            {skippedCount > 0 && <span style={{ fontSize: 9, color: "#94a3b8", fontWeight: 600 }}>⏭️ {skippedCount} skipped</span>}
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{(totalMs / 1000).toFixed(1)}s · v{VELA_VERSION}</span>
             <div style={{ flex: 1 }} />
             <button onClick={(e) => { e.stopPropagation(); copyResults(); }} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", padding: "2px 8px", borderRadius: 4, cursor: "pointer", fontSize: 9, fontFamily: FONT.mono }}>{copied ? "Copied!" : "📋"}</button>
@@ -10183,19 +10411,20 @@ function VelaUITestRunner() {
           {expanded && (
             <div style={{ overflowY: "auto", maxHeight: "60vh", padding: "6px 0" }}>
               {Object.entries(suites).map(([name, tests]) => {
-                const suitePassed = tests.every((t) => t.pass);
-                const suiteFailed = tests.filter((t) => !t.pass).length;
+                const suiteFailed = tests.filter((t) => t.pass === false).length;
+                const suiteSkipped = tests.filter((t) => t.pass === "skip").length;
+                const suitePassed = suiteFailed === 0;
                 return (
                   <div key={name} style={{ padding: "4px 14px" }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: suitePassed ? "#34d399" : "#f87171", padding: "4px 0", display: "flex", alignItems: "center", gap: 6 }}>
                       <span>{suitePassed ? "✅" : "❌"}</span>
                       <span>{name}</span>
-                      <span style={{ fontSize: 8, color: "rgba(255,255,255,0.3)" }}>{tests.length} tests{suiteFailed > 0 ? `, ${suiteFailed} failed` : ""}</span>
+                      <span style={{ fontSize: 8, color: "rgba(255,255,255,0.3)" }}>{tests.length} tests{suiteFailed > 0 ? `, ${suiteFailed} failed` : ""}{suiteSkipped > 0 ? `, ${suiteSkipped} skipped` : ""}</span>
                     </div>
                     {tests.map((t, i) => (
-                      <div key={i} style={{ fontSize: 9, padding: "2px 0 2px 18px", color: t.pass ? "rgba(255,255,255,0.5)" : "#f87171", lineHeight: 1.5 }}>
-                        {t.pass ? "✓" : "✗"} {t.name} <span style={{ color: "rgba(255,255,255,0.2)" }}>{t.ms}ms</span>
-                        {t.error && <div style={{ color: "#f87171", fontSize: 8, paddingLeft: 12 }}>↳ {t.error}</div>}
+                      <div key={i} style={{ fontSize: 9, padding: "2px 0 2px 18px", color: t.pass === true ? "rgba(255,255,255,0.5)" : t.pass === "skip" ? "#94a3b8" : "#f87171", lineHeight: 1.5 }}>
+                        {t.pass === true ? "✓" : t.pass === "skip" ? "⏭️" : "✗"} {t.name} <span style={{ color: "rgba(255,255,255,0.2)" }}>{t.ms}ms</span>
+                        {t.error && <div style={{ color: t.pass === "skip" ? "#94a3b8" : "#f87171", fontSize: 8, paddingLeft: 12 }}>↳ {t.error}</div>}
                       </div>
                     ))}
                   </div>
@@ -14737,6 +14966,279 @@ function exportMarkdown(state, opts = {}) {
   URL.revokeObjectURL(url);
 }
 
+// ━━━ Standalone HTML Export ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// One shareable .html: the transpiled app + the current deck, inlined; React/
+// ReactDOM/lucide-react load from a CDN with SHA-pinned SRI (small output,
+// supply-chain-safe, needs network at open time — acceptable tradeoff vs.
+// embedding ~800KB of UMD bundles in every export). The pure string-transform
+// below is delimited by comment markers and regex-extracted verbatim by
+// tests/test_standalone_html.cjs so it can be unit-tested with the vendored
+// Babel outside the browser — do not reshape it without checking that test.
+// STANDALONE_HTML_PURE_START
+// SRI = sha384 base64 of vela-neutralino/resources/vendor/{react,react-dom,
+// lucide-react}.min.js (byte-identical to these npm-canonical jsdelivr URLs).
+const VELA_STANDALONE_LIBS = [
+  { src: "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js", integrity: "sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" },
+  { src: "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js", integrity: "sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" },
+  { src: "https://cdn.jsdelivr.net/npm/lucide-react@0.344.0/dist/umd/lucide-react.min.js", integrity: "sha384-EQEJvIFEf8npkbAdLZg6nG0ZK4cOAdEhtoe9EDUq7a0abTM5sG7ufDwzmJBsHVVf" },
+];
+
+// Escape a JSON string for safe inline embedding inside a <script> block — the
+// same 5-char rule as assemble.py/serve.py/nl-boot.js's escape_for_script_context()
+// (independently duplicated per-language by existing convention in this repo;
+// kept in sync by review, not shared code).
+function escapeForScriptContext(jsonStr) {
+  return jsonStr
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+// Strip the ESM imports the app source needs when running under a bundler /
+// text-babel host; the standalone output supplies React/lucide as UMD globals
+// instead via a shim (mirrors render-offline.js's proven transform).
+//
+// The exported deck is meant to be SHARED (GitHub Pages / email), so it must open
+// as a read-only PRESENTATION, not the editor. We flip VELA_PRESENTATION_MODE to
+// true in the source (see flipPresentationMode below): that boots fullscreen present
+// (init.fullscreen = VELA_PRESENTATION_MODE) with the editor chrome + test runners
+// suppressed. The read-only-viewer blank-gate (part-app.jsx: `if
+// (VELA_PRESENTATION_MODE && (!state.selectedId || !state.lanes.length)) return
+// <blank/>`) needs a selected module, which a fresh STARTUP_PATCH load doesn't set —
+// so the LOAD reducer (part-reducer.jsx) now auto-selects the first module when
+// VELA_PRESENTATION_MODE is on. Together these make the export open on its first
+// slide with zero edit chrome.
+function stripEsmImportsForStandalone(jsx) {
+  return jsx
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, "")
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, "")
+    .replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, "")
+    .replace(/^export\s+default\s+function\s+/m, "function ");
+}
+
+// Replace the value bound to `const STARTUP_PATCH = ...;` with the current
+// deck, whether the source holds the pristine `null` sentinel (Neutralino:
+// freshly fetched vela.jsx) or an already-embedded deck object (artifact/
+// serve.py: scraped from the live text/babel tag, patched at load time with
+// whatever deck was open then — export always wants the deck open NOW). A
+// plain regex can't safely find the end of an embedded JSON object (its
+// string values may themselves contain `;`/`{`/`}`), so this walks the
+// source respecting string/escape boundaries to find the top-level
+// statement-terminating `;`.
+function spliceStartupPatch(jsx, deckObj) {
+  const marker = "const STARTUP_PATCH = ";
+  const idx = jsx.indexOf(marker);
+  if (idx === -1) throw new Error("STARTUP_PATCH marker not found in source");
+  const valueStart = idx + marker.length;
+  let i = valueStart, depth = 0, inStr = null;
+  for (; i < jsx.length; i++) {
+    const c = jsx[i];
+    if (inStr) {
+      if (c === "\\") { i++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { inStr = c; continue; }
+    if (c === "{" || c === "[" || c === "(") { depth++; continue; }
+    if (c === "}" || c === "]" || c === ")") { depth--; continue; }
+    if (c === ";" && depth === 0) break;
+  }
+  if (i >= jsx.length) throw new Error("STARTUP_PATCH statement terminator not found");
+  const deckJson = escapeForScriptContext(JSON.stringify(deckObj));
+  return jsx.slice(0, valueStart) + deckJson + jsx.slice(i);
+}
+
+// Flip the read-only-viewer flag so the exported HTML boots as a presentation
+// (fullscreen, no editor chrome / test runners) rather than the editor. The source
+// declares `const VELA_PRESENTATION_MODE = false;` exactly once (part-imports.jsx).
+function flipPresentationMode(jsx) {
+  const decl = "const VELA_PRESENTATION_MODE = false;";
+  if (jsx.indexOf(decl) === -1) throw new Error("VELA_PRESENTATION_MODE declaration not found in source");
+  return jsx.replace(decl, "const VELA_PRESENTATION_MODE = true;");
+}
+
+const MADE_WITH_VELA_FOOTER_HTML =
+  "<div id=\"vela-standalone-footer\" style=\"position:fixed;right:10px;bottom:8px;z-index:99999;" +
+  "font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;" +
+  "background:rgba(15,23,42,0.72);padding:4px 10px;border-radius:999px;" +
+  "pointer-events:none;letter-spacing:.02em;user-select:none\">Made with Vela ⛵</div>";
+
+function escapeHtmlText(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+// The pure, testable transform. `babel` is a Babel-standalone-shaped object
+// (window.Babel in-browser, or the vendored babel.min.js required in a Node
+// test) — passed in rather than read off a global so this can be unit-tested
+// outside the browser. Returns the full standalone HTML document string.
+function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
+  const { footer = false, babel } = opts;
+  if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
+  let jsx = stripEsmImportsForStandalone(jsxSource);
+  jsx = spliceStartupPatch(jsx, deckObj);
+  jsx = flipPresentationMode(jsx);
+  const shim =
+    "const { useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;\n" +
+    "const _LucideAll = window.lucideReact;\n" +
+    "const { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown } = window.lucideReact;\n";
+  const tail =
+    "\ntry { window.App = App; window._createRoot(document.getElementById(\"root\")).render(React.createElement(App)); window.__velaBooted = true; }" +
+    " catch (e) { window.__velaBootError = String(e && e.stack || e); }\n";
+  const src = shim + jsx + tail;
+  const { code } = babel.transform(src, { presets: [["react", { runtime: "classic" }]], comments: false });
+  // Neutralize </script and <!-- in the COMPILED output before inlining — the
+  // proven serve.py transform (a backslash inside a JS string/regex literal is
+  // inert at runtime but hides the token from the HTML tokenizer). Several of
+  // the app's own XSS-regression-test strings contain literal `</script` and
+  // would otherwise truncate this very <script> block. NEVER inline
+  // un-neutralized compiled output.
+  const safeCode = code.replace(/<\/(?=script)/gi, "<\\/").replace(/<!--/g, "<\\!--");
+  const title = escapeHtmlText((deckObj && deckObj.deckTitle) || "Vela Deck");
+  const libTag = (l) => `<script src="${l.src}" integrity="${l.integrity}" crossorigin="anonymous"></script>`;
+  const [reactLib, reactDomLib, lucideLib] = VELA_STANDALONE_LIBS;
+  // `window.react = window.React` MUST run between the react.min.js and
+  // lucide-react.min.js tags: lucide's UMD wrapper reads the browser-global
+  // fallback `a.react` (lowercase) synchronously at its OWN top-level
+  // evaluation time (classic <script src> executes in document order), not
+  // lazily — putting the shim after all 3 tags (as a naive reading of the
+  // CDN+SRI shape might suggest) leaves `window.react` undefined when
+  // lucide-react.min.js runs, and it silently destructures `undefined`
+  // (`TypeError: reading 'forwardRef'`). Same ordering render-offline.js /
+  // serve.py / index.html already use for the non-standalone runtimes.
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>html,body{margin:0;height:100%;background:#0f172a}#root{height:100vh}</style>
+${libTag(reactLib)}
+<script>window.react=window.React;</script>
+${libTag(reactDomLib)}
+${libTag(lucideLib)}
+<script>window.lucideReact=window.LucideReact;window._createRoot=window.ReactDOM.createRoot;</script>
+</head><body><div id="root"></div>
+<script>${safeCode}</script>
+${footer ? MADE_WITH_VELA_FOOTER_HTML : ""}
+</body></html>`;
+}
+// STANDALONE_HTML_PURE_END
+
+// Per-runtime acquisition of the app's own JSX source. Neutralino serves its
+// own pristine vela.jsx same-origin (STARTUP_PATCH still `null`); artifact/
+// serve.py wrap the (already deck-patched) source in a `text/babel` script
+// tag — assemble.py/serve.py state that both the local preview AND the
+// Claude.ai artifact viewer use this wrapping (see assemble.py's own
+// docstring), so scraping its textContent is the only same-origin route in
+// those runtimes. spliceStartupPatch() above re-splices the CURRENT deck over
+// whichever value is already there.
+async function getStandaloneJsxSource() {
+  if (typeof Neutralino !== "undefined") {
+    const res = await fetch("vela.jsx");
+    if (!res.ok) throw new Error(`fetch vela.jsx failed: ${res.status}`);
+    return await res.text();
+  }
+  const tag = document.querySelector('script[type="text/babel"]');
+  if (tag && tag.textContent && tag.textContent.includes("STARTUP_PATCH")) return tag.textContent;
+  throw new Error("App source not found (no vela.jsx and no script[type=text/babel] tag)");
+}
+
+// Gate reason for the export menu entry — null means available. Checked at
+// render time (cheap: two typeof checks + a DOM query) so the button can be
+// visible-but-disabled with an explanatory title instead of silently no-oping.
+function velaStandaloneExportGateReason() {
+  if (typeof window === "undefined" || typeof window.Babel === "undefined") return "Babel not available in this runtime";
+  if (typeof Neutralino !== "undefined") return null; // Neutralino: vela.jsx always fetchable same-origin
+  if (typeof document !== "undefined" && document.querySelector('script[type="text/babel"]')) return null;
+  return "App source not available in this runtime";
+}
+
+// ━━━ Standalone HTML Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function StandaloneHtmlModal({ state, onClose }) {
+  const [footer, setFooter] = useState(true);
+  const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
+  const [errorMsg, setErrorMsg] = useState("");
+  const gateReason = useMemo(() => velaStandaloneExportGateReason(), []);
+
+  const doExport = useCallback(async () => {
+    setPhase("exporting");
+    setErrorMsg("");
+    try {
+      const jsxSource = await getStandaloneJsxSource();
+      const save = extractSave(state);
+      const deckTitle = state.deckTitle || "Untitled";
+      const deck = { deckTitle, lanes: save.lanes || [] };
+      if (save.branding) deck.branding = save.branding;
+      if (save.guidelines) deck.guidelines = save.guidelines;
+      const html = buildStandaloneHtml(jsxSource, deck, { footer, babel: window.Babel });
+      const safeTitle = deckTitle.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60) || "vela-deck";
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url;
+      a.download = `${safeTitle}-standalone.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setPhase("done");
+    } catch (err) {
+      setErrorMsg((err && err.message) || String(err));
+      setPhase("error");
+    }
+  }, [footer, state]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, width: "min(440px, 94vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 14 }}>🌐</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: 1 }}>EXPORT STANDALONE HTML</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 4px", lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ padding: "20px 16px" }}>
+          {phase === "choose" && <>
+            <div style={{ fontFamily: FONT.body, fontSize: 13, color: T.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+              One self-contained .html file with this deck baked in — drop it on GitHub Pages, attach it to an email, or open it locally. React/lucide load from a SHA-pinned CDN, so it needs network the first time it's opened.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Made with Vela footer</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Small badge · bottom-right corner</span>
+              </div>
+              <button onClick={() => setFooter((v) => !v)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: footer ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: footer ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>
+            {gateReason && <div style={{ marginBottom: 16, padding: "8px 12px", background: `${T.red}15`, border: `1px solid ${T.red}40`, borderRadius: 8, fontFamily: FONT.mono, fontSize: 11, color: T.red }}>{gateReason}</div>}
+            <button onClick={doExport} disabled={!!gateReason} title={gateReason || "Export standalone HTML"} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: gateReason ? T.border : T.accent, color: gateReason ? T.textDim : "#fff", border: "none", borderRadius: 6,
+              cursor: gateReason ? "not-allowed" : "pointer", letterSpacing: 1, opacity: gateReason ? 0.6 : 1,
+            }}>
+              EXPORT HTML
+            </button>
+          </>}
+          {phase === "exporting" && <div style={{ textAlign: "center", padding: "20px 0", fontFamily: FONT.mono, fontSize: 12, color: T.textMuted }}>Building…</div>}
+          {phase === "done" && <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 12, color: T.green, marginBottom: 12 }}>✅ Downloaded</div>
+            <button onClick={onClose} style={{ padding: "8px 16px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Close</button>
+          </div>}
+          {phase === "error" && <div style={{ textAlign: "center", padding: "10px 0" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.red, marginBottom: 12 }}>{errorMsg}</div>
+            <button onClick={() => setPhase("choose")} style={{ padding: "8px 16px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, background: T.border, color: T.text, border: "none", borderRadius: 6, cursor: "pointer" }}>Back</button>
+          </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -14834,7 +15336,11 @@ function ChangelogDialog({ onClose }) {
       {VELA_CHANGELOG.slice(0, 3).map((c, i) => (
         <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.border}` : "none" }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: i === 0 ? T.accent : T.textDim, flexShrink: 0, minWidth: 32 }}>v{c.v}</span>
-          <span style={{ fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>{c.d}</span>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 11, color: T.text, lineHeight: 1.4 }}>
+            {Array.isArray(c.d)
+              ? <ul style={{ margin: 0, paddingLeft: 16 }}>{c.d.map((b, j) => <li key={j} style={{ marginBottom: 2 }}>{b}</li>)}</ul>
+              : c.d}
+          </div>
         </div>
       ))}
       {/* \u2500\u2500 Dependencies (collapsible) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
@@ -14959,39 +15465,11 @@ function CommentsPanel({ state, dispatch, isMobile }) {
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [images, setImages] = useState([]); // [{dataUrl, fileName}]
-  const fileRef = useRef(null);
 
-  const addImages = (files) => {
-    for (const file of files) {
-      if (!file.type?.startsWith("image/")) continue;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const compressed = await compressSlideImage(reader.result);
-        setImages((prev) => [...prev, { dataUrl: compressed, fileName: file.name }]);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handlePaste = (e) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files = [];
-    for (const item of items) { const f = item.getAsFile?.(); if (f?.type?.startsWith("image/")) files.push(f); }
-    if (files.length > 0) { e.preventDefault(); addImages(files); }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const files = [];
-    for (const item of (e.dataTransfer?.files || [])) { if (item.type?.startsWith("image/")) files.push(item); }
-    if (files.length) addImages(files);
-  };
-
+  // No prompt is fine — that just creates a fresh, blank deck (in a new file).
+  // A prompt (short ask or a long pasted README/outline) hands it to Vera to build.
   const submit = () => {
-    if (!name.trim() && !prompt.trim() && images.length === 0) return;
-    onSubmit({ title: name.trim() || "Untitled", prompt: prompt.trim(), images: images.map((i) => i.dataUrl) });
+    onSubmit({ title: name.trim() || "Untitled", prompt: prompt.trim(), images: [] });
     onClose();
   };
 
@@ -15013,40 +15491,13 @@ function NewDeckDialog({ onClose, onSubmit }) {
           style={{ width: "100%", padding: "10px 12px", fontSize: 15, fontFamily: FONT.body, fontWeight: 600, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" }} />
       </div>
 
-      {/* Prompt */}
-      <div style={{ marginBottom: 14 }}>
-        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Starting Prompt <span style={{ fontWeight: 400, color: T.textDim }}>— what should Vera build?</span></label>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={"e.g. Create a 10-slide pitch deck on AI agents\nwith sections: Intro, Architecture, Demo, Roadmap"}
-          onPaste={handlePaste}
-          rows={4}
-          style={{ width: "100%", padding: "10px 12px", fontSize: 14, fontFamily: FONT.body, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }} />
-      </div>
-
-      {/* Image upload */}
+      {/* Prompt — optional; also the place to paste long source (README / notes / outline) */}
       <div style={{ marginBottom: 18 }}>
-        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Reference Images <span style={{ fontWeight: 400, color: T.textDim }}>— optional, paste or drop</span></label>
-        <div onDrop={handleDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
-          style={{ border: `1px dashed ${T.border}`, borderRadius: 8, padding: images.length > 0 ? "8px" : "16px 12px", background: T.bgInput, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minHeight: 50, cursor: "pointer" }}
-          onClick={() => { if (images.length === 0) fileRef.current?.click(); }}>
-          <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
-            onChange={(e) => { addImages(Array.from(e.target.files || [])); e.target.value = ""; }} />
-          {images.length === 0 && (
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>📷 Click, paste, or drop images here</span>
-            </div>
-          )}
-          {images.map((img, i) => (
-            <div key={i} style={{ position: "relative", width: 56, height: 56, borderRadius: 6, overflow: "hidden", border: `1px solid ${T.border}`, flexShrink: 0 }}>
-              <img src={img.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              <button onClick={(e) => { e.stopPropagation(); setImages((prev) => prev.filter((_, j) => j !== i)); }}
-                style={{ position: "absolute", top: 1, right: 1, width: 16, height: 16, borderRadius: "50%", background: "rgba(0,0,0,0.7)", color: "#fff", border: "none", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>✕</button>
-            </div>
-          ))}
-          {images.length > 0 && (
-            <button onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-              style={{ width: 56, height: 56, borderRadius: 6, border: `1px dashed ${T.border}`, background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: T.textDim, flexShrink: 0 }}>+</button>
-          )}
-        </div>
+        <label style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 }}>Starting Prompt <span style={{ fontWeight: 400, color: T.textDim }}>— optional; leave empty for a blank deck</span></label>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={"e.g. Create a 10-slide pitch deck on AI agents with sections: Intro, Architecture, Demo, Roadmap.\n\nOr paste a whole README / article / outline here and Vera will build a deck from it.\n\nHave images or files? Drop them in this deck's folder and reference them by name in your prompt."}
+          rows={10}
+          style={{ width: "100%", padding: "10px 12px", fontSize: 14, fontFamily: FONT.body, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }} />
+        <div style={{ marginTop: 6, fontFamily: FONT.mono, fontSize: 10, color: T.textDim }}>Tip: paste long source text directly. To use attachments, drop the files into this deck's folder and mention them by filename so Vera can reference them.</div>
       </div>
 
       {/* Actions */}
@@ -15612,6 +16063,7 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
+  const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
   const [iconPicker, setIconPicker] = useState(null); // { value, onPick } — searchable icon picker
@@ -15975,12 +16427,15 @@ export default function App() {
     }
   }, [state.lanes, state.selectedId]);
 
-  // Auto-create default lane if none exist
+  // An empty deck should be immediately editable: seed a first section so the
+  // user can add slides right away (no "create deck" / "add section" step).
+  // Gated by loaded.current so it never races initial hydration; skipped while
+  // an AI build is pending/streaming — Vera populates the deck itself then.
   useEffect(() => {
-    if (loaded.current && state.lanes.length === 0) {
-      dispatch({ type: "ADD_LANE", title: "Main" });
-    }
-  }, [state.lanes.length]);
+    if (!loaded.current || state.lanes.length !== 0) return;
+    if (state._bootstrap || state.chatLoading) return;
+    dispatch({ type: "INSERT_ITEM", title: "New section" });
+  }, [state.lanes.length, state._bootstrap, state.chatLoading]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
   // In LOCAL_MODE the file on disk is the source of truth (synced via
@@ -16184,6 +16639,7 @@ export default function App() {
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
+                {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 <button onClick={() => { setJsonModal(jsonModal ? null : 'copy'); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}>{"{ }"} Copy / Paste JSON</button>
               </div>
@@ -16229,6 +16685,7 @@ export default function App() {
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
+            {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { if (!soReason) { setStandaloneExport(true); setMobileMenu(false); } }} disabled={!!soReason} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: soReason ? "not-allowed" : "pointer" }}>{"🌐"} Standalone HTML</button>; })()}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: true }); setMobileTab("comments"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.amber, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"💬"} Comments</button>
@@ -16244,9 +16701,9 @@ export default function App() {
           {total === 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 12, padding: 20 }}>
               <div style={{ fontSize: 36, opacity: 0.15 }}>⛵</div>
-              <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, textAlign: "center", lineHeight: 1.7, maxWidth: 280 }}>Start a new deck, ask <span style={{ color: T.accent, cursor: "pointer" }} onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }}>Vera</span>, or drop a <span style={{ color: T.accent }}>.json</span> / <span style={{ color: T.accent }}>.vela</span> file.</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, textAlign: "center", lineHeight: 1.7, maxWidth: 280 }}>Your deck is ready. Add a section to start, ask <span style={{ color: T.accent, cursor: "pointer" }} onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }}>Vera</span>, or drop a <span style={{ color: T.accent }}>.json</span> / <span style={{ color: T.accent }}>.vela</span> file.</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setNewDeckDialog(true)} style={{ padding: "8px 18px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{"⛵"} New Deck</button>
+                <button onClick={() => { dispatch({ type: "INSERT_ITEM", title: "New section" }); if (isMobile) setMobileTab("list"); }} style={{ padding: "8px 18px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{"＋"} Add section</button>
                 <button onClick={() => { dispatch({ type: "SET_CHAT", open: true }); if (isMobile) setMobileTab("chat"); }} style={S.btn({ padding: "8px 14px", color: T.accent, border: `1px solid ${T.accent}40`, borderRadius: 6, fontSize: 14, display: "flex", alignItems: "center", gap: 4 })}>🤖 Vera</button>
               </div>
             </div>
@@ -16349,6 +16806,7 @@ export default function App() {
         if (isMobile) setMobileTab("chat");
       }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {standaloneExport && <StandaloneHtmlModal state={state} onClose={() => setStandaloneExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);
         if (result) {

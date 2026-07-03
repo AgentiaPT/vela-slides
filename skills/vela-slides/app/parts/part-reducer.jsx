@@ -14,6 +14,13 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
+      // loaded deck has selectedId=null, which the presentation blank-gate treats as
+      // "not ready" and renders blank. Auto-select the first module so the shared deck
+      // opens straight into its first slide. Editor behavior is unchanged (flag off).
+      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;
         for (const l of loaded.lanes) { const it = l.items.find((i) => i.id === loaded.selectedId); if (it) { maxSlides = it.slides?.length || 0; break; } }
@@ -27,7 +34,7 @@ function innerReducer(state, a) {
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
-    case "INSERT_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId) || state.lanes[0]; if (!lane) return state; const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: state.lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
+    case "INSERT_ITEM": { let lanes = state.lanes; let lane = lanes.find((l) => l.id === a.laneId) || lanes[0]; if (!lane) { lane = { id: uid(), title: a.laneTitle || "Slides", collapsed: false, items: [] }; lanes = [...lanes, lane]; } const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
     // Insert a section at an EXACT position within a source section's slide list.
     // At a mid-list add-point the tail slides split off into the new section; at the
     // very top (idx 0) or very bottom (idx>=len) a new empty section is inserted

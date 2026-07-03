@@ -659,6 +659,61 @@ function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose, anchor }
   );
 }
 
+// ━━━ PresenterView — CR-08: single-screen speaker dashboard shown from
+// Present mode (button + 'S' key). Offline can't drive a real second
+// monitor, so this is a full-page dashboard overlay (same slot/precedent as
+// GalleryView below): current slide, a "Next ▸" preview, speaker notes
+// (slide.notes — the real per-slide field authored via the NOTES bar, not
+// the separate offline studyNotes/student-mode feature), an elapsed timer
+// running since Present mode was entered, and the slide position. Slide
+// navigation itself is handled by the existing global arrow-key handler
+// (unaffected by this overlay), so advancing the deck behind it just works.
+function fmtElapsed(totalSeconds) {
+  const s = Math.max(0, totalSeconds | 0);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+  const notes = (current?.notes || "").trim();
+  const studyNotes = (current?.studyNotes?.text || "").trim();
+  return (
+    <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
+        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
+        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
+        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
+        <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <div style={{ flex: 1, display: "flex", gap: 18, padding: 20, minHeight: 0 }}>
+        <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
+          <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+          </div>
+          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
+            {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
+            {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
+            </div>}
+          </div>
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
 function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
   const gridRef = useRef(null);
@@ -1321,6 +1376,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting && slideIndex > 0) dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
+
+  // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
+  // is entered, stops (and hides the presenter view) on exit.
+  useEffect(() => {
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    presentStartRef.current = Date.now();
+    setPresentElapsed(0);
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    return () => clearInterval(id);
+  }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
   // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
   // presented). Self-contained: only acts when fullscreen AND the current slide
@@ -1353,6 +1418,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showGallery, setShowGallery] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
+  // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
+  // next-slide preview, speaker notes, elapsed timer. Toggled from Present
+  // mode only (button + 'S' key), independent of the audience-facing slide.
+  const [showPresenterView, setShowPresenterView] = useState(false);
+  const showPresenterViewRef = useRef(false);
+  const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
+  const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -1674,7 +1747,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // S → presenter view toggle (Present mode only)
+      if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresenterView((v) => !v);
+      }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
+      if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
       // Ctrl+C → copy current slide to system clipboard
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
         const curSlides = slidesRef.current;
@@ -2050,7 +2128,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       {measureHarness}
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-        <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        {/* Deck-level transition (CR-09): key on slideIndex remounts this wrapper
+            on every slide advance, replaying the subtle fade/scale-in defined by
+            .slide-transition-fade (part-imports.jsx). Independent of the per-block
+            .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
+        <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -2066,9 +2150,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 124, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -2078,50 +2163,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
           </div>
         </div>}
-        {/* Floating Edit + New Slide in fullscreen */}
-        {!isStudent && !improving && <div style={{ position: "absolute", bottom: 20, right: 20, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          {showQuickEdit && !quickEditing && <div onClick={(e) => e.stopPropagation()} style={{ width: isMobile ? "calc(100vw - 40px)" : 320, maxWidth: 320, background: "rgba(20,20,30,0.95)", border: `1px solid ${T.accent}40`, borderRadius: 12, padding: "12px 14px", boxShadow: "0 12px 48px rgba(0,0,0,0.6)", backdropFilter: "blur(16px)", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>QUICK EDIT</span>
-              {quickEditImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
-              <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>E to toggle</span>
-              <button onClick={() => { setShowQuickEdit(false); setQuickEditImage(null); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 14, padding: 0 }}>✕</button>
-            </div>
-            <textarea autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }}
-              onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }}
-              placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors..."}
-              style={{ width: "100%", minHeight: 52, maxHeight: 80, padding: "6px 10px", fontSize: 13, fontFamily: FONT.body, background: "rgba(255,255,255,0.07)", border: `1px solid rgba(255,255,255,0.12)`, borderRadius: 6, color: "#fff", outline: "none", resize: "vertical", lineHeight: 1.4, boxSizing: "border-box" }} />
-            {quickEditImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={quickEditImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", objectFit: "cover" }} /><button onClick={() => setQuickEditImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runQuickEdit} disabled={!quickEditPrompt.trim()} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: quickEditPrompt.trim() ? T.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: quickEditPrompt.trim() ? "pointer" : "default", opacity: quickEditPrompt.trim() ? 1 : 0.4, width: "100%" }}>Apply edit</button>
-          </div>}
-          {showNewSlide && !newSlideGenerating && <div onClick={(e) => e.stopPropagation()} style={{ width: isMobile ? "calc(100vw - 40px)" : 320, maxWidth: 320, background: "rgba(20,20,30,0.95)", border: `1px solid ${T.green}40`, borderRadius: 12, padding: "12px 14px", boxShadow: "0 12px 48px rgba(0,0,0,0.6)", backdropFilter: "blur(16px)", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.green, letterSpacing: "0.05em" }}>NEW SLIDE</span>
-              {newSlideImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
-              <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>N to toggle</span>
-              <button onClick={() => { setShowNewSlide(false); setNewSlideImage(null); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 14, padding: 0 }}>✕</button>
-            </div>
-            <textarea autoFocus value={newSlidePrompt} onChange={(e) => setNewSlidePrompt(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && newSlidePrompt.trim()) { e.preventDefault(); runNewSlide(); } if (e.key === "Escape") { setShowNewSlide(false); setNewSlideImage(null); } }}
-              onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setNewSlideImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }}
-              placeholder={"Describe the slide... (paste image)\nE.g.: Title slide, comparison table..."}
-              style={{ width: "100%", minHeight: 52, maxHeight: 80, padding: "6px 10px", fontSize: 13, fontFamily: FONT.body, background: "rgba(255,255,255,0.07)", border: `1px solid rgba(255,255,255,0.12)`, borderRadius: 6, color: "#fff", outline: "none", resize: "vertical", lineHeight: 1.4, boxSizing: "border-box" }} />
-            {newSlideImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={newSlideImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", objectFit: "cover" }} /><button onClick={() => setNewSlideImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runNewSlide} disabled={!aiOk || !newSlidePrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={{ padding: "6px 14px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 700, background: aiOk && newSlidePrompt.trim() ? T.green : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 6, cursor: aiOk && newSlidePrompt.trim() ? "pointer" : "not-allowed", opacity: aiOk && newSlidePrompt.trim() ? 1 : 0.4, width: "100%" }}>{aiOk ? "Generate slide" : "AI not enabled"}</button>
-          </div>}
-          {!showQuickEdit && !showNewSlide && !quickEditing && !newSlideGenerating && <div style={{ display: "flex", gap: 3, padding: "3px 4px", opacity: 0.6, transition: "opacity 0.3s" }} onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}>
-            <button onClick={() => { setShowNewSlide(true); setShowQuickEdit(false); }} title="New slide (N)" style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: T.green + "cc", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>+</button>
-            <button onClick={() => { if (aiOk) { setShowQuickEdit(true); setShowNewSlide(false); } }} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: "transparent", border: "none", color: aiOk ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
-            <button onClick={() => { if (aiOk && !improving && !altLoading && slides.length > 0) runImproveRef.current?.(null, "slide"); }} title={aiOk ? "Improve (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: improving ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !altLoading ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !altLoading && !improving ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>✨</button>
-            <button onClick={() => { if (aiOk && !altLoading && !improving && slides.length > 0) runAlternatives(); }} title={aiOk ? "Design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={{ width: 26, height: 26, borderRadius: 6, background: altLoading ? T.accent + "30" : "transparent", border: "none", color: aiOk && slides.length > 0 && !improving ? T.accent + "cc" : T.accent + "30", fontSize: 13, cursor: aiOk && slides.length > 0 && !improving && !altLoading ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>🎲</button>
-          </div>}
-          {(quickEditing || newSlideGenerating) && <div style={{ padding: "3px 4px" }}><div style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 13, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span></div></div>}
-        </div>}
+        {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
+            view (CR-03): this branch is the audience-facing Present surface, and a
+            pencil/+ edit cluster here is edit chrome that must never be visible to
+            an audience. Equivalent Quick Edit / New Slide / Improve / Variants
+            controls already exist in the non-fullscreen editor's dialog zone and
+            SLIDE TOOLBAR strip below — exit Present (F) to reach them. */}
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showPresenterView && (() => {
+        let nextIdx = -1;
+        for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
+        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+      })()}
     </div>
   );
 
@@ -2312,7 +2368,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>✏️{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Edit</span>}</button>
+          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
@@ -2320,6 +2376,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <div style={{ width: 1, height: 22, background: T.border + "60" }} />
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -2341,6 +2399,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(260, allMods.length * 32 + 40); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 200, maxWidth: "calc(100vw - 16px)", maxHeight: 260, overflowY: "auto", zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><div style={{ padding: "4px 8px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>{allMods.length === 0 ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No other modules</div> : allMods.map((m) => <button key={m.id} onClick={() => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId: m.id, index: slideIndex }); setShowMoveToModule(false); }} style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{m.title}</button>)}</div></>; })()}
       </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
   );
 }
