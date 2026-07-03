@@ -49,6 +49,32 @@ Total ≈ **25s** (or **<10s** if you trust concat-sync and defer the full Pytho
 integration). Baseline = **353 pass / 0 fail** (jsdom installed) — anything lower is a
 regression you introduced.
 
+## Driving AI-dependent tests (deck-from-source, Vera, "AI available" battery)
+
+The `claude` CLI is present (`/opt/node22/bin/claude`), so the app's real AI paths work
+here **against the local `claude` CLI** via a loopback channel. Verified live: channel up
+(`claude 2.1.199`), `callClaudeAPI` round-trips. **When a test needs AI, boot with the
+channel wired — do NOT rely on the default no-AI offline render** (there `velaAIAvailable()`
+is false and AI features are correctly skipped/disabled).
+
+Two ways, both reuse `agent_backend.py` (the ONE sandboxed place that spawns `claude
+-p`, locked to `--tools "" --strict-mcp-config --setting-sources ""`) + the repo's
+`skills/vela-slides/scripts/render-offline.js --channel-port` (NOT the root
+`hyper-sprint.render-offline.js`, which has no channel support):
+
+- **Committed probes (repeatable/CI-style):** `node skills/vela-slides/scripts/vela-drive.js
+  ai <deck.vela> [--only ping,veraAddSlide,generateSlide,veraChatUI] [--json out.json]`.
+  Add a new probe to `AI_PROBES` in `vela-drive.js` for each new AI feature (e.g.
+  `deckFromSource`) so it stays verifiable.
+- **Ad-hoc AI UI flows (validators/workers):** `node <SCRATCH>/drive-ai.mjs <deck.vela>
+  <scenario.mjs> [shotDir]` — boots the channel + `--channel-port` render + a live
+  Chromium page, then runs `scenario.mjs`'s `export default async (page, shot, helpers)`
+  against the LIVE app. `helpers.velaAIAvailable()` is true inside it.
+
+Each AI run spawns `claude` (real, the user's spend) — opt-in, only when a test needs it.
+Engine globals exposed in the classic-script build: `callClaudeAPI`, `callVera`,
+`generateSlide`, `velaAIAvailable`.
+
 ## The three time-sinks that cost ~15 min — never repeat
 
 1. **Full `window.__velaRunUITests()` HANGS headless** on the fullscreen/animation
