@@ -1,0 +1,175 @@
+<!doctype html>
+<!-- App-agnostic end-of-sprint demo deck. Self-contained: no CDN, no build, no
+     dependency on the app under test. Edit deck.js (content) and drop clips into
+     clips/. Open with file:// or any static server. Works in the cloud profile. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sprint demo</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e6ecff; --muted:#93a0c8; --accent:#7c9cff;
+    --card:#141b33; --ok:#34d399; --warn:#f59e0b; --bad:#f87171;
+    --font: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%;width:100%}
+  body{background:#05070f;color:var(--fg);font-family:var(--font);overflow:hidden}
+  /* Fluid full-width layout: the slide always fills the current viewport (no fixed
+     px canvas, no dead margins at any resolution) — vw/vh-based padding and clamped
+     font sizes below do the actual scaling. Wide content (tables, charts) scrolls in
+     its own container (see .tbl-wrap) rather than the page ever scrolling. */
+  #stage{position:fixed;inset:0;display:grid;place-items:center;overflow:hidden;max-width:100vw}
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+    gap:22px;padding:7vh 9vw;background:var(--bg);animation:fade .4s ease;
+    max-width:100%;overflow:hidden}
+  .slide.on{display:flex}
+  @keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  /* Walkthrough slides get a loud "new chapter" entrance so each CR demo is unmistakable */
+  .slide-video{background:linear-gradient(180deg,#0e1730,#0b1020);overflow:hidden}
+  .slide-video::before{content:"";position:absolute;top:0;left:0;height:7px;width:100%;
+    background:linear-gradient(90deg,var(--accent),#a78bfa);transform-origin:left;animation:sweep .5s cubic-bezier(.2,.7,.2,1)}
+  @keyframes sweep{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  .chap{display:flex;align-items:center;gap:16px;animation:chapIn .45s cubic-bezier(.2,.7,.2,1)}
+  @keyframes chapIn{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
+  .chap .n{font-size:15px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
+    color:#05070f;background:var(--accent);padding:7px 13px;border-radius:9px;white-space:nowrap}
+  .slide-video video{animation:popIn .5s .14s both}
+  @keyframes popIn{from{opacity:0;transform:scale(.96) translateY(10px)}to{opacity:1;transform:none}}
+  .kicker{color:var(--accent);font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:14px}
+  h1{font-size:min(7vw,64px);line-height:1.05;margin:0}
+  h2{font-size:min(4.4vw,40px);margin:0}
+  p,li{font-size:min(2.6vw,22px);color:var(--fg);line-height:1.5;margin:0}
+  .muted{color:var(--muted)}
+  /* minmax(0,1fr), not 1fr: without it a wide child (a long table/number) can force
+     the grid track past its column, silently overflowing the slide at narrower
+     resolutions — the classic "worked at 1920, broke at 1280" grid bug. */
+  .grid{display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid #24304f;border-radius:14px;padding:18px 20px;min-width:0}
+  .card h3{margin:0 0 6px;color:var(--accent);font-size:18px}
+  .metrics{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));gap:18px}
+  .metric .v{font-size:min(7vw,56px);font-weight:800;line-height:1}
+  .metric .l{color:var(--muted);margin-top:6px;font-size:15px}
+  .bar{display:flex;align-items:center;gap:14px;margin:10px 0}
+  .bar .lab{flex:0 0 42%;color:var(--muted)} .track{flex:1;height:14px;background:#1c2540;border-radius:99px;overflow:hidden}
+  .fill{height:100%;background:var(--accent);border-radius:99px}
+  ul,ol{margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:10px}
+  .sev{font-weight:700;margin-right:8px}.sev.h{color:var(--bad)}.sev.m{color:var(--warn)}.sev.l{color:var(--muted)}
+  video{max-width:78vw;max-height:62vh;border-radius:14px;border:1px solid #24304f;background:#000}
+  .row{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:12px;max-width:38ch}
+  #hud{position:fixed;bottom:14px;right:18px;color:var(--muted);font-size:13px;z-index:5}
+  #accentbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);z-index:6;transition:width .3s}
+  .foot{position:fixed;bottom:14px;left:18px;color:var(--muted);font-size:13px}
+  .attrib{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);color:var(--muted);
+    font-size:12px;opacity:.7;z-index:4}
+  /* Wide content (cost/data tables) scrolls in its own box instead of ever pushing
+     the page itself into a horizontal scrollbar. */
+  .tbl-wrap{width:100%;max-width:100%;overflow-x:auto}
+  .tbl{width:100%;min-width:520px;border-collapse:collapse;font-size:min(2.2vw,19px)}
+  .tbl th,.tbl td{padding:9px 14px;border-bottom:1px solid #24304f;text-align:left;white-space:nowrap}
+  .tbl th{color:var(--accent);font-size:14px;letter-spacing:.04em;text-transform:uppercase}
+  .tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tbl tbody tr:last-child td{border-top:2px solid #3a466b;font-weight:700}
+  /* Cost slide: per-agent/role table + a by-model strip + a headline total. */
+  .costtotal{font-size:min(5vw,40px);font-weight:800;color:var(--accent)}
+  .costtotal .l{font-size:14px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-left:10px}
+  .bymodel{display:flex;gap:10px;flex-wrap:wrap}
+  .bymodel span{background:var(--card);border:1px solid #24304f;border-radius:99px;padding:6px 14px;font-size:14px;color:var(--muted)}
+  .bymodel b{color:var(--fg)}
+  /* Savings slide: numbered ideas + a waste/errors panel. */
+  .errs{border:1px solid #3a2a2a;background:#1c1220;border-radius:14px;padding:16px 20px}
+  .errs h3{margin:0 0 6px;color:var(--bad);font-size:16px}
+  .errs li{color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="accentbar"></div>
+<div id="stage"></div>
+<div class="foot" id="foot"></div>
+<div id="hud"></div>
+<div id="attrib" class="attrib" style="display:none">Powered by Hyper Sprint</div>
+<script src="deck.js"></script>
+<script>
+  const D = (window.DECK||{slides:[]});
+  if(D.accent) document.documentElement.style.setProperty('--accent', D.accent);
+  document.getElementById('foot').textContent = D.footer || '';
+  // Attribution footer is opt-in only (references/demo-deck.md) — off unless the
+  // deck explicitly sets D.attribution = true (or a custom string).
+  if (D.attribution) {
+    const at = document.getElementById('attrib');
+    at.style.display = 'block';
+    if (typeof D.attribution === 'string') at.textContent = D.attribution;
+  }
+  const stage = document.getElementById('stage');
+  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const list = a => (a||[]).map(x=>`<li>${esc(x)}</li>`).join('');
+  function chart(s){
+    const W=920,H=340,pl=54,pr=20,pt=16,pb=34, iw=W-pl-pr, ih=H-pt-pb;
+    const xmax=s.xmax||Math.max(...(s.actual||[]).map(p=>p[0]),1);
+    const ymax=s.ymax||Math.max(...(s.actual||[]).flatMap(p=>[p[1]]), ...(s.ideal||[]).map(p=>p[1]),1);
+    const X=x=>pl+iw*(x/xmax), Y=y=>pt+ih*(1-y/ymax);
+    const poly=(pts,extra)=>`<polyline fill="none" ${extra} points="${pts.map(p=>`${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ')}"/>`;
+    const gx=[]; for(let i=0;i<=ymax;i+=Math.ceil(ymax/4)) gx.push(i);
+    const grid=gx.map(v=>`<line x1="${pl}" y1="${Y(v)}" x2="${W-pr}" y2="${Y(v)}" stroke="#1c2540"/><text x="${pl-8}" y="${Y(v)+4}" fill="#93a0c8" font-size="12" text-anchor="end">${v}</text>`).join('');
+    const marks=(s.markers||[]).map(m=>`<line x1="${X(m.x)}" y1="${pt}" x2="${X(m.x)}" y2="${pt+ih}" stroke="#f59e0b" stroke-dasharray="3 3" opacity=".7"/><text x="${X(m.x)}" y="${pt+12}" fill="#f59e0b" font-size="11" text-anchor="middle">${esc(m.label)}</text>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:min(84vw,920px)">
+      ${grid}
+      <line x1="${pl}" y1="${pt+ih}" x2="${W-pr}" y2="${pt+ih}" stroke="#3a466b"/>
+      ${marks}
+      ${s.ideal?poly(s.ideal,'stroke="#93a0c8" stroke-width="2" stroke-dasharray="6 5"'):''}
+      ${poly(s.actual||[],'stroke="var(--accent)" stroke-width="3"')}
+      <text x="${W-pr}" y="${pt+ih+26}" fill="#93a0c8" font-size="12" text-anchor="end">${esc(s.xlabel||'elapsed min')}</text>
+      <text x="${pl}" y="${pt+ih+26}" fill="#93a0c8" font-size="12">0</text>
+      <text x="${pl+iw/2}" y="${pt+ih+26}" fill="#93a0c8" font-size="12" text-anchor="middle">- - ideal · <tspan fill="#7c9cff">actual ${esc(s.unit||'')}</tspan></text>
+    </svg>`;
+  }
+  function render(s){
+    const k = s.kicker?`<div class="kicker">${esc(s.kicker)}</div>`:'';
+    switch(s.type){
+      case 'cover': return `${k}<h1>${esc(s.title)}</h1>${s.subtitle?`<h2 class="muted">${esc(s.subtitle)}</h2>`:''}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'scope': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:${s.cols||2}">${(s.groups||[]).map(g=>`<div class="card"><h3>${esc(g.title)}</h3><p>${esc(g.items)}</p></div>`).join('')}</div>`;
+      case 'metrics': return `${k}<h2>${esc(s.title)}</h2><div class="metrics" style="--cols:${(s.items||[]).length||4}">${(s.items||[]).map(m=>`<div class="metric"><div class="v">${esc(m.v)}</div><div class="l">${esc(m.l)}</div></div>`).join('')}</div>`;
+      case 'burndown': return `${k}<h2>${esc(s.title)}</h2><div>${(s.bars||[]).map(b=>`<div class="bar"><div class="lab">${esc(b.label)}</div><div class="track"><div class="fill" style="width:${Math.max(0,Math.min(100,b.value))}%;background:${b.color||'var(--accent)'}"></div></div><div style="flex:0 0 3ch;text-align:right">${b.value}%</div></div>`).join('')}</div>${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'bugs': return `${k}<h2>${esc(s.title)}</h2><ul>${(s.items||[]).map(b=>`<li><span class="sev ${b.sev||'m'}">${(b.sev||'m').toUpperCase()}</span>${esc(b.text)}</li>`).join('')}</ul>`;
+      case 'chart': return `${k}<h2>${esc(s.title)}</h2>${chart(s)}${s.note?`<p class="muted">${esc(s.note)}</p>`:''}`;
+      case 'retro': return `${k}<h2>${esc(s.title)}</h2><div class="grid" style="--cols:2"><div class="card"><h3 style="color:var(--ok)">What worked</h3><ul>${list(s.worked)}</ul></div><div class="card"><h3 style="color:var(--warn)">Next sprint — improve</h3><ul>${list(s.improve)}</ul></div></div>`;
+      case 'table': return `${k}<h2>${esc(s.title)}</h2><div class="tbl-wrap"><table class="tbl"><thead><tr>${(s.headers||[]).map((h,ci)=>`<th${ci?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${(s.rows||[]).map(r=>`<tr>${r.map((cell,ci)=>`<td${ci?' class="num"':''}>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${s.note?`<p class="muted" style="font-size:15px">${esc(s.note)}</p>`:''}`;
+      case 'bullets': return `${k}<h2>${esc(s.title)}</h2><ul>${list(s.items)}</ul>`;
+      case 'video': return `<div class="chap"><span class="n">${esc(s.kicker||'Live')}</span><h2 style="margin:0">${esc(s.title)}</h2></div><div class="row"><video src="${esc(s.src)}" ${s.controls===false?'':'controls'} muted loop playsinline></video><div class="col">${s.points?`<ul>${list(s.points)}</ul>`:`<p>${esc(s.caption)}</p>`}</div></div>`;
+      // Cost — required proof-artifact slide (SKILL.md principle 9 / references/demo-deck.md):
+      // per-agent/role table from assets/sprint-cost.py, a by-model-tier strip, and the
+      // headline grand total. rows: [[agent, model, cost], ...]; byModel: [{label, v}].
+      case 'cost': return `${k}<h2>${esc(s.title)}</h2>`
+        + (s.total!=null ? `<div class="costtotal">${esc(s.total)}<span class="l">${esc(s.totalLabel||'grand total')}</span></div>` : '')
+        + `<div class="tbl-wrap"><table class="tbl"><thead><tr>${(s.headers||['Agent','Model','Cost']).map((h,ci)=>`<th${ci?' class="num"':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${(s.rows||[]).map(r=>`<tr>${r.map((cell,ci)=>`<td${ci?' class="num"':''}>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+        + (s.byModel?.length ? `<div class="bymodel">${s.byModel.map(m=>`<span>${esc(m.label)}: <b>${esc(m.v)}</b></span>`).join('')}</div>` : '')
+        + (s.note?`<p class="muted" style="font-size:15px">${esc(s.note)}</p>`:'');
+      // Savings — required proof-artifact slide: numbered concrete changes for next time,
+      // each grounded in the cost breakdown, plus a named waste/errors panel (scrapped /
+      // killed / restarted sub-agent spend) so it isn't buried in the total.
+      case 'savings': return `${k}<h2>${esc(s.title)}</h2>`
+        + (s.items?.length ? `<ol>${s.items.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>` : '')
+        + (s.errors?.length ? `<div class="errs"><h3>Wasted / scrapped</h3><ul>${s.errors.map(e=>`<li>${esc(typeof e==='string'?e:e.text)}${e.cost?` — <b>${esc(e.cost)}</b>`:''}</li>`).join('')}</ul></div>` : '')
+        + (s.note?`<p class="muted" style="font-size:15px">${esc(s.note)}</p>`:'');
+      default: return `${k}<h2>${esc(s.title||'')}</h2><p>${esc(s.body||'')}</p>`;
+    }
+  }
+  const slides = D.slides||[];
+  stage.innerHTML = slides.map(s=>`<section class="slide slide-${esc(s.type)}">${render(s)}</section>`).join('');
+  const els=[...stage.children]; let i=0;
+  function show(n){ i=Math.max(0,Math.min(els.length-1,n)); els.forEach((e,x)=>e.classList.toggle('on',x===i));
+    document.getElementById('hud').textContent=`${i+1} / ${els.length}`;
+    document.getElementById('accentbar').style.width=`${(i+1)/els.length*100}%`;
+    const v=els[i].querySelector('video'); if(v){try{v.currentTime=0;v.play().catch(()=>{})}catch(e){}} }
+  addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){show(i+1);e.preventDefault();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1);}
+    else if(e.key==='Home'){show(0);} else if(e.key==='End'){show(els.length-1);}
+    else if(e.key==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  });
+  stage.addEventListener('click',e=>{ if(!e.target.closest('video')) show(i+1); });
+  show(0); window.__deckReady=true; window.__deckGoto=show;
+</script>
+</body>
+</html>
