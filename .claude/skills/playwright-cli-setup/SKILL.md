@@ -99,6 +99,35 @@ npx playwright-cli kill-all        # nuke stale/zombie browsers
 
 Tip: `node_modules/.bin/playwright-cli` skips `npx` resolution overhead in loops.
 
+## Parallel agents — isolating concurrent browser tests
+
+Multiple agents can drive Vela at once, but they share one machine-wide session
+registry (`~/.cache/...`) and one per-cwd output dir. Verified isolation ladder,
+weakest → strongest:
+
+| axis | how | what it isolates | gotcha |
+|------|-----|------------------|--------|
+| **session name** | `-s=agentA` vs `-s=agentB` | the browser + page state (independent — one advancing slides doesn't move the other) | same registry & same `.playwright-cli/` output dir |
+| **registry** | `PWTEST_DAEMON_SESSION_DIR=/tmp/agentA-daemon` (per agent) | the whole session daemon — an agent's sessions are invisible to another's `list`/`close-all`/`kill-all` | must set it on **every** command for that agent |
+| **workspace/cwd** | run each agent from its own dir / git worktree | session namespace **and** the `.playwright-cli/` output dir (both keyed off `findWorkspaceDir(cwd)`) | needs a separate checkout |
+
+**Recommended patterns**
+
+- **Best:** give each parallel agent its own **git worktree** (the Agent tool's
+  `isolation: "worktree"`). Different cwd ⇒ different workspace ⇒ separate session
+  namespace *and* separate `.playwright-cli/` output, for free. Add a unique
+  `-s=<name>` per agent too.
+- **Same cwd:** give each agent a unique `-s=<name>` **and** a unique
+  `PWTEST_DAEMON_SESSION_DIR` — otherwise one agent's `close-all`/`kill-all` kills
+  **every** agent's browsers (the single biggest footgun). Output files still land in
+  the shared `.playwright-cli/` (timestamped names rarely collide, but they intermix).
+
+**Two things that make this easy here:** the offline `file://` render needs **no
+port**, so parallel sessions never collide on a port (unlike serving over HTTP); and
+each deck can render to its own `/tmp/<agent>-render` dir. **Cost:** each session is a
+full Chromium (~200-300 MB RAM) — cap concurrency to the box, and never use the global
+`close-all`/`kill-all` from a parallel agent unless its registry is isolated.
+
 ## Vela-specific hooks & selectors (for `eval` / interaction)
 
 | what | how |
