@@ -93,8 +93,29 @@ jobs:
 
       # 4/4 — Chromium + ffmpeg recorder. Installed into PLAYWRIGHT_BROWSERS_PATH
       # (/opt/pw-browsers) to mirror the Claude cloud layout, with OS deps.
+      # On GitHub-hosted runners /opt is root-owned, so the unprivileged `runner`
+      # user cannot create /opt/pw-browsers — playwright would fail with EACCES.
+      # Pre-create it writable with sudo before installing.
       - name: Install Chromium + ffmpeg
-        run: npx playwright install --with-deps chromium ffmpeg
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /opt/pw-browsers
+          sudo chown -R "$(id -u):$(id -g)" /opt/pw-browsers
+          npx playwright install --with-deps chromium ffmpeg
+          # Fallback: if a pre-baked PLAYWRIGHT_BROWSERS_PATH or a cached install
+          # landed the browser elsewhere, mirror it into /opt/pw-browsers so the
+          # committed harness's hardcoded paths resolve.
+          if ! ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome >/dev/null 2>&1; then
+            for cache in "$HOME/.cache/ms-playwright" "$HOME/Library/Caches/ms-playwright" /ms-playwright; do
+              [ -d "$cache" ] || continue
+              found="$(ls -d "$cache"/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1 || true)"
+              if [ -n "$found" ]; then
+                echo "mirroring browsers from $cache -> /opt/pw-browsers"
+                cp -a "$cache"/. /opt/pw-browsers/
+                break
+              fi
+            done
+          fi
 
       # Wire the on-disk Chromium into the paths the committed harness hardcodes:
       #   * vela-drive.js expects /opt/pw-browsers/chromium-1194/chrome-linux/chrome
