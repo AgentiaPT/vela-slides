@@ -248,6 +248,23 @@ console errors are harmless font fetches. In-app UI battery is invokable headles
 `window.__velaRunUITests()`. Never inline the 1.1MB monolith as `text/babel` (its XSS-test
 strings contain `</script>` and truncate the block) — the harness loads an external `app.js`.
 
+## Ad-hoc testing & exploration: use the Playwright CLI, not throwaway code files
+
+For **ad-hoc / exploratory** browser work — poking a state, reproducing a bug,
+checking a selector, driving presenter/gallery flows, taking a quick screenshot —
+drive the app with the **Playwright CLI** (`@playwright/cli`, skill:
+**`playwright-cli-setup`**) rather than writing a one-off Playwright `.js` file. The
+CLI keeps a persistent browser session (`-s=<name>`) and you run one command at a
+time (`open`, `snapshot`, `click e15`, `press ArrowRight`, `eval "…"`), **inspecting
+page state and command output between every step** — so you reason and adapt in real
+time instead of running a script blind and re-editing it whenever a step fails.
+`window` globals persist across calls, and output goes to `.playwright-cli/`
+(gitignored) so nothing bloats the conversation. Reserve written `.js` harnesses
+(`vela-drive.js`, etc.) for **repeatable, committed** automation (CI, the interaction
+benchmark). Supply-chain note: `@playwright/cli` is installed **isolated and
+script-blocked, never committed** to `package-lock.json` (it pulls a fresh alpha
+`playwright`) — see the `playwright-cli-setup` skill.
+
 ## License
 
 ELv2 (source-available, commercial use allowed for presentations)
