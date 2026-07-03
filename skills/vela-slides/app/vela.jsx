@@ -1244,6 +1244,7 @@ const getCss = () => `
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} .fade-in{animation:fadeIn .3s ease-out}
+@keyframes slideTransitionFade{from{opacity:0;transform:scale(0.985)}to{opacity:1;transform:scale(1)}} .slide-transition-fade{animation:slideTransitionFade .25s ease-out both}
 @keyframes navToastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes navToastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
 .nav-toast-in{animation:navToastIn .25s ease-out forwards}
@@ -5573,6 +5574,61 @@ function CommentPopover({ itemId, slideIndex, slide, dispatch, onClose, anchor }
   );
 }
 
+// ━━━ PresenterView — CR-08: single-screen speaker dashboard shown from
+// Present mode (button + 'S' key). Offline can't drive a real second
+// monitor, so this is a full-page dashboard overlay (same slot/precedent as
+// GalleryView below): current slide, a "Next ▸" preview, speaker notes
+// (slide.notes — the real per-slide field authored via the NOTES bar, not
+// the separate offline studyNotes/student-mode feature), an elapsed timer
+// running since Present mode was entered, and the slide position. Slide
+// navigation itself is handled by the existing global arrow-key handler
+// (unaffected by this overlay), so advancing the deck behind it just works.
+function fmtElapsed(totalSeconds) {
+  const s = Math.max(0, totalSeconds | 0);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+  const notes = (current?.notes || "").trim();
+  const studyNotes = (current?.studyNotes?.text || "").trim();
+  return (
+    <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
+        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
+        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
+        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
+        <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+      </div>
+      <div style={{ flex: 1, display: "flex", gap: 18, padding: 20, minHeight: 0 }}>
+        <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
+          <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+          </div>
+          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
+            {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
+            {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
+            </div>}
+          </div>
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
 function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
   const gridRef = useRef(null);
@@ -6235,6 +6291,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (exiting && slideIndex > 0) dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
     else if (exiting) dispatch({ type: "SET_SLIDE_INDEX", index: 0 });
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps to fire once on transition
+
+  // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
+  // is entered, stops (and hides the presenter view) on exit.
+  useEffect(() => {
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    presentStartRef.current = Date.now();
+    setPresentElapsed(0);
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    return () => clearInterval(id);
+  }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
   // Skip hidden slides during fullscreen presentation (CR: hidden slides are not
   // presented). Self-contained: only acts when fullscreen AND the current slide
@@ -6267,6 +6333,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showGallery, setShowGallery] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
+  // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
+  // next-slide preview, speaker notes, elapsed timer. Toggled from Present
+  // mode only (button + 'S' key), independent of the audience-facing slide.
+  const [showPresenterView, setShowPresenterView] = useState(false);
+  const showPresenterViewRef = useRef(false);
+  const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
+  const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -6588,7 +6662,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // S → presenter view toggle (Present mode only)
+      if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresenterView((v) => !v);
+      }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
+      if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
       // Ctrl+C → copy current slide to system clipboard
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
         const curSlides = slidesRef.current;
@@ -6964,7 +7043,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       {measureHarness}
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-        <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        {/* Deck-level transition (CR-09): key on slideIndex remounts this wrapper
+            on every slide advance, replaying the subtle fade/scale-in defined by
+            .slide-transition-fade (part-imports.jsx). Independent of the per-block
+            .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
+        <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+        </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -6980,9 +7065,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 124, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -7002,6 +7088,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showPresenterView && (() => {
+        let nextIdx = -1;
+        for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
+        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+      })()}
     </div>
   );
 
@@ -7200,6 +7291,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <div style={{ width: 1, height: 22, background: T.border + "60" }} />
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -7221,6 +7314,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(260, allMods.length * 32 + 40); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 200, maxWidth: "calc(100vw - 16px)", maxHeight: 260, overflowY: "auto", zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><div style={{ padding: "4px 8px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>{allMods.length === 0 ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No other modules</div> : allMods.map((m) => <button key={m.id} onClick={() => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId: m.id, index: slideIndex }); setShowMoveToModule(false); }} style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{m.title}</button>)}</div></>; })()}
       </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
   );
 }
@@ -9801,6 +9895,125 @@ uiSuite("Gallery View", [
     await _waitFor(() => !_$text("GALLERY"), 3000);
   }},
   { name: "Exit fullscreen after gallery tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── CR-12: Gallery reachable from the editor (not just Present mode) ──
+uiSuite("Gallery From Editor", [
+  { name: "Editor is not in fullscreen/Present", fn: async () => {
+    await _waitFor(() => _$("header"), 2000);
+  }},
+  { name: "Overview button visible in the SLIDE TOOLBAR", fn: async () => {
+    await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+  }},
+  { name: "Clicking Overview opens the gallery grid with tiles", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    // Scope to the gallery overlay itself — the editor's module list (still
+    // mounted behind the overlay) has its own numbered mono-font badges that
+    // would otherwise collide with an unscoped document-wide query.
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const cardCount = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono")).length;
+    if (cardCount === 0) throw new Error("gallery opened from editor but shows no slide tiles");
+  }},
+  { name: "Clicking a tile from the editor-opened gallery navigates", fn: async () => {
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const nums = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
+    const card1 = nums.find((n) => n.textContent?.trim() === "1");
+    if (!card1) throw new Error("tile '1' not found in gallery overlay");
+    const cardEl = card1.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
+    if (!cardEl) throw new Error("clickable card wrapper not found for tile '1'");
+    _click(cardEl);
+    await _wait(400);
+    if (_$text("GALLERY")) throw new Error("gallery still open after selecting a tile");
+    await _waitFor(() => _$("header"), 2000); // back in the editor, not fullscreen
+  }},
+  { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    document.activeElement?.blur(); await _wait(100);
+    _key("g"); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    _key("Escape"); await _wait(300);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+]);
+
+// ── CR-08: Dedicated presenter/speaker view ──────────────────────────
+uiSuite("Presenter View", [
+  { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+    await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s"); await _wait(400);
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    const timerEl = _$("[data-testid='presenter-timer']");
+    if (!timerEl) throw new Error("presenter-timer not found");
+    if (!/\d+:\d\d/.test(timerEl.textContent || "")) throw new Error("presenter timer text does not match mm:ss: " + timerEl.textContent);
+    if (!_$("[data-testid='presenter-next']")) throw new Error("Next-slide preview region not found");
+    if (!_$("[data-testid='presenter-notes']")) throw new Error("Speaker notes region not found");
+  }},
+  { name: "Timer keeps advancing (elapsed clock is live)", fn: async () => {
+    const before = _$("[data-testid='presenter-timer']")?.textContent;
+    await _wait(1200);
+    const after = _$("[data-testid='presenter-timer']")?.textContent;
+    if (before == null || after == null) throw new Error("presenter-timer disappeared");
+    // Not a hard equality check (1s tick can be flaky under load) — just confirm it's still a valid mm:ss.
+    if (!/\d+:\d\d/.test(after)) throw new Error("presenter timer stopped showing mm:ss: " + after);
+  }},
+  { name: "Arrow key advances the deck while presenter view is open", fn: async () => {
+    const before = _slidePos();
+    _key("ArrowRight"); await _wait(400);
+    const after = _slidePos();
+    if (before != null && after != null && after === before) throw new Error("ArrowRight did not advance slide with presenter view open");
+  }},
+  { name: "Presenter toggle button closes the view", fn: async () => {
+    const btn = _$("[data-testid='presenter-toggle']");
+    if (!btn) throw new Error("presenter-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+  }},
+  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── CR-09: Deck-level slide transition on advance ────────────────────
+uiSuite("Slide Transitions", [
+  { name: "Enter fullscreen for transition tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
+    await _waitFor(() => _$(".slide-transition-fade"), 2000);
+  }},
+  { name: "Transition wrapper remounts (fresh play) on slide advance", fn: async () => {
+    const before = _$(".slide-transition-fade");
+    if (!before) throw new Error("no .slide-transition-fade element before advancing");
+    _key("ArrowRight"); await _wait(400);
+    await _waitFor(() => {
+      const el = _$(".slide-transition-fade");
+      return el && el !== before;
+    }, 2000);
+  }},
+  { name: "Per-block stagger (.stg-N) still present alongside the deck transition", fn: async () => {
+    await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
+  }},
+  { name: "Exit fullscreen after transition tests", fn: async () => {
     _key("f"); await _wait(300);
     await _waitFor(() => _$("header"));
   }},

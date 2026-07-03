@@ -1244,6 +1244,7 @@ const getCss = () => `
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} .fade-in{animation:fadeIn .3s ease-out}
+@keyframes slideTransitionFade{from{opacity:0;transform:scale(0.985)}to{opacity:1;transform:scale(1)}} .slide-transition-fade{animation:slideTransitionFade .25s ease-out both}
 @keyframes navToastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes navToastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
 .nav-toast-in{animation:navToastIn .25s ease-out forwards}

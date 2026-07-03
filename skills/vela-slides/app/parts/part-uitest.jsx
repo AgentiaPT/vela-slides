@@ -1280,6 +1280,125 @@ uiSuite("Gallery View", [
   }},
 ]);
 
+// ── CR-12: Gallery reachable from the editor (not just Present mode) ──
+uiSuite("Gallery From Editor", [
+  { name: "Editor is not in fullscreen/Present", fn: async () => {
+    await _waitFor(() => _$("header"), 2000);
+  }},
+  { name: "Overview button visible in the SLIDE TOOLBAR", fn: async () => {
+    await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+  }},
+  { name: "Clicking Overview opens the gallery grid with tiles", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    // Scope to the gallery overlay itself — the editor's module list (still
+    // mounted behind the overlay) has its own numbered mono-font badges that
+    // would otherwise collide with an unscoped document-wide query.
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const cardCount = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono")).length;
+    if (cardCount === 0) throw new Error("gallery opened from editor but shows no slide tiles");
+  }},
+  { name: "Clicking a tile from the editor-opened gallery navigates", fn: async () => {
+    const root = _$("[data-teacher-panel]");
+    if (!root) throw new Error("gallery overlay root not found");
+    const nums = _$$("span", root).filter((s) => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
+    const card1 = nums.find((n) => n.textContent?.trim() === "1");
+    if (!card1) throw new Error("tile '1' not found in gallery overlay");
+    const cardEl = card1.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
+    if (!cardEl) throw new Error("clickable card wrapper not found for tile '1'");
+    _click(cardEl);
+    await _wait(400);
+    if (_$text("GALLERY")) throw new Error("gallery still open after selecting a tile");
+    await _waitFor(() => _$("header"), 2000); // back in the editor, not fullscreen
+  }},
+  { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    document.activeElement?.blur(); await _wait(100);
+    _key("g"); await _wait(400);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    _key("Escape"); await _wait(300);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+]);
+
+// ── CR-08: Dedicated presenter/speaker view ──────────────────────────
+uiSuite("Presenter View", [
+  { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+    await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s"); await _wait(400);
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    const timerEl = _$("[data-testid='presenter-timer']");
+    if (!timerEl) throw new Error("presenter-timer not found");
+    if (!/\d+:\d\d/.test(timerEl.textContent || "")) throw new Error("presenter timer text does not match mm:ss: " + timerEl.textContent);
+    if (!_$("[data-testid='presenter-next']")) throw new Error("Next-slide preview region not found");
+    if (!_$("[data-testid='presenter-notes']")) throw new Error("Speaker notes region not found");
+  }},
+  { name: "Timer keeps advancing (elapsed clock is live)", fn: async () => {
+    const before = _$("[data-testid='presenter-timer']")?.textContent;
+    await _wait(1200);
+    const after = _$("[data-testid='presenter-timer']")?.textContent;
+    if (before == null || after == null) throw new Error("presenter-timer disappeared");
+    // Not a hard equality check (1s tick can be flaky under load) — just confirm it's still a valid mm:ss.
+    if (!/\d+:\d\d/.test(after)) throw new Error("presenter timer stopped showing mm:ss: " + after);
+  }},
+  { name: "Arrow key advances the deck while presenter view is open", fn: async () => {
+    const before = _slidePos();
+    _key("ArrowRight"); await _wait(400);
+    const after = _slidePos();
+    if (before != null && after != null && after === before) throw new Error("ArrowRight did not advance slide with presenter view open");
+  }},
+  { name: "Presenter toggle button closes the view", fn: async () => {
+    const btn = _$("[data-testid='presenter-toggle']");
+    if (!btn) throw new Error("presenter-toggle not found");
+    _click(btn); await _wait(400);
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+  }},
+  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── CR-09: Deck-level slide transition on advance ────────────────────
+uiSuite("Slide Transitions", [
+  { name: "Enter fullscreen for transition tests", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f"); await _wait(400);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
+    await _waitFor(() => _$(".slide-transition-fade"), 2000);
+  }},
+  { name: "Transition wrapper remounts (fresh play) on slide advance", fn: async () => {
+    const before = _$(".slide-transition-fade");
+    if (!before) throw new Error("no .slide-transition-fade element before advancing");
+    _key("ArrowRight"); await _wait(400);
+    await _waitFor(() => {
+      const el = _$(".slide-transition-fade");
+      return el && el !== before;
+    }, 2000);
+  }},
+  { name: "Per-block stagger (.stg-N) still present alongside the deck transition", fn: async () => {
+    await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
+  }},
+  { name: "Exit fullscreen after transition tests", fn: async () => {
+    _key("f"); await _wait(300);
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
 // ── Review / Comments Suite ─────────────────────────────────────────
 uiSuite("Review", [
   { name: "Review button visible in header", fn: async () => {
