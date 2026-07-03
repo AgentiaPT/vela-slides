@@ -434,18 +434,37 @@ function installAgentsBridge() {
   // Consumed by trust.js to render the provider choice in the confirm modal.
   window.__velaSelectProvider = selectProvider;
 
-  // Detect installed agents in the background — the gatekeeper may still be
-  // starting, so this polls briefly (agents-bridge.js) and updates when ready.
+  // Detect installed agents in the background. The gatekeeper extension may
+  // still be starting — and a FRESHLY BUILT native binary is slow on its first
+  // Windows launches (Defender scan / SmartScreen / MOTW on a new-hash exe, plus
+  // first-run resource unpack), so a single 3s probe often misses it and the
+  // whole session shows AI as unavailable until the app is closed and reopened.
+  // Retry with backoff until the gatekeeper answers (or a budget elapses), so a
+  // slow first launch self-heals instead of needing a manual restart.
   (async () => {
-    try {
-      await agents.detect();
-      window.__velaAgentInfo = agents.info();
-      window.__velaAgentReady = agents.available();
-      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
-    } catch {
-      window.__velaAgentReady = false;
+    const deadline = Date.now() + 45000; // give a cold, AV-scanned exe time to boot
+    let emptyTries = 0;                   // gatekeeper answered but no agent installed
+    let delay = 500;
+    for (;;) {
+      let gatekeeperUp = false;
+      try {
+        gatekeeperUp = await agents.detect();
+        window.__velaAgentInfo = agents.info();
+        window.__velaAgentReady = agents.available();
+        window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+      } catch {
+        window.__velaAgentReady = false;
+      }
+      window.dispatchEvent(new Event("vela-agent-update"));
+
+      if (window.__velaAgentReady) break;              // found an agent — done
+      // Gatekeeper responded but reported no agent: mostly a real negative, but a
+      // slow first-run `claude --version` can time out too, so allow a few retries.
+      if (gatekeeperUp && ++emptyTries >= 3) break;
+      if (Date.now() >= deadline) break;               // gatekeeper never came up
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(Math.round(delay * 1.5), 4000);
     }
-    window.dispatchEvent(new Event("vela-agent-update"));
   })();
 }
 

@@ -101,9 +101,19 @@ function availableList() {
 
 // Probe which agents are installed and choose the active one: the persisted
 // pick if it is still available, otherwise the first available provider.
+//
+// Returns whether the gatekeeper actually ANSWERED (handshake read + /detect
+// responded), NOT whether an agent was found. The boot retry loop (nl-boot.js)
+// needs this distinction: a freshly built native gatekeeper binary can be slow
+// to start on its first Windows launches (Defender scan / SmartScreen / MOTW on
+// a new-hash exe), so an early attempt sees no handshake files yet — that is a
+// transient "not up yet", retryable. A gatekeeper that answers with no agent
+// installed is a real negative that should stop the retry.
 async function detect() {
+  let gatekeeperUp = false;
   try {
     const data = await extFetch("/detect", {}, 15000);
+    gatekeeperUp = true;
     detected = data.providers || {};
   } catch {
     detected = {};
@@ -114,7 +124,7 @@ async function detect() {
   if (saved && detected[saved]?.available) activeId = saved;
   else if (avail.length) activeId = avail[0];
   else activeId = null;
-  return detected;
+  return gatekeeperUp;
 }
 
 export const agents = {
