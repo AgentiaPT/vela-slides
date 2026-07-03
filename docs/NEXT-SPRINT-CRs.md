@@ -161,64 +161,18 @@ deck-overview/reorder surface. Reuses working code. **Effort:** S–M.
 
 ---
 
-## F. ⭐ "Share & Present" sprint — one sprint, 3 senior engineers
+## F. ⭐ Sprint — moved to `.hyper-sprint/`
 
-Goal: convert *"someone found Vela on GitHub"* into *"they starred, shared, and came
-back."* Stars for a presentation tool come from three moments this sprint targets —
-**share it virally**, **present it professionally**, and **the one-prompt wow demo**.
+The self-contained sprint definition now lives at
+**`.hyper-sprint/sprint-2026-07-03-1-tradewinds.md`** ("Share & Present", codename
+*Tradewinds*) — scope only, no delivery plan, intended to be run by coding agents.
+This document (`docs/NEXT-SPRINT-CRs.md`) remains the **CR catalogue and findings**
+that the sprint draws from.
 
-> **Scope decision:** Bring-Your-Own-Key AI (the "try it in 60 seconds" adoption
-> unlock) has been **pulled from this sprint to the backlog → CR-13**. Consequence:
-> Track 3's deck-from-source runs on the **existing** AI paths only (Claude.ai artifact
-> proxy + desktop agent-bridge), so it works in those runtimes but **not for a keyless
-> OSS cloner** until CR-13 ships. The demo GIF still drives stars regardless of where
-> the viewer can run it. The three tracks below are fully **independent — no shared
-> dependency edge** now that A is out.
-
-### Track 1 · *Share it anywhere* — Standalone HTML export + present-mode polish  (Eng 1)
-A presentation tool grows through the decks people share. Productize the existing
-`render-offline.js` recipe into an in-app **Export → "Standalone HTML"**: one
-self-contained `.html` (deck + vendored UMD + safely-inlined transpiled app) that
-opens offline anywhere and drops straight onto GitHub Pages or into an email. Add a
-toggleable **"Made with Vela ⛵"** footer → attribution loop. **Ship CR-03** here
-(edit chrome must never appear in a shared/presented deck — it's the actual output)
-and **CR-05** (presenter counter legibility) as same-surface polish.
-**Why it drives stars:** every shared deck becomes a growth vector with built-in
-attribution. **Verify:** exported file opens in a fresh, network-less browser; arrows
-navigate; zero edit chrome; counter legible. **Effort:** M (+ CR-03/05 small).
-
-### Track 2 · *Present it professionally* — Presenter view + editor overview  (Eng 2)
-Ship the **dedicated presenter/speaker view** (CR-08): current slide + next-slide
-preview + speaker notes + elapsed/segment timer — table-stakes for live talks that's
-currently missing. Bundle the AI-independent editor wins: expose the working
-`GalleryView` as a **grid/overview-and-reorder surface from the editor** (CR-12), and
-land the affordance-consistency + label polish (**CR-06**, **CR-11**).
-**Why it drives stars:** closes the credibility gap for anyone who'd present live, and
-makes the editor feel finished on first open — all with **zero AI dependency**, so it
-lands cleanly even without CR-13. **Verify:** presenter view shows next-slide + notes
-+ running timer; gallery opens from the editor and reorders slides. **Effort:** M–L.
-
-### Track 3 · *One-prompt wow* — Deck-from-source + slide transitions  (Eng 3)
-The hero, screenshot-able moment: **"Generate deck from…"** a pasted README / URL /
-PDF-text → a full Vela deck in one shot. *"Turn your repo README into a pitch deck"*
-is the tweet that gets posted. Runs on the existing AI paths (see scope note). Pair it
-with **slide transitions / build animations** (CR-09) so both the generated deck and
-the shared HTML from Track 1 feel like a finished product.
-**Why it drives stars:** produces the demo GIF that spreads, and raises the perceived
-polish of every deck. **Verify:** paste a real README (in an AI-enabled runtime) →
-coherent deck; a deck-level transition plays on slide advance. **Effort:** M–L.
-
-### Shared hardening (all three, ~½ day each) — *repo looks healthy to a visitor*
-A first-time visitor judges trust by green CI and a clean test run. Land the cheap
-quality fixes so the repo reads as maintained: **CR-01** (battery drift), **CR-02**
-(AI-test offline guard), **CR-04** (jsdom dev-dep). Each requires a `VELA_VERSION`
-bump per the repo rule.
-
-### Sequencing & fit
-No cross-track dependency — all three start day 1 and run in parallel. Each track is a
-single coherent surface (export / presenter+gallery / generation+transitions) plus a
-small polish tail, with shared hardening threaded throughout. Comfortably one sprint;
-Track 2 (AI-independent) is the safest to fully complete if scope tightens.
+In-scope for the sprint: standalone HTML export + attribution, CR-03, CR-05, CR-08,
+CR-12, CR-06, CR-11, deck-from-source, CR-09, and hardening CR-01/CR-02/CR-04.
+Out (backlog): CR-13 (BYO-key AI), CR-07 (PPTX). Full detail and verify conditions are
+in the sprint doc.
 
 ---
 
@@ -229,20 +183,38 @@ Track 2 (AI-independent) is the safest to fully complete if scope tightens.
 `callClaudeAPI` chokepoint (part-engine.jsx:17) for a **user-supplied key** (Anthropic
 + OpenAI-compatible + local Ollama), entered in a settings dialog, stored
 **browser-local only** ("your key never leaves this device"); `velaAIAvailable()`
-flips true when a key is present. Unlocks Vera/Improve/Variants/Batch — and Track 3's
-deck-from-source — for **keyless OSS cloners**. Highest adoption leverage of any single
+flips true when a key is present. Unlocks Vera/Improve/Variants/Batch — and the
+deck-from-source item — for **keyless OSS cloners**. Highest adoption leverage of any single
 item; revisit as the headline of the next sprint. **Effort:** M.
 
 ### VELA-CR-07 · PowerPoint (.pptx) export
-Editable PPTX interchange (see §C). Swap into Track 1 instead of standalone-HTML if the
+Editable PPTX interchange (see §C). Swap in for the standalone-HTML export if the
 target audience is enterprise/business rather than OSS-viral.
 
 ---
 
-## Suggested sprint cut
+## Sprint contents (index)
 
-- **⭐ Star sprint (headline):** Track 1 (standalone export + CR-03/05), Track 2
-  (presenter view + CR-12/06/11), Track 3 (deck-from-source + CR-09 transitions)
-- **Shared hardening (in-sprint):** CR-01, CR-02, CR-04
-- **Backlog:** CR-13 (BYO-key AI — pulled from sprint), CR-07 (PPTX export)
-- **Done:** CR-10 (skill-trigger routing)
+> Authoritative sprint doc: **`.hyper-sprint/sprint-2026-07-03-1-tradewinds.md`**.
+> This is a quick index into the catalogue above.
+
+**In scope**
+- Standalone HTML export + "Made with Vela" attribution
+- CR-03 · edit chrome leaking into Present mode
+- CR-05 · presenter counter legibility
+- CR-08 · dedicated presenter/speaker view
+- CR-12 · gallery/overview from the editor
+- CR-06 · add-affordance visibility consistency
+- CR-11 · disambiguate the AI-gated "Edit" button
+- Deck-from-source (README/URL/PDF → deck)
+- CR-09 · slide transitions / build animations
+- CR-01 · UI-battery selector drift
+- CR-02 · AI-test offline guard
+- CR-04 · jsdom dev-dependency
+
+**Backlog (not this sprint)**
+- CR-13 · Bring-Your-Own-Key AI (pulled from sprint)
+- CR-07 · PowerPoint (.pptx) export
+
+**Done**
+- CR-10 · skill-trigger routing
