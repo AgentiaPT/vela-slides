@@ -1137,7 +1137,7 @@ class TestAgentBackendSerialisation(unittest.TestCase):
         self.assertIn('"type"', out)
 
     def test_args_lock_down_every_capability(self):
-        args = agent_backend._claude_args("SYS")
+        args = agent_backend._claude_args("/tmp/sys.txt")
         self.assertIn("-p", args)
         self.assertIn("--output-format", args)
         # Positive allowlist of NOTHING (stronger than a denylist).
@@ -1150,13 +1150,51 @@ class TestAgentBackendSerialisation(unittest.TestCase):
         for bad in ("--dangerously-skip-permissions", "--disallowed-tools", "--allow-all-tools"):
             self.assertNotIn(bad, args)
 
-    def test_system_prompt_passed_through(self):
-        args = agent_backend._claude_args("VERA SYSTEM")
-        self.assertIn("--system-prompt", args)
-        self.assertEqual(args[args.index("--system-prompt") + 1], "VERA SYSTEM")
+    def test_system_prompt_passed_by_file_never_argv(self):
+        # The system prompt is delivered by FILE PATH, so no request value ever
+        # reaches the command line (CodeQL: no uncontrolled command line).
+        args = agent_backend._claude_args("/tmp/vera-sys.txt")
+        self.assertIn("--system-prompt-file", args)
+        self.assertEqual(args[args.index("--system-prompt-file") + 1], "/tmp/vera-sys.txt")
+        self.assertNotIn("--system-prompt", args)  # never the argv-value form
 
     def test_no_system_prompt_when_empty(self):
-        self.assertNotIn("--system-prompt", agent_backend._claude_args(""))
+        self.assertNotIn("--system-prompt-file", agent_backend._claude_args(None))
+
+    def test_canonical_origin_rebuilds_and_blocks_crlf(self):
+        c = agent_backend._canonical_allowed_origin
+        # Allowed origins are rebuilt from parsed parts (exact echo for these).
+        self.assertEqual(c("http://localhost:3030"), "http://localhost:3030")
+        self.assertEqual(c("http://127.0.0.1:8811"), "http://127.0.0.1:8811")
+        self.assertEqual(c("null"), "null")
+        # Not echoed: absent, foreign, look-alike, non-http.
+        for bad in (None, "", "https://evil.com", "http://localhost.evil.com", "file://x"):
+            self.assertIsNone(c(bad))
+        # A CR/LF-laced Origin can never reach the response header.
+        self.assertIsNone(c("http://localhost\r\nSet-Cookie: x=1"))
+
+    def test_run_completion_keeps_system_off_argv(self):
+        # End-to-end: whatever the caller sends as `system`, run_completion must
+        # never place it on the child's argv — it goes to a temp file.
+        seen = {}
+
+        def fake_run(argv, **kw):
+            seen["argv"] = argv
+            # the system prompt must be in the temp file, not on argv
+            sf = argv[argv.index("--system-prompt-file") + 1]
+            with open(sf, encoding="utf-8") as f:
+                seen["file"] = f.read()
+            return type("P", (), {"returncode": 0, "stdout": '{"result":"ok"}', "stderr": ""})()
+
+        orig = agent_backend.subprocess.run
+        agent_backend.subprocess.run = fake_run
+        try:
+            agent_backend.run_completion("SECRET-SYSTEM-PROMPT", [{"role": "user", "content": "hi"}])
+        finally:
+            agent_backend.subprocess.run = orig
+        self.assertNotIn("SECRET-SYSTEM-PROMPT", seen["argv"])
+        self.assertIn("--system-prompt-file", seen["argv"])
+        self.assertEqual(seen["file"], "SECRET-SYSTEM-PROMPT")
 
     def test_parse_claude_json(self):
         out = agent_backend._parse_claude(json.dumps({
@@ -1447,9 +1485,15 @@ class TestBackendParity(unittest.TestCase):
             self.assertNotIn(bad, self.py, f"Python backend must not use {bad}")
             self.assertNotIn(f'"{bad}"', self.go, f"Go gatekeeper must not use {bad}")
 
-    def test_both_pass_system_via_system_prompt(self):
+    def test_both_deliver_system_as_authoritative_prompt(self):
+        # Both backends make Vera's instructions the real system prompt (not
+        # inline text). The TRANSPORT intentionally differs: Python passes it by
+        # FILE (--system-prompt-file) so no request value touches the argv (CodeQL
+        # uncontrolled-command-line); the Go desktop passes --system-prompt (argv
+        # is not a web-response concern there). Neither may regress to inline.
         self._require_go()
-        self.assertIn("--system-prompt", self.py)
+        self.assertIn("--system-prompt-file", self.py)
+        self.assertNotIn("--system-prompt", self.py)  # value form never on argv
         self.assertIn('"--system-prompt"', self.go)
 
 

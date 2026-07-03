@@ -37,6 +37,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -102,15 +103,17 @@ def serialise_messages(messages):
     return "\n\n".join(parts)
 
 
-def _claude_args(system):
-    """Locked argument template for `claude`. Vera's instructions go through the
-    real --system-prompt (replacing Claude Code's default agent prompt, so Vera
-    behaviour drives the model); the conversation itself goes on stdin. Every
+def _claude_args(system_file=None):
+    """Locked argument template for `claude`. Vera's instructions are delivered
+    through --system-prompt-FILE (an authoritative system prompt that replaces
+    Claude Code's default agent prompt, so Vera behaviour drives the model); the
+    conversation goes on stdin. The prompt is passed by file path, never as an
+    argv value, so NO user-controlled data ever reaches the command line. Every
     tool, MCP server, and settings source is disabled (CLAUDE_LOCKDOWN) — no flag
     ever grants a capability."""
     args = ["-p", "--output-format", "json"] + list(CLAUDE_LOCKDOWN)
-    if system:
-        args += ["--system-prompt", system]
+    if system_file:
+        args += ["--system-prompt-file", system_file]
     return args
 
 
@@ -195,15 +198,30 @@ def run_completion(system, messages, call_type="chat", timeout=None):
     if timeout is None:
         timeout = CREATE_TIMEOUT if call_type == "create" else DEFAULT_TIMEOUT
     prompt = serialise_messages(messages)
+    # Vera's system prompt goes to a private temp FILE (0600), passed as
+    # --system-prompt-file — so no request-derived value is ever placed on the
+    # command line (nothing to inject), and large prompts can't hit ARG_MAX.
+    sys_file = None
     try:
-        proc = subprocess.run(
-            [binpath] + _claude_args(system),
-            input=prompt, capture_output=True, text=True, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"{AGENT_BIN} timed out after {timeout}s"}
-    except OSError as e:
-        return {"ok": False, "error": f"{AGENT_BIN} failed to start: {e}"}
+        if system:
+            fd, sys_file = tempfile.mkstemp(prefix="vela-sys-", suffix=".txt")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(system)
+        try:
+            proc = subprocess.run(
+                [binpath] + _claude_args(sys_file),
+                input=prompt, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"{AGENT_BIN} timed out after {timeout}s"}
+        except OSError as e:
+            return {"ok": False, "error": f"{AGENT_BIN} failed to start: {e}"}
+    finally:
+        if sys_file:
+            try:
+                os.unlink(sys_file)
+            except OSError:
+                pass
     if proc.returncode != 0:
         err = (proc.stderr or "").strip() or f"exit {proc.returncode}"
         return {"ok": False, "error": f"{AGENT_BIN} failed: {err[:400]}"}
@@ -258,13 +276,34 @@ def _is_allowed_origin(origin):
     # starts with "localhost") is correctly REJECTED.
     if origin is None or origin == "" or origin == "null":
         return True
+    return _canonical_allowed_origin(origin) is not None
+
+
+def _canonical_allowed_origin(origin):
+    """Return a SAFE Access-Control-Allow-Origin value for an allowed loopback
+    origin, else None. The value is REBUILT from parsed + allowlisted components
+    (validated scheme, allowlisted host, integer port) — the raw request header
+    never flows into the response, so a CR/LF in the Origin cannot split the
+    response (defense against HTTP response splitting)."""
+    if origin == "null":
+        return "null"
+    if not origin:
+        return None
     try:
         u = urlsplit(origin)
     except ValueError:
-        return False
+        return None
     if u.scheme not in ("http", "https"):
-        return False
-    return (u.hostname or "").lower() in _LOOPBACK_HOSTS
+        return None
+    host = (u.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        return None
+    try:
+        port = u.port  # int or None; raises ValueError on a bogus port
+    except ValueError:
+        return None
+    hostpart = f"[{host}]" if ":" in host else host  # bracket an IPv6 literal
+    return f"{u.scheme}://{hostpart}:{port}" if port else f"{u.scheme}://{hostpart}"
 
 
 class _ChannelHandler(BaseHTTPRequestHandler):
@@ -285,11 +324,12 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         return True
 
     def _cors(self):
-        origin = self.headers.get("Origin")
-        # Only ever echo an allowed (loopback / null) origin — never a foreign
-        # one — so a leaked port cannot be replayed from a browser page elsewhere.
-        if origin and _is_allowed_origin(origin):
-            self.send_header("Access-Control-Allow-Origin", origin)
+        # Echo a REBUILT canonical origin (from allowlisted parts), never the raw
+        # request header — so no CR/LF from the caller can reach the response
+        # header, and only a loopback/null origin is ever reflected.
+        safe = _canonical_allowed_origin(self.headers.get("Origin"))
+        if safe is not None:
+            self.send_header("Access-Control-Allow-Origin", safe)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, x-vela-token")
