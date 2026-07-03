@@ -826,10 +826,16 @@ class FileWatcher:
 # ── Main server ────────────────────────────────────────────────────────
 class VelaLocalServer:
     def __init__(self, path, port=3030, host="127.0.0.1", channel_port=0, no_open=False,
-                 no_auth=False, token=None, replace=False):
+                 no_auth=False, token=None, replace=False, ai_enabled=False):
         self.port = port
         self.host = host
         self.channel_port = channel_port
+        # AI is OFF by default. The channel spawns the user's `claude` CLI (its
+        # credentials / spend), so it is strictly opt-in — only started when the
+        # operator passes `--ai` (or the harness/dev tooling requests it). When
+        # disabled, the served page gets VELA_CHANNEL_PORT=0 so velaAIAvailable()
+        # is false and the AI UI stays inert.
+        self.ai_enabled = ai_enabled
         self.no_open = no_open
         self._vendor_available = False
         self._force_kill = replace
@@ -966,9 +972,13 @@ class VelaLocalServer:
 
         # Enable local mode
         vela_jsx = vela_jsx.replace("const VELA_LOCAL_MODE = false;", "const VELA_LOCAL_MODE = true;", 1)
-        vela_jsx = vela_jsx.replace("const VELA_CHANNEL_PORT = 0;", f"const VELA_CHANNEL_PORT = {self.channel_port};", 1)
-        # token_urlsafe is [A-Za-z0-9_-] only — safe to inline in a JS string.
-        vela_jsx = vela_jsx.replace('const VELA_CHANNEL_TOKEN = "";', f'const VELA_CHANNEL_TOKEN = "{self._channel_token}";', 1)
+        # AI channel is injected ONLY when enabled (--ai); otherwise the page gets
+        # port 0 → velaAIAvailable() is false → the AI UI is inert.
+        eff_port = self.channel_port if self.ai_enabled else 0
+        vela_jsx = vela_jsx.replace("const VELA_CHANNEL_PORT = 0;", f"const VELA_CHANNEL_PORT = {eff_port};", 1)
+        if self.ai_enabled:
+            # token_urlsafe is [A-Za-z0-9_-] only — safe to inline in a JS string.
+            vela_jsx = vela_jsx.replace('const VELA_CHANNEL_TOKEN = "";', f'const VELA_CHANNEL_TOKEN = "{self._channel_token}";', 1)
 
         # Neutralize HTML script-data tokens inside the JS source before it is
         # inlined into <script type="text/babel">. vela.jsx legitimately holds
@@ -986,7 +996,7 @@ class VelaLocalServer:
 
         # Assemble HTML
         html = html_template.replace("__VELA_JSX_PLACEHOLDER__", vela_jsx)
-        html = html.replace("__VELA_CHANNEL_PORT__", str(self.channel_port))
+        html = html.replace("__VELA_CHANNEL_PORT__", str(eff_port))
         html = html.replace("'__VELA_DECK_PATH__'", json.dumps(deck_label))
 
         if self._vendor_available:
@@ -1340,8 +1350,11 @@ class VelaLocalServer:
             print(f"  Auth:    DISABLED (--no-auth)")
         else:
             print(f"  Auth:    Token (see {self.RUNTIME_FILE}, or check browser)")
-        if self.channel_port:
-            print(f"  Channel: http://localhost:{self.channel_port}  {self._channel_status}")
+        if self.ai_enabled:
+            print(f"  AI:      ENABLED — Vera runs the local `claude` CLI (its credentials/spend)")
+            print(f"           Channel: http://127.0.0.1:{self.channel_port} (loopback, token-gated)  {self._channel_status}")
+        else:
+            print(f"  AI:      off (opt-in with --ai)")
         if self.host == "0.0.0.0" and self._no_auth:
             print(f"  ⚠️  WARNING: Listening on all interfaces WITHOUT authentication!")
             print(f"     Anyone on your network can read/write decks.")
@@ -1367,7 +1380,12 @@ class VelaLocalServer:
     def _start_channel(self):
         """Start the loopback AI channel on self.channel_port. Returns a short
         status string for the banner. Never raises — the deck browser must come
-        up even if the agent CLI is absent or the port is busy."""
+        up even if the agent CLI is absent or the port is busy.
+
+        No-op unless AI was explicitly enabled (--ai): the channel spawns the
+        user's `claude`, so it must never start implicitly."""
+        if not self.ai_enabled:
+            return "OFF (enable with --ai)"
         if not self.channel_port:
             return ""
         try:
@@ -1403,7 +1421,11 @@ def main():
     parser.add_argument("path", help="Folder of decks, or a deck JSON file (uses its parent folder)")
     parser.add_argument("--port", type=int, default=3030, help="HTTP port (default: 3030)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, use 0.0.0.0 for LAN access)")
-    parser.add_argument("--channel-port", type=int, default=8787, help="Channel server port (default: 8787, 0 to disable)")
+    parser.add_argument("--ai", action="store_true",
+                        help="Enable Vera AI via the local `claude` CLI (OFF by default). "
+                             "Spawns claude as a tool-sandboxed text completion on a loopback, "
+                             "token-gated channel. Opt-in: it uses your Claude Code credentials/spend.")
+    parser.add_argument("--channel-port", type=int, default=8787, help="AI channel port when --ai is set (default: 8787)")
     parser.add_argument("--no-open", action="store_true", help="Don't open browser automatically")
     parser.add_argument("--no-auth", action="store_true", help="Disable token authentication (NOT RECOMMENDED)")
     parser.add_argument("--token", default=None, help="Use a specific auth token (default: auto-generated, or VELA_TOKEN env var)")
@@ -1412,7 +1434,7 @@ def main():
 
     server = VelaLocalServer(args.path, port=args.port, host=args.host, channel_port=args.channel_port,
                              no_open=args.no_open, no_auth=args.no_auth, token=args.token,
-                             replace=args.replace)
+                             replace=args.replace, ai_enabled=args.ai)
     server.run()
 
 

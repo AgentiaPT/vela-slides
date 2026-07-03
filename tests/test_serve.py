@@ -864,12 +864,13 @@ class TestHTMLGeneration(unittest.TestCase):
         if cls._tmpdir:
             shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
-    def _make_server(self, deck_data, channel_port=0):
+    def _make_server(self, deck_data, channel_port=0, ai_enabled=False):
         """Helper to create a folder-mode server and write a deck file."""
         deck_path = os.path.join(self._tmpdir, "gen.vela")
         with open(deck_path, "w", encoding="utf-8") as f:
             json.dump(deck_data, f)
-        server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=channel_port, no_auth=True)
+        server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=channel_port,
+                                 no_auth=True, ai_enabled=ai_enabled)
         return server
 
     def test_prepare_html_contains_deck(self):
@@ -937,10 +938,21 @@ class TestHTMLGeneration(unittest.TestCase):
         html = server._build_html_for_deck(deck_path, "export.vela").decode("utf-8")
         self.assertIn("Test Deck", html)
 
-    def test_prepare_html_channel_port_injected(self):
-        server = self._make_server(SAMPLE_DECK, channel_port=9999)
+    def test_prepare_html_channel_port_injected_when_ai_enabled(self):
+        server = self._make_server(SAMPLE_DECK, channel_port=9999, ai_enabled=True)
         html = server._prepare_html(SAMPLE_DECK, "gen.vela")
         self.assertIn("VELA_CHANNEL_PORT = 9999", html)
+        # Token is injected only in AI mode (page is behind serve.py auth).
+        self.assertNotIn('VELA_CHANNEL_TOKEN = "";', html)
+
+    def test_prepare_html_ai_off_by_default(self):
+        # Default (no --ai): the channel must NOT be wired into the page, even if
+        # a channel_port is configured. Port 0 → velaAIAvailable() is false.
+        server = self._make_server(SAMPLE_DECK, channel_port=9999, ai_enabled=False)
+        html = server._prepare_html(SAMPLE_DECK, "gen.vela")
+        self.assertIn("VELA_CHANNEL_PORT = 0", html)
+        self.assertNotIn("VELA_CHANNEL_PORT = 9999", html)
+        self.assertIn('VELA_CHANNEL_TOKEN = "";', html)  # left empty
 
 
 # ── 8. Edge Cases ────────────────────────────────────────────────────
@@ -1170,6 +1182,26 @@ class TestAgentBackendSerialisation(unittest.TestCase):
         finally:
             agent_backend.resolve_agent_bin = orig
 
+    @unittest.skipUnless(os.name == "posix", "world-writable bits are POSIX-only")
+    def test_resolve_agent_bin_rejects_world_writable(self):
+        # A PATH-planted / world-writable `claude` shim must not be launched.
+        d = tempfile.mkdtemp()
+        try:
+            binp = os.path.join(d, "claude")
+            with open(binp, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(binp, 0o777)  # world-writable file → untrusted
+            orig = agent_backend.shutil.which
+            agent_backend.shutil.which = lambda name: binp
+            try:
+                self.assertIsNone(agent_backend.resolve_agent_bin())
+                os.chmod(binp, 0o755)  # now trusted (dir is 0700)
+                self.assertEqual(agent_backend.resolve_agent_bin(), binp)
+            finally:
+                agent_backend.shutil.which = orig
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 class TestAgentBackendChannel(unittest.TestCase):
     """The loopback channel HTTP contract part-engine.jsx speaks. run_completion
@@ -1258,6 +1290,15 @@ class TestAgentBackendChannel(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIsNone(r.getheader("Access-Control-Allow-Origin"))
 
+    def test_origin_prefix_bypass_rejected(self):
+        # A host that merely STARTS WITH "localhost"/"127.0.0.1" must not pass the
+        # loopback check (this was a naive-startswith bug — now parsed exactly).
+        for bad in ("http://localhost.evil.com", "http://127.0.0.1.evil.com", "http://localhostx"):
+            status, _, _ = self._post("/action", {
+                "action": "complete", "messages": [{"role": "user", "content": "x"}],
+            }, origin=bad)
+            self.assertEqual(status, 403, f"{bad} must be rejected")
+
     def test_forbidden_host_rejected(self):
         # DNS-rebinding: a malicious domain resolving to 127.0.0.1 is refused by
         # the Host check even though the socket is loopback.
@@ -1334,8 +1375,15 @@ class TestServeChannelIntegration(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
+    def test_channel_off_by_default(self):
+        # AI must be OFF unless explicitly enabled — even with a channel_port set.
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=8787, no_auth=True)
+        self.assertFalse(srv.ai_enabled)
+        self.assertIn("OFF", srv._start_channel())
+        self.assertIsNone(srv._channel_server)
+
     def test_channel_disabled_when_port_zero(self):
-        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0, no_auth=True)
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0, no_auth=True, ai_enabled=True)
         self.assertEqual(srv._start_channel(), "")
         self.assertIsNone(srv._channel_server)
 
@@ -1345,7 +1393,7 @@ class TestServeChannelIntegration(unittest.TestCase):
         s.bind(("127.0.0.1", 0))
         free_port = s.getsockname()[1]
         s.close()
-        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=free_port, no_auth=True)
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=free_port, no_auth=True, ai_enabled=True)
         status = srv._start_channel()
         try:
             self.assertIsNotNone(srv._channel_server)

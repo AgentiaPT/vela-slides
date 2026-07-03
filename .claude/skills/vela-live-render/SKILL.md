@@ -1,6 +1,6 @@
 ---
 name: vela-live-render
-description: Run the FULL Vela app live in a real browser inside the remote-execution container (offline, no CDN) — to visually verify UX changes, run the in-app UI-test battery headless, reproduce a reported bug, screenshot a feature, or record a demo video. Use whenever a change needs to be seen actually working in the rendered app (not just source/unit tests), e.g. list/section drag-drop, presenter mode, dialogs, hide/unhide, header stats.
+description: Run the FULL Vela app live in a real browser inside the remote-execution container (offline, no CDN) — to visually verify UX changes, run the in-app UI-test battery headless, reproduce a reported bug, screenshot a feature, or record a demo video. Use whenever a change needs to be seen actually working in the rendered app (not just source/unit tests), e.g. list/section drag-drop, presenter mode, dialogs, hide/unhide, header stats. A full AI mode is also available (opt-in) — drive the real Vera/AI features against the local `claude` CLI via `vela-drive.js ai`.
 ---
 
 # Vela live render (offline, in-container)
@@ -62,6 +62,12 @@ parity test). To add a feature check, add a probe to `AI_PROBES` in
 `vela-drive.js` (call the real engine global and assert the result). To wire
 AI into any other harness mode, build with `render-offline.js … --channel-port
 <port>` while a channel is running.
+
+**AI is opt-in / OFF by default.** The channel spawns the user's `claude` (their
+credentials/spend), so it never starts implicitly. Enable it deliberately:
+`vela-drive.js ai` (dev/testing), `render-offline.js … --channel-port N`, or, for
+a real served session, `vela server start <folder> --ai`. The channel is
+loopback-only, Host/Origin-checked, token-gated, and caps concurrent spawns.
 
 ## Gotchas already solved (don't rediscover)
 - **Never inline the 1.1MB monolith as `<script type="text/babel">`** — it contains

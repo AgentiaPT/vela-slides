@@ -1015,7 +1015,7 @@ CAPABILITIES = {
         },
         "server": {
             "commands": {
-                "start": "vela server start <folder-or-file> [--port N] [--replace] — Jupyter-style deck browser with live sync",
+                "start": "vela server start <folder-or-file> [--port N] [--replace] [--ai] — Jupyter-style deck browser with live sync (--ai enables Vera via the local `claude` CLI; OFF by default)",
                 "stop": "vela server stop [--port N] — stop a running Vela server",
             },
             "description": "Local server operations"
@@ -2485,7 +2485,10 @@ def deck_split(args):
 # ── SERVER START ───────────────────────────────────────────────────────
 
 def server_start(args):
-    """Start local server (Jupyter-style). Usage: vela server start <folder-or-file> [--port 3030] [--no-open] [--no-auth] [--token TOKEN]"""
+    """Start local server (Jupyter-style). Usage: vela server start <folder-or-file> [--port 3030] [--no-open] [--no-auth] [--token TOKEN] [--ai]
+
+    AI is OFF by default. Pass --ai to let Vera run the local `claude` CLI (opt-in;
+    uses your Claude Code credentials/spend, tool-sandboxed, loopback + token-gated)."""
     if not args:
         _err(EXIT_USAGE, "Missing path", suggestions=["vela server start /path/to/decks/", "vela server start /path/to/deck.vela"])
     path = args[0]

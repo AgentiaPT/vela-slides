@@ -236,8 +236,10 @@ spawns `claude -p` locked to a pure text completion (`--tools "" --strict-mcp-co
 --setting-sources ""`: no tools, MCP, or hooks) — builds an agent-mode render,
 and asserts deck mutations. That lockdown is the security contract shared with
 the Neutralino gatekeeper (`vela-neutralino/extensions/agent/main.go`), enforced
-by a parity test in `tests/test_serve.py`. `vela server` starts the same channel
-automatically (loopback-only, `--channel-port`).
+by a parity test in `tests/test_serve.py`. **AI is OFF by default** — it spawns
+the user's `claude` (their credentials/spend), so it is strictly opt-in:
+`vela server start <folder> --ai` (loopback-only, token-gated), or the `ai`
+harness mode / `render-offline.js --channel-port …` for dev/testing.
 
 Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;

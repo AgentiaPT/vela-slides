@@ -34,10 +34,12 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 # The agent binary Vela is allowed to launch. Constant — never taken from a
 # request (matches the Go gatekeeper's provider allowlist).
@@ -62,6 +64,9 @@ CLAUDE_LOCKDOWN = ["--tools", "", "--strict-mcp-config", "--setting-sources", ""
 DEFAULT_TIMEOUT = 180       # seconds; a normal completion
 CREATE_TIMEOUT = 300        # seconds; "create" calls generate whole decks
 MAX_SSE_CLIENTS = 4         # cap concurrent /events streams (loopback DoS guard)
+MAX_CONCURRENT = 3          # cap concurrent claude spawns (cost/resource guard —
+                            # bounds amplification if the authorized page is ever
+                            # compromised, e.g. a deck-driven XSS with the token)
 
 _ANSI_RE = re.compile("\x1b\\[[0-9;]*[A-Za-z]")
 _BRAILLE_RE = re.compile("[⠀-⣿]")
@@ -132,11 +137,40 @@ def _parse_claude(stdout):
     }
 
 
+def _world_writable(path):
+    """True if `path` is world-writable and (for a dir) not sticky. POSIX only —
+    os.stat mode bits don't model Windows ACLs, so we skip the check there
+    (matches the Go gatekeeper's checkBinaryTrusted no-op on Windows)."""
+    if os.name != "posix":
+        return False
+    try:
+        st = os.stat(path)
+    except OSError:
+        return True  # can't verify → treat as untrusted
+    if not (st.st_mode & stat.S_IWOTH):
+        return False
+    # A world-writable *directory* is safe if it has the sticky bit (e.g. /tmp);
+    # a world-writable *file* is never safe.
+    if stat.S_ISDIR(st.st_mode) and (st.st_mode & stat.S_ISVTX):
+        return False
+    return True
+
+
 def resolve_agent_bin():
-    """Resolve the agent binary NAME to an absolute path, or None if not on PATH.
-    (The Go gatekeeper additionally refuses world-writable resolutions; here the
-    server is loopback-only and dev-facing, so PATH resolution is sufficient.)"""
-    return shutil.which(AGENT_BIN)
+    """Resolve the agent binary NAME to a VERIFIED absolute path, or None.
+
+    shutil.which trusts PATH; a `claude` shim planted earlier in PATH (or dropped
+    into a world-writable install dir) would otherwise be launched. Mirror the Go
+    gatekeeper: pin to an absolute path and refuse a resolution whose file — or
+    parent dir — is world-writable, where any local account could swap it out."""
+    p = shutil.which(AGENT_BIN)
+    if not p:
+        return None
+    p = os.path.abspath(p)
+    real = os.path.realpath(p)  # follow symlinks — vet the actual executable
+    if _world_writable(real) or _world_writable(os.path.dirname(real)) or _world_writable(os.path.dirname(p)):
+        return None
+    return p
 
 
 def agent_available():
@@ -197,31 +231,40 @@ def run_completion(system, messages, call_type="chat", timeout=None):
 # Same defense model as serve.py (_check_host) and the Go gatekeeper
 # (allowedOrigin). Residual surface is a pure text completion (CLAUDE_LOCKDOWN).
 
-_LOOPBACK_HOSTS = frozenset(["localhost", "127.0.0.1", "::1", "[::1]"])
-_LOOPBACK_ORIGIN_PREFIXES = ("http://localhost", "http://127.0.0.1", "http://[::1]")
+# Loopback host set. urlsplit().hostname strips IPv6 brackets, so store "::1"
+# (not "[::1]"); the Host header keeps brackets, handled in _host_only.
+_LOOPBACK_HOSTS = frozenset(["localhost", "127.0.0.1", "::1"])
 
 
 def _host_only(host_header):
-    """Strip the port from a Host/authority, keeping IPv6 brackets intact."""
+    """Return the bracket-stripped, lowercased host from a Host/authority."""
     if not host_header:
         return ""
     h = host_header.strip()
-    if h.startswith("["):  # [::1]:port  ->  [::1]
-        return h[: h.index("]") + 1] if "]" in h else h
-    return h.rsplit(":", 1)[0] if ":" in h else h
+    if h.startswith("["):  # [::1]:port  ->  ::1
+        return h[1: h.index("]")].lower() if "]" in h else h.lower()
+    return (h.rsplit(":", 1)[0] if ":" in h else h).lower()
 
 
 def _is_loopback_host(host_header):
-    return _host_only(host_header).lower() in _LOOPBACK_HOSTS
+    return _host_only(host_header) in _LOOPBACK_HOSTS
 
 
 def _is_allowed_origin(origin):
     # Absent Origin: a non-browser client (curl, the frontend's own fetch on some
     # engines) — allowed; it carries no ambient browser authority. "null":
-    # file:// harness. Otherwise it must be a loopback web origin.
+    # file:// harness. Otherwise the origin's HOST must be loopback — parsed, not
+    # prefix-matched, so "http://localhost.evil.com" (a foreign host that merely
+    # starts with "localhost") is correctly REJECTED.
     if origin is None or origin == "" or origin == "null":
         return True
-    return origin.lower().startswith(_LOOPBACK_ORIGIN_PREFIXES)
+    try:
+        u = urlsplit(origin)
+    except ValueError:
+        return False
+    if u.scheme not in ("http", "https"):
+        return False
+    return (u.hostname or "").lower() in _LOOPBACK_HOSTS
 
 
 class _ChannelHandler(BaseHTTPRequestHandler):
@@ -349,10 +392,18 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         if action != "complete":
             self._json(400, {"ok": False, "error": f"unknown action: {action}"})
             return
-        result = run_completion(
-            req.get("system", ""), req.get("messages", []),
-            call_type=req.get("_callType", "chat"),
-        )
+        # Bound concurrent spawns: reject rather than fork an unbounded number of
+        # claude processes if /action is hammered (cost/resource amplification).
+        if not self.server._spawn_sem.acquire(blocking=False):
+            self._json(429, {"ok": False, "error": "busy — too many concurrent AI requests"})
+            return
+        try:
+            result = run_completion(
+                req.get("system", ""), req.get("messages", []),
+                call_type=req.get("_callType", "chat"),
+            )
+        finally:
+            self.server._spawn_sem.release()
         self._json(200 if result.get("ok") else 500, result)
 
 
@@ -376,6 +427,7 @@ def make_channel_server(port=8787, host="127.0.0.1", token=None):
     httpd._sse_lock = threading.Lock()
     httpd._sse_count = 0
     httpd._token = token or None
+    httpd._spawn_sem = threading.BoundedSemaphore(MAX_CONCURRENT)
     return httpd
 
 
