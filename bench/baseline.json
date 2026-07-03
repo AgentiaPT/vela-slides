@@ -1,0 +1,53 @@
+{
+  "deck": "vela-demo.vela",
+  "runs": 1,
+  "actions": {
+    "present-enter": {
+      "n": 1,
+      "mean": 23.7,
+      "p50": 23.7,
+      "p95": 23.7,
+      "max": 23.7
+    },
+    "next-slide": {
+      "n": 27,
+      "mean": 10.4,
+      "p50": 10.3,
+      "p95": 14.5,
+      "max": 15.3
+    },
+    "prev-slide": {
+      "n": 27,
+      "mean": 8.7,
+      "p50": 8.6,
+      "p95": 13.9,
+      "max": 14.4
+    },
+    "gallery-open": {
+      "n": 1,
+      "mean": 97.5,
+      "p50": 97.5,
+      "p95": 97.5,
+      "max": 97.5
+    },
+    "gallery-close": {
+      "n": 1,
+      "mean": 7.6,
+      "p50": 7.6,
+      "p95": 7.6,
+      "max": 7.6
+    },
+    "present-exit": {
+      "n": 1,
+      "mean": 16.2,
+      "p50": 16.2,
+      "p95": 16.2,
+      "max": 16.2
+    }
+  },
+  "galleryScroll": {
+    "medianFps": 59.9,
+    "minFps": 59.9,
+    "worstFrameMs": 51.7
+  }
+}
