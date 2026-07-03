@@ -1,9 +1,17 @@
 ---
 name: vela-live-render
-description: Run the FULL Vela app live in a real browser inside the remote-execution container (offline, no CDN) — to visually verify UX changes, run the in-app UI-test battery headless, reproduce a reported bug, screenshot a feature, or record a demo video. Use whenever a change needs to be seen actually working in the rendered app (not just source/unit tests), e.g. list/section drag-drop, presenter mode, dialogs, hide/unhide, header stats. A full AI mode is also available (opt-in) — drive the real Vera/AI features against the local `claude` CLI via `vela-drive.js ai`.
+description: Offline in-container render harness for the FULL Vela app (no CDN) plus the committed `vela-drive.js` scripts — headless UI-test battery, scripted screenshot, recorded demo video, and an opt-in AI mode. Use for REPEATABLE, COMMITTED automation where the harness itself is the deliverable — running the UI battery in CI, recording a demo video, a scripted screenshot in a benchmark, or verifying real Vera/AI features against the local `claude` CLI via `vela-drive.js ai`. For AD-HOC / INTERACTIVE work — explore/test the app, poke a state, reproduce a bug, a one-off screenshot, verify a UX change, drive presenter/gallery — use the `playwright-cli-setup` skill instead (a persistent CLI browser driven step by step). This skill still documents the blocked-CDN offline render recipe that both skills share.
 ---
 
 # Vela live render (offline, in-container)
+
+> **Routing:** the `vela-drive.js` commands here are **code-based scripts for
+> repeatable, committed automation only** (CI UI battery, recorded demo videos,
+> benchmark screenshots). If you're doing a **one-off / interactive** task —
+> exploring the app, reproducing a bug, a quick screenshot, verifying a UX change —
+> stop and use the **`playwright-cli-setup`** skill instead: a persistent browser you
+> drive one command at a time, inspecting state between steps. Same offline render,
+> better fit for exploration.
 
 The container **blocks the React/lucide CDNs (esm.sh) and the Playwright browser CDN**.
 `serve.py`'s default HTML uses an esm.sh importmap and therefore **never boots here**.

@@ -215,11 +215,20 @@ python3 evals/scripts/report.py evals/results/
 
 ## Running the app live in a browser (offline / demo videos / visual QA)
 
+> **Pick the right tool first.** Doing a **one-off / interactive** thing — explore
+> the app, screenshot a state, reproduce a bug, verify a UX change, poke a selector,
+> drive presenter/gallery? → **Playwright CLI** (skill **`playwright-cli-setup`**, see
+> next section). The `vela-drive.js` commands below are **code-based scripts for
+> REPEATABLE, committed automation only** (CI, the interaction benchmark, recorded
+> demo videos) — reach for them when the harness itself is the deliverable, not for
+> ad-hoc exploration. When in doubt for a manual task, use the CLI.
+
 The remote container **blocks the React/lucide CDNs (esm.sh) and the Playwright
 browser CDN**, so `serve.py`'s default importmap HTML never boots here. Do NOT
-try to reach esm.sh or run `npx playwright install`. Use the offline harness
-(skill: **`vela-live-render`**) which reuses the Neutralino shell's vendored-UMD
-recipe (Node-transpiled external script):
+try to reach esm.sh or run `npx playwright install`. Both paths use the offline
+render (skill: **`vela-live-render`**) which reuses the Neutralino shell's
+vendored-UMD recipe (Node-transpiled external script). The committed `vela-drive.js`
+scripts (repeatable automation only):
 
 ```bash
 python3 skills/vela-slides/scripts/concat.py                                   # after editing parts
