@@ -40,8 +40,11 @@ jobs:
       # NODE_ENV=production, npm OMITS them and the install silently "succeeds"
       # without the tools. Neutralise it for the whole job.
       NODE_ENV: development
-      # Don't let `npm ci` pull a browser — Chromium is installed explicitly below.
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      # NOTE: do NOT set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD here — as a job-level env
+      # it also neuters the explicit `npx playwright install` below (making it a
+      # no-op, so Chromium never lands). `npm ci` already can't pull a browser
+      # because it runs with --ignore-scripts (+ ignore-scripts=true in .npmrc),
+      # which blocks playwright's postinstall download.
       # Mirror the Claude cloud layout so the harness's pinned paths resolve.
       PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
       # Pinned; see the "Supply-chain" note on the @playwright/cli step.
@@ -101,7 +104,9 @@ jobs:
       - name: Wire Chromium into harness paths
         run: |
           set -euo pipefail
-          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1)"
+          # `|| true` so a no-match doesn't trip pipefail/set -e before the clean
+          # check below (ls exits non-zero when the glob matches nothing).
+          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1 || true)"
           if [ -z "$CHROME" ]; then
             echo "::error::Chromium not found under /opt/pw-browsers after install"
             exit 1
