@@ -129,9 +129,99 @@ the CLAUDE.md section. (Docs/skills only — no `skills/vela-slides/` change, so
 
 ---
 
+## E. Round-2 interactive testing notes (Playwright CLI)
+
+A second live pass drove gallery, Present mode, Brand, New-deck, and inline editing.
+New, verified observations:
+
+- **Inline editing works with no AI** 🟢 — single-click on any text block enters a
+  `contentEditable` editor (verified: `contentEditables:1`, active element editable).
+  Important: the OSS/no-key experience is a usable editor, not a dead app. Keep this
+  front-and-centre (see CR-11).
+- **CR-03 is broader than "+" markers** 🟢 — in the header-less Present state the
+  focused heading also shows a **dashed block-selection outline** and a bottom-right
+  **pencil/edit icon**, i.e. the full block-edit chrome, not just add affordances.
+  (Caveat: offline `file://` render doesn't engage the real Fullscreen API; confirm
+  in the actual artifact — but the DOM evidence is consistent.)
+- **Gallery is presentation-only** 🟡 — the `🗂` grid/gallery (verified working: 136
+  tiles) is reachable **only inside Present mode**; there's no overview/grid from the
+  editor. A grid overview while *editing* is a common expectation → CR-12.
+- **Branding panel is solid** 🟢 — header rule, logo upload, footer L/C/R, colors,
+  image-compression sliders, slide rules all render and respond.
+
+### VELA-CR-11 · Disambiguate the AI-gated bottom "✏️ Edit" button · P3 · 🟢
+The bottom-toolbar `✏️ Edit` / `✨ Improve` / `🎲 Variants` / `🔄 Batch` are disabled
+when AI is unavailable — correct — but "Edit" being greyed out reads as *"editing is
+off"* even though single-click inline editing works fine. Rename to `⚡ AI Edit` (or
+`Quick Edit`) so the disabled state doesn't imply the editor is dead. **Effort:** S.
+
+### VELA-CR-12 · Grid / gallery overview from the editor · P3 · 🟡
+Expose the existing `GalleryView` from the editor (not just Present mode) as a
+deck-overview/reorder surface. Reuses working code. **Effort:** S–M.
+
+---
+
+## F. ⭐ "Clone-to-Star" sprint — one sprint, 3 senior engineers
+
+Goal: convert *"someone found Vela on GitHub"* into *"they starred, shared, and came
+back."* Stars for a presentation tool come from four moments — **try it instantly**,
+**share it virally**, **one-prompt wow**, and **present it professionally**. Three
+parallel tracks, one shared dependency (Track A's provider lands first, week 1).
+
+### Track A · *Try it in 60 seconds* — Bring-Your-Own-Key AI  (Eng 1)
+Today Vera/Improve/Variants/Batch only light up via the Claude.ai artifact proxy or
+the desktop agent-bridge — so a plain GitHub cloner gets a disabled AI and concludes
+"it does nothing." **`callClaudeAPI` (part-engine.jsx:17) is a single chokepoint**
+with exactly two branches (desktop `__velaAgentSend`, artifact proxy); add a **third:
+a direct-HTTP provider with a user-supplied key** (Anthropic + OpenAI-compatible +
+local Ollama), entered in a settings dialog, stored **browser-local only**, with clear
+"your key never leaves this device" messaging. `velaAIAvailable()` flips true when a
+key is present.
+**Why it drives stars:** removes the single biggest "this is useless to me" barrier —
+the whole AI surface now works for anyone. **Verify:** with a key set, Vera builds
+slides under `serve.py` and the offline render. **Effort:** M.
+
+### Track B · *Share it anywhere* — Standalone HTML export + present-mode polish  (Eng 2)
+A presentation tool grows through the decks people share. Productize the existing
+`render-offline.js` recipe into an in-app **Export → "Standalone HTML"**: one
+self-contained `.html` (deck + vendored UMD + safely-inlined transpiled app) that
+opens offline anywhere and drops straight onto GitHub Pages or into an email. Add a
+toggleable **"Made with Vela ⛵"** footer → attribution loop. **Ship CR-03 in this
+track** (edit chrome must never appear in a shared/presented deck — it's the actual
+output).
+**Why it drives stars:** every shared deck becomes a growth vector with built-in
+attribution. **Verify:** exported file opens in a fresh, network-less browser; arrows
+navigate; zero edit chrome. **Effort:** M.
+
+### Track C · *One-prompt wow* — Deck-from-source + Presenter view  (Eng 3)
+The hero, screenshot-able moment: **"Generate deck from…"** a pasted README / URL /
+PDF-text → a full Vela deck in one shot (consumes Track A's provider). *"Turn your
+repo README into a pitch deck"* is the tweet that gets posted. Bundle the **dedicated
+presenter/speaker view** (CR-08): current + next-slide preview + speaker notes +
+timer — table-stakes that's currently missing.
+**Why it drives stars:** produces the demo GIF that spreads, and closes the credibility
+gap for anyone who'd present live. **Verify:** paste a real README → coherent deck;
+presenter view shows next-slide + notes + running timer. **Effort:** M–L.
+
+### Shared hardening (all three, ~½ day each) — *repo looks healthy to a visitor*
+A first-time visitor judges trust by green CI and a clean `make test`. Land the cheap
+quality fixes so the repo reads as maintained: **CR-01** (battery drift), **CR-02**
+(AI-test offline guard), **CR-04** (jsdom dev-dep). Each requires a `VELA_VERSION`
+bump per the repo rule.
+
+### Sequencing & fit
+Week 1: Track A ships the provider interface (unblocks C's generation) while B builds
+the export pipeline and C builds the presenter view. Weeks 2–3: C's deck-from-source
+lands on A's provider; B finishes CR-03 + attribution; shared hardening throughout.
+Three independent surfaces, one clean dependency edge — comfortably one sprint.
+
+---
+
 ## Suggested sprint cut
 
-- **Must (P1/P2):** CR-01, CR-02, CR-03, CR-07, CR-08
-- **Should (P2/P3):** CR-04, CR-05, CR-06
-- **Stretch:** CR-09
-- **Done:** CR-10
+- **⭐ Star sprint (headline):** Track A (BYO-key), Track B (standalone export + CR-03),
+  Track C (deck-from-source + CR-08 presenter view)
+- **Shared hardening (in-sprint):** CR-01, CR-02, CR-04
+- **Fast-follow polish:** CR-05, CR-06, CR-11, CR-12
+- **Backlog:** CR-07 (PPTX export), CR-09 (transitions)
+- **Done:** CR-10 (skill-trigger routing)
