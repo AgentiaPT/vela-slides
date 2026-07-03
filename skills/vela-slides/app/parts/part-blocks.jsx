@@ -414,6 +414,10 @@ function newItemFor(block, type) {
 // Lets the user append a placeholder item to a multi-item block without AI.
 // variant: "row" full-width dashed bar (column lists) · "chip" compact inline
 // (wrap/horizontal layouts) · "cell" grid-cell-sized dashed box.
+// Hover-reveal (CR-06): mirrors the slide-level "＋ add" affordance (AddMenu,
+// part-list.jsx) — idle at low opacity so it reads as a hint rather than
+// permanent chrome, full opacity + accent styling on hover. Same policy
+// everywhere an "+ Add X" appears (bullets, flow, table rows, steps, etc.).
 function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
   const [hover, setHover] = useState(false);
   const ac = accent || T.accent;
@@ -425,7 +429,8 @@ function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
     border: `1px dashed ${hover ? ac : T.border}`,
     borderRadius: variant === "cell" ? 10 : 6,
     background: hover ? `${ac}12` : "transparent",
-    transition: "color .15s, border-color .15s, background .15s",
+    opacity: hover ? 1 : 0.28,
+    transition: "opacity .15s, color .15s, border-color .15s, background .15s",
     boxSizing: "border-box", userSelect: "none",
     padding: variant === "chip" ? "4px 10px" : variant === "cell" ? 16 : "6px 12px",
     width: variant === "chip" ? "fit-content" : "100%",
@@ -722,23 +727,26 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Show the "+ add item" affordance only in the live editable panel
   // (never in present/thumbnail/PDF, and only when an onChange sink exists).
   const canEdit = editable && !presenting && typeof onChange === "function";
+  // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
+  // icon slot) must also never leak into Present mode — gate it the same way.
+  const textEditable = editable && !presenting;
   switch (block.type) {
 
     case "heading": {
       const headingText = (block.text || "").replace(/^\*\*\s*|\s*\*\*$/g, "").replace(/\*\*/g, "");
-      const headingIconSlot = block.icon || editable;
+      const headingIconSlot = block.icon || textEditable;
       const hs = { fontFamily: FONT.display, fontSize: SIZES[block.size || "2xl"], fontWeight: block.weight || 700, color: block.color || st.text, lineHeight: 1.2, letterSpacing: "-0.02em", textAlign: headingIconSlot ? undefined : block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, ...block.style };
       const wrapS = headingIconSlot ? { display: "flex", alignItems: "center", gap: 10, justifyContent: block.align === "center" ? "center" : block.align === "right" ? "flex-end" : undefined } : {};
       return <div className={cls} style={{ ...wrapS, ...hs }}>
-        <EditableIcon editable={editable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={headingText} editable={editable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
+        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
       </div>;
     }
 
     case "text":
-      return <EditableText className={cls} text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline
+      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline
         style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, textAlign: block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, fontStyle: block.italic ? "italic" : "normal", fontWeight: block.bold ? 600 : 400, ...block.style }} />;
 
     case "bullets":
@@ -754,11 +762,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
       </div></ZoomWrap>;
 
     case "code":
-      return <CodeBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
+      return <CodeBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
 
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
@@ -786,22 +794,22 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "callout":
-      return <CalloutBlock block={block} cls={cls} st={st} editable={editable} onChange={onChange} SIZES={SIZES} />;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
-        <EditableIcon editable={editable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div> : null}
         </EditableIcon>
-        <EditableText text={block.value} editable={editable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
-        {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
       </div>;
 
     case "quote":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", ...block.style }}>
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
           style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "xl"], fontWeight: 600, color: block.color || st.text, lineHeight: 1.4, fontStyle: "italic", maxWidth: "85%" }} />
-        {block.author && <EditableText text={block.author} editable={editable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
+        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
@@ -819,7 +827,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
-        {block.caption && <EditableText text={block.caption} editable={editable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
     }
 
@@ -829,26 +837,26 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgePadV = Math.max(3, Math.round(badgeFontSize * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontSize * 0.8));
       return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontSize * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
-        <EditableIcon editable={editable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
+        <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} />
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} />
       </div>;
     }
 
     case "icon": {
       const sz = { sm: 20, md: 28, lg: 40, xl: 56 }[block.size || "md"] || 28;
       const iconEl = getIcon(block.name, { size: sz, color: block.color || st.accent, strokeWidth: block.strokeWidth || 1.5 });
-      if (!iconEl && !editable) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
+      if (!iconEl && !textEditable) return <div className={cls} style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div>;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", gap: 6, ...block.style }}>
-        <EditableIcon editable={editable} value={block.name} size={sz} onPick={(name) => onChange?.({ name })}>
+        <EditableIcon editable={textEditable} value={block.name} size={sz} onPick={(name) => onChange?.({ name })}>
           {iconEl
             ? (block.circle !== false
               ? <IconBubble icon={block.name} size={sz} color={block.color || st.accent} bg={block.bg || `${block.color || st.accent}15`} strokeWidth={block.strokeWidth || 1.5} />
               : iconEl)
             : (block.name ? <div style={{ fontFamily: FONT.mono, fontSize: 10, color: st.textDim }}>⚠ {block.name}</div> : null)}
         </EditableIcon>
-        {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, letterSpacing: "0.03em", textAlign: "center" }} />}
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, letterSpacing: "0.03em", textAlign: "center" }} />}
       </div>;
     }
 
@@ -895,8 +903,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} /> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-            {item.sublabel && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
+            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
+            {item.sublabel && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
           </ItemChrome>
         );
         if (i < items.length - 1) {
@@ -950,12 +958,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const brdColor = block.borderColor || st.border;
       return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
         {headers.length > 0 && <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: hdrBg }}>
-          {headers.map((h, hi) => <EditableText key={hi} text={h} editable={editable} onSave={(v) => {
+          {headers.map((h, hi) => <EditableText key={hi} text={h} editable={textEditable} onSave={(v) => {
             const nh = [...headers]; nh[hi] = v; onChange?.({ headers: nh });
           }} style={{ padding: "10px 14px", fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 700, color: hdrColor, letterSpacing: "0.03em", textTransform: "uppercase", borderRight: hi < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>}
         {rows.map((row, ri) => <div key={ri} className={stg(staggerIdx, ri + 1)} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: block.striped && ri % 2 === 1 ? `${st.accent}08` : "transparent", borderTop: `1px solid ${brdColor}` }}>
-          {(row || []).map((cell, ci) => <EditableText key={ci} text={String(cell)} editable={editable} onSave={(v) => {
+          {(row || []).map((cell, ci) => <EditableText key={ci} text={String(cell)} editable={textEditable} onSave={(v) => {
             const nr = rows.map((r, i) => i === ri ? r.map((c, j) => j === ci ? v : c) : r);
             onChange?.({ rows: nr });
           }} style={{ padding: "9px 14px", fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
@@ -992,7 +1000,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "sm"], fontWeight: 500, color: block.labelColor || st.text }} />
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "sm"], fontWeight: 500, color: block.labelColor || st.text }} />
               {block.showValue !== false && <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: col, fontWeight: 700 }}>{val}%</span>}
             </div>
             <div style={{ width: "100%", height: barH, borderRadius: barH / 2, background: trackCol, overflow: "hidden" }}>
@@ -1027,8 +1035,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: lineCol, marginTop: 4 }} />}
             </div>
             <div style={{ flex: 1, paddingTop: 3 }}>
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
-              {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
             </div>
           </ItemChrome>;
         })}
@@ -1055,7 +1063,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <span style={{ display: "flex", flexShrink: 0 }}>{getIcon(item.icon, { size: 12, color: variant === "filled" ? "#fff" : col, strokeWidth: 2 })}</span> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" />
+            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" />
           </ItemChrome>;
         })}
         {canEdit && <AddItem variant="chip" label="Add" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"tag-group"))} />}
@@ -1081,9 +1089,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: lineCol, marginTop: 4 }} />}
               </div>
               <div style={{ flex: 1 }}>
-                {item.date && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 3 }} />}
-                <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
-                {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
+                {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 3 }} />}
+                <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+                {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
               </div>
             </ItemChrome>
           ))}
@@ -1102,9 +1110,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
-              {item.date && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
-              <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-              {item.text && <ItemText block={block} onChange={onChange} editable={editable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
+              {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
+              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
             </ItemChrome>
           ))}
         </div>
@@ -1693,7 +1701,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         })()}
         {branding?.enabled
           ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 14, right: 18, fontFamily: FONT.mono, fontSize: 10, color: st.muted, opacity: 0.35 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>

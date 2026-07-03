@@ -215,6 +215,20 @@ uiSuite("Presenter", [
       if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
     }
   }},
+  { name: "Present mode shows no edit chrome (CR-03)", fn: async () => {
+    // A presented slide must show ZERO edit affordances: no dashed hover-outline
+    // (EditableText), no ghost "+" icon-slot marker (EditableIcon with no value),
+    // no floating pencil/edit button. Scoped to the fullscreen container only.
+    const fs = _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']");
+    if (!fs) throw new Error("No fixed fullscreen element found");
+    const all = _$$("*", fs);
+    const dashedOutline = all.filter((el) => el.style?.outlineStyle === "dashed");
+    if (dashedOutline.length > 0) throw new Error(`found ${dashedOutline.length} dashed-outline edit-chrome element(s) while presenting`);
+    const ghostPlus = all.filter((el) => el.children.length === 0 && (el.textContent || "").trim() === "+");
+    if (ghostPlus.length > 0) throw new Error(`found ${ghostPlus.length} ghost "+" affordance(s) while presenting`);
+    const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
+    if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _wait(300);
@@ -232,6 +246,11 @@ uiSuite("Toolbar", [
   }},
   { name: "Edit button exists (✏️)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Edit") || b.textContent?.includes("✏")));
+  }},
+  { name: "Edit button renamed to AI Edit (CR-11)", fn: async () => {
+    // The bottom-toolbar Edit button was renamed to disambiguate that it is
+    // AI-gated (⚡ AI Edit), not a generic non-AI editing affordance.
+    await _waitFor(() => _$$("button").find((b) => b.textContent?.includes("AI Edit")));
   }},
   { name: "Improve button exists (✨)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Improve") || b.textContent?.includes("✨")));
