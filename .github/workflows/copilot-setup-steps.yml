@@ -104,11 +104,12 @@ jobs:
           npx playwright install --with-deps chromium ffmpeg
           # Fallback: if a pre-baked PLAYWRIGHT_BROWSERS_PATH or a cached install
           # landed the browser elsewhere, mirror it into /opt/pw-browsers so the
-          # committed harness's hardcoded paths resolve.
-          if ! ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome >/dev/null 2>&1; then
+          # committed harness's hardcoded paths resolve. (chrome-linux* matches
+          # both the old `chrome-linux` and newer `chrome-linux64` layouts.)
+          if ! ls -d /opt/pw-browsers/chromium-*/chrome-linux*/chrome >/dev/null 2>&1; then
             for cache in "$HOME/.cache/ms-playwright" "$HOME/Library/Caches/ms-playwright" /ms-playwright; do
               [ -d "$cache" ] || continue
-              found="$(ls -d "$cache"/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1 || true)"
+              found="$(ls -d "$cache"/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1 || true)"
               if [ -n "$found" ]; then
                 echo "mirroring browsers from $cache -> /opt/pw-browsers"
                 cp -a "$cache"/. /opt/pw-browsers/
@@ -120,26 +121,31 @@ jobs:
       # Wire the on-disk Chromium into the paths the committed harness hardcodes:
       #   * vela-drive.js expects /opt/pw-browsers/chromium-1194/chrome-linux/chrome
       #   * .playwright/cli.config.json's executablePath (kept in sync below)
-      # The chromium-* build number drifts with the playwright version, so alias
-      # whatever landed to the pinned `chromium-1194` name as well.
+      # The chromium build number AND the inner dir name drift with the playwright
+      # version (older builds use `chrome-linux`, newer ones `chrome-linux64`), so
+      # we detect the real binary and expose it at the pinned `chrome-linux` path.
       - name: Wire Chromium into harness paths
         run: |
           set -euo pipefail
-          # `|| true` so a no-match doesn't trip pipefail/set -e before the clean
-          # check below (ls exits non-zero when the glob matches nothing).
-          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1 || true)"
+          # chrome-linux* matches both layouts; `|| true` so a no-match doesn't
+          # trip pipefail/set -e before the clean check below.
+          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1 || true)"
           if [ -z "$CHROME" ]; then
             echo "::error::Chromium not found under /opt/pw-browsers after install"
+            echo "contents of /opt/pw-browsers:"; ls -la /opt/pw-browsers || true
             exit 1
           fi
-          echo "Chromium: $CHROME"
+          echo "Chromium binary: $CHROME"
 
-          # Pinned alias expected by vela-drive.js (skip if it already resolves).
-          PIN="/opt/pw-browsers/chromium-1194"
-          REAL_DIR="$(dirname "$(dirname "$CHROME")")"
-          if [ ! -e "$PIN/chrome-linux/chrome" ]; then
-            ln -sfn "$REAL_DIR" "$PIN"
-            echo "aliased $PIN -> $REAL_DIR"
+          # Expose it at the pinned path vela-drive.js hardcodes
+          # (/opt/pw-browsers/chromium-1194/chrome-linux/chrome). We symlink the
+          # binary itself — not the dir — so it works even when the real dir is
+          # `chrome-linux64`. Skip if the pinned path already resolves.
+          PIN_CHROME="/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+          if [ ! -e "$PIN_CHROME" ]; then
+            mkdir -p "$(dirname "$PIN_CHROME")"
+            ln -sfn "$CHROME" "$PIN_CHROME"
+            echo "pinned $PIN_CHROME -> $CHROME"
           fi
 
           # vela-drive.js requires playwright from /home/user/vela-slides/node_modules.
@@ -149,14 +155,14 @@ jobs:
             sudo ln -sfn "$GITHUB_WORKSPACE" /home/user/vela-slides || true
           fi
 
-          # Keep .playwright/cli.config.json's executablePath in sync with the
-          # Chromium actually on disk (mirrors the Claude setup's sync step).
+          # Point .playwright/cli.config.json's executablePath at the stable pinned
+          # path (mirrors the Claude setup's committed config).
           CFG="$GITHUB_WORKSPACE/.playwright/cli.config.json"
           if [ -f "$CFG" ]; then
             tmp="$(mktemp)"
-            jq --arg c "$CHROME" '.browser.launchOptions.executablePath = $c' "$CFG" > "$tmp" \
+            jq --arg c "$PIN_CHROME" '.browser.launchOptions.executablePath = $c' "$CFG" > "$tmp" \
               && mv "$tmp" "$CFG" \
-              && echo "synced executablePath -> $CHROME"
+              && echo "synced executablePath -> $PIN_CHROME"
           fi
 
       # Final verification — check the real end state, independent of what each
@@ -182,9 +188,11 @@ jobs:
           [ -d node_modules/playwright ] && ok "playwright npm package present" || bad "playwright NOT installed (NODE_ENV=production would drop devDeps)"
           [ -x node_modules/.bin/playwright-cli ] && ok "@playwright/cli present" || bad "@playwright/cli NOT installed"
 
-          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1)"
+          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1)"
           [ -n "$CHROME" ] && [ -x "$CHROME" ] && ok "Chromium present: $CHROME" || bad "Chromium NOT found under /opt/pw-browsers"
-          [ -x /opt/pw-browsers/chromium-1194/chrome-linux/chrome ] && ok "pinned chromium-1194 path resolves" || warn "pinned chromium-1194 path missing (vela-drive.js hardcodes it)"
+          # Prefer the pinned path vela-drive.js hardcodes for the smoke test below.
+          PIN_CHROME="/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+          if [ -x "$PIN_CHROME" ]; then ok "pinned chromium-1194 path resolves"; CHROME="$PIN_CHROME"; else warn "pinned chromium-1194 path missing (vela-drive.js hardcodes it)"; fi
 
           FFMPEG="$(ls -d /opt/pw-browsers/ffmpeg-*/ffmpeg-linux 2>/dev/null | sort | tail -1)"
           [ -n "$FFMPEG" ] && [ -x "$FFMPEG" ] && ok "recorder ffmpeg present: $FFMPEG" || warn "ffmpeg not found (demo-video recording may fail)"
