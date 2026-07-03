@@ -1,0 +1,185 @@
+name: "Copilot Setup Steps"
+
+# Provisions the GitHub Copilot cloud agent's ephemeral container with the SAME
+# resources our Claude Code cloud setup script installs, so browser-driving,
+# PDF export and the Node security suites work out of the box:
+#   * poppler-utils        — spec-PDF text extraction + page screenshots
+#   * locked npm devDeps   — jsdom, playwright, react, @babel/standalone …
+#   * @playwright/cli      — interactive browser driving (pinned, uncommitted)
+#   * Chromium + ffmpeg    — offline renders, UI battery, demo-video recording
+#
+# Unlike the Claude cloud image (which pre-provisions Chromium under
+# /opt/pw-browsers), GitHub-hosted runners have no browser pre-installed, so we
+# install it with `playwright install` and then mirror it into the
+# /opt/pw-browsers layout the committed harness (vela-drive.js,
+# .playwright/cli.config.json) hardcodes.
+#
+# Runs automatically on change so it is easy to validate, and can be launched
+# manually from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or Copilot will not pick it up.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Lowest permissions needed for setup. Copilot gets its own token for its work.
+    permissions:
+      contents: read
+
+    env:
+      # jsdom + playwright are devDependencies. If the base image sets
+      # NODE_ENV=production, npm OMITS them and the install silently "succeeds"
+      # without the tools. Neutralise it for the whole job.
+      NODE_ENV: development
+      # Don't let `npm ci` pull a browser — Chromium is installed explicitly below.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      # Mirror the Claude cloud layout so the harness's pinned paths resolve.
+      PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
+      # Pinned; see the "Supply-chain" note on the @playwright/cli step.
+      PLAYWRIGHT_CLI_VERSION: "0.1.15"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Toolchains match .github/workflows/ci.yml so the agent's environment
+      # lines up with what CI actually gates on.
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.22"
+
+      # 1/4 — poppler-utils: spec-PDF text + screenshots (pdftotext/pdftoppm/pdfinfo)
+      - name: Install poppler-utils
+        run: |
+          sudo apt-get update -y || true
+          sudo apt-get install -y --no-install-recommends poppler-utils
+
+      # 2/4 — Locked npm devDependencies (jsdom, playwright, react, babel …).
+      # `npm ci` installs the EXACT locked tree (versions + sha512). --include=dev
+      # is belt-and-suspenders with NODE_ENV=development so devDeps always land;
+      # --ignore-scripts pairs with .npmrc to block install hooks.
+      - name: Install npm devDependencies (locked)
+        run: npm ci --include=dev --ignore-scripts --no-audit --no-fund
+
+      # 3/4 — @playwright/cli: interactive browser driving. Installed ISOLATED and
+      # UNCOMMITTED on purpose — it pulls a fresh alpha `playwright` nested in its
+      # own tree; --no-save keeps it out of package.json / package-lock.json so it
+      # never drags that alpha into the audited, shipped lockfile.
+      - name: Install @playwright/cli (pinned, uncommitted)
+        run: npm install --no-save --include=dev --no-audit --no-fund --ignore-scripts "@playwright/cli@${PLAYWRIGHT_CLI_VERSION}"
+
+      # 4/4 — Chromium + ffmpeg recorder. Installed into PLAYWRIGHT_BROWSERS_PATH
+      # (/opt/pw-browsers) to mirror the Claude cloud layout, with OS deps.
+      - name: Install Chromium + ffmpeg
+        run: npx playwright install --with-deps chromium ffmpeg
+
+      # Wire the on-disk Chromium into the paths the committed harness hardcodes:
+      #   * vela-drive.js expects /opt/pw-browsers/chromium-1194/chrome-linux/chrome
+      #   * .playwright/cli.config.json's executablePath (kept in sync below)
+      # The chromium-* build number drifts with the playwright version, so alias
+      # whatever landed to the pinned `chromium-1194` name as well.
+      - name: Wire Chromium into harness paths
+        run: |
+          set -euo pipefail
+          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::Chromium not found under /opt/pw-browsers after install"
+            exit 1
+          fi
+          echo "Chromium: $CHROME"
+
+          # Pinned alias expected by vela-drive.js (skip if it already resolves).
+          PIN="/opt/pw-browsers/chromium-1194"
+          REAL_DIR="$(dirname "$(dirname "$CHROME")")"
+          if [ ! -e "$PIN/chrome-linux/chrome" ]; then
+            ln -sfn "$REAL_DIR" "$PIN"
+            echo "aliased $PIN -> $REAL_DIR"
+          fi
+
+          # vela-drive.js requires playwright from /home/user/vela-slides/node_modules.
+          # Best-effort compatibility symlink to this checkout so it resolves here.
+          if [ ! -e /home/user/vela-slides ]; then
+            sudo mkdir -p /home/user || true
+            sudo ln -sfn "$GITHUB_WORKSPACE" /home/user/vela-slides || true
+          fi
+
+          # Keep .playwright/cli.config.json's executablePath in sync with the
+          # Chromium actually on disk (mirrors the Claude setup's sync step).
+          CFG="$GITHUB_WORKSPACE/.playwright/cli.config.json"
+          if [ -f "$CFG" ]; then
+            tmp="$(mktemp)"
+            jq --arg c "$CHROME" '.browser.launchOptions.executablePath = $c' "$CFG" > "$tmp" \
+              && mv "$tmp" "$CFG" \
+              && echo "synced executablePath -> $CHROME"
+          fi
+
+      # Final verification — check the real end state, independent of what each
+      # step reported. Catches "install succeeded but the tool never landed".
+      # A non-zero exit here stops further setup and surfaces the problem clearly.
+      - name: Verify real end state
+        run: |
+          set -uo pipefail
+          fail=0
+          ok()  { printf '  ✅ %s\n' "$*"; }
+          bad() { printf '  ❌ %s\n' "$*"; fail=1; }
+          warn(){ printf '  ⚠️  %s\n' "$*"; }
+
+          echo "▶ Verifying provisioned resources"
+
+          if command -v pdftotext >/dev/null && command -v pdftoppm >/dev/null && command -v pdfinfo >/dev/null; then
+            ok "poppler-utils: $(pdftotext -v 2>&1 | head -1)"
+          else
+            bad "poppler-utils not usable (pdftotext/pdftoppm/pdfinfo missing)"
+          fi
+
+          [ -d node_modules/jsdom ]     && ok "jsdom present"                 || bad "jsdom NOT installed (NODE_ENV=production would drop devDeps)"
+          [ -d node_modules/playwright ] && ok "playwright npm package present" || bad "playwright NOT installed (NODE_ENV=production would drop devDeps)"
+          [ -x node_modules/.bin/playwright-cli ] && ok "@playwright/cli present" || bad "@playwright/cli NOT installed"
+
+          CHROME="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | sort | tail -1)"
+          [ -n "$CHROME" ] && [ -x "$CHROME" ] && ok "Chromium present: $CHROME" || bad "Chromium NOT found under /opt/pw-browsers"
+          [ -x /opt/pw-browsers/chromium-1194/chrome-linux/chrome ] && ok "pinned chromium-1194 path resolves" || warn "pinned chromium-1194 path missing (vela-drive.js hardcodes it)"
+
+          FFMPEG="$(ls -d /opt/pw-browsers/ffmpeg-*/ffmpeg-linux 2>/dev/null | sort | tail -1)"
+          [ -n "$FFMPEG" ] && [ -x "$FFMPEG" ] && ok "recorder ffmpeg present: $FFMPEG" || warn "ffmpeg not found (demo-video recording may fail)"
+
+          # Chromium headless launch smoke test (only if both pieces exist).
+          if [ -n "$CHROME" ] && [ -d node_modules/playwright ]; then
+            if node -e "
+              const { chromium } = require('playwright');
+              chromium.launch({ executablePath: process.argv[1], headless: true, args: ['--no-sandbox'] })
+                .then(async b => { await b.close(); process.exit(0); })
+                .catch(e => { console.error(String(e).split('\n')[0]); process.exit(1); });
+            " "$CHROME"; then
+              ok "Chromium headless launch smoke test passed"
+            else
+              bad "Chromium headless launch smoke test failed"
+            fi
+          fi
+
+          echo ""
+          if [ "$fail" -ne 0 ]; then
+            echo "❌ One or more critical resources are missing — see above."
+            exit 1
+          fi
+          echo "✅ All critical resources provisioned."
