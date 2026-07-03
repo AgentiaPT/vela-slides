@@ -7,8 +7,11 @@ the container's pinned Chromium.
 ## Run it
 
 ```bash
-# one-time (ephemeral node_modules) + committed .playwright/cli.config.json
-npm install --no-audit --no-fund --ignore-scripts @playwright/cli
+# one-time (ephemeral node_modules) + committed .playwright/cli.config.json.
+# @playwright/cli is installed isolated & script-blocked — NOT committed to the
+# locked tree (it drags a fresh alpha playwright). See the playwright-cli-setup skill.
+npm ci --ignore-scripts
+npm install --no-save --no-audit --no-fund --ignore-scripts @playwright/cli@0.1.15
 
 bench/vela-interaction-bench.sh                              # default: examples/vela-demo.vela, 1 run
 bench/vela-interaction-bench.sh examples/tech-talk.vela --json bench/out.json

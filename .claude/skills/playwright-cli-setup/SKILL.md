@@ -1,6 +1,6 @@
 ---
 name: playwright-cli-setup
-description: Get the Playwright CLI (@playwright/cli — the token-efficient CLI alternative to Playwright MCP) driving a LIVE Vela app in a real browser inside this remote-execution container, cleanly and offline. Use whenever you want to interactively poke the rendered app one command at a time — screenshot a state, reproduce a bug, drive presenter/gallery flows, run the interaction benchmark (bench/vela-interaction-bench.sh), or verify a UX change actually works. Captures the exact setup so you skip the dead-ends (blocked CDNs, file:// block, Chromium revision mismatch).
+description: For ad-hoc testing and exploration of Vela, drive the app with the Playwright CLI (@playwright/cli — the token-efficient CLI alternative to Playwright MCP) INSTEAD OF writing throwaway Playwright code files: you keep the browser warm and inspect page state and command output between every step, so you reason and adapt in real time instead of running a script blind and re-editing it when a step fails. Gets a LIVE Vela app running in a real browser inside this remote-execution container, cleanly and offline. Use whenever you want to interactively poke the rendered app one command at a time — screenshot a state, reproduce a bug, drive presenter/gallery flows, run the interaction benchmark (bench/vela-interaction-bench.sh), or verify a UX change actually works. Captures the exact setup so you skip the dead-ends (blocked CDNs, file:// block, Chromium revision mismatch).
 allowed-tools: Bash(npx playwright-cli*), Bash(npm install*), Bash(node skills/vela-slides/scripts/*), Bash(node_modules/.bin/playwright-cli*), Read, Write, Edit, Glob, Grep
 ---
 
@@ -19,9 +19,11 @@ streams into the conversation unless you read a file).
 
 ## Setup — do this once per fresh container
 
-**1. Install** (`node_modules` is ephemeral/gitignored, like jsdom/playwright):
+**1. Restore the locked deps, then install the CLI isolated** (see *Supply-chain
+safety* below for why it's not committed):
 ```bash
-npm install --no-audit --no-fund --ignore-scripts @playwright/cli
+npm ci --ignore-scripts                                                   # locked tree first
+npm install --no-save --no-audit --no-fund --ignore-scripts @playwright/cli@0.1.15
 ```
 
 **2. Config is already committed** at `.playwright/cli.config.json` (the default
@@ -41,6 +43,34 @@ config path, read from the repo root). It solves the two things that otherwise f
 ```
 Recreate it if missing. Update `executablePath` if the image's Chromium moves
 (`ls /opt/pw-browsers/`).
+
+## Supply-chain safety (why `@playwright/cli` is NOT committed)
+
+This repo pins its supply chain via a committed `package-lock.json` (exact
+versions + sha512), `npm ci --ignore-scripts` in CI, `npm audit` gating, and a
+7-day release-cooldown (`.npmrc: ignore-scripts=true`, see docs/SECURITY.md).
+
+`@playwright/cli@0.1.15` transitively depends on a **days-old alpha** of
+`playwright` (nested in its own `node_modules`, so it does **not** override the
+repo's locked top-level `playwright`). Committing it would pull that fresh alpha
+into the audited, shipped dependency tree — against the cooldown policy. So it is
+deliberately kept **out** of `package.json` / `package-lock.json` and installed as
+an isolated, dev/test-only tool. The install is hardened accordingly:
+
+- **`@playwright/cli@0.1.15`** — exact version pin, no range (no surprise upgrades).
+- **`--ignore-scripts`** — blocks pre/post-install hooks (belt-and-suspenders with
+  `.npmrc: ignore-scripts=true`); the #1 npm supply-chain vector.
+- **`--no-save`** — never writes to `package.json`/`package-lock.json`; the audited,
+  shipped tree stays exactly as locked. `npm` still verifies the registry sha512 on
+  download.
+- **Ephemeral & unshipped** — `node_modules/` is gitignored; the CLI never enters
+  the Vela artifact, a release, or CI's locked install.
+- Always run `npm ci --ignore-scripts` **first** so the top-level `playwright`/etc.
+  match the lockfile (an ad-hoc `npm install` earlier can drift them).
+
+Before bumping the pin, check the new version's transitive `playwright` dep
+(`npm view @playwright/cli@<v> dependencies`) and prefer a version that resolves a
+**stable** playwright once one ships.
 
 ## Drive a Vela deck
 
