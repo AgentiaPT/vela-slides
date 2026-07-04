@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const REPO = __dirname; // this file sits at the repo root
+const REPO = path.resolve(__dirname, '..'); // this file sits in <repo>/.hyper-sprint/
 const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
 const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
 
