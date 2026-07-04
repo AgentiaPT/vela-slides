@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.0
+version: 2.1
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -167,14 +167,26 @@ validation round in one style and scrapping it for another once the CRs are alre
 environment is already pre-provisioned (a setup script ran, a prebuilt image/artifact is
 present), the orchestrator runs the fast boot+smoke gate itself, inline, and moves straight to
 Phase 1. Otherwise, delegate to a readiness sub-agent: verify the config's commands/paths exist
-on the base branch (a missing one is *config drift* — fall back to an existing repo harness/
-skill, don't silently rebuild); provision declared deps; run build + tests; boot and
+on the base branch (a missing one is *config drift* — **repair it here, don't route around it**:
+fix the broken path / stale test-id / missing reset hook so the shipped harness works, rather
+than quietly building your own). Provision declared deps; run build + tests; then boot and
 **smoke-test every surface the sprint will verify** (e.g. the primary view, a secondary mode, a
 dialog). It **writes an entrypoint file** (the one boot+drive command, baseline passing-count +
 known pre-existing failures, new gotchas) and **returns only `ready|blocked` + reason + that
 path**. Orchestrator **hard-gates on `blocked`** either way. Delegating (when genuinely needed)
 keeps the bring-up trial-and-error out of the premium context entirely; running it inline (when
 pre-provisioned) avoids paying a sub-agent round-trip for a gate that's already solved.
+
+**Readiness MUST boot *through the same harness the blind gate will use* — the `burst-bug-hunter`
+engine (§Phase 5), not a parallel driver.** Concretely: `start-hunt.sh <wd> <url> <config>`, then
+prove every sprint-verified surface with a real `vrun` burst (present view, gallery, a modal, the
+edit path…). This is where latent harness bugs surface at minute 5 instead of hour 2 — e.g. a
+headless `requestFullscreen` that hangs `keyboard.press` — and the workaround gets **crystallized
+into the repo verb library now**, so no later hunt re-pays it. **Anti-pattern (the #1 way the
+engine gets bypassed): writing a throwaway per-step Playwright helper for the readiness smoke and
+then reusing it for the blind gate.** If you catch yourself hand-rolling a `launch()`/driver in the
+hub, stop — fix the engine's config instead. A second driving harness that gets reused for
+verification means the enforced time-box and burst efficiency never apply.
 
 **Phase 1 — Recon.** Parallel read-only sub-agents (one per subsystem) → anchored edit maps in `NOTES.md`.
 
@@ -191,7 +203,10 @@ count), which is only honest if the plan wasn't reconstructed afterward.
 **Phase 3 — Delegate & integrate.** Dispatch each cluster to a **worker sub-agent** (routed
 model/effort) with its objective, edit map, its **acceptance Verify verbatim**, and exclusive
 file set; disjoint clusters run in parallel **worktrees**. Worker does edits + unit/e2e tests and
-returns a compact result — never its raw diff (*hub hygiene*, principle 3). The orchestrator
+returns a compact result — never its raw diff (*hub hygiene*, principle 3). **New UI a worker
+adds must be drivable by the repo's burst verb library**: emit the stable test-ids those verbs
+expect (or update the verbs in the same change) — otherwise the blind gate can't drive the feature
+and you pay a mid-sprint reconciliation. The orchestrator
 merges sequentially, **full suite green between merges**, and posts a steering update (done/
 total + feature screenshots where supported, sent as a file/link — not pasted inline). Re-run
 the suite after every fix. **At roughly the halfway point, run the mid-sprint cost checkpoint**
@@ -203,10 +218,18 @@ time to correct it, instead of discovering it at the retro).
 → re-run suite. This *reduces* defects but does **not** decide done — the blind gate does.
 
 **Phase 5 — Blind gate + proof + archive.** Run the **blind validation** stop gate (below) —
-default hybrid shape (per-CR verifiers + broad hunters, principle 7). Drive browser
-verification through the **`burst-bug-hunter`** skill (warm app opened once, multi-step
-Playwright *bursts*, hard per-job time cap) — and have each verifier `ctx.shot()` its proof
-state so the same pass that verifies also captures the report screenshots. Only once it's
+default hybrid shape (per-CR verifiers + broad hunters, principle 7). Browser verification runs
+**through the `burst-bug-hunter` engine — this is mandatory, not advice**; a round driven by an
+ad-hoc per-step Playwright harness **does not count** (it loses the enforced time-box and warm-app
+efficiency). Concrete required sequence: for each hunter, `start-hunt.sh <wd> <url> <config>`
+(one warm server, app opened once), **write the hard time-box to `<wd>/deadline`**
+(`python3 -c 'import time;print(time.time()+<N>*60)' > <wd>/deadline` — the *engine* enforces it;
+a prompt that merely says "hunt for X minutes" with no `deadline` file is non-compliant), then
+spawn each blind hunter given only **`VDRIVE=<wd>` + the verbs path + the `vrun`/burst protocol**
+(never a bespoke driver). Each verifier works in **bursts** (multi-step `job.mjs` run to
+completion, observe at burst boundaries) and `ctx.shot()`s its proof state so the same pass that
+verifies also captures the report screenshots. Hunt **non-stop until the engine `deadline`**;
+`stats.json` + `findings.jsonl` are the audit trail. Only once it's
 clean, assemble the **default proof: a single Markdown report** — agentic burndown (from
 `assets/sprint-stats.py` + the blind-round timeline) + before/after screenshots + cost/savings
 (`assets/sprint-cost.py`) — and **archive the whole sprint** to
@@ -258,9 +281,13 @@ gotchas: **`references/demo-deck.md`**.
    turns, elapsed time, "nearly done", the diff — so the verdict can't be anchored. Classify
    findings **in-scope defect vs cosmetic/out-of-scope from the start** — the bar never moves
    by round. Any in-scope finding → fix → **new** blind round (fresh agents; may share the
-   harness bring-up, never the findings). Done when a full ≥ X-min round surfaces **zero
-   in-scope defects** and all features confirmed present. (Protocol, and the tradeoff of
-   per-CR-only vs hybrid: `references/orchestration.md`.) **And**
+   harness bring-up, never the findings). Done when a full round **run through the
+   `burst-bug-hunter` engine with an engine-enforced `deadline`** (§Phase 5) surfaces **zero
+   in-scope defects** and all features confirmed present. The `X min` budget is the `deadline`
+   file, not a sentence in a prompt — a round whose time-box wasn't mechanically enforced, or
+   that was driven by a bespoke per-step harness instead of the engine, **does not satisfy the
+   gate**. Keep the engine's `stats.json`/`findings.jsonl` as evidence the enforced burst hunt
+   actually ran. (Protocol, and the tradeoff of per-CR-only vs hybrid: `references/orchestration.md`.) **And**
 2. the **Markdown sprint report** exists at `.hyper-sprint/completed/<sprint>/README.md`
    (agentic burndown + before/after screenshots + cost) and its shots have been *looked at*
    to confirm every change is actually shown working. (A recorded video demo is optional —

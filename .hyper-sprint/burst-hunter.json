@@ -1,11 +1,11 @@
 {
-  "_doc": "Repo-specific config for the generic burst-bug-hunter skill (Vela). Paths are resolved relative to this file's directory. The skill's driver-server.mjs reads readyExpr/resetExpr/initScript/viewport; the rest is documentation for the caller.",
+  "_doc": "Repo-specific config for the generic burst-bug-hunter skill (Vela). Paths (initScript, verbs) resolve relative to THIS file's directory. driver-server.mjs reads readyExpr/resetExpr/initScript/viewport/jobTimeoutMs; the rest is documentation for the caller.",
   "readyExpr": "window.__velaBooted === true",
-  "resetExpr": "window.__velaReset && window.__velaReset()",
   "initScript": "burst-init.js",
   "viewport": { "width": 1280, "height": 720 },
-  "verbs": ".hyper-sprint/vela-verbs.mjs",
-  "bootCmd": "python3 skills/vela-slides/scripts/concat.py && node hyper-sprint.render-offline.js <deck.vela> <outdir>",
+  "jobTimeoutMs": 20000,
+  "verbs": "vela-verbs.mjs",
+  "bootCmd": "python3 skills/vela-slides/scripts/concat.py && node .hyper-sprint/render-offline.js <deck.vela> <outdir>",
   "appUrl": "file://<outdir>/render.html",
-  "notes": "render-offline.js exposes window.__velaReset (in-memory remount, no reload) and window.__velaBooted. burst-init.js installs an in-mem window.storage polyfill so the save-status path is exercisable offline."
+  "notes": "Reset is RELOAD-based (no resetExpr): the app exposes window.__velaBooted but NOT an in-memory reset hook, so ctx.reset()/vrun --reset does a full page.reload() — reliable but costs a boot (~1-2s), so keep bursts short and prefer navigating back over resetting mid-burst; jobTimeoutMs is 20s to leave room for reload+boot+multi-step. burst-init.js installs an in-mem window.storage polyfill so the save-status path is exercisable offline. GOTCHA: once the app enters fullscreen presenter mode (synthetic/real 'f'), Playwright page.keyboard.press AND ctx.shot HANG (headless requestFullscreen) — drive presenter keys via synthetic dispatch (see navKey/presentKey verbs) + CDP touch + real mouse/wheel; take shots only after leaving fullscreen."
 }

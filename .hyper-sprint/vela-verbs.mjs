@@ -83,3 +83,33 @@ export async function dropZoneVisible(page) { return page.evaluate(() => [...doc
 // Dispatch on a #root descendant so it bubbles to React's delegated root handler.
 export async function simulateDrag(page, { files = false } = {}) { await page.evaluate((withFiles) => { const root = document.getElementById("root"); const tgt = (root && root.querySelector("*")) || root; const dt = new DataTransfer(); if (withFiles) dt.items.add(new File(["x"], "a.vela", { type: "text/plain" })); else dt.setData("text/plain", "x"); for (const n of ["dragenter", "dragover"]) tgt.dispatchEvent(new DragEvent(n, { bubbles: true, cancelable: true, dataTransfer: dt })); }, files); await page.waitForTimeout(200); }
 export async function endDrag(page) { await page.evaluate(() => { const root = document.getElementById("root"); const tgt = (root && root.querySelector("*")) || root; tgt.dispatchEvent(new DragEvent("dragleave", { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })); }); await page.waitForTimeout(150); }
+
+// ── Fullscreen-safe keyboard (GOTCHA crystallized from a hunt) ─────────────────
+// Once the app is in fullscreen presenter mode (real/synthetic 'f' → requestFullscreen),
+// Playwright's page.keyboard.press AND page.screenshot/ctx.shot HANG indefinitely in
+// headless Chromium. Drive presenter keys via a SYNTHETIC KeyboardEvent dispatched on
+// document instead (bubbles to the app's window-level keydown handler), and take shots
+// only after leaving fullscreen. Mouse (click/wheel) and CDP touch are unaffected.
+// navKey(page, "ArrowRight") | navKey(page, "e", {ctrlKey:true}) | navKey(page, "f")
+export async function navKey(page, key, mods = {}) {
+  await page.evaluate(({ key, mods }) => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods }));
+  }, { key, mods });
+  await page.waitForTimeout(120);
+}
+// Enter fullscreen presenter via synthetic 'f' (avoids the keyboard.press hang path);
+// waits for the fixed full-viewport presenter container to appear.
+export async function presentKey(page) {
+  await navKey(page, "f");
+  await page.waitForFunction(() => [...document.querySelectorAll("*")].some(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }), { timeout: 5000 });
+}
+// CDP touch swipe: dir<0 (finger right→left) = forward/next; dir>0 (left→right) = back/prev.
+export async function swipe(page, dir = -1) {
+  const cdp = await page.context().newCDPSession(page);
+  const [x0, x1] = dir < 0 ? [900, 300] : [300, 900];
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y: 400 }] });
+  for (let x = x0; dir < 0 ? x >= x1 : x <= x1; x += dir < 0 ? -100 : 100)
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: 400 }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(150);
+}
