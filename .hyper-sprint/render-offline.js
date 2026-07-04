@@ -49,7 +49,15 @@ function build(deckPath, outDir) {
     'const _LucideAll = window.lucideReact;\n' +
     'const { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X, Presentation, Download, Upload, Search, FileDown } = window.lucideReact;\n';
   const tail =
-    '\ntry { window.App = App; window._createRoot(document.getElementById("root")).render(React.createElement(App)); window.__velaBooted = true; }' +
+    '\ntry {' +
+    ' window.App = App; var _el = document.getElementById("root");' +
+    // mount / remount a FRESH React root — a new component tree = all state reset.
+    ' window.__velaMount = function(){ window.__velaBooted = false; if (window.__velaRoot) { try { window.__velaRoot.unmount(); } catch (e) {} } window.__velaRoot = window._createRoot(_el); window.__velaRoot.render(React.createElement(App)); window.__velaBooted = true; };' +
+    // reset to known initial state WITHOUT reload (app.js stays in memory): clear the
+    // in-mem storage so the app falls back to the baked STARTUP_PATCH deck, then remount.
+    ' window.__velaReset = function(){ try { if (window.__vmem) { for (var k in window.__vmem) delete window.__vmem[k]; } } catch (e) {} window.__velaMount(); };' +
+    ' window.__velaMount();' +
+    ' }' +
     ' catch (e) { window.__velaBootError = String(e && e.stack || e); }\n';
   const src = shim + jsx + tail;
   const { code } = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] });

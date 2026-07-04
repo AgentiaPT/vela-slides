@@ -7,8 +7,8 @@ WHAT IT DOES
   off every assistant turn (input / output / cache-write / cache-read tokens + the
   `model` field), tiers the model against the editable PRICE table below, and sums
   cost per agent and per model tier. Prints a human table; `--json` also emits a
-  machine-readable version so a deck builder (e.g. the demo-deck "cost" slide) can
-  consume it directly.
+  machine-readable version so the cost/savings section of the Markdown sprint report
+  (or, on the optional demo path, the demo-deck "cost" slide) can consume it directly.
 
 CLAUDE-CODE TRANSCRIPT ASSUMPTION
   Defaults are shaped for Claude Code's on-disk transcript layout:
