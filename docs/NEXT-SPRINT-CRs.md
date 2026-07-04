@@ -95,6 +95,8 @@ Current export menu: **Vela (.vela), PDF, Markdown, JSON copy/paste** — no edi
 `.pptx`. This is the #1 interchange format business/enterprise users expect for
 handing a deck to colleagues who don't use Vela. **Scope:** map the 27 block types to
 PPTX shapes/placeholders (a lossy-but-useful first cut is fine). **Effort:** L.
+**Research + PoC:** see `docs/POWERPOINT-EXPORT-RESEARCH.md` (design, 3 alternatives,
+recommendation, and a working spike in `spike/pptx/` proving native-editable output).
 
 ### VELA-CR-08 · Dedicated presenter / speaker view · P2 · 🟢
 Presentation goes fullscreen, and speaker/study notes exist in the data model, but
