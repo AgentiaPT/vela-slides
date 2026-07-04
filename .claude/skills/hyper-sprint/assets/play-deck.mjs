@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Record the FINISHED demo deck as ONE integrated video — the final deliverable.
+// OPTIONAL demo path: record the FINISHED demo deck as ONE integrated video. The default
+// proof artifact is the Markdown sprint report (references/sprint-archive.md); build and
+// record this video deck only when the user explicitly asks for a guided walkthrough.
 // Plays index.html straight through: dwells on text slides, lets each embedded clip
 // play once, and screenshots mid-slide (ground-truth frame-check — see note below).
 //

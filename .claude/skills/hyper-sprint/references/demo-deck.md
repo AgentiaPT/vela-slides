@@ -1,4 +1,8 @@
-# Demo deck scaffold
+# Demo deck scaffold (OPTIONAL — build only on request)
+
+> **The default proof artifact is the Markdown sprint report** (`references/sprint-archive.md`),
+> not this video deck. Build this recorded HTML/video deck **only when the user explicitly asks**
+> for a guided walkthrough on top of the report. Everything below is that optional path.
 
 The end-of-sprint demo is a self-contained, **app-independent** HTML slide deck: the
 slide chrome owes nothing to the app under test, so it drops onto any browser-based app.

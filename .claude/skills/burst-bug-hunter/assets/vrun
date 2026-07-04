@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# vrun — submit a multi-step Playwright job (burst) to the persistent warm-app server
+# and block until it returns the full structured result. One call = one whole burst.
+#
+#   vrun <job.mjs>            run a job file (export async function run(page, ctx))
+#   vrun --reset              reset app to known initial state
+#   vrun --shutdown           stop the server
+#   vrun --inline 'CODE'      run an inline body: `export async function run(page,ctx){ CODE }`
+#   vrun --finding '{json}'   append one finding line to $VDRIVE/findings.jsonl (no server round-trip)
+#
+# Env: VDRIVE=<workdir> (default /tmp/burst-drive)
+set -euo pipefail
+WORK="${VDRIVE:-/tmp/burst-drive}"
+INBOX="$WORK/inbox"; OUTBOX="$WORK/outbox"
+mkdir -p "$INBOX" "$OUTBOX"
+
+if [ "${1:-}" = "--finding" ]; then printf '%s\n' "$2" >> "$WORK/findings.jsonl"; echo "recorded"; exit 0; fi
+
+id="j$(date +%s%N)"
+case "${1:-}" in
+  --reset)    id="reset-$id"; : > "$INBOX/$id.mjs" ;;
+  --shutdown) id="shutdown-$id"; : > "$INBOX/$id.mjs" ;;
+  --inline)   printf 'export async function run(page, ctx){\n%s\n}\n' "$2" > "$INBOX/$id.mjs" ;;
+  *)          [ -f "${1:-}" ] || { echo "vrun: job file not found: ${1:-}" >&2; exit 2; }
+              cp "$1" "$INBOX/$id.mjs" ;;
+esac
+
+# Client wait is bounded to a few seconds over the server's job cap (VRUN_WAIT, default
+# 15s). The server ALWAYS writes a result within its JOB_TIMEOUT_MS (~8s) even for a
+# hung burst, so a call never blocks longer than this. Never 180s.
+WAIT_ITERS=$(( ${VRUN_WAIT:-15} * 5 ))
+for _ in $(seq 1 "$WAIT_ITERS"); do
+  if [ -f "$OUTBOX/$id.json" ]; then cat "$OUTBOX/$id.json"; rm -f "$OUTBOX/$id.json"; exit 0; fi
+  sleep 0.2
+done
+echo '{"ok":false,"error":"vrun: no server result within '"${VRUN_WAIT:-15}"'s (server down or overloaded)"}' >&2; exit 1

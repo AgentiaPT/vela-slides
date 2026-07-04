@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Generic, app-agnostic demo recorder for the claude-code-cloud-default profile.
+// OPTIONAL demo path — the default proof artifact is the Markdown sprint report
+// (references/sprint-archive.md); use this only when the user asks for a recorded deck.
 // Records one .webm per feature clip and a screenshot at every beat (the frame-check),
 // then scaffolds a self-contained HTML deck you fill in.
 //

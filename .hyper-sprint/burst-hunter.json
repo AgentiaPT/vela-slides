@@ -1,0 +1,11 @@
+{
+  "_doc": "Repo-specific config for the generic burst-bug-hunter skill (Vela). Paths are resolved relative to this file's directory. The skill's driver-server.mjs reads readyExpr/resetExpr/initScript/viewport; the rest is documentation for the caller.",
+  "readyExpr": "window.__velaBooted === true",
+  "resetExpr": "window.__velaReset && window.__velaReset()",
+  "initScript": "burst-init.js",
+  "viewport": { "width": 1280, "height": 720 },
+  "verbs": ".hyper-sprint/vela-verbs.mjs",
+  "bootCmd": "python3 skills/vela-slides/scripts/concat.py && node hyper-sprint.render-offline.js <deck.vela> <outdir>",
+  "appUrl": "file://<outdir>/render.html",
+  "notes": "render-offline.js exposes window.__velaReset (in-memory remount, no reload) and window.__velaBooted. burst-init.js installs an in-mem window.storage polyfill so the save-status path is exercisable offline."
+}

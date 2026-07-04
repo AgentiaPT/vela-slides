@@ -41,8 +41,9 @@ If markers partially match (e.g. `/opt/pw-browsers` but no proxy), you're in a *
   **JS/CSS CDNs are blocked** (esm.sh, unpkg, the Playwright browser CDN, most font
   CDNs). `ERR_INVALID_URL` / `ERR_CONNECTION_CLOSED` on font/CDN fetches are harmless.
 - **Consequence:** anything you open in a browser must be **self-contained** — no CDN
-  `<script>`/`<link>`, no import maps to esm.sh, fonts inlined or system-stack only.
-  The demo deck in `assets/demo/` is already built this way.
+  `<script>`/`<link>`, no import maps to esm.sh, fonts inlined or system-stack only. The
+  offline render the blind verifiers drive (repo's own boot recipe → external app script)
+  and the optional demo deck in `assets/demo/` are both built this way.
 
 ### Browser (Playwright, pre-installed)
 - `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`; do **not** run `playwright install`.

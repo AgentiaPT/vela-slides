@@ -9,7 +9,8 @@ description: >-
   and gates completion on an independent BLIND validation by the best model. Use
   when handed a list of changes/issues (a PDF, ticket list, or spec) to implement,
   test, and prove working end-to-end — stop rule "a blind best-model hunt finds no
-  bugs + a demo/proof artifact". Repo-agnostic; reads a root `.hyper-sprint/config.md` for
+  bugs + a proof artifact (a Markdown sprint report by default; recorded demo optional)".
+  Repo-agnostic; reads a root `.hyper-sprint/config.md` for
   repo facts; front-loads app/browser readiness so verification never stalls.
 ---
 
@@ -100,15 +101,19 @@ biases the final gate). Three separate roles:
    declaring "done" is exactly the trap that spawns redundant "final" passes — see *Stop
    rule* and `references/orchestration.md` for the full protocol and the tradeoff (pure
    per-CR risks missing feature interactions; the broad hunters are what catch those).
-8. **Verify with eyes, sample before declaring done.** The proof artifact is a full
-   end-of-sprint **HTML demo deck** with embedded recordings of the real app (see
-   *Proof artifact*). Never trust a recording blindly — *look* at frames captured while
-   driving; a driver bug (wrong key, clip never played) silently proves nothing.
+8. **Verify with eyes, sample before declaring done.** The proof artifact is, **by default,
+   a single self-contained Markdown sprint report** — agentic burndown + before/after
+   screenshots per change — archived under `.hyper-sprint/completed/<sprint>/` (see *Proof
+   artifact*). Screenshots come **free from the blind verifiers** (each `ctx.shot()`s its
+   proof state via the `burst-bug-hunter` warm-app harness; "before" shots come from the
+   base-commit render driven the same way). A recorded HTML/video demo deck is **optional** —
+   build it only if the user asks. Never trust a shot blindly — *look* at it (feature visible,
+   right screen, interaction landed); a driver bug silently proves nothing.
 9. **Cost is a first-class deliverable, not an afterthought.** Track and report real spend,
    not a guess. Run a **mid-sprint cost checkpoint** — `assets/sprint-cost.py` at roughly the
    halfway point — so runaway hub bloat or an over-provisioned validator fleet is caught
-   *before* it compounds, not discovered in a post-mortem. The final deck's cost + savings
-   slides (see *Proof artifact*) come from the same script re-run at the end.
+   *before* it compounds, not discovered in a post-mortem. The report's cost + savings
+   section (see *Proof artifact*) comes from the same script re-run at the end.
 10. **Don't fight the environment.** Detect a capability once (signing keys, network,
    missing binaries); if an op is impossible here, record it as a known limitation and
    move on — don't burn turns retrying "command not found" or an empty credential.
@@ -175,7 +180,13 @@ pre-provisioned) avoids paying a sub-agent round-trip for a gate that's already 
 
 **Phase 2 — Plan.** Cluster by file-locality into task-tracked items with **disjoint file
 sets** where possible; assign each a model/effort tier and a rough effort estimate (the
-burndown's ideal line); note the start time.
+burndown's ideal line); note the start time. **Pick a short memorable codename** for the
+sprint (e.g. `limelight`) — folder and plan filenames carry **date + codename**. **Write the
+plan NOW, not at the end:** create
+`.hyper-sprint/completed/<YYYY-MM-DD>-<codename>/plan-<YYYY-MM-DD>-<codename>.md` with the
+*verbatim original prompt* + this plan (parsed CRs, clusters, batches). Capturing it live makes
+it a real artifact — at close you append a short "what happened vs plan" (e.g. blind-round
+count), which is only honest if the plan wasn't reconstructed afterward.
 
 **Phase 3 — Delegate & integrate.** Dispatch each cluster to a **worker sub-agent** (routed
 model/effort) with its objective, edit map, its **acceptance Verify verbatim**, and exclusive
@@ -191,33 +202,44 @@ time to correct it, instead of discovering it at the retro).
 **Phase 4 — Fix-round hunt.** Diverse-lens hunters find bugs → fix workers + regression tests
 → re-run suite. This *reduces* defects but does **not** decide done — the blind gate does.
 
-**Phase 5 — Blind gate + proof + handoff.** Run the **blind validation** stop gate (below) —
-default hybrid shape (per-CR verifiers + broad hunters, principle 7). Only once it's clean,
-build the demo deck (real burndown + retro from `assets/sprint-stats.py` + **cost/savings
-breakdown** from `assets/sprint-cost.py`), frame-check, deliver, and report final status vs
-the full list.
+**Phase 5 — Blind gate + proof + archive.** Run the **blind validation** stop gate (below) —
+default hybrid shape (per-CR verifiers + broad hunters, principle 7). Drive browser
+verification through the **`burst-bug-hunter`** skill (warm app opened once, multi-step
+Playwright *bursts*, hard per-job time cap) — and have each verifier `ctx.shot()` its proof
+state so the same pass that verifies also captures the report screenshots. Only once it's
+clean, assemble the **default proof: a single Markdown report** — agentic burndown (from
+`assets/sprint-stats.py` + the blind-round timeline) + before/after screenshots + cost/savings
+(`assets/sprint-cost.py`) — and **archive the whole sprint** to
+`.hyper-sprint/completed/<sprint>/` (`README.md` = report, `plan-*.md`, `sprint.json`, `img/`);
+append a row to `.hyper-sprint/completed/README.md`. A recorded HTML/video demo deck is
+**optional** (build only on request — see *Proof artifact*). **Deliver the report as a
+clickable Markdown link** — `[Sprint "<codename>" report](https://github.com/<owner>/<repo>/tree/<branch>/.hyper-sprint/completed/<YYYY-MM-DD>-<codename>)` (the `tree` folder URL renders the
+README on open). NEVER wrap the URL in backticks (that renders as non-clickable code) or hand
+over a bare repo path. Also offer the shorter **repo/branch-root** link — deep paths with a
+dot-folder (`.hyper-sprint`) often fall back to the browser, while short `github.com/<owner>/<repo>` links hand off to the GitHub mobile app more reliably. Then the final status vs the full list.
 
-## Proof artifact — the end-of-sprint demo
+## Proof artifact — default: a Markdown sprint report (video optional)
 
-Deliver **one app-independent HTML deck** (any browser, no toolchain, offline) — a full
-end-of-sprint review, not a reel of clips. Arc: Open (theme) → Scope → **real Burndown**
-(work-remaining = open CRs + open defects over time; the bug-hunt *adds* scope, so it bumps
-up before zero) → **Session stats & retro** (from `assets/sprint-stats.py`, profile-dependent)
-→ **Cost breakdown** (a required slide, built from `assets/sprint-cost.py`'s per-agent +
-per-model + grand-total-to-the-cent output) → **Savings/retro-with-numbers** (what would be
-done differently and the estimated delta, grounded in the cost breakdown rather than a vague
-"we could be faster") → Quality (bugs fixed) → **Live walkthrough** (one embedded real-app clip
-per change — the heart) → Close. The deck builder is **incremental**: edit the existing deck in
-place across checkpoints rather than rebuilding it, and never re-encode/re-embed a clip or image
-that's already in the deck. Full pipeline, slide types, and gotchas: **`references/demo-deck.md`**.
+**Default = one self-contained Markdown report** archived at
+`.hyper-sprint/completed/<sprint>/README.md` (renders when the folder is opened). Full
+convention + generation flow: **`references/sprint-archive.md`**. Arc: Scope → **agentic
+burndown** (work-remaining = open CRs + agent-found defects; the blind-hunt rounds *add*
+scope, so the curve bumps up before zero — render with `assets/mk-burndown.py`) → **stats**
+(`assets/sprint-stats.py`) → **before/after per change** (screenshots the verifiers already
+captured: HEAD for "after", the base-commit render for "before") → **cost/savings**
+(`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed**. Use **relative**
+`img/…` paths (GitHub renders those; it does *not* render base64 data-URIs) — optionally also
+emit a base64-inlined single-file copy for portable one-click viewing.
 
-**Frame-check before shipping (hard gate).** The recorders screenshot **while driving** —
-*inspect* those PNGs (feature visible, right screen, interaction landed). A green suite is
-**not** proof the demo shows it; a recording can silently be wrong. Playwright's VP8 isn't
-seekable — verify via during-drive screenshots, not post-hoc playback/`ffmpeg`. When the
-profile can drive more than one viewport, frame-check at more than one resolution (e.g. a
-common desktop size and a common laptop size) so a fluid layout that only got tested at one
-width doesn't ship with dead margins or a horizontal scrollbar at the other.
+**Screenshots are a by-product of verification, not a separate step.** The blind verifiers
+drive each feature through the `burst-bug-hunter` warm app; add one `ctx.shot("<cr>-after-…")`
+per proof state. "Before" shots = the same tagged bursts run against a render of the base
+commit. **Frame-check (hard gate):** *look* at every shot (feature visible, right screen,
+interaction landed) — a green suite is not proof the report shows it.
+
+**Optional: recorded HTML/video demo deck.** Build the embedded-clip HTML deck **only if the
+user asks** (a guided walkthrough on top of the report). Pipeline, slide types, VP8/frame-check
+gotchas: **`references/demo-deck.md`**.
 
 ## Stop rule (both required)
 
@@ -239,8 +261,10 @@ width doesn't ship with dead margins or a horizontal scrollbar at the other.
    harness bring-up, never the findings). Done when a full ≥ X-min round surfaces **zero
    in-scope defects** and all features confirmed present. (Protocol, and the tradeoff of
    per-CR-only vs hybrid: `references/orchestration.md`.) **And**
-2. the **HTML demo deck** with embedded recorded demos exists and its frames have been
-   sampled to confirm every change is actually shown working.
+2. the **Markdown sprint report** exists at `.hyper-sprint/completed/<sprint>/README.md`
+   (agentic burndown + before/after screenshots + cost) and its shots have been *looked at*
+   to confirm every change is actually shown working. (A recorded video demo is optional —
+   only when the user asks; it is **not** required for the gate.)
 
 Do not let the (biased) main context declare done; the gate is owned by agents who never
 saw the work happen.
