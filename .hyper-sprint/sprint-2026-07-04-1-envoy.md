@@ -136,19 +136,56 @@ version-bump gate passes.
 
 ## Verification approach (whole sprint)
 
-`soffice` headless is **non-functional in the sprint container** (fails on a plain
-`.txt`), so visual round-trip can't use LibreOffice here. Prove parity via **(a)**
-`python-pptx` read-back — objective "these are native editable objects, not a picture"
-— plus per-slide object counts and positions, and **(b)** an **in-browser reconstruction
-preview**: re-render the emitted IR to a PNG and diff against the source Vela render
-within tolerance. Final visual sign-off is a human opening the `.pptx` in real PowerPoint
-(or local `soffice --headless --convert-to png`).
+Two complementary checks — one objective, one visual:
+
+**(a) Structural read-back — `python-pptx`.** Assert the export is made of *native
+editable objects, not a picture*: per-slide counts of text boxes / autoshapes / pictures
+/ native SVG, plus block positions within tolerance. (`spike/pptx/verify.py`.)
+
+**(b) Visual render of the GENERATED `.pptx` — LibreOffice Impress.** ✅ **Solved and
+tested this sprint.** The container ships a *stripped* LibreOffice (only `pdfimport`/
+`xsltfilter` registry modules) that fails on any `.pptx`/`.txt` ("source file could not
+be loaded"). Installing the app module once — **`apt-get install -y libreoffice-impress`**
+— makes `soffice --headless --convert-to png` render slides faithfully (**native SVG
+included**). Then diff the rendered `.pptx` against the source Vela render (Chromium
+`shot`). Helpers committed in the spike: **`spike/pptx/render-pptx.sh`** (pptx→png) and
+**`spike/pptx/compare.py`** (source vs pptx side-by-side). This is the primary parity
+gate for every item below.
+
+### Baseline findings — first visual pass (evidence for the scope)
+
+Rendering the current spike output through this method already proves the plan and
+sharpens each item. See `img/pptx-parity-real-slide.png` (source vs generated) and
+`img/pptx-emitter-minimal.png` (hand-authored fixture).
+
+- ✅ **Emitter is correct.** The minimal fixture renders **pixel-clean** from its
+  `.pptx`, including the embedded **native SVG rendered as crisp vector** — so PPTX-2's
+  SVG-embed approach is validated end-to-end, and the roundRect/ellipse/text-box/image
+  primitives are sound. Every real-slide gap below is in the **DOM extraction**, not the
+  OOXML emitter.
+- **Duplicated / overlapping text** *(→ PPTX-1)* — the callout paragraph is emitted
+  **twice, offset**: per-visual-line rect extraction double-emits wrapped lines. Fix:
+  emit **one text box per text element** with real paragraph wrapping, not one box per
+  line rect.
+- **Text color wrong / low-contrast** *(→ PPTX-1)* — diagram labels (Request/Cache/…)
+  render near-black on dark bg. Extraction picked the wrong computed color (translucent/
+  gradient context). Fix: resolve effective text color against the composited background.
+- **Fill/border flattened** *(→ PPTX-1 + PPTX-4)* — the four cycle nodes render as one
+  solid cyan; the source has **distinct colored strokes + translucent fills**. Fix:
+  capture border color/width and alpha-composited fills (reuse the vector-PDF border/
+  gradient extraction).
+- **Vector diagrams missing** *(→ PPTX-2, expected)* — flow arrows, cycle connector
+  arrows, and Lucide icon glyphs are absent (inline SVG not yet captured). This is the
+  core PPTX-2 work; the minimal fixture proves the embed path already renders.
+- **Hidden/overlay leakage** *(→ PPTX-1 extraction hygiene)* — a stray "zoom" control
+  label leaked in. Fix: skip `display:none` / `visibility:hidden` / `aria-hidden` /
+  zero-opacity / off-slide nodes during measurement.
 
 **Stop rule / artifact:** a real multi-block deck (headings, bullets, table, metric,
-`flow`, `cycle`, image, gradient) exports; `python-pptx` confirms native objects on
-every slide; the reconstruction diff is within tolerance; and the file opens clean in
-PowerPoint (local sign-off). A short exported sample `.pptx` is attached as the proof
-artifact.
+`flow`, `cycle`, image, gradient) exports; `python-pptx` confirms native objects on every
+slide; the **LibreOffice render matches the source Vela render within tolerance** (the
+six findings above resolved); and the file opens clean in PowerPoint (local sign-off). A
+short exported sample `.pptx` + a source-vs-pptx comparison image are the proof artifacts.
 
 ---
 

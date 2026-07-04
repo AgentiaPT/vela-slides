@@ -42,7 +42,9 @@ python3 verify.py out/real-slide.pptx
   stops at the native-shape boundary to make that boundary visible.
 - No gradients, borders, images, tables, or font embedding yet (all straightforward
   extensions of the emitter; the vector-PDF path already extracts gradients/borders).
-- `soffice` headless is **non-functional in this container** (fails on a plain
-  `.txt`), so visual round-trip is verified via python-pptx read-back rather than a
-  LibreOffice render. Run `soffice --headless --convert-to png out/*.pptx` locally
-  for a visual check.
+- **Visual render of the generated `.pptx`** works via LibreOffice, but the container
+  ships a *stripped* build (only `pdfimport`/`xsltfilter` modules — fails on any
+  `.pptx`/`.txt`). One-time fix: `apt-get install -y libreoffice-impress`. Then:
+  `bash render-pptx.sh out/real-slide.pptx out` (pptx→png) and
+  `python3 compare.py out/real-slide-source.png out/real-slide.png cmp.png` (source vs
+  pptx side-by-side). python-pptx read-back remains the objective editability check.

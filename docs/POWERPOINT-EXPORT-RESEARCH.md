@@ -191,10 +191,16 @@ load-bearing risks are retired:
    cycle **SVG arrows and icons were not captured** by the native-shape pass — which is
    exactly the content the Alternative-C embedded-SVG fallback is for.
 
-Verification note: `soffice` headless is **non-functional in this container** (fails on
-a plain `.txt`), so editability was proven objectively via **python-pptx read-back**
-(real `TextFrame` runs + autoshapes, not a flattened picture) rather than a LibreOffice
-render. A local `soffice --headless --convert-to png` gives the visual round-trip.
+Verification note: editability is proven objectively via **python-pptx read-back** (real
+`TextFrame` runs + autoshapes, not a flattened picture). **Visual** round-trip of the
+generated `.pptx` also works in-container: the shipped LibreOffice is *stripped* (only
+`pdfimport`/`xsltfilter` modules — fails on any `.pptx`/`.txt`), but
+`apt-get install -y libreoffice-impress` restores rendering, after which
+`soffice --headless --convert-to png` renders slides faithfully (native SVG included).
+Helpers: `spike/pptx/render-pptx.sh` + `spike/pptx/compare.py`. That first visual pass
+confirmed the emitter is correct (the minimal fixture renders pixel-clean incl. the
+native SVG) and localised the remaining fidelity gaps to the DOM extraction — see the
+sprint spec's "Baseline findings".
 
 ---
 
