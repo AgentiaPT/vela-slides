@@ -180,6 +180,102 @@ def load_roles(path):
         return {}
 
 
+def audit_transcript(path):
+    """Context-bloat audit for a (usually orchestrator) transcript. Images and large
+    tool-results are the un-evictable payloads that dominate cache-read in a long run:
+    a pinned block is re-read on EVERY later turn, so its true cost is size x turns-survived.
+    Returns a summary dict, or None if the transcript can't be read.
+
+    Token sizes are estimates (from serialized length); the % is relative to the exact
+    cache_read from usage, so the ranking is reliable even if absolute tokens are rough."""
+    try:
+        rows = [json.loads(l) for l in open(path) if l.strip()]
+    except (OSError, json.JSONDecodeError):
+        return None
+    assistant_turns = 0
+    total_cr = 0
+    peak_ctx = 1         # largest live context (in+cw+cr) seen on any turn
+    images = []          # (turn_index_seen, est_tokens)  — base64 ~ len//4 tokens
+    big_results = []     # (turn_index_seen, est_tokens)
+    for rec in rows:
+        msg = rec.get("message") if isinstance(rec.get("message"), dict) else rec
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            u = usage_of(rec)
+            if u:  # u = (model, in, out, cache_write, cache_read)
+                assistant_turns += 1
+                total_cr += u[4]
+                peak_ctx = max(peak_ctx, u[1] + u[3] + u[4])
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_result":
+                cc = b.get("content")
+                if isinstance(cc, list):
+                    for bb in cc:
+                        if isinstance(bb, dict) and bb.get("type") == "image":
+                            data = (bb.get("source") or {}).get("data", "")
+                            images.append((assistant_turns, max(1, len(data) // 4)))
+                    approx = len(json.dumps(cc)) // 4
+                elif isinstance(cc, str):
+                    approx = len(cc) // 4
+                else:
+                    approx = 0
+                if approx > 3000:
+                    big_results.append((assistant_turns, approx))
+            elif b.get("type") == "image":  # image pasted directly in a message
+                data = (b.get("source") or {}).get("data", "")
+                images.append((assistant_turns, max(1, len(data) // 4)))
+    N = max(1, assistant_turns)
+    img_tokens = sum(t for _, t in images)
+    # Primary, bounded metric: images as a share of the PEAK standing context (they are
+    # all still pinned at the end, so this is how much of the live window they occupy).
+    img_pct_ctx = min(100, round(100 * img_tokens / peak_ctx)) if peak_ctx else 0
+    # Secondary (estimate): cumulative cache-read attributable to images = size x turns
+    # survived, vs total cache-read billed. Rough — depends on the token estimate above.
+    img_exposure = sum(tok * (N - t) for t, tok in images)
+    img_pct_cr = round(100 * img_exposure / total_cr) if total_cr else 0
+    big_results.sort(key=lambda x: -x[1])
+    return {
+        "turns": assistant_turns, "cache_read": total_cr, "peak_context": peak_ctx,
+        "images": len(images), "image_est_tokens": img_tokens,
+        "image_pct_of_context": img_pct_ctx, "image_pct_of_cache_read_est": img_pct_cr,
+        "big_tool_results": big_results[:8],
+    }
+
+
+def print_audit(rows_paths):
+    print("\n" + "=" * 60)
+    print("CONTEXT-BLOAT AUDIT  (--audit): un-evictable payloads pinned in the hub")
+    print("=" * 60)
+    any_main = False
+    for label, path in rows_paths:
+        if "orchestrator" not in label:
+            continue  # audit the hub(s); sub-agents are isolated + short-lived
+        a = audit_transcript(path)
+        if not a:
+            continue
+        any_main = True
+        print(f"\n{label}  ({path})")
+        print(f"  assistant turns: {a['turns']:,}   cache_read: {a['cache_read']:,}"
+              f"   peak context: {a['peak_context']:,}")
+        flag = "  <-- images in the hub! delegate visual checks (see principle 3)" \
+            if a["images"] else ""
+        print(f"  images pinned:   {a['images']} (~{a['image_est_tokens']:,} tok) "
+              f"= ~{a['image_pct_of_context']}% of standing context, "
+              f"~{a['image_pct_of_cache_read_est']}% of cache-read (est){flag}")
+        if a["big_tool_results"]:
+            tops = ", ".join(f"~{tok:,}tok@turn{t}" for t, tok in a["big_tool_results"][:5])
+            print(f"  largest pinned tool-results: {tops}")
+    if not any_main:
+        print("\n  (no orchestrator/main transcript identified to audit)")
+    print("\n  Rule of thumb: any image in the hub, or images >=10% of cache-read, is a")
+    print("  regression — the verifiers look; the hub reads their verdict. See")
+    print("  references/context-economy.md.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -196,6 +292,9 @@ def main():
                      "specific sprint's agent ids")
     ap.add_argument("--json", metavar="PATH", help="also write a machine-readable "
                      "report here (per-agent, per-model, grand total, tokens)")
+    ap.add_argument("--audit", action="store_true", help="also print a context-bloat "
+                     "audit of the orchestrator transcript(s): images pinned in the hub "
+                     "and their cache-read share, plus the largest pinned tool-results")
     args = ap.parse_args()
 
     roles = load_roles(args.roles)
@@ -247,6 +346,9 @@ def main():
               f"{grand_tok:,} tokens (cache-read {GR:,} = {100 * GR / grand_tok:.0f}% of all tokens)")
     else:
         print(f"Grand total: ${grand:.2f} (no usage records parsed)")
+
+    if args.audit:
+        print_audit([(agent_label(p, roles), p) for p in paths])
 
     if args.json:
         report = {

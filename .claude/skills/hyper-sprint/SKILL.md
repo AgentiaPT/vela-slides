@@ -67,11 +67,19 @@ biases the final gate). Three separate roles:
    only **by exception**, via a cheap sub-agent that returns a bare pass/fail (not the raw
    artifact). Frame-checks and one-off lookups (a pricing page, a doc for one config flag, a
    single number buried in a giant reference) are **delegated**, never fetched/read directly
-   in the hub. *(Example run: in one measured sprint the orchestrator alone was ~62% of total
-   spend and ~96% of its tokens were cache-reads — almost all of it the hub re-absorbing
-   worker payloads on every later turn. This is generally the single biggest cost lever
-   available; it is not specific to that run.)* Enforceable checklist and re-drive-by-
-   exception recipe: `references/hub-hygiene.md`.
+   in the hub. **Screenshots are the single worst payload — treat "no images in the hub" as an
+   absolute.** A viewed screenshot is ~10–37K tokens, is **un-evictable** (compaction is the
+   only thing that sheds it, and context-editing/`clear_tool_uses` does not cover image
+   blocks), and is re-read on **every** later turn. The blind verifiers/hunters already *look*
+   at every proof state (principle 8) and return a one-line frame-check verdict — the hub reads
+   the **verdict, never the pixels**; if the hub genuinely needs its own visual check, spawn a
+   throwaway "look at this PNG → reply pass/fail + one sentence" sub-agent so the image lives and
+   dies in an isolated window. *(Measured example: in one sprint the orchestrator was **65% of
+   total spend** and **95% of its tokens were cache-reads**; **10 screenshots the hub looked at
+   were 31% of its cache-read and ~46% of its standing context** — more than any other single
+   bucket. This is generally the single biggest cost lever; it is not specific to that run.)*
+   Enforceable checklist, the CLI-vs-SDK context levers, and the re-drive-by-exception recipe:
+   `references/hub-hygiene.md` + `references/context-economy.md`.
 4. **Cluster by file-locality, not by ticket number.** Group changes that touch the
    same files into one work item so edits don't collide and each item is independently
    testable — and so clusters with **disjoint file sets** can run as parallel workers in
@@ -89,6 +97,14 @@ biases the final gate). Three separate roles:
    uncertainty. And **never hand-write bespoke drivers in the main context** — each ad-hoc
    script sits in the premium context and is re-read (cache-read tax) every later turn; call
    the repo-provided driver or delegate the drive to a cheap sub-agent that returns a verdict.
+   **Hard cap on confirmation-drives (this is the #2 cost lever and the root cause of image
+   bloat):** once a worker returns green with its pasted standardized-run output, the
+   orchestrator does **not** re-run that same verification itself "to be sure." Budget **at most
+   one** inline re-drive for the *whole sprint's* single load-bearing increment — and even that
+   is delegated if it would pull a screenshot or large artifact into the hub. Re-verifying
+   already-green work in the premium context is what silently adds turns *and* drags in the
+   screenshots principle 3 bans: the two biggest levers are the same habit. Trust the green;
+   the **blind gate** is the real check, and it is owned by agents who never saw the build.
 7. **Converge on a BLIND gate, not "one more final pass" — verify-each + hunt-across.**
    Fix-round hunting during the sprint uses diverse-lens hunters (correctness, edge/boundary,
    state/undo, data-loss, security). But *completion* is decided by **blind validators** who
@@ -96,8 +112,12 @@ biases the final gate). Three separate roles:
    small-context **verifier per change-request/cluster** (parallel, blind, each drives only
    its own surface and checks its acceptance Verify verbatim) **plus** one or two **broad
    adversarial hunters** for emergent/cross-cutting/integration bugs no single cluster would
-   surface. Scale verifier count to CR count, capped by the parallelism limit; every
-   validator stays blind to sprint history regardless of scope. The biased main context
+   surface. **Scale verifier count to distinct *surfaces*, not raw CR count** — when N CRs
+   build **one feature over a few surfaces** (e.g. 6 CRs → an exporter with ~3 drivable
+   surfaces), a fix-round hunt(1) → blind(1–2) → [fix → blind(1)] is enough; fanning one
+   per-CR verifier ×N spends flagship-max agents on overlapping coverage that largely agrees.
+   Reserve the full per-CR fan-out for genuinely independent surfaces. Cap by the parallelism
+   limit; every validator stays blind to sprint history regardless of scope. The biased main context
    declaring "done" is exactly the trap that spawns redundant "final" passes — see *Stop
    rule* and `references/orchestration.md` for the full protocol and the tradeoff (pure
    per-CR risks missing feature interactions; the broad hunters are what catch those).
@@ -108,12 +128,19 @@ biases the final gate). Three separate roles:
    proof state via the `burst-bug-hunter` warm-app harness; "before" shots come from the
    base-commit render driven the same way). A recorded HTML/video demo deck is **optional** —
    build it only if the user asks. Never trust a shot blindly — *look* at it (feature visible,
-   right screen, interaction landed); a driver bug silently proves nothing.
+   right screen, interaction landed); a driver bug silently proves nothing. **But the eyes are
+   the verifier's, not the hub's:** the looking happens *inside* the blind verifier/hunter
+   sub-agent, which reports a one-line frame-check verdict; the orchestrator reads that verdict
+   and must **not** pull the PNG into its own context to look (principle 3). Same rigor, without
+   pinning a 20K-token image in the premium loop for the rest of the run.
 9. **Cost is a first-class deliverable, not an afterthought.** Track and report real spend,
    not a guess. Run a **mid-sprint cost checkpoint** — `assets/sprint-cost.py` at roughly the
    halfway point — so runaway hub bloat or an over-provisioned validator fleet is caught
-   *before* it compounds, not discovered in a post-mortem. The report's cost + savings
-   section (see *Proof artifact*) comes from the same script re-run at the end.
+   *before* it compounds, not discovered in a post-mortem. **Run it with `--audit`**: besides
+   the per-agent cost table it flags the orchestrator's context bloat — image count + their
+   cache-read share, and the largest pinned tool-results — so a "images-in-hub" or
+   confirmation-drive regression is caught at turn ~150, not at the retro. The report's cost +
+   savings section (see *Proof artifact*) comes from the same script re-run at the end.
 10. **Don't fight the environment.** Detect a capability once (signing keys, network,
    missing binaries); if an op is impossible here, record it as a known limitation and
    move on — don't burn turns retrying "command not found" or an empty credential.
