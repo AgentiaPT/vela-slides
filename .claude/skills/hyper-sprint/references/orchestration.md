@@ -89,11 +89,70 @@ on a cheap one.
 | Bug-hunt (broad, cross-cutting hunters) | best | high — cheap models miss subtle bugs |
 | **Per-CR/cluster verifier** (checks one acceptance Verify) | **cheap/mid** | **low–medium** — a narrow, well-specified check; the flagship's edge is wasted on it, and running many of these in parallel on a cheap tier is what keeps the hybrid gate affordable |
 | **Broad cross-cutting hunter (final validation)** | **best** | **max** — this is the emergent-bug catch-all; never economize here |
+| **Pattern-mirroring / bounded mechanical fix** (clone an existing, fully-specified component; apply a named root cause + a specified guard/regex) | **cheap/mid** | **medium** — evidence, not a guess: in one sprint an Opus worker did a bounded guard-and-escape fix for $3.82, and a structurally identical follow-up fix ran on **Sonnet for $1.61** — the blind gate verified both correct. Reserve the flagship for the novel design/algorithmic work a pattern-mirror or bounded fix is not. |
 
 The split matters: a per-CR verifier's whole job is "confirm this one acceptance Verify
 and hunt only its own surface" — a narrowly scoped, mechanical-ish check that a cheaper
 model does reliably. The one or two broad hunters are where subtlety and cross-cutting
-judgment actually pay off, so that's where the flagship effort goes.
+judgment actually pay off, so that's where the flagship effort goes. The same logic
+extends to implementation workers: if a worker's prompt can name the exact template to
+clone or the exact root cause + fix to apply, it's mechanical-ish regardless of how the
+code itself reads — route it cheap/mid and let the blind gate be the actual check on
+whether it worked, not the model tier that wrote it.
+
+## Isolated phase orchestration (nesting) — Build only, for now
+
+Sub-agents can themselves dispatch sub-agents — `Agent` tool access is inherited by any
+worker/validator type with `Tools: *`, confirmed working including correct result
+propagation back up through multiple levels. This means **Phase 3 (Build)** can run as a
+single nested dispatch instead of one dispatch per cluster: the sequential
+dispatch→verify→next-cluster churn stays inside a disposable child context, and the
+orchestrator pays only for one dispatch and one small structured result instead of
+experiencing every cluster's cycle directly.
+
+**Empirically validated, not theoretical, for Build specifically:** a simulated 2-cluster
+sequential build (dispatch → verify → dispatch on the first cluster's output → verify)
+cost the top-level orchestrator exactly **2 turns** end to end. The equivalent real work —
+four sequential clusters, each with its own `TaskUpdate`/confirm-`Bash`/`ScheduleWakeup`
+cycle — took **~45 orchestrator turns** in one sprint's Phase 3. Nesting the same work
+would have cut that to ~2.
+
+**Scope: adopt this for Phase 3 (Build) only.** Other phases (recon digest, readiness,
+fix-round hunt, blind gate, report assembly) have been *discussed* as plausible nesting
+candidates by the same reasoning, but none of them has been tested — don't nest them on
+the strength of this result. If one gets validated the same way (a real or simulated dry
+run measuring actual orchestrator turns saved), add it here as its own entry rather than
+generalizing from Build's numbers.
+
+### The contract the nested Build dispatch must honor
+
+1. **No `SendUserFile` / `AskUserQuestion` inside any nested agent, at any depth.**
+   Confirmed empirically: `AskUserQuestion` is not exposed to sub-agents at all — the call
+   cannot be made. `SendUserFile` called from a sub-agent returns success but the file does
+   not reach the user (2/2 test failures despite a success response) — treat it as a
+   channel that does not work below the top level, not merely an unreliable one.
+2. **Structured return only** — never a raw log, transcript excerpt, or diff:
+   ```json
+   { "phase": "...", "status": "done|blocked", "key_decisions": ["..."],
+     "defects_found_and_fixed": ["sev: one-line"], "commits": ["hash: one-line msg"],
+     "tests": "before -> after passed", "blocked_reason": null, "artifacts": ["path", "..."] }
+   ```
+3. **Escalate, don't loop.** If a cluster comes back blocked on something only a human can
+   decide (an ambiguous spec point, a merge conflict the worker can't resolve safely), stop
+   and return `{"status": "blocked", "blocked_reason": "..."}` to the parent rather than
+   guessing. Only the top-level orchestrator can call `AskUserQuestion` — a stuck nested
+   dispatch must bubble the decision all the way up, never attempt to route around it.
+4. **Progress artifacts mid-build are rare and exceptional, never routine.** If the nested
+   dispatch produces something genuinely worth surfacing before it finishes (a hard-won proof
+   screenshot, a significant milestone), write ONE small file to a shared, session-scoped
+   progress folder — never call `SendUserFile` itself (see #1). The top-level orchestrator
+   watches that folder with a **bounded, single-fire `Monitor` tied to one expected file**
+   (never a long-running watch spanning a whole phase) and delivers it itself via its own
+   `SendUserFile`, the one confirmed-reliable path. Use sparingly: every event the
+   orchestrator acts on still costs it a turn, and routine per-cluster chatter through this
+   channel quietly reintroduces the exact turn-count bloat nesting exists to remove. The
+   default remains the cheap compact-summary relay in #2 — this is the exception, not the
+   norm.
 
 ## Blind validation — the stop gate
 
