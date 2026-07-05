@@ -14,16 +14,29 @@
 // file:// in Chromium). Pair with vela-drive.js to screenshot / run UI tests /
 // record a demo video.
 //
-// USAGE: node render-offline.js <deck.vela> <outDir>
+// USAGE: node render-offline.js <deck.vela> <outDir> [--repo-root <path>]
+//
+// --repo-root: this file's OWN location (__dirname) is the default repo root — correct
+// when you invoke a tree's own copy of this script. If you instead invoke this exact file
+// (e.g. via an absolute path habit) while meaning to build a DIFFERENT tree — a git
+// worktree checked out at an older commit — __dirname still points at THIS tree, so it
+// silently builds the wrong commit's app. Pass --repo-root to the worktree path to make
+// the target tree explicit and unambiguous.
 // ─────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
 
-const REPO = path.resolve(__dirname, '..', '..', '..'); // skills/vela-slides/scripts -> repo root
-const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
-const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
+function resolveRepoRoot(argv) {
+  const i = argv.indexOf('--repo-root');
+  if (i >= 0 && argv[i + 1]) return path.resolve(argv[i + 1]);
+  if (process.env.HYPER_SPRINT_REPO_ROOT) return path.resolve(process.env.HYPER_SPRINT_REPO_ROOT);
+  return path.resolve(__dirname, '..', '..', '..'); // skills/vela-slides/scripts -> repo root
+}
 
 function build(deckPath, outDir, opts = {}) {
+  const REPO = opts.repoRoot || path.resolve(__dirname, '..', '..', '..');
+  const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
+  const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
   if (!fs.existsSync(VELA_JSX)) throw new Error('vela.jsx not found — run concat.py first');
   const Babel = require(path.join(VENDOR, 'babel.min.js'));
   const deck = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
@@ -77,13 +90,16 @@ function build(deckPath, outDir, opts = {}) {
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
+  const repoRoot = resolveRepoRoot(argv);
+  const ri = argv.indexOf('--repo-root');
+  if (ri >= 0) argv.splice(ri, 2);
   const ti = argv.indexOf('--channel-token');
   const channelToken = ti >= 0 ? argv.splice(ti, 2)[1] : (process.env.VELA_CHANNEL_TOKEN || '');
   const ci = argv.indexOf('--channel-port');
   const channelPort = ci >= 0 ? argv.splice(ci, 2)[1] : 0;
   const [deckPath, outDir] = argv;
-  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir> [--channel-port N] [--channel-token T]'); process.exit(2); }
-  const r = build(deckPath, outDir, { channelPort, channelToken });
-  console.log(`built ${r.html} (app.js ${r.bytes} bytes)${channelPort ? ` [AI channel :${channelPort}]` : ''}`);
+  if (!deckPath || !outDir) { console.error('usage: node render-offline.js <deck.vela> <outDir> [--channel-port N] [--channel-token T] [--repo-root <path>]'); process.exit(2); }
+  const r = build(deckPath, outDir, { channelPort, channelToken, repoRoot });
+  console.log(`built ${r.html} (app.js ${r.bytes} bytes)${channelPort ? ` [AI channel :${channelPort}]` : ''} [repo: ${repoRoot}]`);
 }
 module.exports = { build };

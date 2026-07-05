@@ -11,7 +11,7 @@ the **default** proof artifact (a recorded video demo is optional, on request).
     README.md                            # the sprint report — renders when the folder is opened
     plan-<YYYY-MM-DD>-<codename>.md        # verbatim original prompt + initial plan (written in Phase 2)
     sprint.json                          # machine-readable metadata (see schema below)
-    img/                                 # burndown.png + <cr>-before/after-*.png (relative paths)
+    img/                                 # burndown.svg + <cr>-before/after-*.png (relative paths)
 ```
 Pick the codename in Phase 2 (memorable, lowercase-hyphen); reuse it in the folder, the plan
 filename, the report title, and `sprint.json.codename`.
@@ -38,7 +38,10 @@ before/after pair where the UI actually differs; otherwise after-only + a one-li
 description. Frame-check (look at each PNG) before shipping.
 
 ## Agentic burndown
-`assets/mk-burndown.py <events.json> <out.png>` renders the curve. `events.json` is a list of
+`assets/mk-burndown.py <events.json> <out.svg>` renders the curve (writes `<out>.svg` +
+a sibling `<out>.html`; GitHub renders `.svg` natively — don't rasterize to `.png`
+unless you specifically need a raster copy, see the script's own docstring).
+`events.json` is a list of
 `{label, work, kind}` where `kind ∈ start|impl|bump|fix|done`; `bump` = a blind-hunt round that
 ADDED scope (agent-found defects) — annotated `+N`, so the curve rises before reaching 0. Build
 the event list from the real merge/fix commits + blind-round outcomes (`sprint-stats.py` gives
@@ -50,7 +53,10 @@ the commit timeline; the round results give the bumps).
 3. `mk-burndown.py` from the event list; `sprint-cost.py` / `sprint-stats.py` for numbers.
 4. Assemble `README.md` (relative img paths); write `sprint.json`; append a row to
    `completed/README.md`; append "what happened vs plan" to `plan-*.md`.
-5. Deliver the report link (format below). Recorded video demo only if the user asks.
+5. **Move the original sprint-request doc** (`.hyper-sprint/sprint-<date>-<n>-<codename>.md`,
+   the input spec this sprint was scoped from) to `.hyper-sprint/archive/` once the sprint
+   branch merges — repo root stays uncluttered with only genuinely open/pending requests.
+6. Deliver the report link (format below). Recorded video demo only if the user asks.
 
 ## Delivering the link (so it's clickable and can open the GitHub app)
 Hand over the report as a **clickable Markdown link**, never bare text or backticked code:

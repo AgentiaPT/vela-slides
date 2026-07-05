@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.1
+version: 2.2
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -248,7 +248,15 @@ time to correct it, instead of discovering it at the retro).
 default hybrid shape (per-CR verifiers + broad hunters, principle 7). Browser verification runs
 **through the `burst-bug-hunter` engine — this is mandatory, not advice**; a round driven by an
 ad-hoc per-step Playwright harness **does not count** (it loses the enforced time-box and warm-app
-efficiency). Concrete required sequence: for each hunter, `start-hunt.sh <wd> <url> <config>`
+efficiency). **Render-freshness precondition (hard rule, before ANY hunt/verify dispatch — Phase 4
+fix-round hunt, each blind-gate round, and any re-check after a fix commit lands): rebuild the
+offline render from current HEAD first. Never reuse a render/workdir across a commit boundary** —
+a validator driven against a stale pre-fix render produces a false-positive re-report of an
+already-fixed bug, and worse, that false positive can look like the mandatory "any real issue →
+new blind round" rule firing when it's actually testing dead code. One sprint hit exactly this:
+two round-1 validators re-found a bug that commit `31dc2c4` had already fixed, because the render
+dir wasn't rebuilt after the fix landed. Cheap, mechanical, zero tradeoff — rebuild every time, not
+"when in doubt." Concrete required sequence: for each hunter, `start-hunt.sh <wd> <url> <config>`
 (one warm server, app opened once), **write the hard time-box to `<wd>/deadline`**
 (`python3 -c 'import time;print(time.time()+<N>*60)' > <wd>/deadline` — the *engine* enforces it;
 a prompt that merely says "hunt for X minutes" with no `deadline` file is non-compliant), then

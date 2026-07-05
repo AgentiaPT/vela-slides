@@ -15,9 +15,12 @@ You supply only recordings and text. All pieces live in `assets/`.
    change **and** a screenshot at every beat, then scaffolds the deck (`index.html` +
    `deck.js` + `clips/`). The only app-specific file is `scenario.mjs`, which exports
    `boot(page)` (wait until the app is ready) + `clips[]` (each `{name, run(page,shot)}`).
-2. **Edit `deck.js`** — the only content file. Slide types: `cover, scope, chart,
-   metrics, bugs, retro, bullets, video, cost, savings`. Point `video` slides at
-   `clips/<name>.webm`. `cost` and `savings` are described below — they are **required**
+2. **Edit `deck.js`** — the only content file. Slide types (all implemented in
+   `assets/demo/index.html`): `cover, scope, burndown, chart, metrics, bugs, retro, table,
+   bullets, video, cost, savings`. For the burndown slide, prefer `burndown` (a simple bar
+   list — see `assets/demo/deck.js` for a working example) over the more general `chart`
+   type unless you need the latter's flexibility. Point `video` slides at `clips/<name>.webm`.
+   `cost` and `savings` are described below — they are **required**
    in the arc, not optional extras.
 3. **`assets/sprint-stats.py`** — profile-aware stats for the burndown + retro:
    `python3 sprint-stats.py --transcript <path>` (git-only if no transcript). Feed the
