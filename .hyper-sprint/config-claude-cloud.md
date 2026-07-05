@@ -34,11 +34,11 @@ adds bring-up overhead for no gain.
 
 # 2. build sync + suite (the real gate)
 python3 skills/vela-slides/scripts/concat.py     # ~0.2s — must print "in sync"
-python3 tests/test_vela.py                        # ~17s — BASELINE: 353 passed / 0 failed
+python3 tests/test_vela.py                        # ~17s — BASELINE: 354 passed / 0 failed (drifts upward as main grows — treat as "last known good," re-check if it's lower)
 
 # 3. ONE browser smoke (~8s) — single launch drives editor→present→gallery
 python3 skills/vela-slides/scripts/concat.py
-node hyper-sprint.render-offline.js examples/vela-demo.vela /tmp/vout
+node .hyper-sprint/render-offline.js examples/vela-demo.vela /tmp/vout
 node <SCRATCH>/drive.mjs file:///tmp/vout/render.html <shotDir>
 ```
 `<SCRATCH>` = the session scratch dir holding `drive.mjs` (a validated one-launch
@@ -46,8 +46,9 @@ Playwright driver: Chromium `/opt/pw-browsers/chromium-*/chrome-linux/chrome`, l
 `--no-sandbox --autoplay-policy=no-user-gesture-required`, waits `window.__velaBooted`).
 
 Total ≈ **25s** (or **<10s** if you trust concat-sync and defer the full Python suite to
-integration). Baseline = **353 pass / 0 fail** (jsdom installed) — anything lower is a
-regression you introduced.
+integration). Baseline = **354 pass / 0 fail** (jsdom installed, current as of this
+writing — the count drifts upward as `main` grows; anything lower than the count you
+actually observe on `main` is a regression you introduced, not this stale number).
 
 ## Driving AI-dependent tests (deck-from-source, Vera, "AI available" battery)
 
@@ -60,7 +61,7 @@ is false and AI features are correctly skipped/disabled).
 Two ways, both reuse `agent_backend.py` (the ONE sandboxed place that spawns `claude
 -p`, locked to `--tools "" --strict-mcp-config --setting-sources ""`) + the repo's
 `skills/vela-slides/scripts/render-offline.js --channel-port` (NOT the root
-`hyper-sprint.render-offline.js`, which has no channel support):
+`.hyper-sprint/render-offline.js`, which has no channel support):
 
 - **Committed probes (repeatable/CI-style):** `node skills/vela-slides/scripts/vela-drive.js
   ai <deck.vela> [--only ping,veraAddSlide,generateSlide,veraChatUI] [--json out.json]`.
@@ -91,7 +92,7 @@ Engine globals exposed in the classic-script build: `callClaudeAPI`, `callVera`,
 
 ## Other stable env facts (from `references/agent-profiles.md`)
 - **CDNs blocked** (esm.sh/unpkg/Playwright browser CDN/most fonts). Anything opened in a
-  browser must be self-contained → use `hyper-sprint.render-offline.js` (vendored UMD,
+  browser must be self-contained → use `.hyper-sprint/render-offline.js` (vendored UMD,
   external transpiled `app.js`, `import`/`export` stripped, `lucideReact` global). Never
   inline the monolith as `text/babel` (its XSS-test strings contain `</script>`).
 - Harmless console noise: `ERR_INVALID_URL` / `ERR_CONNECTION_CLOSED` / font fetches.

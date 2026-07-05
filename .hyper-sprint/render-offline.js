@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────
-// hyper-sprint.render-offline.js — repo asset shipped WITH .hyper-sprint/config.md.
+// .hyper-sprint/render-offline.js — repo asset shipped WITH .hyper-sprint/config.md.
 //
 // Builds a fully OFFLINE, runnable render of the Vela app so the hyper-sprint
 // readiness gate / demo recorder can boot & drive it in real Chromium without
@@ -19,7 +19,7 @@
 //
 // OUTPUT: <outDir>/app.js + <outDir>/render.html (file:// loadable in Chromium;
 //         window.__velaBooted / __velaBootError signal readiness).
-// USAGE:  node hyper-sprint.render-offline.js <deck.vela> <outDir> [--repo-root <path>]
+// USAGE:  node .hyper-sprint/render-offline.js <deck.vela> <outDir> [--repo-root <path>]
 //         (run `python3 skills/vela-slides/scripts/concat.py` first to build vela.jsx)
 //
 // --repo-root / HYPER_SPRINT_REPO_ROOT: this file's OWN location (__dirname) is the
@@ -96,7 +96,7 @@ if (require.main === module) {
   const ri = argv.indexOf('--repo-root');
   if (ri >= 0) argv.splice(ri, 2);
   const [deckPath, outDir] = argv;
-  if (!deckPath || !outDir) { console.error('usage: node hyper-sprint.render-offline.js <deck.vela> <outDir> [--repo-root <path>]'); process.exit(2); }
+  if (!deckPath || !outDir) { console.error('usage: node .hyper-sprint/render-offline.js <deck.vela> <outDir> [--repo-root <path>]'); process.exit(2); }
   const r = build(deckPath, outDir, { repoRoot });
   console.log(`built ${r.html} (app.js ${r.bytes} bytes) [repo: ${repoRoot}]`);
 }
