@@ -37,6 +37,22 @@ biases the final gate). Three separate roles:
 
 ## Operating principles (the economy rules)
 
+**The governing test (everything below is an instance of it).** The hub's context is the one
+thing paid for on **every** turn — total hub cost ≈ *standing context × turns*. So the only
+things that belong in the main loop are what must **persist for the whole session to steer it**:
+the plan, pointers to deposited detail, worker verdicts, and the decisions/rationale behind
+them. Everything else — reads, drives, trial-and-error, one-off lookups, visual checks, raw
+diffs — is **transient or bulky**, earns nothing on turn N+50, and is **delegated to a sub-agent
+whose window is discarded when it returns**. Sub-agent isolation *is* the eviction mechanism;
+there is no surgical "drop that one earlier blob" in the hub, so the discipline is to never let
+it in. The test for any content is: *would this still be worth its per-turn cache-read cost 50
+turns from now?* If no → delegate it, pin only the pointer + verdict. Two caveats keep this from
+becoming dogma: (a) the hub must keep **enough** decision-state that it never re-derives what it
+already knew — under-retaining costs round-trips too; (b) delegation has a fixed round-trip +
+context-rebuild cost, so a genuinely small, already-solved, deterministic step (principle 1) is
+cheaper done inline than shipped to an agent. Delegate the heavy and the single-use; keep the
+durable and the decision-bearing.
+
 1. **Readiness before features (hard gate) — inline it when the env is pre-provisioned,
    sub-agent it when bring-up is uncertain.** When a setup script / container image /
    prebuilt artifact already provisions the environment, the fast boot+smoke gate is cheap
@@ -144,6 +160,15 @@ biases the final gate). Three separate roles:
 10. **Don't fight the environment.** Detect a capability once (signing keys, network,
    missing binaries); if an op is impossible here, record it as a known limitation and
    move on — don't burn turns retrying "command not found" or an empty credential.
+   - *Don't re-trigger environment noise, either.* A managed env often signs commits via a
+     broker: `git commit`/`git push` succeed **silently**, but `git log --show-signature`,
+     `git verify-commit`, and raw `git cat-file -p`/`--format=raw` re-run verification against
+     an unconfigured `allowedSignersFile` (→ a recurring `error:` line) and dump the multi-line
+     signature block into logs — pure context pollution, multiplied across every agent that
+     "checks" its commit. Confirm commits with `git log --oneline` / `git show --stat` /
+     `git log -1 --format=%s`, **never** `--show-signature` or raw commit dumps. The
+     "Unverified" badge on the host for an ephemeral env key is **expected** and needs no
+     action — don't re-diagnose it each sprint.
 11. **Right-size the fan-out & route the model.** Recon inline for a file a single worker
    owns; spawn a dedicated recon agent only for a subsystem no worker owns (don't pre-spawn
    agents that go unused). Parallelize independent reads/hunts and

@@ -70,3 +70,7 @@ into full-price input. Don't run a per-turn re-summarizer over the live transcri
 - [ ] One warm harness per phase, reused across that phase's agents (don't re-boot per agent).
 - [ ] Run `sprint-cost.py --audit` at the mid-sprint checkpoint; if images-in-hub or a pinned
       artifact shows up, stop and correct before it compounds.
+- [ ] Confirm commits with `git log --oneline` / `--format=%s`, never `--show-signature` or raw
+      `cat-file` — in a broker-signed env those re-trigger a verification `error:` line and dump
+      the signature block into logs every time (see SKILL principle 10). The host "Unverified"
+      badge on an ephemeral env key is expected; don't re-diagnose it.
