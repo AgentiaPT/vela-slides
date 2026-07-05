@@ -41,6 +41,11 @@ context — not its own.
   observation logs, readiness entrypoint files. The orchestrator's job is routing those
   pointers to whichever *other* sub-agent needs the detail next — it rarely needs to
   read the detail itself.
+- **Pick a `Write`-capable agent type for any "write your findings to a file" task.** An
+  agent type without `Write` (e.g. `Explore`) can't deposit to disk — it has no choice but
+  to return everything inline, which is the exact anti-pattern this whole doc exists to
+  prevent. Check the type before dispatch, not after the findings are already sitting in
+  the hub.
 - **Send steering updates as files/links, not inline blobs.** A "here's the new
   feature" update to the user can reference a screenshot path; it doesn't require the
   image to be pasted into the orchestrator's own context to be shared.

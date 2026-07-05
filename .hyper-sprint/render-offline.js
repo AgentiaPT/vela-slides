@@ -19,17 +19,30 @@
 //
 // OUTPUT: <outDir>/app.js + <outDir>/render.html (file:// loadable in Chromium;
 //         window.__velaBooted / __velaBootError signal readiness).
-// USAGE:  node hyper-sprint.render-offline.js <deck.vela> <outDir>
+// USAGE:  node hyper-sprint.render-offline.js <deck.vela> <outDir> [--repo-root <path>]
 //         (run `python3 skills/vela-slides/scripts/concat.py` first to build vela.jsx)
+//
+// --repo-root / HYPER_SPRINT_REPO_ROOT: this file's OWN location (__dirname) is the
+// default repo root — correct when you invoke a tree's own copy of this script. If you
+// instead invoke this exact file (e.g. via an absolute path habit) while meaning to build
+// a DIFFERENT tree — a git worktree checked out at an older commit — __dirname still
+// points at THIS tree, so it silently builds the wrong commit's app. Pass --repo-root (or
+// set the env var) to the worktree path to make the target tree explicit and unambiguous.
 // ─────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
 
-const REPO = path.resolve(__dirname, '..'); // this file sits in <repo>/.hyper-sprint/
-const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
-const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
+function resolveRepoRoot(argv) {
+  const i = argv.indexOf('--repo-root');
+  if (i >= 0 && argv[i + 1]) return path.resolve(argv[i + 1]);
+  if (process.env.HYPER_SPRINT_REPO_ROOT) return path.resolve(process.env.HYPER_SPRINT_REPO_ROOT);
+  return path.resolve(__dirname, '..'); // this file sits in <repo>/.hyper-sprint/
+}
 
-function build(deckPath, outDir) {
+function build(deckPath, outDir, opts = {}) {
+  const REPO = opts.repoRoot || path.resolve(__dirname, '..');
+  const VELA_JSX = path.join(REPO, 'skills/vela-slides/app/vela.jsx');
+  const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
   if (!fs.existsSync(VELA_JSX)) throw new Error('vela.jsx not found — run skills/vela-slides/scripts/concat.py first');
   const Babel = require(path.join(VENDOR, 'babel.min.js'));
   const deck = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
@@ -78,9 +91,13 @@ function build(deckPath, outDir) {
 }
 
 if (require.main === module) {
-  const [deckPath, outDir] = process.argv.slice(2);
-  if (!deckPath || !outDir) { console.error('usage: node hyper-sprint.render-offline.js <deck.vela> <outDir>'); process.exit(2); }
-  const r = build(deckPath, outDir);
-  console.log(`built ${r.html} (app.js ${r.bytes} bytes)`);
+  const argv = process.argv.slice(2);
+  const repoRoot = resolveRepoRoot(argv);
+  const ri = argv.indexOf('--repo-root');
+  if (ri >= 0) argv.splice(ri, 2);
+  const [deckPath, outDir] = argv;
+  if (!deckPath || !outDir) { console.error('usage: node hyper-sprint.render-offline.js <deck.vela> <outDir> [--repo-root <path>]'); process.exit(2); }
+  const r = build(deckPath, outDir, { repoRoot });
+  console.log(`built ${r.html} (app.js ${r.bytes} bytes) [repo: ${repoRoot}]`);
 }
 module.exports = { build };

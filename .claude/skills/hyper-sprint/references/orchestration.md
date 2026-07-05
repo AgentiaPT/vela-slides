@@ -22,6 +22,17 @@ bill — it keeps the premium, always-re-read context tiny. Full enforceable che
 - **Recon** writes its full `file:line` map to a file, returns `subsystem → files →
   one-line summary → map-path`. The orchestrator partitions from the index; each worker
   reads *its* map file directly (never via the orchestrator).
+- **Never dispatch recon as an agent type without a `Write` tool** (e.g. `Explore`) when
+  its deliverable is "write your findings to a file." An agent that can't write has no
+  choice but to return its full findings inline — which lands directly in the
+  orchestrator's own context, the exact thing this section exists to prevent, and then has
+  to be manually re-written to disk by the orchestrator anyway (paying the write twice).
+  Confirmed failure mode in one sprint: 2 of 3 recon agents were dispatched as `Explore`,
+  both said so explicitly in their return ("no file-write tool available, reporting
+  findings inline instead"), and the orchestrator had to re-transcribe them to files by
+  hand. Use `general-purpose` (or any type with `Write` access) for any recon task whose
+  prompt says "write to file X" — check the type has the tool *before* dispatch, not after
+  the findings land in the hub.
 - **Shared files must live at an absolute path outside any worktree** (a session scratch
   dir) — an uncommitted `NOTES/` file in the main tree is invisible to a worktree worker.
   Pass the path in.
@@ -50,6 +61,19 @@ concurrent workers touch **disjoint files**, each in its own git worktree. The
 orchestrator merges sequentially, running the full suite between merges. Two workers that
 must touch the same file is a signal to **serialize** them (one cluster), not to race
 them. Prefer partition-by-module — then merges are trivial and conflicts near-zero.
+
+**Fix workers verify via one `burst-bug-hunter` burst, not step-by-step interactive CLI.**
+A fix worker's prompt must say so explicitly: reuse the implementer's driver verbs and
+submit one multi-step burst script (open → act → assert → done) through the engine, the
+same discipline as a validator round. Forbid falling back to the interactive
+`playwright-cli-setup` skill for anything beyond 2-3 quick one-off checks — that skill is
+documented as the ad-hoc/exploratory tool, and driving a fix's full verification through it
+one LLM turn per CLI step (open, snapshot, click, snapshot, click, snapshot, eval, eval…) is
+exactly the anti-pattern the burst engine exists to eliminate. Confirmed in one sprint: a
+fix worker re-navigated a modal by hand through ~25 one-shot CLI round-trips (114 total tool
+calls for a task that should have been one burst) — the two other fix workers in the same
+sprint used one-off Node scripts instead, a defensible shortcut for a handful of checks, but
+the interactive-CLI path is never defensible once the check count passes a handful.
 
 ## Model & effort routing
 
@@ -114,6 +138,18 @@ hunters are still present for the emergent-bug class the per-CR tier structurall
 cover.
 
 ### Running a round
+
+**Precondition, every round, no exceptions: rebuild the offline render from current HEAD
+immediately before dispatch.** Never reuse a render/workdir built for an earlier phase or an
+earlier commit — this includes the fix-round hunt, blind-gate round 1, round 2, and any
+targeted re-check after a fix lands. A validator driven against a stale pre-fix render
+produces a false-positive re-report of an already-fixed bug, which is worse than a slow
+build: it looks like a genuine "in-scope defect found" and can trigger a redundant blind
+round on top of whatever round the real findings already required. Confirmed cause of the
+one real orchestration mistake in one sprint: the render dir was reused across a bugfix
+commit boundary, and two validators re-found the already-fixed bug. The fix costs one
+rebuild command; skipping it costs an adjudication detour and erodes trust in the round's
+verdict. Rebuild first, every time — don't reason about whether "this one" needs it.
 
 Spawn fresh validator sub-agents whose prompt contains **only**:
 1. the acceptance spec relevant to their scope — the full spec for broad hunters, one
