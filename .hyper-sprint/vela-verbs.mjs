@@ -1,4 +1,4 @@
-// vela-helpers.mjs — the app's PREDICTIVE MODEL, captured ONCE as stable verbs.
+// vela-verbs.mjs — the app's PREDICTIVE MODEL, captured ONCE as stable verbs.
 // Authored by whoever knows the app (the implementer). Validators/hunters import
 // these instead of re-predicting selectors/timing per burst. Each verb WAITS on its
 // own post-condition (no fixed sleeps), so it adapts to timing and fails LOUDLY at a

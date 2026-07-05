@@ -78,7 +78,7 @@ python3 -c 'import time;print(time.time()+180)' > /tmp/hunt-A/deadline   # hard 
 ## Screenshots for free → the sprint report
 Verification and documentation share one pass. Have each verifier `ctx.shot("<cr>-after-<label>")`
 at its proof state — those PNGs are exactly the "after" images the hyper-sprint **Markdown
-report** needs (`hyper-sprint/references/sprint-archive.md`). "Before" images = the same tagged
+report** needs (see the `hyper-sprint` skill's `references/sprint-archive.md`). "Before" images = the same tagged
 bursts run against a warm render built from the **base commit**. No separate capture step.
 
 ## Answering "doesn't the agent need app knowledge to write bursts?"
