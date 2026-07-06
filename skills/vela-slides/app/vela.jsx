@@ -15436,6 +15436,124 @@ function pptxLinkSp(id, rid, l) {
     + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
 }
 
+// ── native table (<a:tbl> graphicFrame) ─────────────────────────────────────
+// Emits a GENUINELY EDITABLE PowerPoint table (cell text is retype-able, not a
+// picture). tbl IR: { x,y,w,h, cols, borderColor?, borderWidth?,
+//   rows:[{ header?:bool, bg?:color, h?:px, cells:[{text, color?, fontWeight?,
+//   fontSize?, align?, fontFamily?}] }] }. Geometry in 960×540 px space.
+function pptxTableCellXml(cell, tbl, isHeader, rowBg) {
+  const size = cell.fontSize || (isHeader ? 11 : 13);
+  const bold = (cell.fontWeight || 400) >= 600;
+  const hex = pptxColorHex(cell.color) || (isHeader ? "FFFFFF" : "000000");
+  const font = pptxFontName(cell.fontFamily);
+  const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[cell.align] || "l";
+  const txt = String(cell.text == null ? "" : cell.text);
+  const run = txt
+    ? `<a:r><a:rPr lang="en-US" sz="${pptxCpt(size)}"${bold ? ' b="1"' : ""} dirty="0"><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
+      + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr><a:t>${pptxEsc(txt)}</a:t></a:r>`
+    : `<a:endParaRPr lang="en-US"/>`;
+  const brdHex = pptxColorHex(tbl.borderColor);
+  const lnW = pptxEmu(tbl.borderWidth || 1);
+  const lnPaint = brdHex ? `<a:solidFill><a:srgbClr val="${brdHex}"/></a:solidFill>` : "<a:noFill/>";
+  // border children MUST precede the fill child in <a:tcPr> (schema order)
+  const borders = ["L", "R", "T", "B"].map((s) => `<a:ln${s} w="${lnW}" cap="flat"><a:prstDash val="solid"/>${lnPaint}</a:ln${s}>`).join("");
+  const fill = rowBg ? pptxSolidFill(rowBg) : "<a:noFill/>";
+  return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="${algn}"/>${run}</a:p></a:txBody>`
+    + `<a:tcPr marL="${pptxEmu(12)}" marR="${pptxEmu(12)}" marT="${pptxEmu(6)}" marB="${pptxEmu(6)}" anchor="ctr">${borders}${fill}</a:tcPr></a:tc>`;
+}
+
+function pptxTableFrame(id, tbl) {
+  const cols = Math.max(1, tbl.cols || (tbl.rows[0] && tbl.rows[0].cells.length) || 1);
+  const totalEmu = pptxEmu(Math.max(1, tbl.w));
+  const colW = Math.max(1, Math.round(totalEmu / cols));
+  const grid = Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join("");
+  const firstRow = tbl.rows[0] && tbl.rows[0].header ? "1" : "0";
+  const trs = (tbl.rows || []).map((row) => {
+    const cells = (row.cells || []).map((c) => pptxTableCellXml(c, tbl, !!row.header, row.bg)).join("");
+    return `<a:tr h="${pptxEmu(row.h || 24)}">${cells}</a:tr>`;
+  }).join("");
+  return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table ${id}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>`
+    + `<p:xfrm><a:off x="${pptxEmu(tbl.x)}" y="${pptxEmu(tbl.y)}"/><a:ext cx="${totalEmu}" cy="${pptxEmu(Math.max(1, tbl.h))}"/></p:xfrm>`
+    + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">`
+    + `<a:tbl><a:tblPr firstRow="${firstRow}" bandRow="1"/><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>`
+    + `</a:graphicData></a:graphic></p:graphicFrame>`;
+}
+
+// ── raster image bytes helpers ───────────────────────────────────────────────
+// Decode a data: URI to raw bytes + a PPT-safe media extension. Returns null for
+// non-data URIs (external URL → resolved async by pptxResolveImages).
+function pptxDataUriToBytes(src) {
+  const m = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(src || "");
+  if (!m) return null;
+  const mime = (m[1] || "").toLowerCase();
+  const isB64 = !!m[2];
+  const payload = m[3] || "";
+  let bytes;
+  try {
+    if (isB64) {
+      const bin = atob(payload.replace(/\s+/g, ""));
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(payload));
+    }
+  } catch (e) { return null; }
+  const ext = mime.indexOf("png") >= 0 ? "png"
+    : (mime.indexOf("jpeg") >= 0 || mime.indexOf("jpg") >= 0) ? "jpeg"
+    : mime.indexOf("gif") >= 0 ? "gif"
+    : mime.indexOf("svg") >= 0 ? "svg"
+    : mime.indexOf("webp") >= 0 ? "webp" : "png";
+  return { data: bytes, ext };
+}
+
+// Rasterize an <img> src (external URL, or a format PPT renders poorly like webp)
+// to PNG bytes via Image → canvas → toBlob. Async; rejects on CORS/load failure.
+function pptxImgToPng(src, w, h, scale) {
+  return new Promise((resolve, reject) => {
+    const s = scale || 2;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const iw = Math.max(1, Math.round(img.naturalWidth || w || 1));
+        const ih = Math.max(1, Math.round(img.naturalHeight || h || 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = iw * s; canvas.height = ih * s;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error("pptx img→png: toBlob returned null")); return; }
+          const fr = new FileReader();
+          fr.onload = () => resolve(new Uint8Array(fr.result));
+          fr.onerror = () => reject(fr.error || new Error("pptx img→png: read failed"));
+          fr.readAsArrayBuffer(blob);
+        }, "image/png");
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error("pptx img→png: image failed to load"));
+    img.src = src;
+  });
+}
+
+// Fill each image entry's raw bytes (async). data: URIs decode inline; external
+// URLs / webp rasterize to PNG. Call on page.images before buildPptx(). Failures
+// are non-fatal — an unresolved entry (no .data) is skipped by buildPptx.
+async function pptxResolveImages(images, opts) {
+  opts = opts || {};
+  for (const im of images || []) {
+    if (!im || im.data || !im.src) continue;
+    try {
+      const d = pptxDataUriToBytes(im.src);
+      if (d && d.ext !== "webp") { im.data = d.data; im.ext = d.ext; continue; }
+      im.data = await pptxImgToPng(im.src, im.w, im.h, opts.scale);
+      im.ext = "png";
+    } catch (e) {
+      if (typeof console !== "undefined") console.warn("[pptx] image embed skipped:", e && e.message);
+    }
+  }
+  return images;
+}
+
 // ── per-slide assembly ──────────────────────────────────────────────────────
 function pptxBuildSlide(page, idx) {
   const media = []; // {name, data}
@@ -15445,6 +15563,7 @@ function pptxBuildSlide(page, idx) {
   const shapes = [];
   let sid = 1; // shape id 1 is the group; children are 2+
   let si = 0;  // per-slide media index for svg/png pairs
+  let ii = 0;  // per-slide media index for embedded images
   const W = page.w || PPTX_SLIDE_W;
   const H = page.h || PPTX_SLIDE_H;
 
@@ -15464,6 +15583,22 @@ function pptxBuildSlide(page, idx) {
 
   for (const b of page.boxes || []) shapes.push(pptxBox(++sid, b));
   for (const c of page.circles || []) shapes.push(pptxEllipse(++sid, c));
+  // Native, editable PowerPoint tables (<a:tbl> graphicFrame) for `table` blocks.
+  for (const tb of page.tables || []) {
+    if (!tb || !tb.rows || !tb.rows.length) continue;
+    shapes.push(pptxTableFrame(++sid, tb));
+  }
+  // Embedded pictures for `image` blocks (base64 data: URI or resolved URL).
+  for (const im of page.images || []) {
+    if (!im || !im.data) continue;
+    ii++;
+    const ext = (im.ext || "png").toLowerCase();
+    const rid = nextRid();
+    const name = `slide${idx}_img${ii}.${ext}`;
+    media.push({ name: `ppt/media/${name}`, data: im.data });
+    rels.push({ id: rid, type: PPTX_REL_IMAGE, target: `../media/${name}` });
+    shapes.push(pptxPic(++sid, rid, im));
+  }
   // Native SVG pictures (Lucide icons, flow/cycle/funnel connectors, svg block) —
   // vector part + PNG fallback. Placed above shapes, below text labels.
   for (const s of page.svgs || []) {
@@ -15687,6 +15822,12 @@ function pptxZip(files) {
 //       circles?:   [{cx,cy,r, bg?|fill?, borderWidth?,borderColor? / line?}],
 //       texts?:     [{x,y,w,h, text, fontSize?/size?, color, fontWeight?/bold?, fontStyle?/italic?, fontFamily?/font?, align?}],
 //       links?:     [{href,x,y,w,h}],
+//       tables?:    [{x,y,w,h, cols, borderColor?, borderWidth?,
+//                     rows:[{header?, bg?, h?, cells:[{text, color?, fontWeight?, fontSize?, align?, fontFamily?}]}]}],
+//                   // native editable PowerPoint tables (<a:tbl> graphicFrame).
+//       images?:    [{x,y,w,h, data:Uint8Array, ext:"png"|"jpeg"|"gif"|"svg", alt?}],
+//                   // embedded pictures for `image` blocks; `data` is filled from a
+//                   // data: URI (sync) or an external URL (async pptxResolveImages()).
 //       svgs?:      [{x,y,w,h, svg:string, pngFallback?:Uint8Array, alt?}],
 //                   // native SVG pictures (Lucide icons / flow / cycle / svg block).
 //                   // `svg` is standalone serialized markup; `pngFallback` is the
@@ -15943,6 +16084,119 @@ function pptxExtractSVGEntries(container, containerRect) {
   return out;
 }
 
+// ── native table extraction ──────────────────────────────────────────────────
+// Detect `table` blocks in the rendered DOM and lift them to native-table IR.
+// A Vela table renders as a bordered container whose direct children are ≥2
+// `display:grid` rows sharing one column template (the `grid` block, by contrast,
+// is a SINGLE grid element, and a column of stacked grid blocks has no border on
+// the shared parent) — so the discriminator is: bordered parent + ≥2 equal-width
+// grid rows whose cell counts match the column count. Header row = the first row
+// with no top border (the renderer gives body rows a `borderTop`, the header none).
+function pptxExtractTables(container, containerRect) {
+  const tables = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  const colsOf = (el) => {
+    const t = window.getComputedStyle(el).gridTemplateColumns;
+    return t && t !== "none" ? t.trim().split(/\s+/).filter(Boolean).length : 0;
+  };
+  const byParent = new Map();
+  container.querySelectorAll("*").forEach((el) => {
+    const d = window.getComputedStyle(el).display;
+    if (d !== "grid" && d !== "inline-grid") return;
+    const p = el.parentElement;
+    if (!p) return;
+    if (!byParent.has(p)) byParent.set(p, []);
+    byParent.get(p).push(el);
+  });
+  for (const [parent, rows] of byParent) {
+    if (rows.length < 2) continue;
+    const ps = window.getComputedStyle(parent);
+    if (_isExportHidden(ps)) continue;
+    // Table container carries a visible border; a column of grid blocks does not.
+    const brdW = parseFloat(ps.borderTopWidth) || 0;
+    const brdColor = parseColor(ps.borderTopColor) || parseColor(ps.borderColor);
+    if (!(brdW > 0.4 && brdColor)) continue;
+    const cols = colsOf(rows[0]);
+    if (cols < 1) continue;
+    if (!rows.every((r) => colsOf(r) === cols && r.children.length === cols)) continue;
+
+    const rect = parent.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) continue;
+    let x = rect.left - containerRect.left, y = rect.top - containerRect.top;
+    let w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) continue;
+
+    const outRows = rows.map((rowEl, ri) => {
+      const rs = window.getComputedStyle(rowEl);
+      const rowRect = rowEl.getBoundingClientRect();
+      const noTopBorder = (parseFloat(rs.borderTopWidth) || 0) < 0.5;
+      const header = ri === 0 && noTopBorder;
+      const rowBg = parseColor(rs.backgroundColor);
+      const cells = [];
+      for (const cellEl of rowEl.children) {
+        const cs = window.getComputedStyle(cellEl);
+        let text = (cellEl.textContent || "").replace(/\s+/g, " ").trim();
+        const tt = cs.textTransform;
+        if (tt === "uppercase") text = text.toUpperCase();
+        else if (tt === "lowercase") text = text.toLowerCase();
+        cells.push({
+          text,
+          color: parseColor(cs.color),
+          fontWeight: parseInt(cs.fontWeight) || 400,
+          fontSize: parseFloat(cs.fontSize) || 14,
+          align: cs.textAlign || "left",
+          fontFamily: cs.fontFamily || "",
+        });
+      }
+      return { header, bg: rowBg, h: rowRect.height, cells };
+    });
+    tables.push({ x, y, w, h, cols, rows: outRows, borderColor: brdColor, borderWidth: brdW, _rect: { x, y, w, h } });
+  }
+  return tables;
+}
+
+// ── image-block extraction ───────────────────────────────────────────────────
+// Walk every rendered <img> → embedded-picture IR (geometry in 960×540 px space).
+// data: URIs decode to bytes inline (the common Vela case — pasted images); other
+// srcs keep `.src` for the async pptxResolveImages() pass. Same visibility/zoom
+// hygiene as the other extractors.
+function pptxExtractImages(container, containerRect) {
+  const out = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  container.querySelectorAll("img").forEach((img) => {
+    if (img.closest("[data-zoom-badge]") || img.closest("[data-no-pdf]")) return;
+    if (_isExportHidden(window.getComputedStyle(img))) return;
+    const src = img.currentSrc || img.src;
+    if (!src) return;
+    const rect = img.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    let x = rect.left - containerRect.left, y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return;
+    const entry = { x, y, w, h, src, alt: img.getAttribute("alt") || "image" };
+    const d = pptxDataUriToBytes(src);
+    if (d && d.ext !== "webp") { entry.data = d.data; entry.ext = d.ext; }
+    out.push(entry);
+  });
+  return out;
+}
+
+// Whole-slide raster hybrid — mirrors the vector-PDF `slideHasImages` fallback
+// (part-pdf.jsx): image-heavy slides can't be faithfully lifted to native shapes,
+// so the ENTIRE slide is captured as one full-bleed JPEG picture (page.imageData,
+// which buildPptx already emits full-bleed). Async (canvas capture); the caller
+// invokes this INSTEAD of pptxExtractSlidePage for slides where slideHasImages()
+// is true. Links stay native/clickable over the raster.
+async function pptxCaptureSlideRaster(el, slide, opts) {
+  opts = opts || {};
+  const containerRect = el.getBoundingClientRect();
+  const slideBg = (slide && (slide.bgGradient || slide.bg)) || null;
+  const canvas = await domToCanvas(el, PPTX_SLIDE_W, PPTX_SLIDE_H, opts.scale || 3, slideBg);
+  const imageData = await canvasToJpegBytes(canvas, opts.quality || 0.95);
+  const links = (typeof extractLinks === "function") ? extractLinks(el, containerRect) : [];
+  return { w: PPTX_SLIDE_W, h: PPTX_SLIDE_H, imageData, links };
+}
+
 // Extract one page IR from an already-rendered off-screen slide container (the
 // element carrying <SlideContent>, sized 960×540, class "no-anim vela-pdf-capture").
 // This is what a PptxExportModal (PPTX-5) calls per slide before buildPptx().
@@ -15953,14 +16207,32 @@ function pptxExtractSlidePage(el, containerRect, slide) {
   const rawBgStr = pptxSetCompositeBg(slide, el);
   const slideBg = parseColor((slide && slide.bg) || rawBgStr) || parseColor("#0a0f1c");
   const slideGrad = parseLinearGradient((slide && slide.bgGradient) || rawBgStr) || null;
+
+  // Native tables first, so their cell backgrounds/borders/text (otherwise picked
+  // up as generic boxes + text boxes) are excluded — the <a:tbl> owns that region.
+  const tables = pptxExtractTables(el, containerRect);
+  const tableRects = tables.map((t) => t._rect);
+  const inTable = (cx, cy) => tableRects.some((r) => cx >= r.x - 1 && cx <= r.x + r.w + 1 && cy >= r.y - 1 && cy <= r.y + r.h + 1);
+
+  let boxes = extractBoxes(el, containerRect);
+  let circles = extractCircles(el, containerRect);
+  let texts = pptxExtractTextBoxes(el, containerRect);
+  if (tableRects.length) {
+    boxes = boxes.filter((b) => !inTable(b.x + b.w / 2, b.y + b.h / 2));
+    texts = texts.filter((t) => !inTable(t.x + t.w / 2, t.y + t.h / 2));
+    circles = circles.filter((c) => !inTable(c.cx, c.cy));
+  }
+
   return {
     w: PPTX_SLIDE_W,
     h: PPTX_SLIDE_H,
     bg: slideBg,
     bgGradient: slideGrad,
-    boxes: extractBoxes(el, containerRect),
-    circles: extractCircles(el, containerRect),
-    texts: pptxExtractTextBoxes(el, containerRect),
+    boxes,
+    circles,
+    texts,
+    tables,
+    images: pptxExtractImages(el, containerRect),
     svgs: pptxExtractSVGEntries(el, containerRect),
     links: extractLinks(el, containerRect),
   };
@@ -16034,14 +16306,24 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
       try {
         const slide = slides[renderIdx];
         const containerRect = el.getBoundingClientRect();
-        // One native page IR straight from the off-screen DOM (fixed 960×540 space).
-        const page = pptxExtractSlidePage(el, containerRect, slide);
-
-        // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
-        // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
-        // Guarded so this stays a no-op until the SVG-embed exporter merge lands.
-        if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
-          await pptxRasterizeSvgs(page.svgs);
+        let page;
+        if (typeof pptxCaptureSlideRaster === "function" && typeof slideHasImages === "function" && slideHasImages(slide)) {
+          // Image-heavy slide: whole-slide raster hybrid (mirrors the vector-PDF
+          // slideHasImages fallback) — one full-bleed picture instead of native
+          // per-block extraction, so photo slides still round-trip faithfully.
+          page = await pptxCaptureSlideRaster(el, slide);
+        } else {
+          // One native page IR straight from the off-screen DOM (fixed 960×540 space).
+          page = pptxExtractSlidePage(el, containerRect, slide);
+          // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
+          // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
+          if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
+            await pptxRasterizeSvgs(page.svgs);
+          }
+          // Resolve any image blocks whose bytes aren't inline (external URLs / webp).
+          if (typeof pptxResolveImages === "function" && page.images && page.images.length) {
+            await pptxResolveImages(page.images);
+          }
         }
 
         // Optional "Made with Vela" branding — a native, editable text box, kept

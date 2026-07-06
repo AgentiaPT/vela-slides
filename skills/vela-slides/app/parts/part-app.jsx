@@ -67,14 +67,24 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
       try {
         const slide = slides[renderIdx];
         const containerRect = el.getBoundingClientRect();
-        // One native page IR straight from the off-screen DOM (fixed 960×540 space).
-        const page = pptxExtractSlidePage(el, containerRect, slide);
-
-        // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
-        // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
-        // Guarded so this stays a no-op until the SVG-embed exporter merge lands.
-        if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
-          await pptxRasterizeSvgs(page.svgs);
+        let page;
+        if (typeof pptxCaptureSlideRaster === "function" && typeof slideHasImages === "function" && slideHasImages(slide)) {
+          // Image-heavy slide: whole-slide raster hybrid (mirrors the vector-PDF
+          // slideHasImages fallback) — one full-bleed picture instead of native
+          // per-block extraction, so photo slides still round-trip faithfully.
+          page = await pptxCaptureSlideRaster(el, slide);
+        } else {
+          // One native page IR straight from the off-screen DOM (fixed 960×540 space).
+          page = pptxExtractSlidePage(el, containerRect, slide);
+          // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
+          // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
+          if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
+            await pptxRasterizeSvgs(page.svgs);
+          }
+          // Resolve any image blocks whose bytes aren't inline (external URLs / webp).
+          if (typeof pptxResolveImages === "function" && page.images && page.images.length) {
+            await pptxResolveImages(page.images);
+          }
         }
 
         // Optional "Made with Vela" branding — a native, editable text box, kept
