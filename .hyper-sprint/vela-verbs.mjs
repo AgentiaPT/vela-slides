@@ -84,6 +84,59 @@ export async function dropZoneVisible(page) { return page.evaluate(() => [...doc
 export async function simulateDrag(page, { files = false } = {}) { await page.evaluate((withFiles) => { const root = document.getElementById("root"); const tgt = (root && root.querySelector("*")) || root; const dt = new DataTransfer(); if (withFiles) dt.items.add(new File(["x"], "a.vela", { type: "text/plain" })); else dt.setData("text/plain", "x"); for (const n of ["dragenter", "dragover"]) tgt.dispatchEvent(new DragEvent(n, { bubbles: true, cancelable: true, dataTransfer: dt })); }, files); await page.waitForTimeout(200); }
 export async function endDrag(page) { await page.evaluate(() => { const root = document.getElementById("root"); const tgt = (root && root.querySelector("*")) || root; tgt.dispatchEvent(new DragEvent("dragleave", { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() })); }); await page.waitForTimeout(150); }
 
+// ── Export menu + PowerPoint (.pptx) export ───────────────────────────────────
+// Published driver contract (data-testids): export-menu-toggle,
+// export-pptx-menu-item, pptx-export-modal, pptx-export-branding-toggle,
+// pptx-export-start, pptx-export-done, pptx-export-download, pptx-export-error.
+
+// Open the desktop Export dropdown; waits until the PowerPoint entry is present.
+// Idempotent: if the entry is already visible (menu open) it is a no-op, so it is
+// safe to call before exportPptx() without accidentally toggling the menu shut.
+export async function openExportMenu(page) {
+  if (await page.evaluate(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"))) return;
+  if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-menu-toggle]"); if (!b) return false; b.click(); return true; }))
+    throw new Error("openExportMenu: no export-menu-toggle (desktop header not mounted?)");
+  await page.waitForFunction(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"), { timeout: 4000 });
+}
+
+// Drive the whole PowerPoint export: open menu → click entry → start → wait for
+// the done phase → read the download data: URI back. Returns { size, dataUri,
+// download } where size is the decoded byte length of the produced .pptx. Throws
+// LOUDLY at whichever step's post-condition fails. Set opts.branding=true to flip
+// the "Made with Vela" toggle before exporting.
+export async function exportPptx(page, opts = {}) {
+  await openExportMenu(page);
+  if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-pptx-menu-item]"); if (!b) return false; b.click(); return true; }))
+    throw new Error("exportPptx: export-pptx-menu-item vanished before click");
+  await page.waitForFunction(() => !!document.querySelector("[data-testid=pptx-export-modal]"), { timeout: 4000 });
+  if (opts.branding) {
+    await page.evaluate(() => { const t = document.querySelector("[data-testid=pptx-export-branding-toggle]"); if (t) t.click(); });
+  }
+  if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=pptx-export-start]"); if (!b) return false; b.click(); return true; }))
+    throw new Error("exportPptx: no pptx-export-start button (modal stuck on choose?)");
+  // Off-screen render loop (~350ms/slide) → done phase. Fail early on the error phase.
+  await page.waitForFunction(() => {
+    if (document.querySelector("[data-testid=pptx-export-error]")) return true;
+    return !!document.querySelector("[data-testid=pptx-export-download]");
+  }, { timeout: 60000 });
+  const err = await page.evaluate(() => { const e = document.querySelector("[data-testid=pptx-export-error]"); return e ? e.textContent : null; });
+  if (err) throw new Error(`exportPptx: modal reported error phase: ${err}`);
+  const info = await page.evaluate(() => {
+    const a = document.querySelector("[data-testid=pptx-export-download]");
+    if (!a) return null;
+    const uri = a.getAttribute("href") || "";
+    const comma = uri.indexOf(",");
+    const b64 = comma >= 0 ? uri.slice(comma + 1) : "";
+    let size = 0;
+    try { const bin = atob(b64); size = bin.length; } catch (e) { size = -1; }
+    return { size, dataUri: uri, download: a.getAttribute("download") };
+  });
+  if (!info || !info.dataUri.startsWith("data:application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+    throw new Error("exportPptx: download href is not a .pptx data URI");
+  if (!(info.size > 0)) throw new Error(`exportPptx: produced .pptx is empty (size=${info.size})`);
+  return info;
+}
+
 // ── Fullscreen-safe keyboard (GOTCHA crystallized from a hunt) ─────────────────
 // Once the app is in fullscreen presenter mode (real/synthetic 'f' → requestFullscreen),
 // Playwright's page.keyboard.press AND page.screenshot/ctx.shot HANG indefinitely in
