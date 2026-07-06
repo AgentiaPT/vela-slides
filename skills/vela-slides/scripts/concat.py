@@ -13,7 +13,7 @@ Two modes:
      Outputs to specified file or ./vela-built.jsx
 
 Concatenation order is fixed (matches dependency graph):
-  imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → app
+  imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 """
 
 import sys, os
@@ -31,6 +31,7 @@ PART_ORDER = [
     "part-uitest.jsx",
     "part-demo.jsx",
     "part-pdf.jsx",
+    "part-pptx.jsx",
     "part-app.jsx",
 ]
 
