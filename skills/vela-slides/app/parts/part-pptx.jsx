@@ -833,12 +833,13 @@ function pptxExtractSVGEntries(container, containerRect) {
 
 // ── native table extraction ──────────────────────────────────────────────────
 // Detect `table` blocks in the rendered DOM and lift them to native-table IR.
-// A Vela table renders as a bordered container whose direct children are ≥2
-// `display:grid` rows sharing one column template (the `grid` block, by contrast,
-// is a SINGLE grid element, and a column of stacked grid blocks has no border on
-// the shared parent) — so the discriminator is: bordered parent + ≥2 equal-width
-// grid rows whose cell counts match the column count. Header row = the first row
-// with no top border (the renderer gives body rows a `borderTop`, the header none).
+// part-blocks.jsx wraps EVERY rendered block in `<div data-block-type={b.type}>`
+// (both its editable and non-editable render branches), so a `table` block's DOM
+// root is reliably marked `data-block-type="table"` — independent of its internal
+// border/grid styling. That wrapper carries no layout/border of its own; the
+// actual bordered grid structure is its single rendered child (case "table" in
+// part-blocks.jsx). Header row = the first row with no top border (the renderer
+// gives body rows a `borderTop`, the header none).
 function pptxExtractTables(container, containerRect) {
   const tables = [];
   const cw = containerRect.width, ch = containerRect.height;
@@ -846,32 +847,28 @@ function pptxExtractTables(container, containerRect) {
     const t = window.getComputedStyle(el).gridTemplateColumns;
     return t && t !== "none" ? t.trim().split(/\s+/).filter(Boolean).length : 0;
   };
-  const byParent = new Map();
-  container.querySelectorAll("*").forEach((el) => {
-    const d = window.getComputedStyle(el).display;
-    if (d !== "grid" && d !== "inline-grid") return;
-    const p = el.parentElement;
-    if (!p) return;
-    if (!byParent.has(p)) byParent.set(p, []);
-    byParent.get(p).push(el);
-  });
-  for (const [parent, rows] of byParent) {
-    if (rows.length < 2) continue;
-    const ps = window.getComputedStyle(parent);
-    if (_isExportHidden(ps)) continue;
-    // Table container carries a visible border; a column of grid blocks does not.
-    const brdW = parseFloat(ps.borderTopWidth) || 0;
-    const brdColor = parseColor(ps.borderTopColor) || parseColor(ps.borderColor);
-    if (!(brdW > 0.4 && brdColor)) continue;
-    const cols = colsOf(rows[0]);
-    if (cols < 1) continue;
-    if (!rows.every((r) => colsOf(r) === cols && r.children.length === cols)) continue;
+  container.querySelectorAll('[data-block-type="table"]').forEach((wrapEl) => {
+    if (_isExportHidden(window.getComputedStyle(wrapEl))) return;
 
-    const rect = parent.getBoundingClientRect();
-    if (rect.width < 2 || rect.height < 2) continue;
-    let x = rect.left - containerRect.left, y = rect.top - containerRect.top;
-    let w = rect.width, h = rect.height;
-    if (x + w < 0 || x > cw || y + h < 0 || y > ch) continue;
+    const rect = wrapEl.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return;
+    const x = rect.left - containerRect.left, y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return;
+
+    // Border color/width come from the table's own rendered root (for the OOXML
+    // outline) — not used as a detection signal now that discovery is exact.
+    const tableRoot = wrapEl.firstElementChild || wrapEl;
+    const ts = window.getComputedStyle(tableRoot);
+    const brdW = parseFloat(ts.borderTopWidth) || 0;
+    const brdColor = parseColor(ts.borderTopColor) || parseColor(ts.borderColor);
+
+    const rows = Array.from(tableRoot.children).filter((el) => {
+      const d = window.getComputedStyle(el).display;
+      return d === "grid" || d === "inline-grid";
+    });
+    if (!rows.length) return;
+    const cols = colsOf(rows[0]);
 
     const outRows = rows.map((rowEl, ri) => {
       const rs = window.getComputedStyle(rowEl);
@@ -898,7 +895,7 @@ function pptxExtractTables(container, containerRect) {
       return { header, bg: rowBg, h: rowRect.height, cells };
     });
     tables.push({ x, y, w, h, cols, rows: outRows, borderColor: brdColor, borderWidth: brdW, _rect: { x, y, w, h } });
-  }
+  });
   return tables;
 }
 
