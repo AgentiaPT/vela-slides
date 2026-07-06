@@ -15415,6 +15415,20 @@ function pptxPic(id, rid, m) {
     + `<p:spPr>${pptxXfrm(m.x, m.y, m.w, m.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
 }
 
+// s: { x,y,w,h, alt? }, ridPng → PNG-fallback image rel, ridSvg → native-SVG image rel.
+// Native "SVG with raster fallback" picture — the exact shape PowerPoint itself emits
+// when you Insert > Picture an .svg: the primary <a:blip r:embed> points at the PNG
+// (rendered by every client, incl. pre-365), and an asvg:svgBlip extension points at the
+// real vector SVG part (PowerPoint 2016/365 renders it crisp + offers "Convert to Shape").
+function pptxPicSvg(id, ridPng, ridSvg, s) {
+  const svgExt = `<a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">`
+    + `<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="${ridSvg}"/>`
+    + `</a:ext></a:extLst>`;
+  return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${pptxEsc(s.alt || "SVG " + id)}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>`
+    + `<p:blipFill><a:blip r:embed="${ridPng}">${svgExt}</a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+    + `<p:spPr>${pptxXfrm(s.x, s.y, s.w, s.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+}
+
 // Transparent rect over a link rect carrying a hlinkClick (r: declared on slide root).
 function pptxLinkSp(id, rid, l) {
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Link ${id}"><a:hlinkClick r:id="${rid}"/></p:cNvPr><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`
@@ -15430,6 +15444,7 @@ function pptxBuildSlide(page, idx) {
   const nextRid = () => `rId${++rc}`;
   const shapes = [];
   let sid = 1; // shape id 1 is the group; children are 2+
+  let si = 0;  // per-slide media index for svg/png pairs
   const W = page.w || PPTX_SLIDE_W;
   const H = page.h || PPTX_SLIDE_H;
 
@@ -15449,6 +15464,27 @@ function pptxBuildSlide(page, idx) {
 
   for (const b of page.boxes || []) shapes.push(pptxBox(++sid, b));
   for (const c of page.circles || []) shapes.push(pptxEllipse(++sid, c));
+  // Native SVG pictures (Lucide icons, flow/cycle/funnel connectors, svg block) —
+  // vector part + PNG fallback. Placed above shapes, below text labels.
+  for (const s of page.svgs || []) {
+    if (!s || !s.svg) continue;
+    si++;
+    const ridSvg = nextRid();
+    const svgName = `slide${idx}_svg${si}.svg`;
+    media.push({ name: `ppt/media/${svgName}`, data: s.svg });
+    rels.push({ id: ridSvg, type: PPTX_REL_IMAGE, target: `../media/${svgName}` });
+    if (s.pngFallback) {
+      const ridPng = nextRid();
+      const pngName = `slide${idx}_svg${si}.png`;
+      media.push({ name: `ppt/media/${pngName}`, data: s.pngFallback });
+      rels.push({ id: ridPng, type: PPTX_REL_IMAGE, target: `../media/${pngName}` });
+      shapes.push(pptxPicSvg(++sid, ridPng, ridSvg, s));
+    } else {
+      // No raster fallback available — embed the SVG as a plain picture. Modern PPT and
+      // LibreOffice render it; only very old SVG-blind clients show nothing for this shape.
+      shapes.push(pptxPic(++sid, ridSvg, s));
+    }
+  }
   for (const t of page.texts || []) if (t && t.text) shapes.push(pptxTextSp(++sid, t));
   for (const l of page.links || []) {
     if (!l || !l.href) continue;
@@ -15651,6 +15687,11 @@ function pptxZip(files) {
 //       circles?:   [{cx,cy,r, bg?|fill?, borderWidth?,borderColor? / line?}],
 //       texts?:     [{x,y,w,h, text, fontSize?/size?, color, fontWeight?/bold?, fontStyle?/italic?, fontFamily?/font?, align?}],
 //       links?:     [{href,x,y,w,h}],
+//       svgs?:      [{x,y,w,h, svg:string, pngFallback?:Uint8Array, alt?}],
+//                   // native SVG pictures (Lucide icons / flow / cycle / svg block).
+//                   // `svg` is standalone serialized markup; `pngFallback` is the
+//                   // browser-rasterized PNG (async — fill via pptxRasterizeSvgs()
+//                   // before calling buildPptx so the asvg:svgBlip+PNG pattern emits).
 //       imageData?: Uint8Array (JPEG) }      // whole-slide raster fallback
 //     (`color` = a parseColor() {r,g,b,a} object OR a css/hex string.)
 //   opts: reserved (unused today).
@@ -15777,10 +15818,137 @@ function pptxSetCompositeBg(slide, el) {
   return rawBgStr;
 }
 
+// ── native-SVG capture (Lucide icons, flow/cycle/funnel connectors, svg block) ──
+// The PDF path converts each inline <svg> to bezier PDF path-ops (extractSVGs,
+// part-pdf.jsx). For PPTX we instead embed the live vector directly: serialize the
+// DOM <svg> to a standalone file and rasterize a PNG fallback, then emit both as a
+// native "SVG with PNG fallback" picture (pptxPicSvg). We only reuse extractSVGs'
+// geometry approach (bounding box + container clip) — the PDF path-op strings are
+// not PPTX-compatible, so the serialization below is written fresh.
+
+// Serialize a live DOM <svg> to a standalone, self-contained SVG string. Computed
+// paint/stroke/font values are inlined onto every element (as inline style, which
+// wins over presentation attributes) so the icon renders identically out of its CSS
+// / currentColor / CSS-variable context — getComputedStyle has already resolved
+// currentColor and var() to concrete rgb()/px values.
+const PPTX_SVG_STYLE_PROPS = [
+  "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin",
+  "stroke-dasharray", "stroke-opacity", "fill-opacity", "opacity",
+  "color", "stop-color", "stop-opacity",
+];
+const PPTX_SVG_TEXT_PROPS = ["font-family", "font-size", "font-weight", "font-style", "text-anchor"];
+function pptxSerializeSvg(svg) {
+  const clone = svg.cloneNode(true);
+  const srcEls = [svg, ...svg.querySelectorAll("*")];
+  const dstEls = [clone, ...clone.querySelectorAll("*")];
+  const n = Math.min(srcEls.length, dstEls.length);
+  for (let i = 0; i < n; i++) {
+    const cs = window.getComputedStyle(srcEls[i]);
+    const dst = dstEls[i];
+    if (!dst.style) continue;
+    for (const p of PPTX_SVG_STYLE_PROPS) {
+      const v = cs.getPropertyValue(p);
+      if (v && v.trim() && v !== "normal") dst.style.setProperty(p, v.trim());
+    }
+    const tag = (dst.tagName || "").toLowerCase();
+    if (tag === "text" || tag === "tspan") {
+      for (const p of PPTX_SVG_TEXT_PROPS) {
+        const v = cs.getPropertyValue(p);
+        if (v && v.trim()) dst.setAttribute(p, v.trim());
+      }
+    }
+  }
+  const rect = svg.getBoundingClientRect();
+  const pw = Math.max(1, Math.round(rect.width));
+  const ph = Math.max(1, Math.round(rect.height));
+  if (!clone.getAttribute("viewBox")) clone.setAttribute("viewBox", `0 0 ${pw} ${ph}`);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  if (svg.querySelector("image, use") || svg.querySelector("[*|href]")) {
+    clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  }
+  clone.setAttribute("width", pw);
+  clone.setAttribute("height", ph);
+  const body = new XMLSerializer().serializeToString(clone);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>\r\n${body}`;
+}
+
+// Rasterize a serialized SVG string to PNG bytes via Image → canvas → toBlob (the
+// pre-365 fallback blip). Async — the Image must load the SVG data URI first.
+function pptxSvgToPng(svgStr, w, h, scale) {
+  return new Promise((resolve, reject) => {
+    const s = scale || 2; // 2× the on-slide box for crisp fallback
+    const pw = Math.max(1, Math.round((w || 1) * s));
+    const ph = Math.max(1, Math.round((h || 1) * s));
+    const uri = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = pw; canvas.height = ph;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, pw, ph);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error("pptx svg→png: toBlob returned null")); return; }
+          const fr = new FileReader();
+          fr.onload = () => resolve(new Uint8Array(fr.result));
+          fr.onerror = () => reject(fr.error || new Error("pptx svg→png: read failed"));
+          fr.readAsArrayBuffer(blob);
+        }, "image/png");
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error("pptx svg→png: SVG image failed to load"));
+    img.src = uri;
+  });
+}
+
+// Fill each svg entry's `pngFallback` (async). Call on page.svgs after
+// pptxExtractSlidePage() and before buildPptx(). Failures are non-fatal — an entry
+// with no pngFallback still emits a (degraded) plain-SVG picture in buildPptx.
+async function pptxRasterizeSvgs(svgs, opts) {
+  opts = opts || {};
+  for (const s of svgs || []) {
+    if (!s || !s.svg || s.pngFallback) continue;
+    try {
+      s.pngFallback = await pptxSvgToPng(s.svg, s.w, s.h, opts.scale);
+    } catch (e) {
+      if (typeof console !== "undefined") console.warn("[pptx] svg raster fallback skipped:", e && e.message);
+    }
+  }
+  return svgs;
+}
+
+// Walk every inline <svg> in the container → [{x,y,w,h, svg, alt}] (geometry in
+// 960×540 px space, mirroring extractSVGs' bounding-box + container clip). No
+// pngFallback yet — that is filled asynchronously by pptxRasterizeSvgs(). Applies the
+// same visibility / zoom-badge hygiene as the other extractors.
+function pptxExtractSVGEntries(container, containerRect) {
+  const out = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  container.querySelectorAll("svg").forEach((svg) => {
+    // Serialize only the outermost <svg> (skip an <svg> nested inside another).
+    if (svg.parentElement && svg.parentElement.closest("svg")) return;
+    if (svg.closest("[data-zoom-badge]") || svg.closest("[data-no-pdf]")) return;
+    if (_isExportHidden(window.getComputedStyle(svg))) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    let x = rect.left - containerRect.left;
+    let y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return; // fully off-slide
+    let svgStr;
+    try { svgStr = pptxSerializeSvg(svg); } catch (e) { return; }
+    if (!svgStr || svgStr.indexOf("<svg") < 0) return;
+    out.push({ x, y, w, h, svg: svgStr, alt: svg.getAttribute("aria-label") || "diagram" });
+  });
+  return out;
+}
+
 // Extract one page IR from an already-rendered off-screen slide container (the
 // element carrying <SlideContent>, sized 960×540, class "no-anim vela-pdf-capture").
 // This is what a PptxExportModal (PPTX-5) calls per slide before buildPptx().
 // Reuses the part-pdf.jsx extractors as-is (fitScale already baked into the DOM).
+// NB: `svgs` entries carry serialized markup but NO pngFallback yet — the caller must
+// `await pptxRasterizeSvgs(page.svgs)` before buildPptx() to embed the PNG fallback.
 function pptxExtractSlidePage(el, containerRect, slide) {
   const rawBgStr = pptxSetCompositeBg(slide, el);
   const slideBg = parseColor((slide && slide.bg) || rawBgStr) || parseColor("#0a0f1c");
@@ -15793,6 +15961,7 @@ function pptxExtractSlidePage(el, containerRect, slide) {
     boxes: extractBoxes(el, containerRect),
     circles: extractCircles(el, containerRect),
     texts: pptxExtractTextBoxes(el, containerRect),
+    svgs: pptxExtractSVGEntries(el, containerRect),
     links: extractLinks(el, containerRect),
   };
 }
