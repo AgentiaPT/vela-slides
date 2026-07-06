@@ -15289,12 +15289,47 @@ const PPTX_REL_HLINK = "http://schemas.openxmlformats.org/officeDocument/2006/re
 const PPTX_REL_LAYOUT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 
 // ── color helpers ──────────────────────────────────────────────────────────
+// Parse a CSS color STRING to {hex, alpha} WITHOUT compositing, so the ORIGINAL
+// RGB and TRUE alpha survive into OOXML (which, unlike PDF, supports per-color
+// alpha via <a:alpha>). Matches Vela's own color convention exactly — the same
+// forms part-pdf.jsx's parseColor() accepts: 3/4/6/8-digit #hex (the 8-digit
+// #RRGGBBAA / hex+"NN"-suffix translucent-fill convention used throughout the
+// app) and rgb()/rgba(). Returns null if the string isn't one of these forms.
+// NB: parseColor() alpha-composites (needed for the PDF path); here we keep the
+// raw channels so an alpha fill round-trips as a real translucent OOXML color
+// rather than a flattened one.
+function pptxParseColorStr(str) {
+  if (typeof str !== "string") return null;
+  const s = str.trim();
+  const clamp255 = (n) => Math.max(0, Math.min(255, parseInt(n, 10) || 0));
+  const to2 = (n) => clamp255(n).toString(16).padStart(2, "0");
+  const rgbM = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+  if (rgbM) {
+    const a = rgbM[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbM[4]))) : 1;
+    return { hex: (to2(rgbM[1]) + to2(rgbM[2]) + to2(rgbM[3])).toUpperCase(), alpha: a };
+  }
+  const hexM = s.match(/^#([0-9a-fA-F]{3,8})$/);
+  if (hexM) {
+    let h = hexM[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    else if (h.length === 4) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+    if (h.length === 5 || h.length === 7) return null; // not a valid hex length
+    const alpha = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return { hex: h.slice(0, 6).toUpperCase(), alpha };
+  }
+  return null;
+}
+
 // Accepts a parseColor() object {r,g,b,a} in 0..1, OR a css/hex string. Returns
 // a 6-digit upper-hex string, or null when unresolvable (caller should skip).
 function pptxColorHex(c) {
   if (!c && c !== 0) return null;
   if (typeof c === "string") {
-    const pc = parseColor(c);
+    // Preserve the raw RGB for hex/rgb(a) strings (no compositing) so an alpha
+    // suffix keeps its true base color; pptxAlphaTag emits the <a:alpha> child.
+    const p = pptxParseColorStr(c);
+    if (p) return p.hex;
+    const pc = parseColor(c); // named colors / other CSS forms parseColor knows
     if (pc) return pptxColorHex(pc);
     const h = c.replace(/[^0-9a-fA-F]/g, "");
     return h.length >= 6 ? h.slice(0, 6).toUpperCase() : null;
@@ -15307,11 +15342,17 @@ function pptxColorHex(c) {
   return (to(c.r) + to(c.g) + to(c.b)).toUpperCase();
 }
 
-// Optional <a:alpha> child when the color carries sub-1 alpha (rare — parseColor
-// pre-composites, but hand-authored IR / gradient stops may keep alpha).
+// Optional <a:alpha> child when a color carries sub-1 alpha. Handles both a
+// parseColor() object (whose .a may survive for hand-authored IR — parseColor
+// itself pre-composites, so extracted objects are usually a=1) AND a raw CSS
+// string with an alpha component (8-digit #RRGGBBAA hex-suffix or rgba()) —
+// Vela's own translucent-fill convention. val is in 1000ths of a percent (0..100000).
 function pptxAlphaTag(c) {
-  if (c && typeof c === "object" && c.a != null && c.a < 0.999) {
-    return `<a:alpha val="${Math.round(Math.max(0, c.a) * 100000)}"/>`;
+  let a = null;
+  if (typeof c === "string") { const p = pptxParseColorStr(c); if (p) a = p.alpha; }
+  else if (c && typeof c === "object" && c.a != null) a = c.a;
+  if (a != null && a < 0.999) {
+    return `<a:alpha val="${Math.round(Math.max(0, Math.min(1, a)) * 100000)}"/>`;
   }
   return "";
 }
@@ -15339,7 +15380,7 @@ function pptxGradFill(g) {
 function pptxLine(w, color) {
   const hex = pptxColorHex(color);
   if (!hex || !(w > 0)) return "<a:ln><a:noFill/></a:ln>";
-  return `<a:ln w="${pptxEmu(w)}"><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></a:ln>`;
+  return `<a:ln w="${pptxEmu(w)}"><a:solidFill><a:srgbClr val="${hex}">${pptxAlphaTag(color)}</a:srgbClr></a:solidFill></a:ln>`;
 }
 
 function pptxFontName(ff) {
@@ -15377,10 +15418,15 @@ function pptxBox(id, b) {
     + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
 }
 
-// e: { cx,cy,r, bg?|fill?:color, borderWidth?,borderColor? | line?:{w,color} }
+// e: { cx,cy,r, bg?|fill?:color, gradient?:IR, borderWidth?,borderColor? | line?:{w,color} }
 function pptxEllipse(id, e) {
   const x = e.cx - e.r, y = e.cy - e.r, w = e.r * 2, h = e.r * 2;
-  const fill = (e.bg || e.fill) ? pptxSolidFill(e.bg || e.fill) : "<a:noFill/>";
+  // gradient-aware fill (parity with pptxBox) — a gradient-filled circular
+  // shape emits <a:gradFill> instead of flattening to a solid. (Extraction via
+  // extractCircles does not currently populate `gradient`, so this fires only
+  // for hand-authored IR today; kept for emitter completeness/parity.)
+  const grad = e.gradient ? pptxGradFill(e.gradient) : null;
+  const fill = grad || ((e.bg || e.fill) ? pptxSolidFill(e.bg || e.fill) : "<a:noFill/>");
   let line = "<a:ln><a:noFill/></a:ln>";
   if (e.line) line = pptxLine(e.line.w, e.line.color);
   else if (e.borderWidth > 0 && e.borderColor) line = pptxLine(e.borderWidth, e.borderColor);
