@@ -15438,6 +15438,9 @@ function pptxEllipse(id, e) {
 
 // t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align? }
 // One text box per source text element; PowerPoint reflows/wraps within the box.
+// `text` may contain explicit "\n" line breaks (from source <br> elements — see
+// pptxExtractTextBoxes) — each becomes its OWN <a:p> so multi-line text/heading/
+// quote/callout blocks keep their line breaks instead of fusing into one run.
 function pptxTextSp(id, t) {
   const size = t.fontSize != null ? t.fontSize : (t.size != null ? t.size : 18);
   const bold = t.bold != null ? t.bold : (t.fontWeight >= 600);
@@ -15449,10 +15452,17 @@ function pptxTextSp(id, t) {
   const rPr = `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""} dirty="0">`
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
+  const lines = String(t.text == null ? "" : t.text).split("\n");
+  const paras = lines.map((line) => {
+    const run = line
+      ? `<a:r>${rPr}<a:t>${pptxEsc(line)}</a:t></a:r>`
+      : `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
+    return `<a:p><a:pPr algn="${algn}"/>${run}</a:p>`;
+  }).join("");
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`
     + `<p:spPr>${pptxXfrm(t.x, t.y, t.w, t.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
     + `<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
-    + `<a:p><a:pPr algn="${algn}"/><a:r>${rPr}<a:t>${pptxEsc(t.text)}</a:t></a:r></a:p></p:txBody></p:sp>`;
+    + paras + `</p:txBody></p:sp>`;
 }
 
 // m: { x,y,w,h }, rid → embedded picture (raster fallback for image-heavy slides)
@@ -15516,7 +15526,20 @@ function pptxTableFrame(id, tbl) {
   const grid = Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join("");
   const firstRow = tbl.rows[0] && tbl.rows[0].header ? "1" : "0";
   const trs = (tbl.rows || []).map((row) => {
-    const cells = (row.cells || []).map((c) => pptxTableCellXml(c, tbl, !!row.header, row.bg)).join("");
+    // Every <a:tr> MUST carry exactly `cols` <a:tc> children to match the
+    // declared <a:tblGrid> — a short source row (fewer cells than the column
+    // count, which Vela's table renderer/deck format both permit) pad with
+    // empty cells; an over-long row (shouldn't happen, but be defensive) is
+    // truncated. Ragged rows otherwise emit malformed OOXML that LibreOffice
+    // mis-renders (shifted banding/missing text) and PowerPoint may flag as
+    // needing repair.
+    let rowCells = row.cells || [];
+    if (rowCells.length < cols) {
+      rowCells = rowCells.concat(Array.from({ length: cols - rowCells.length }, () => ({ text: "" })));
+    } else if (rowCells.length > cols) {
+      rowCells = rowCells.slice(0, cols);
+    }
+    const cells = rowCells.map((c) => pptxTableCellXml(c, tbl, !!row.header, row.bg)).join("");
     return `<a:tr h="${pptxEmu(row.h || 24)}">${cells}</a:tr>`;
   }).join("");
   return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table ${id}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>`
@@ -15951,13 +15974,19 @@ function pptxExtractTextBoxes(container, containerRect) {
     if (!color) continue; // skip genuinely invisible / unresolvable text
 
     // Full visible text of THIS element's own direct text nodes (children with
-    // their own text become their own boxes).
-    let text = "";
+    // their own text become their own boxes). part-blocks.jsx's parseInline()
+    // renders an explicit "\n" in the source as a sibling <br> between text
+    // nodes (see renderTextWithLineBreaks-equivalent line-splitting there) — walk
+    // direct children in order and start a new line at each <br> so those breaks
+    // survive into the emitted text instead of the adjacent lines fusing together.
+    let lines = [""];
     for (const n of parent.childNodes) {
-      if (n.nodeType === 3) text += n.textContent;
+      if (n.nodeType === 3) lines[lines.length - 1] += n.textContent;
+      else if (n.nodeType === 1 && n.tagName === "BR") lines.push("");
     }
-    text = text.replace(/\s+/g, " ").trim();
-    if (!text) continue;
+    lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
+    let text = lines.join("\n");
+    if (!text.trim()) continue;
     const tt = style.textTransform;
     if (tt === "uppercase") text = text.toUpperCase();
     else if (tt === "lowercase") text = text.toLowerCase();
