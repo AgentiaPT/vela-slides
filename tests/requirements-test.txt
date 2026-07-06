@@ -1,0 +1,10 @@
+# TEST-ONLY dependencies. Never imported by Vela app code — used solely by the
+# test suite to verify build artifacts. Install with:
+#   pip install -r tests/requirements-test.txt
+#
+# python-pptx: read-back verification for the native .pptx export e2e test
+# (tests/test_pptx_export.cjs drives the export; tests/test_vela.py's
+# run_pptx_e2e_tests() opens the produced deck to assert native text boxes,
+# autoshapes, pictures, and tables). Optional at runtime — the suite skips the
+# read-back assertions cleanly when it is not installed.
+python-pptx>=1.0
