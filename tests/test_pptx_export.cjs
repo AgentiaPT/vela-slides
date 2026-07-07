@@ -253,6 +253,24 @@ async function driveExport(page) {
       check('at least one embedded SVG (asvg:svgBlip)', /svgBlip/.test(allSlideXml));
       check('at least one native table (<a:tbl>)', /<a:tbl[ >]/.test(allSlideXml));
 
+      // Regression: a <a:tbl> with banding attrs but NO <a:tableStyleId> is a
+      // PowerPoint "repair" trigger (LibreOffice / python-pptx tolerate it, real
+      // PowerPoint does not). Every table must carry a tableStyleId, and the
+      // package must ship a matching tableStyles.xml part referenced from the
+      // presentation rels + declared in [Content_Types].xml.
+      const tblCount = (allSlideXml.match(/<a:tbl[ >]/g) || []).length;
+      const styleIdCount = (allSlideXml.match(/<a:tableStyleId>/g) || []).length;
+      check('every native table carries a <a:tableStyleId>',
+        tblCount > 0 && styleIdCount >= tblCount, `tables=${tblCount} styleIds=${styleIdCount}`);
+      check('package ships ppt/tableStyles.xml when a table is present',
+        zip.names.includes('ppt/tableStyles.xml'));
+      const presRels = zip.part('ppt/_rels/presentation.xml.rels') || '';
+      check('presentation rels reference tableStyles.xml',
+        /Target="tableStyles\.xml"/.test(presRels) && /relationships\/tableStyles/.test(presRels));
+      const ctypes = zip.part('[Content_Types].xml') || '';
+      check('[Content_Types].xml declares the tableStyles part',
+        /PartName="\/ppt\/tableStyles\.xml"/.test(ctypes) && /presentationml\.tableStyles\+xml/.test(ctypes));
+
       // Regression: the editor's always-on bottom-right slide-position pill
       // ("01 / 05") is UI chrome, not slide content — it must never leak into
       // exported text runs (it lacked a data-no-pdf marker; extractBoxes also
