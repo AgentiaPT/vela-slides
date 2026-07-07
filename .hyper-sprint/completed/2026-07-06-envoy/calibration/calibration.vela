@@ -1,0 +1,30 @@
+{
+  "deckTitle": "Font Scale Calibration",
+  "lanes": [
+    {
+      "title": "Calibration",
+      "items": [
+        {
+          "title": "Calib",
+          "status": "todo",
+          "slides": [
+            {
+              "bg": "#000000",
+              "color": "#ffffff",
+              "accent": "#00ff00",
+              "align": "center",
+              "duration": 60,
+              "blocks": [
+                { "type": "heading", "text": "HHHHHHHH", "color": "#ffffff", "style": { "fontSize": 120, "lineHeight": 1.2, "fontWeight": 700 } },
+                { "type": "spacer", "size": 40 },
+                { "type": "text", "text": "HHHHHHHH", "color": "#ffffff", "style": { "fontSize": 48, "lineHeight": 1.4, "fontWeight": 400 } },
+                { "type": "spacer", "size": 40 },
+                { "type": "callout", "text": "RULER", "bg": "#00ff00", "color": "#000000", "style": { "background": "#00ff00", "width": 480 } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
