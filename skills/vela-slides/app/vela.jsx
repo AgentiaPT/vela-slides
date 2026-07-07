@@ -99,9 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.85";
+const VELA_VERSION = "12.86";
 const VELA_CHANGELOG = [
-  { v: "12.85", d: ["PowerPoint export: fixed the repair prompt real PowerPoint showed on first open of decks with a table — exported tables now carry a table-style reference and the package ships the matching table-styles part.", "Added a regression test."] },
+  { v: "12.86", d: ["PowerPoint export: fixed the repair prompt real PowerPoint showed on first open of decks with a table — exported tables now carry a table-style reference and the package ships the matching table-styles part.", "Fixed exported text rendering ~25% too small — font sizes now match the slide's 1:1 canvas-px→point scale, sized correctly relative to shapes and boxes.", "Regression tests added for both."] },
   { v: "12.84", d: ["Native PowerPoint (.pptx) export added to the Export menu — editable text boxes, shapes and tables (not flattened images).", "Vector diagrams (icons, flow, cycle) embed as native SVG with a PNG fallback for older PowerPoint; image-heavy slides use a raster hybrid.", "Gradient and per-color/alpha fidelity carried through; optional 'Made with Vela' caption.", "New Playwright + python-pptx e2e test drives the real export path and reads the deck back."] },
   { v: "12.83", d: "Fixed a path-resolution bug in the offline render harness that could silently build the wrong git tree's app when invoked from outside its own directory; added an explicit override." },
   { v: "12.82", d: ["New Deck dialog is now the single entry point — removed the separate 'From Source' dialog.", "Starting Prompt is optional and takes long pasted text (README / article / outline) directly; leaving it empty creates a fresh blank deck in a new file.", "Dropped in-dialog image attachments — instead, place files in the deck's folder and reference them by name in the prompt.", "An empty deck is now immediately editable: it opens with a fresh, ready-to-name section so you can add slides right away instead of a 'New Deck' prompt."] },
@@ -15269,8 +15269,10 @@ function StandaloneHtmlModal({ state, onClose }) {
 // Public entry: buildPptx(pages, opts) → Blob (see JSDoc on buildPptx).
 //
 // Units: Vela canvas is 960×540 px; a 16:9 PPT slide is 12192000×6858000 EMU,
-//        so 1 px = 12700 EMU exactly. Font px → centipoints: round(px*0.75*100).
-//        Geometry fed to buildPptx is in 960×540 px space (the fitScale
+//        so 1 px = 12700 EMU exactly. 12700 EMU is also exactly 1 point, so the
+//        fixed slide size bakes a 1:1 canvas-px→point mapping — shared by geometry
+//        (pptxEmu) AND font sizes. Font px → centipoints: round(px*100) (1 pt =
+//        100 cpt). Geometry fed to buildPptx is in 960×540 px space (the fitScale
 //        shrink-to-fit is already baked into the DOM by getBoundingClientRect /
 //        getVisualScale, so no extra scaling is applied here).
 // ─────────────────────────────────────────────────────────────────────────
@@ -15279,7 +15281,14 @@ const PPTX_EMU_PER_PX = 12700;
 const PPTX_SLIDE_W = VIRTUAL_W; // 960
 const PPTX_SLIDE_H = VIRTUAL_H; // 540
 const pptxEmu = (px) => Math.round((px || 0) * PPTX_EMU_PER_PX);
-const pptxCpt = (px) => Math.round((px || 0) * 0.75 * 100); // px → centipoints
+// Canvas px → font centipoints. The fixed 16:9 slide size bakes a clean 1:1
+// canvas-px→point mapping (12192000 EMU / 960 px = 12700 EMU/px, and 12700 EMU
+// = exactly 1 point), the SAME mapping pptxEmu uses for all shape geometry. So a
+// DOM-measured px font size maps directly to that many points — 1 pt = 100
+// centipoints. (A prior ×0.75 CSS-px→pt factor was a double conversion on top of
+// the already-1:1 slide size, rendering text ~25% smaller than its surrounding
+// shapes/boxes, which are placed with the un-shrunk px→EMU constant.)
+const pptxCpt = (px) => Math.round((px || 0) * 100); // px → centipoints (1 canvas px = 1 pt)
 const pptxEsc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;")

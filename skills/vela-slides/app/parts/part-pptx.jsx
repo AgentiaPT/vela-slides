@@ -14,8 +14,10 @@
 // Public entry: buildPptx(pages, opts) → Blob (see JSDoc on buildPptx).
 //
 // Units: Vela canvas is 960×540 px; a 16:9 PPT slide is 12192000×6858000 EMU,
-//        so 1 px = 12700 EMU exactly. Font px → centipoints: round(px*0.75*100).
-//        Geometry fed to buildPptx is in 960×540 px space (the fitScale
+//        so 1 px = 12700 EMU exactly. 12700 EMU is also exactly 1 point, so the
+//        fixed slide size bakes a 1:1 canvas-px→point mapping — shared by geometry
+//        (pptxEmu) AND font sizes. Font px → centipoints: round(px*100) (1 pt =
+//        100 cpt). Geometry fed to buildPptx is in 960×540 px space (the fitScale
 //        shrink-to-fit is already baked into the DOM by getBoundingClientRect /
 //        getVisualScale, so no extra scaling is applied here).
 // ─────────────────────────────────────────────────────────────────────────
@@ -24,7 +26,14 @@ const PPTX_EMU_PER_PX = 12700;
 const PPTX_SLIDE_W = VIRTUAL_W; // 960
 const PPTX_SLIDE_H = VIRTUAL_H; // 540
 const pptxEmu = (px) => Math.round((px || 0) * PPTX_EMU_PER_PX);
-const pptxCpt = (px) => Math.round((px || 0) * 0.75 * 100); // px → centipoints
+// Canvas px → font centipoints. The fixed 16:9 slide size bakes a clean 1:1
+// canvas-px→point mapping (12192000 EMU / 960 px = 12700 EMU/px, and 12700 EMU
+// = exactly 1 point), the SAME mapping pptxEmu uses for all shape geometry. So a
+// DOM-measured px font size maps directly to that many points — 1 pt = 100
+// centipoints. (A prior ×0.75 CSS-px→pt factor was a double conversion on top of
+// the already-1:1 slide size, rendering text ~25% smaller than its surrounding
+// shapes/boxes, which are placed with the un-shrunk px→EMU constant.)
+const pptxCpt = (px) => Math.round((px || 0) * 100); // px → centipoints (1 canvas px = 1 pt)
 const pptxEsc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;")

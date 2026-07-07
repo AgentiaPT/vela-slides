@@ -278,6 +278,18 @@ async function driveExport(page) {
       const counterLeak = allSlideXml.match(/<a:t[ >][^<]*\d{2}\s*\/\s*\d{2}[^<]*<\/a:t>/);
       check('no slide-position counter ("NN / NN") leaked into text runs', !counterLeak,
         counterLeak ? counterLeak[0] : '');
+
+      // Regression: font sizes must use the fixed slide's 1:1 canvas-px->point
+      // mapping (sz cpt = round(px*100)), NOT an extra CSS-px->pt 0.75 shrink on
+      // top of it — the double conversion rendered text ~25% smaller than the
+      // shapes/boxes around it (image-measured; see
+      // .hyper-sprint/completed/2026-07-06-envoy/font-scale-calibration.md).
+      // tech-talk's largest heading exports at ~4160 cpt (41.6pt); the 0.75 bug
+      // would drop the largest run to ~3120 cpt, so a 3600-cpt floor catches it.
+      const szVals = (allSlideXml.match(/sz="(\d+)"/g) || []).map(s => parseInt(s.replace(/\D/g, ''), 10));
+      const maxSz = szVals.length ? Math.max(...szVals) : 0;
+      check('font sizes use 1:1 px->pt scale (largest run >= 3600 cpt, not 0.75-shrunk)',
+        maxSz >= 3600, `maxSz=${maxSz}`);
     }
 
     await page.close();
