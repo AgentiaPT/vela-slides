@@ -3379,7 +3379,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         })()}
         {branding?.enabled
           ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -12680,11 +12680,11 @@ function measureText(text, fontSize) {
 
 function extractBoxes(container, containerRect) {
   const boxes = [];
-  const skipSelectors = "[data-zoom-badge], [data-no-pdf]";
   const elements = container.querySelectorAll("*");
   const scaleCache = new Map();
   for (const el of elements) {
     if (el.tagName === "SVG" || el.closest("svg")) continue;
+    if (el.closest("[data-zoom-badge], [data-no-pdf]")) continue;
     const style = window.getComputedStyle(el);
     if (_isExportHidden(style)) continue;
     // Skip elements that will be drawn as circles (borderRadius >= 50% of size AND roughly square)

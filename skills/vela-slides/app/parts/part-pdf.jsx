@@ -1378,11 +1378,11 @@ function measureText(text, fontSize) {
 
 function extractBoxes(container, containerRect) {
   const boxes = [];
-  const skipSelectors = "[data-zoom-badge], [data-no-pdf]";
   const elements = container.querySelectorAll("*");
   const scaleCache = new Map();
   for (const el of elements) {
     if (el.tagName === "SVG" || el.closest("svg")) continue;
+    if (el.closest("[data-zoom-badge], [data-no-pdf]")) continue;
     const style = window.getComputedStyle(el);
     if (_isExportHidden(style)) continue;
     // Skip elements that will be drawn as circles (borderRadius >= 50% of size AND roughly square)

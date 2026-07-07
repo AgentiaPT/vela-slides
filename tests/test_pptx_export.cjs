@@ -252,6 +252,14 @@ async function driveExport(page) {
       check('at least one native autoshape (<a:prstGeom>)', /<a:prstGeom/.test(allSlideXml));
       check('at least one embedded SVG (asvg:svgBlip)', /svgBlip/.test(allSlideXml));
       check('at least one native table (<a:tbl>)', /<a:tbl[ >]/.test(allSlideXml));
+
+      // Regression: the editor's always-on bottom-right slide-position pill
+      // ("01 / 05") is UI chrome, not slide content — it must never leak into
+      // exported text runs (it lacked a data-no-pdf marker; extractBoxes also
+      // had a dead skipSelectors check that let its pill background through).
+      const counterLeak = allSlideXml.match(/<a:t[ >][^<]*\d{2}\s*\/\s*\d{2}[^<]*<\/a:t>/);
+      check('no slide-position counter ("NN / NN") leaked into text runs', !counterLeak,
+        counterLeak ? counterLeak[0] : '');
     }
 
     await page.close();
