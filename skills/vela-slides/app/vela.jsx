@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.84";
+const VELA_VERSION = "12.85";
 const VELA_CHANGELOG = [
+  { v: "12.85", d: ["PowerPoint export: fixed the repair prompt real PowerPoint showed on first open of decks with a table — exported tables now carry a table-style reference and the package ships the matching table-styles part.", "Added a regression test."] },
   { v: "12.84", d: ["Native PowerPoint (.pptx) export added to the Export menu — editable text boxes, shapes and tables (not flattened images).", "Vector diagrams (icons, flow, cycle) embed as native SVG with a PNG fallback for older PowerPoint; image-heavy slides use a raster hybrid.", "Gradient and per-color/alpha fidelity carried through; optional 'Made with Vela' caption.", "New Playwright + python-pptx e2e test drives the real export path and reads the deck back."] },
   { v: "12.83", d: "Fixed a path-resolution bug in the offline render harness that could silently build the wrong git tree's app when invoked from outside its own directory; added an explicit override." },
   { v: "12.82", d: ["New Deck dialog is now the single entry point — removed the separate 'From Source' dialog.", "Starting Prompt is optional and takes long pasted text (README / article / outline) directly; leaving it empty creates a fresh blank deck in a new file.", "Dropped in-dialog image attachments — instead, place files in the deck's folder and reference them by name in the prompt.", "An empty deck is now immediately editable: it opens with a fresh, ready-to-name section so you can add slides right away instead of a 'New Deck' prompt."] },
@@ -15498,6 +15499,20 @@ function pptxLinkSp(id, rid, l) {
 // picture). tbl IR: { x,y,w,h, cols, borderColor?, borderWidth?,
 //   rows:[{ header?:bool, bg?:color, h?:px, cells:[{text, color?, fontWeight?,
 //   fontSize?, align?, fontFamily?}] }] }. Geometry in 960×540 px space.
+// A `<a:tbl>` that carries banding attributes (firstRow/bandRow) MUST reference a
+// table style via `<a:tblPr><a:tableStyleId>…`; a table with NO tableStyleId is a
+// well-documented PowerPoint "repair" trigger (LibreOffice / python-pptx tolerate
+// it, real PowerPoint does not). We paint every cell's own borders/fills/text
+// explicitly in <a:tcPr>, so we point at the built-in "No Style, No Grid" style
+// (GUID below) — it adds no borders/banding of its own, letting our per-cell paint
+// fully control appearance. The GUID must exist as a built-in style OR be defined
+// in a tableStyles.xml part; this one is built-in, and buildPptx also ships a
+// minimal tableStyles.xml (with matching `def`) referenced from presentation rels,
+// mirroring the known-good package python-pptx emits.
+const PPTX_TABLE_STYLE_ID = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}";
+const PPTX_TABLE_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="${PPTX_TABLE_STYLE_ID}"/>`;
+
 function pptxTableCellXml(cell, tbl, isHeader, rowBg) {
   const size = cell.fontSize || (isHeader ? 11 : 13);
   const bold = (cell.fontWeight || 400) >= 600;
@@ -15545,7 +15560,7 @@ function pptxTableFrame(id, tbl) {
   return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table ${id}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>`
     + `<p:xfrm><a:off x="${pptxEmu(tbl.x)}" y="${pptxEmu(tbl.y)}"/><a:ext cx="${totalEmu}" cy="${pptxEmu(Math.max(1, tbl.h))}"/></p:xfrm>`
     + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">`
-    + `<a:tbl><a:tblPr firstRow="${firstRow}" bandRow="1"/><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>`
+    + `<a:tbl><a:tblPr firstRow="${firstRow}" bandRow="1"><a:tableStyleId>${PPTX_TABLE_STYLE_ID}</a:tableStyleId></a:tblPr><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>`
     + `</a:graphicData></a:graphic></p:graphicFrame>`;
 }
 
@@ -15718,7 +15733,7 @@ function pptxBuildSlide(page, idx) {
 }
 
 // ── package skeleton (shared master + layout + theme) ───────────────────────
-const pptxContentTypes = (slideCount, mediaExts) => {
+const pptxContentTypes = (slideCount, mediaExts, hasTables) => {
   const defaults = new Set(["rels", "xml", ...mediaExts]);
   const defTags = [...defaults].map((e) => {
     const ct = e === "rels" ? "application/vnd.openxmlformats-package.relationships+xml"
@@ -15732,6 +15747,8 @@ const pptxContentTypes = (slideCount, mediaExts) => {
     + `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>`
     + `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`
     + `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>`;
+  if (hasTables)
+    overrides += `<Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>`;
   for (let i = 1; i <= slideCount; i++)
     overrides += `<Override PartName="/ppt/slides/slide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
@@ -15756,12 +15773,14 @@ function pptxPresentationXml(slideCount, w, h) {
     + `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
 }
 
-function pptxPresentationRels(slideCount) {
+function pptxPresentationRels(slideCount, hasTables) {
   let r = "";
   for (let i = 1; i <= slideCount; i++)
     r += `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i}.xml"/>`;
   r += `<Relationship Id="rId${slideCount + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>`;
   r += `<Relationship Id="rId${slideCount + 3}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>`;
+  if (hasTables)
+    r += `<Relationship Id="rId${slideCount + 4}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${r}</Relationships>`;
 }
 
@@ -15919,6 +15938,11 @@ function buildPptx(pages, opts) {
   const allMedia = [];
   const W = (list[0] && list[0].w) || PPTX_SLIDE_W;
   const H = (list[0] && list[0].h) || PPTX_SLIDE_H;
+  // A table needs a tableStyleId + tableStyles.xml part to open in PowerPoint
+  // without a repair prompt (see PPTX_TABLE_STYLE_ID). Only ship that part when a
+  // deck actually has a table, so table-free decks stay minimal.
+  const hasTables = list.some((p) => p && Array.isArray(p.tables)
+    && p.tables.some((t) => t && Array.isArray(t.rows) && t.rows.length));
 
   list.forEach((page, i) => {
     const { slideXml, relsXml, media } = pptxBuildSlide(page || {}, i + 1);
@@ -15930,10 +15954,11 @@ function buildPptx(pages, opts) {
     }
   });
 
-  files.unshift({ name: "[Content_Types].xml", data: pptxContentTypes(list.length, [...mediaExts]) });
+  files.unshift({ name: "[Content_Types].xml", data: pptxContentTypes(list.length, [...mediaExts], hasTables) });
   files.push({ name: "_rels/.rels", data: PPTX_ROOT_RELS });
   files.push({ name: "ppt/presentation.xml", data: pptxPresentationXml(list.length, W, H) });
-  files.push({ name: "ppt/_rels/presentation.xml.rels", data: pptxPresentationRels(list.length) });
+  files.push({ name: "ppt/_rels/presentation.xml.rels", data: pptxPresentationRels(list.length, hasTables) });
+  if (hasTables) files.push({ name: "ppt/tableStyles.xml", data: PPTX_TABLE_STYLES });
   files.push({ name: "ppt/theme/theme1.xml", data: PPTX_THEME });
   files.push({ name: "ppt/slideMasters/slideMaster1.xml", data: PPTX_SLIDE_MASTER });
   files.push({ name: "ppt/slideMasters/_rels/slideMaster1.xml.rels", data: PPTX_SLIDE_MASTER_RELS });
