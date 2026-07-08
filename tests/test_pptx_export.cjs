@@ -290,6 +290,121 @@ async function driveExport(page) {
       const maxSz = szVals.length ? Math.max(...szVals) : 0;
       check('font sizes use 1:1 px->pt scale (largest run >= 3600 cpt, not 0.75-shrunk)',
         maxSz >= 3600, `maxSz=${maxSz}`);
+
+      // Regression: every emitted font-size sz must sit in OOXML's valid
+      // ST_TextFontSize range [100, 400000] (1pt–4000pt). A run with sz="0" — which
+      // happens when an ancestor's collapsed/scale(0) transform zeroes the measured
+      // font size — is a schema violation real PowerPoint rejects on open ("found a
+      // problem with content … removed it" repair). pptxCpt clamps to that range.
+      const badSz = szVals.filter(v => v < 100 || v > 400000);
+      check('every font-size sz is in OOXML range [100,400000] (no sz="0")',
+        badSz.length === 0, `out-of-range=${JSON.stringify(badSz.slice(0, 8))}`);
+
+      // Directly exercise the clamp: a text run whose measured size collapsed to 0
+      // (getVisualScale → 0) must still emit a valid sz, not sz="0". Drives the
+      // in-page emitter so it's independent of whether the deck happens to contain
+      // a scale-0 element.
+      const clampSz = await page.evaluate(() => {
+        if (typeof pptxTextSp !== 'function' || typeof pptxCpt !== 'function') return null;
+        const xml = pptxTextSp(2, { x: 0, y: 0, w: 100, h: 20, text: 'x', fontSize: 0 });
+        const m = xml.match(/sz="(\d+)"/);
+        return { run: m ? parseInt(m[1], 10) : null, zero: pptxCpt(0), neg: pptxCpt(-5), huge: pptxCpt(1e9) };
+      });
+      if (clampSz === null) {
+        check('clamp unit: emitter fns reachable in page scope', false, 'pptxTextSp/pptxCpt not global');
+      } else {
+        check('clamp unit: fontSize:0 text emits valid sz (>=100, not 0)',
+          clampSz.run !== null && clampSz.run >= 100, `sz=${clampSz.run}`);
+        check('clamp unit: pptxCpt clamps 0/-5 up to 100 and 1e9 down to 400000',
+          clampSz.zero === 100 && clampSz.neg === 100 && clampSz.huge === 400000,
+          `zero=${clampSz.zero} neg=${clampSz.neg} huge=${clampSz.huge}`);
+      }
+
+      // Regression: inline **bold** / *italic* segments (parseInline renders them as
+      // <span style="font-weight:700"> / <em> INSIDE the paragraph) must stay as RUNS
+      // in the SAME text box — not spawn a separate box floating at the span's mid-line
+      // rect (the misplaced-bold bug). Also: a flex/grid-centered glyph (numbered step
+      // circle) must export centered, not left-hugging. Drives both the emitter (runs →
+      // multiple <a:r>) and the DOM extractor directly.
+      const inlineFmt = await page.evaluate(() => {
+        if (typeof pptxTextSp !== 'function' || typeof pptxExtractTextBoxes !== 'function') return null;
+        // (a) emitter: a runs[] text box emits one <a:r> per run with b="1" ONLY on bold.
+        const xml = pptxTextSp(3, { x: 0, y: 0, w: 300, h: 40, fontSize: 18, color: { r: 0, g: 0, b: 0, a: 1 },
+          runs: [[{ text: 'plain ' }, { text: 'bold', bold: true }, { text: ' end' }]] });
+        const runCount = (xml.match(/<a:r>/g) || []).length;
+        const boldAttrCount = (xml.match(/ b="1"/g) || []).length;
+        const boldOnRightRun = /<a:rPr[^>]* b="1"[^>]*>[\s\S]*?<a:t>bold<\/a:t>/.test(xml);
+        // (b) extractor: a paragraph with an inline bold span → ONE box, a bold run, full text.
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:400px';
+        host.innerHTML = '<div style="color:#fff;font-size:16px">Slide sorter. '
+          + '<span style="font-weight:700">Drag-and-drop</span> reorder.</div>';
+        document.body.appendChild(host);
+        // (c) extractor: a flex justify-content:center glyph → align "center".
+        const circ = document.createElement('div');
+        circ.style.cssText = 'position:absolute;left:0;top:0;width:400px';
+        circ.innerHTML = '<div style="width:28px;height:28px;display:flex;align-items:center;'
+          + 'justify-content:center;color:#fff;font-size:11px">1</div>';
+        document.body.appendChild(circ);
+        let boxes = [], circBoxes = [];
+        try { boxes = pptxExtractTextBoxes(host, host.getBoundingClientRect()) || []; } catch (e) {}
+        try { circBoxes = pptxExtractTextBoxes(circ, circ.getBoundingClientRect()) || []; } catch (e) {}
+        const withText = boxes.filter((b) => b.text && b.text.indexOf('Drag-and-drop') >= 0);
+        const box = withText[0];
+        const oneBox = withText.length === 1;
+        const hasBoldRun = !!(box && box.runs && box.runs.some((ln) => ln.some((r) => r.bold && /Drag-and-drop/.test(r.text))));
+        const fullText = !!(box && /Slide sorter\.\s*Drag-and-drop\s*reorder\./.test(String(box.text).replace(/\n/g, ' ')));
+        const circBox = circBoxes.find((b) => String(b.text).trim() === '1');
+        const centered = !!(circBox && circBox.align === 'center');
+        document.body.removeChild(host);
+        document.body.removeChild(circ);
+        return { runCount, boldAttrCount, boldOnRightRun, oneBox, hasBoldRun, fullText, centered };
+      });
+      if (inlineFmt === null) {
+        check('inline-fmt unit: emitter/extractor reachable in page scope', false, 'pptxTextSp/pptxExtractTextBoxes not global');
+      } else {
+        check('inline bold: runs[] text box emits one <a:r> per run with b="1" only on the bold run',
+          inlineFmt.runCount >= 3 && inlineFmt.boldAttrCount === 1 && inlineFmt.boldOnRightRun, JSON.stringify(inlineFmt));
+        check('inline bold: a paragraph with a bold span extracts as ONE box (no floating bold), bold run + full text kept',
+          inlineFmt.oneBox && inlineFmt.hasBoldRun && inlineFmt.fullText, JSON.stringify(inlineFmt));
+        check('flex-center: a justify-content:center glyph (step-number circle) exports align="center"',
+          inlineFmt.centered, JSON.stringify(inlineFmt));
+      }
+
+      // Regression: table cell fonts must carry the fitScale shrink-to-fit factor
+      // (same as text boxes). Geometry from getBoundingClientRect is already scaled,
+      // but getComputedStyle().fontSize is NOT — so an unscaled cell font oversizes
+      // rows on a shrunk slide, growing the table past its region and overflowing the
+      // blocks below (deck slide "Tables, Tags & Progress").
+      const tblScale = await page.evaluate(() => {
+        if (typeof pptxExtractTables !== 'function' || typeof getVisualScale !== 'function') return null;
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:800px;height:400px';
+        host.innerHTML =
+          '<div style="transform:scale(0.5);transform-origin:top left;width:800px">'
+            + '<div data-block-type="table">'
+              + '<div>'
+                + '<div style="display:grid;grid-template-columns:1fr 1fr;width:800px">'
+                  + '<div style="font-size:20px;padding:8px">Cell A</div>'
+                  + '<div style="font-size:20px;padding:8px">Cell B</div>'
+                + '</div>'
+              + '</div>'
+            + '</div>'
+          + '</div>';
+        document.body.appendChild(host);
+        let tables = [];
+        try { tables = pptxExtractTables(host, host.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(host);
+        const cell = tables[0] && tables[0].rows[0] && tables[0].rows[0].cells[0];
+        return { found: !!cell, fontSize: cell ? cell.fontSize : null };
+      });
+      if (tblScale === null) {
+        check('table-scale unit: pptxExtractTables/getVisualScale reachable in page scope', false, 'fns not global');
+      } else {
+        // 20px * 0.5 fitScale ≈ 10 (tolerance for sub-px rounding); the bug left it 20.
+        check('table cell font carries the fitScale factor (20px @ scale .5 → ~10, not 20)',
+          tblScale.found && tblScale.fontSize > 8 && tblScale.fontSize < 12, JSON.stringify(tblScale));
+      }
     }
 
     await page.close();

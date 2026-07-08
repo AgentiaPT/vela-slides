@@ -2,18 +2,18 @@
   "deckTitle": "Vela Slides — Live Demo",
   "lanes": [
     {
-      "id": "3275f63b",
+      "id": "5e884eb9",
       "title": "Introduction",
       "collapsed": false,
       "items": [
         {
-          "id": "ea774b27",
+          "id": "f491f168",
           "title": "Title",
           "notes": "",
           "comments": [],
           "status": "done",
           "importance": "must",
-          "order": 0,
+          "order": 1,
           "slides": [
             {
               "title": "Vela Slides",
@@ -161,27 +161,37 @@
             {
               "title": "By the Numbers",
               "duration": 30,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
+              "padding": "44px 64px",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
               "color": "#e2e8f0",
               "accent": "#3b82f6",
               "blocks": [
                 {
-                  "type": "heading",
-                  "text": "Vela at a Glance",
-                  "size": "2xl",
+                  "type": "badge",
+                  "text": "BY THE NUMBERS",
                   "icon": "BarChart3",
-                  "iconColor": "#3b82f6",
-                  "align": "center"
+                  "color": "#93c5fd",
+                  "bg": "rgba(59,130,246,0.15)"
                 },
                 {
                   "type": "spacer",
-                  "h": 24
+                  "h": 10
+                },
+                {
+                  "type": "heading",
+                  "text": "Vela at a Glance",
+                  "size": "2xl",
+                  "align": "left",
+                  "color": "#f8fafc"
+                },
+                {
+                  "type": "spacer",
+                  "h": 22
                 },
                 {
                   "type": "grid",
                   "cols": 4,
-                  "gap": 20,
+                  "gap": 18,
                   "items": [
                     {
                       "blocks": [
@@ -190,14 +200,16 @@
                           "value": "27",
                           "label": "BLOCK TYPES",
                           "icon": "Layers",
-                          "iconColor": "#3b82f6",
+                          "iconColor": "#60a5fa",
                           "size": "3xl",
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(59,130,246,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(59,130,246,0.25)",
+                      "align": "center"
                     },
                     {
                       "blocks": [
@@ -211,9 +223,11 @@
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(167,139,250,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(167,139,250,0.25)",
+                      "align": "center"
                     },
                     {
                       "blocks": [
@@ -227,9 +241,11 @@
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(52,211,153,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(52,211,153,0.25)",
+                      "align": "center"
                     },
                     {
                       "blocks": [
@@ -243,9 +259,11 @@
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(245,158,11,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(245,158,11,0.25)",
+                      "align": "center"
                     }
                   ]
                 },
@@ -254,26 +272,116 @@
                   "h": 24
                 },
                 {
-                  "type": "quote",
+                  "type": "callout",
                   "text": "The gap between thinking and presenting should be zero.",
-                  "author": "Vela design philosophy",
-                  "size": "lg",
-                  "color": "#94a3b8"
+                  "title": "Vela design philosophy",
+                  "icon": "Sparkles",
+                  "bg": "rgba(59,130,246,0.12)",
+                  "border": "1px solid rgba(59,130,246,0.35)",
+                  "color": "#e2e8f0"
                 }
               ]
             }
           ],
           "createdAt": "2026-03-23T23:14:42.515Z"
+        },
+        {
+          "id": "a8180106",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 2,
+          "slides": [],
+          "createdAt": "2026-07-07T06:21:29.438Z"
+        },
+        {
+          "id": "ffb68be0",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 3,
+          "slides": [],
+          "createdAt": "2026-07-07T07:05:59.935Z"
+        },
+        {
+          "id": "35215c75",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 4,
+          "slides": [],
+          "createdAt": "2026-07-07T07:08:12.808Z"
+        },
+        {
+          "id": "634dbaa8",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 5,
+          "slides": [],
+          "createdAt": "2026-07-07T08:54:15.569Z"
+        },
+        {
+          "id": "5095b36a",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 6,
+          "slides": [],
+          "createdAt": "2026-07-07T09:32:01.428Z"
+        },
+        {
+          "id": "f8c03b2f",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 7,
+          "slides": [],
+          "createdAt": "2026-07-07T09:44:20.252Z"
+        },
+        {
+          "id": "4ad39d1d",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 8,
+          "slides": [],
+          "createdAt": "2026-07-07T09:54:52.677Z"
+        },
+        {
+          "id": "ef820427",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 9,
+          "slides": [],
+          "createdAt": "2026-07-07T14:12:29.077Z"
         }
       ]
     },
     {
-      "id": "a4846798",
+      "id": "b2c6ecc1",
       "title": "What's New — v12",
       "collapsed": false,
       "items": [
         {
-          "id": "0d2a97d8",
+          "id": "3beb8db3",
           "title": "v12 Features",
           "notes": "Student mode, studyNotes, copy & reveal features",
           "comments": [
@@ -600,12 +708,12 @@
       ]
     },
     {
-      "id": "24107813",
+      "id": "a01957cb",
       "title": "Block Showcase",
       "collapsed": false,
       "items": [
         {
-          "id": "bffabe58",
+          "id": "39263ef5",
           "title": "Text & Typography",
           "notes": "",
           "comments": [],
@@ -712,7 +820,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "7b075467",
+          "id": "fcade85c",
           "title": "Process & Flow",
           "notes": "",
           "comments": [],
@@ -867,7 +975,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "77c8b556",
+          "id": "233d1cf3",
           "title": "Data & Metrics",
           "notes": "",
           "comments": [],
@@ -1091,7 +1199,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "ab6f73bf",
+          "id": "072949b5",
           "title": "Code & Visual",
           "notes": "",
           "comments": [],
@@ -1285,7 +1393,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "16a98546",
+          "id": "1d7d87f4",
           "title": "New Primitives",
           "notes": "Showcases the 6 new block types added in v12.25",
           "comments": [
@@ -1564,7 +1672,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "8c64e170",
+          "id": "2e792c77",
           "title": "Layout: Columns",
           "notes": "",
           "comments": [],
@@ -1754,12 +1862,12 @@
       ]
     },
     {
-      "id": "f89ccd5c",
+      "id": "fcb50e5d",
       "title": "AI & Platform",
       "collapsed": false,
       "items": [
         {
-          "id": "9471c8e9",
+          "id": "2d7f5a7c",
           "title": "Vera AI",
           "notes": "",
           "comments": [],
@@ -2008,7 +2116,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "8a0f618f",
+          "id": "30e48061",
           "title": "CLI & Skill",
           "notes": "",
           "comments": [],
@@ -2098,7 +2206,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "5bae7e89",
+          "id": "74a2afa7",
           "title": "Runtimes & Desktop",
           "notes": "",
           "comments": [],
@@ -2396,7 +2504,7 @@
           "createdAt": "2026-06-01T00:30:48.654Z"
         },
         {
-          "id": "06df897c",
+          "id": "edfd55e4",
           "title": "Platform Features",
           "notes": "",
           "comments": [],
@@ -2721,12 +2829,12 @@
       ]
     },
     {
-      "id": "27bec4a5",
+      "id": "8cca2139",
       "title": "Closing",
       "collapsed": false,
       "items": [
         {
-          "id": "1274eada",
+          "id": "98cf3cb0",
           "title": "Get Started",
           "notes": "",
           "comments": [],
@@ -3136,7 +3244,7 @@
       ]
     },
     {
-      "id": "c1ec05c3",
+      "id": "8fa19bd8",
       "title": "Main",
       "collapsed": false,
       "items": []

@@ -33,7 +33,14 @@ const pptxEmu = (px) => Math.round((px || 0) * PPTX_EMU_PER_PX);
 // centipoints. (A prior ×0.75 CSS-px→pt factor was a double conversion on top of
 // the already-1:1 slide size, rendering text ~25% smaller than its surrounding
 // shapes/boxes, which are placed with the un-shrunk px→EMU constant.)
-const pptxCpt = (px) => Math.round((px || 0) * 100); // px → centipoints (1 canvas px = 1 pt)
+// px → centipoints (1 canvas px = 1 pt), CLAMPED to OOXML's valid ST_TextFontSize
+// range [100, 400000] (1pt–4000pt). A DOM-measured size can round to 0 when an
+// ancestor carries a collapsed/scale(0) transform (getVisualScale → 0 → fontSize
+// 0); sz="0" is out of schema range and real PowerPoint rejects those runs on open
+// ("found a problem with content … removed it" — a repair prompt), while lenient
+// readers ignore it. Clamping guarantees every emitted sz is in range, so the
+// package always opens without repair (a zeroed run degrades to a harmless 1pt).
+const pptxCpt = (px) => Math.min(400000, Math.max(100, Math.round((px || 0) * 100)));
 const pptxEsc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;")
@@ -191,11 +198,14 @@ function pptxEllipse(id, e) {
     + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
 }
 
-// t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align? }
+// t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align?,
+//      runs?: [ [ {text, bold?, italic?}, … ], … ] }
 // One text box per source text element; PowerPoint reflows/wraps within the box.
-// `text` may contain explicit "\n" line breaks (from source <br> elements — see
-// pptxExtractTextBoxes) — each becomes its OWN <a:p> so multi-line text/heading/
-// quote/callout blocks keep their line breaks instead of fusing into one run.
+// `runs` (from pptxExtractTextBoxes) is an array of LINES, each an array of styled
+// runs — so inline **bold** / *italic* segments emit as separate <a:r> runs within
+// ONE paragraph (mixed formatting preserved, not floated into a separate box). When
+// `runs` is absent (hand-authored IR), fall back to box-level bold/italic over
+// `text`, whose explicit "\n" breaks (from source <br>) each become their own <a:p>.
 function pptxTextSp(id, t) {
   const size = t.fontSize != null ? t.fontSize : (t.size != null ? t.size : 18);
   const bold = t.bold != null ? t.bold : (t.fontWeight >= 600);
@@ -204,16 +214,26 @@ function pptxTextSp(id, t) {
   const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[alignRaw] || "l";
   const hex = pptxColorHex(t.color) || "000000";
   const font = pptxFontName(t.font || t.fontFamily);
-  const rPr = `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""} dirty="0">`
+  const mkRPr = (b, i) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""} dirty="0">`
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
-  const lines = String(t.text == null ? "" : t.text).split("\n");
-  const paras = lines.map((line) => {
-    const run = line
-      ? `<a:r>${rPr}<a:t>${pptxEsc(line)}</a:t></a:r>`
-      : `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
-    return `<a:p><a:pPr algn="${algn}"/>${run}</a:p>`;
-  }).join("");
+  const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
+  let paras;
+  if (Array.isArray(t.runs)) {
+    paras = t.runs.map((lineRuns) => {
+      const body = (lineRuns && lineRuns.length)
+        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
+        : emptyPara;
+      return `<a:p><a:pPr algn="${algn}"/>${body}</a:p>`;
+    }).join("");
+  } else {
+    const rPr = mkRPr(bold, italic);
+    const lines = String(t.text == null ? "" : t.text).split("\n");
+    paras = lines.map((line) => {
+      const run = line ? `<a:r>${rPr}<a:t>${pptxEsc(line)}</a:t></a:r>` : emptyPara;
+      return `<a:p><a:pPr algn="${algn}"/>${run}</a:p>`;
+    }).join("");
+  }
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`
     + `<p:spPr>${pptxXfrm(t.x, t.y, t.w, t.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
     + `<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
@@ -735,6 +755,10 @@ function pptxExtractTextBoxes(container, containerRect) {
   const seen = new Set();
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
   const cw = containerRect.width, ch = containerRect.height;
+  const isInline = (el) => {
+    const d = window.getComputedStyle(el).display;
+    return d === "inline" || d === "inline-block" || d === "inline-flex" || d === "contents";
+  };
 
   while (walker.nextNode()) {
     const textNode = walker.currentNode;
@@ -742,35 +766,77 @@ function pptxExtractTextBoxes(container, containerRect) {
     if (!raw || !raw.trim()) continue;
     const parent = textNode.parentElement;
     if (!parent) continue;
+
+    // Resolve the BLOCK-level element that owns this text. part-blocks.jsx's
+    // parseInline() renders inline **bold** / *italic* / links as <span
+    // style="font-weight:700"> / <em> / <a> INSIDE the paragraph/heading element —
+    // climb past any inline-display ancestors so ONE box owns the whole paragraph
+    // and its formatting becomes RUNS within it. (Previously each inline span was
+    // treated as its own element → a separate text box floating at the span's
+    // mid-line rect, so bold/italic segments appeared misplaced/overlapping.)
+    // Hygiene exclusions run on `parent` (a descendant of blockEl) so closest()
+    // still walks the full ancestor chain — including any inline wrapper we climb
+    // through — matching the prior per-element semantics (e.g. the slide-counter
+    // pill's data-no-pdf guard, SVG text).
     if (parent.closest("svg")) continue;
     if (parent.closest("[data-zoom-badge]") || parent.closest("[data-no-pdf]")) continue;
-    if (seen.has(parent)) continue; // one box per element
-    seen.add(parent);
 
-    const style = window.getComputedStyle(parent);
+    let blockEl = parent;
+    while (blockEl && blockEl !== container && isInline(blockEl)) blockEl = blockEl.parentElement;
+    if (!blockEl || blockEl === container) blockEl = parent;
+
+    if (seen.has(blockEl)) continue; // one box per block element
+    seen.add(blockEl);
+
+    const style = window.getComputedStyle(blockEl);
     if (_isExportHidden(style)) continue;
     const color = parseColor(style.color);
     if (!color) continue; // skip genuinely invisible / unresolvable text
 
-    // Full visible text of THIS element's own direct text nodes (children with
-    // their own text become their own boxes). part-blocks.jsx's parseInline()
-    // renders an explicit "\n" in the source as a sibling <br> between text
-    // nodes (see renderTextWithLineBreaks-equivalent line-splitting there) — walk
-    // direct children in order and start a new line at each <br> so those breaks
-    // survive into the emitted text instead of the adjacent lines fusing together.
-    let lines = [""];
-    for (const n of parent.childNodes) {
-      if (n.nodeType === 3) lines[lines.length - 1] += n.textContent;
-      else if (n.nodeType === 1 && n.tagName === "BR") lines.push("");
-    }
-    lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
-    let text = lines.join("\n");
-    if (!text.trim()) continue;
     const tt = style.textTransform;
-    if (tt === "uppercase") text = text.toUpperCase();
-    else if (tt === "lowercase") text = text.toLowerCase();
+    const applyTransform = (s) => tt === "uppercase" ? s.toUpperCase() : (tt === "lowercase" ? s.toLowerCase() : s);
 
-    const rect = parent.getBoundingClientRect();
+    // Recursively collect the block's inline content into lines of STYLED RUNS.
+    // Each run carries its own bold/italic (inherited through nested inline spans),
+    // so a single reflowable PowerPoint text box reproduces mixed formatting. A
+    // <br> starts a new line/paragraph (explicit "\n" in source); a block-level
+    // child is left for the walker to emit as its own box (NOT marked seen here).
+    const lines = [[]];
+    const pushRun = (txt, bold, italic) => { if (txt) lines[lines.length - 1].push({ text: txt, bold, italic }); };
+    const walkInline = (node, bold, italic) => {
+      for (const n of node.childNodes) {
+        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic); continue; }
+        if (n.nodeType !== 1) continue;
+        if (n.tagName === "BR") { lines.push([]); continue; }
+        if (String(n.tagName).toLowerCase() === "svg") continue; // icons handled separately
+        if (!isInline(n)) continue; // block child → its own box via the walker
+        const cs = window.getComputedStyle(n);
+        const b = bold || (parseInt(cs.fontWeight) || 400) >= 600;
+        const it = italic || (String(cs.fontStyle).indexOf("italic") >= 0);
+        seen.add(n); // absorb this inline element so its text nodes don't spawn a box
+        walkInline(n, b, it);
+      }
+    };
+    const baseBold = (parseInt(style.fontWeight) || 400) >= 600;
+    const baseItalic = String(style.fontStyle).indexOf("italic") >= 0;
+    walkInline(blockEl, baseBold, baseItalic);
+
+    // Normalize whitespace per line: collapse runs of whitespace to single spaces,
+    // trim the outer edges, drop emptied runs, then apply text-transform per run.
+    const runs = lines.map((lineRuns) => {
+      let rs = lineRuns.map((r) => ({ text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
+      if (rs.length) {
+        rs[0].text = rs[0].text.replace(/^\s+/, "");
+        rs[rs.length - 1].text = rs[rs.length - 1].text.replace(/\s+$/, "");
+      }
+      rs = rs.filter((r) => r.text !== "");
+      for (const r of rs) r.text = applyTransform(r.text);
+      return rs;
+    });
+    const text = runs.map((rs) => rs.map((r) => r.text).join("")).join("\n");
+    if (!text.trim()) continue;
+
+    const rect = blockEl.getBoundingClientRect();
     let x = rect.left - containerRect.left;
     let y = rect.top - containerRect.top;
     let w = rect.width;
@@ -782,14 +848,24 @@ function pptxExtractTextBoxes(container, containerRect) {
     if (w < 1 || h < 1) continue;
     if (y + h < 0 || y > ch || x + w < 0 || x > cw) continue;
 
-    const vs = getVisualScale(parent, container);
+    const vs = getVisualScale(blockEl, container);
     const fontSize = (parseFloat(style.fontSize) || 14) * vs;
     const fontWeight = parseInt(style.fontWeight) || 400;
     const fontStyle = style.fontStyle || "normal";
     const fontFamily = style.fontFamily || "";
-    const align = style.textAlign || "left";
+    // Horizontal alignment: textAlign covers normal text, but a flex/grid container
+    // (e.g. a numbered step/badge circle) centers its glyph via justify-content —
+    // which textAlign does NOT reflect. Map that so the number sits centered in its
+    // box instead of hugging the left edge.
+    let align = style.textAlign || "left";
+    const disp = style.display;
+    if (disp === "flex" || disp === "inline-flex" || disp === "grid" || disp === "inline-grid") {
+      const jc = style.justifyContent;
+      if (jc === "center" || jc === "space-around" || jc === "space-evenly") align = "center";
+      else if (jc === "flex-end" || jc === "end" || jc === "right") align = "right";
+    }
 
-    boxes.push({ x, y, w, h, text, fontSize, color, fontWeight, fontStyle, fontFamily, align });
+    boxes.push({ x, y, w, h, text, runs, fontSize, color, fontWeight, fontStyle, fontFamily, align });
   }
   return boxes;
 }
@@ -995,7 +1071,12 @@ function pptxExtractTables(container, containerRect) {
           text,
           color: parseColor(cs.color),
           fontWeight: parseInt(cs.fontWeight) || 400,
-          fontSize: parseFloat(cs.fontSize) || 14,
+          // Apply the fitScale shrink-to-fit factor to the font, same as the text-box
+          // extractor. Geometry (x/y/w/h, row heights) comes from getBoundingClientRect
+          // and is already scaled, but getComputedStyle().fontSize is NOT — so without
+          // this the cell text emits full-size on a shrunk slide, growing rows past
+          // their region and overflowing the blocks below.
+          fontSize: (parseFloat(cs.fontSize) || 14) * getVisualScale(cellEl, container),
           align: cs.textAlign || "left",
           fontFamily: cs.fontFamily || "",
         });

@@ -99,8 +99,11 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.86";
+const VELA_VERSION = "13.0";
 const VELA_CHANGELOG = [
+  { v: "13.0", d: ["Native PowerPoint (.pptx) export — the deck exports as a fully editable .pptx with real text boxes, shapes and tables (not flattened images), vector diagrams as native SVG with PNG fallback, and gradient/color fidelity carried through.", "Milestone release consolidating the .pptx exporter."] },
+  { v: "12.88", d: ["PowerPoint export: fixed inline bold/italic text appearing misplaced — bold and italic segments now stay as runs within their paragraph instead of floating to a separate box.", "Fixed numbers/labels centered via flex/grid (e.g. step-number circles) hugging the left edge — centering is now carried through.", "Fixed table text on shrink-to-fit slides exporting oversized and overflowing the blocks below — cell fonts now use the same scale as the rest of the slide.", "Regression tests added."] },
+  { v: "12.87", d: ["PowerPoint export: fixed a repair prompt real PowerPoint could still show on first open — a run whose measured font size collapsed to zero emitted an out-of-range size PowerPoint rejects; exported font sizes are now clamped to PowerPoint's valid range.", "Regression test added."] },
   { v: "12.86", d: ["PowerPoint export: fixed the repair prompt real PowerPoint showed on first open of decks with a table — exported tables now carry a table-style reference and the package ships the matching table-styles part.", "Fixed exported text rendering ~25% too small — font sizes now match the slide's 1:1 canvas-px→point scale, sized correctly relative to shapes and boxes.", "Regression tests added for both."] },
   { v: "12.84", d: ["Native PowerPoint (.pptx) export added to the Export menu — editable text boxes, shapes and tables (not flattened images).", "Vector diagrams (icons, flow, cycle) embed as native SVG with a PNG fallback for older PowerPoint; image-heavy slides use a raster hybrid.", "Gradient and per-color/alpha fidelity carried through; optional 'Made with Vela' caption.", "New Playwright + python-pptx e2e test drives the real export path and reads the deck back."] },
   { v: "12.83", d: "Fixed a path-resolution bug in the offline render harness that could silently build the wrong git tree's app when invoked from outside its own directory; added an explicit override." },
