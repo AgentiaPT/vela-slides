@@ -99,8 +99,13 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "12.83";
+const VELA_VERSION = "13.0";
 const VELA_CHANGELOG = [
+  { v: "13.0", d: ["Native PowerPoint (.pptx) export — the deck exports as a fully editable .pptx with real text boxes, shapes and tables (not flattened images), vector diagrams as native SVG with PNG fallback, and gradient/color fidelity carried through.", "Milestone release consolidating the .pptx exporter."] },
+  { v: "12.88", d: ["PowerPoint export: fixed inline bold/italic text appearing misplaced — bold and italic segments now stay as runs within their paragraph instead of floating to a separate box.", "Fixed numbers/labels centered via flex/grid (e.g. step-number circles) hugging the left edge — centering is now carried through.", "Fixed table text on shrink-to-fit slides exporting oversized and overflowing the blocks below — cell fonts now use the same scale as the rest of the slide.", "Regression tests added."] },
+  { v: "12.87", d: ["PowerPoint export: fixed a repair prompt real PowerPoint could still show on first open — a run whose measured font size collapsed to zero emitted an out-of-range size PowerPoint rejects; exported font sizes are now clamped to PowerPoint's valid range.", "Regression test added."] },
+  { v: "12.86", d: ["PowerPoint export: fixed the repair prompt real PowerPoint showed on first open of decks with a table — exported tables now carry a table-style reference and the package ships the matching table-styles part.", "Fixed exported text rendering ~25% too small — font sizes now match the slide's 1:1 canvas-px→point scale, sized correctly relative to shapes and boxes.", "Regression tests added for both."] },
+  { v: "12.84", d: ["Native PowerPoint (.pptx) export added to the Export menu — editable text boxes, shapes and tables (not flattened images).", "Vector diagrams (icons, flow, cycle) embed as native SVG with a PNG fallback for older PowerPoint; image-heavy slides use a raster hybrid.", "Gradient and per-color/alpha fidelity carried through; optional 'Made with Vela' caption.", "New Playwright + python-pptx e2e test drives the real export path and reads the deck back."] },
   { v: "12.83", d: "Fixed a path-resolution bug in the offline render harness that could silently build the wrong git tree's app when invoked from outside its own directory; added an explicit override." },
   { v: "12.82", d: ["New Deck dialog is now the single entry point — removed the separate 'From Source' dialog.", "Starting Prompt is optional and takes long pasted text (README / article / outline) directly; leaving it empty creates a fresh blank deck in a new file.", "Dropped in-dialog image attachments — instead, place files in the deck's folder and reference them by name in the prompt.", "An empty deck is now immediately editable: it opens with a fresh, ready-to-name section so you can add slides right away instead of a 'New Deck' prompt."] },
   { v: "12.81", d: ["Sprint 'Tradewinds' — share & present.", "Share: Export → Standalone HTML produces one shareable, read-only .html (no editor chrome), self-transpiled and safely inlined, loading React/lucide from a CDN with SHA-pinned integrity; optional 'Made with Vela ⛵' footer.", "Present: dedicated presenter/speaker view (current + next-slide preview, speaker notes, live elapsed timer, per-slide budget), grid gallery/overview reachable from the editor, and a tasteful deck-level slide transition.", "One-prompt: Generate Deck from Source turns a pasted README / URL text / PDF text into a full deck via the existing AI path.", "Present-mode polish: edit affordances fully suppressed while presenting, larger/higher-contrast slide counter, hover-consistent block add affordances, toolbar 'Edit' renamed 'AI Edit'.", "Test honesty: realigned UI-battery selectors, AI-dependent tests skip-with-reason when AI unavailable, jsdom-gated suites skip cleanly instead of failing."] },
@@ -3378,7 +3383,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         })()}
         {branding?.enabled
           ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -12296,6 +12301,14 @@ function compositeColor(fg) {
   };
 }
 
+// Skip nodes that are visually hidden so they never leak into exports (PDF/PPTX).
+// display:none already yields a 0-size rect (caught by the size checks); this adds
+// visibility:hidden and opacity:0 (e.g. the hover-only zoom-badge overlay, which
+// stays in the DOM at opacity:0 until hovered).
+function _isExportHidden(style) {
+  return style.visibility === "hidden" || style.opacity === "0" || style.display === "none";
+}
+
 function parseColor(str) {
   if (!str || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
   // rgb(r, g, b) or rgba(r, g, b, a)
@@ -12671,12 +12684,13 @@ function measureText(text, fontSize) {
 
 function extractBoxes(container, containerRect) {
   const boxes = [];
-  const skipSelectors = "[data-zoom-badge], [data-no-pdf]";
   const elements = container.querySelectorAll("*");
   const scaleCache = new Map();
   for (const el of elements) {
     if (el.tagName === "SVG" || el.closest("svg")) continue;
+    if (el.closest("[data-zoom-badge], [data-no-pdf]")) continue;
     const style = window.getComputedStyle(el);
+    if (_isExportHidden(style)) continue;
     // Skip elements that will be drawn as circles (borderRadius >= 50% of size AND roughly square)
     const brCheck = parseFloat(style.borderRadius) || 0;
     const elRect = el.getBoundingClientRect();
@@ -13010,6 +13024,7 @@ function extractCircles(container, containerRect) {
   for (const el of elements) {
     if (el.closest("svg")) continue;
     const style = window.getComputedStyle(el);
+    if (_isExportHidden(style)) continue;
     const br = style.borderRadius;
     if (!br || br === "0px") continue;
     const rect = el.getBoundingClientRect();
@@ -15241,6 +15256,1178 @@ function StandaloneHtmlModal({ state, onClose }) {
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────
+// part-pptx.jsx — native, editable PowerPoint (.pptx) exporter
+//
+// A second emitter over the SAME per-slide primitive IR the vector-PDF path
+// already produces. Promotes the proven `spike/pptx/pptx-emitter.mjs` OOXML+ZIP
+// writer into the monolith (no bundler → plain top-level declarations, no
+// import/export). Extraction REUSES part-pdf.jsx's already-correct extractors
+// (extractBoxes / extractCircles / extractLinks, parseColor / compositeColor /
+// parseLinearGradient / getVisualScale, _compositeBg, slideHasImages,
+// collectAllSlides, sanitizeUrl) — all globals after concat. Text uses a NEW
+// element-grouped extractor (pptxExtractTextBoxes) so wrapped paragraphs become
+// ONE editable, reflowable PowerPoint text box instead of one box per line.
+//
+// Public entry: buildPptx(pages, opts) → Blob (see JSDoc on buildPptx).
+//
+// Units: Vela canvas is 960×540 px; a 16:9 PPT slide is 12192000×6858000 EMU,
+//        so 1 px = 12700 EMU exactly. 12700 EMU is also exactly 1 point, so the
+//        fixed slide size bakes a 1:1 canvas-px→point mapping — shared by geometry
+//        (pptxEmu) AND font sizes. Font px → centipoints: round(px*100) (1 pt =
+//        100 cpt). Geometry fed to buildPptx is in 960×540 px space (the fitScale
+//        shrink-to-fit is already baked into the DOM by getBoundingClientRect /
+//        getVisualScale, so no extra scaling is applied here).
+// ─────────────────────────────────────────────────────────────────────────
+
+const PPTX_EMU_PER_PX = 12700;
+const PPTX_SLIDE_W = VIRTUAL_W; // 960
+const PPTX_SLIDE_H = VIRTUAL_H; // 540
+const pptxEmu = (px) => Math.round((px || 0) * PPTX_EMU_PER_PX);
+// Canvas px → font centipoints. The fixed 16:9 slide size bakes a clean 1:1
+// canvas-px→point mapping (12192000 EMU / 960 px = 12700 EMU/px, and 12700 EMU
+// = exactly 1 point), the SAME mapping pptxEmu uses for all shape geometry. So a
+// DOM-measured px font size maps directly to that many points — 1 pt = 100
+// centipoints. (A prior ×0.75 CSS-px→pt factor was a double conversion on top of
+// the already-1:1 slide size, rendering text ~25% smaller than its surrounding
+// shapes/boxes, which are placed with the un-shrunk px→EMU constant.)
+// px → centipoints (1 canvas px = 1 pt), CLAMPED to OOXML's valid ST_TextFontSize
+// range [100, 400000] (1pt–4000pt). A DOM-measured size can round to 0 when an
+// ancestor carries a collapsed/scale(0) transform (getVisualScale → 0 → fontSize
+// 0); sz="0" is out of schema range and real PowerPoint rejects those runs on open
+// ("found a problem with content … removed it" — a repair prompt), while lenient
+// readers ignore it. Clamping guarantees every emitted sz is in range, so the
+// package always opens without repair (a zeroed run degrades to a harmless 1pt).
+const pptxCpt = (px) => Math.min(400000, Math.max(100, Math.round((px || 0) * 100)));
+const pptxEsc = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  // strip control chars XML 1.0 forbids (defensive — text comes from user decks)
+  .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+
+const PPTX_REL_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const PPTX_REL_HLINK = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const PPTX_REL_LAYOUT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
+
+// ── color helpers ──────────────────────────────────────────────────────────
+// Parse a CSS color STRING to {hex, alpha} WITHOUT compositing, so the ORIGINAL
+// RGB and TRUE alpha survive into OOXML (which, unlike PDF, supports per-color
+// alpha via <a:alpha>). Matches Vela's own color convention exactly — the same
+// forms part-pdf.jsx's parseColor() accepts: 3/4/6/8-digit #hex (the 8-digit
+// #RRGGBBAA / hex+"NN"-suffix translucent-fill convention used throughout the
+// app) and rgb()/rgba(). Returns null if the string isn't one of these forms.
+// NB: parseColor() alpha-composites (needed for the PDF path); here we keep the
+// raw channels so an alpha fill round-trips as a real translucent OOXML color
+// rather than a flattened one.
+function pptxParseColorStr(str) {
+  if (typeof str !== "string") return null;
+  const s = str.trim();
+  const clamp255 = (n) => Math.max(0, Math.min(255, parseInt(n, 10) || 0));
+  const to2 = (n) => clamp255(n).toString(16).padStart(2, "0");
+  const rgbM = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+  if (rgbM) {
+    const a = rgbM[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbM[4]))) : 1;
+    return { hex: (to2(rgbM[1]) + to2(rgbM[2]) + to2(rgbM[3])).toUpperCase(), alpha: a };
+  }
+  const hexM = s.match(/^#([0-9a-fA-F]{3,8})$/);
+  if (hexM) {
+    let h = hexM[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    else if (h.length === 4) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+    if (h.length === 5 || h.length === 7) return null; // not a valid hex length
+    const alpha = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return { hex: h.slice(0, 6).toUpperCase(), alpha };
+  }
+  return null;
+}
+
+// Accepts a parseColor() object {r,g,b,a} in 0..1, OR a css/hex string. Returns
+// a 6-digit upper-hex string, or null when unresolvable (caller should skip).
+function pptxColorHex(c) {
+  if (!c && c !== 0) return null;
+  if (typeof c === "string") {
+    // Preserve the raw RGB for hex/rgb(a) strings (no compositing) so an alpha
+    // suffix keeps its true base color; pptxAlphaTag emits the <a:alpha> child.
+    const p = pptxParseColorStr(c);
+    if (p) return p.hex;
+    const pc = parseColor(c); // named colors / other CSS forms parseColor knows
+    if (pc) return pptxColorHex(pc);
+    const h = c.replace(/[^0-9a-fA-F]/g, "");
+    return h.length >= 6 ? h.slice(0, 6).toUpperCase() : null;
+  }
+  if (typeof c !== "object") return null;
+  const to = (v) => {
+    const n = Math.round(Math.max(0, Math.min(1, v == null ? 0 : v)) * 255);
+    return n.toString(16).padStart(2, "0");
+  };
+  return (to(c.r) + to(c.g) + to(c.b)).toUpperCase();
+}
+
+// Optional <a:alpha> child when a color carries sub-1 alpha. Handles both a
+// parseColor() object (whose .a may survive for hand-authored IR — parseColor
+// itself pre-composites, so extracted objects are usually a=1) AND a raw CSS
+// string with an alpha component (8-digit #RRGGBBAA hex-suffix or rgba()) —
+// Vela's own translucent-fill convention. val is in 1000ths of a percent (0..100000).
+function pptxAlphaTag(c) {
+  let a = null;
+  if (typeof c === "string") { const p = pptxParseColorStr(c); if (p) a = p.alpha; }
+  else if (c && typeof c === "object" && c.a != null) a = c.a;
+  if (a != null && a < 0.999) {
+    return `<a:alpha val="${Math.round(Math.max(0, Math.min(1, a)) * 100000)}"/>`;
+  }
+  return "";
+}
+
+function pptxSolidFill(color) {
+  const hex = pptxColorHex(color);
+  if (!hex) return "<a:noFill/>";
+  return `<a:solidFill><a:srgbClr val="${hex}">${pptxAlphaTag(color)}</a:srgbClr></a:solidFill>`;
+}
+
+// gradient IR {angleDeg, stops:[{color,position}]} → <a:gradFill>. CSS angle
+// (Vela convention: 180 = top→bottom) → OOXML <a:lin ang> (60000ths of a degree,
+// clockwise from 3-o'clock/east): ooxml = (cssAngle - 90) mod 360.
+function pptxGradFill(g) {
+  if (!g || !g.stops || g.stops.length < 2) return null;
+  const gs = g.stops.map((s) => {
+    const pos = Math.round(Math.max(0, Math.min(1, s.position == null ? 0 : s.position)) * 100000);
+    const hex = pptxColorHex(s.color) || "000000";
+    return `<a:gs pos="${pos}"><a:srgbClr val="${hex}">${pptxAlphaTag(s.color)}</a:srgbClr></a:gs>`;
+  }).join("");
+  const ang = (((Math.round(g.angleDeg || 0) - 90) % 360) + 360) % 360;
+  return `<a:gradFill><a:gsLst>${gs}</a:gsLst><a:lin ang="${ang * 60000}" scaled="1"/></a:gradFill>`;
+}
+
+function pptxLine(w, color) {
+  const hex = pptxColorHex(color);
+  if (!hex || !(w > 0)) return "<a:ln><a:noFill/></a:ln>";
+  return `<a:ln w="${pptxEmu(w)}"><a:solidFill><a:srgbClr val="${hex}">${pptxAlphaTag(color)}</a:srgbClr></a:solidFill></a:ln>`;
+}
+
+function pptxFontName(ff) {
+  if (!ff) return "Arial";
+  const first = String(ff).split(",")[0].trim().replace(/^["']|["']$/g, "");
+  return first || "Arial";
+}
+
+// ── DrawingML shape builders ────────────────────────────────────────────────
+const pptxXfrm = (x, y, w, h) =>
+  `<a:xfrm><a:off x="${pptxEmu(x)}" y="${pptxEmu(y)}"/><a:ext cx="${pptxEmu(Math.max(1, w))}" cy="${pptxEmu(Math.max(1, h))}"/></a:xfrm>`;
+
+// b: { x,y,w,h, bg?|fill?:color, gradient?:IR, borderRadius?|radius?, borders?:{side:{w,color}}, line?:{w,color} }
+function pptxBox(id, b) {
+  const grad = b.gradient ? pptxGradFill(b.gradient) : null;
+  const fill = grad || ((b.bg || b.fill) ? pptxSolidFill(b.bg || b.fill) : "<a:noFill/>");
+  let line = "<a:ln><a:noFill/></a:ln>";
+  if (b.line) {
+    line = pptxLine(b.line.w, b.line.color);
+  } else if (b.borders) {
+    // OOXML autoshapes carry one outline — represent per-side borders by the widest side.
+    const sides = ["top", "right", "bottom", "left"].map((k) => b.borders[k]).filter(Boolean);
+    if (sides.length) {
+      const rep = sides.reduce((a, c) => (c.w > a.w ? c : a));
+      line = pptxLine(rep.w, rep.color);
+    }
+  }
+  const radius = b.radius != null ? b.radius : (b.borderRadius || 0);
+  const prst = radius > 0.5 ? "roundRect" : "rect";
+  const adj = radius > 0.5
+    ? `<a:avLst><a:gd name="adj" fmla="val ${Math.min(50000, Math.round((radius / Math.min(b.w, b.h)) * 100000))}"/></a:avLst>`
+    : "<a:avLst/>";
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Box ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`
+    + `<p:spPr>${pptxXfrm(b.x, b.y, b.w, b.h)}<a:prstGeom prst="${prst}">${adj}</a:prstGeom>${fill}${line}</p:spPr>`
+    + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+}
+
+// e: { cx,cy,r, bg?|fill?:color, gradient?:IR, borderWidth?,borderColor? | line?:{w,color} }
+function pptxEllipse(id, e) {
+  const x = e.cx - e.r, y = e.cy - e.r, w = e.r * 2, h = e.r * 2;
+  // gradient-aware fill (parity with pptxBox) — a gradient-filled circular
+  // shape emits <a:gradFill> instead of flattening to a solid. (Extraction via
+  // extractCircles does not currently populate `gradient`, so this fires only
+  // for hand-authored IR today; kept for emitter completeness/parity.)
+  const grad = e.gradient ? pptxGradFill(e.gradient) : null;
+  const fill = grad || ((e.bg || e.fill) ? pptxSolidFill(e.bg || e.fill) : "<a:noFill/>");
+  let line = "<a:ln><a:noFill/></a:ln>";
+  if (e.line) line = pptxLine(e.line.w, e.line.color);
+  else if (e.borderWidth > 0 && e.borderColor) line = pptxLine(e.borderWidth, e.borderColor);
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Ellipse ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`
+    + `<p:spPr>${pptxXfrm(x, y, w, h)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>${fill}${line}</p:spPr>`
+    + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+}
+
+// t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align?,
+//      runs?: [ [ {text, bold?, italic?}, … ], … ] }
+// One text box per source text element; PowerPoint reflows/wraps within the box.
+// `runs` (from pptxExtractTextBoxes) is an array of LINES, each an array of styled
+// runs — so inline **bold** / *italic* segments emit as separate <a:r> runs within
+// ONE paragraph (mixed formatting preserved, not floated into a separate box). When
+// `runs` is absent (hand-authored IR), fall back to box-level bold/italic over
+// `text`, whose explicit "\n" breaks (from source <br>) each become their own <a:p>.
+function pptxTextSp(id, t) {
+  const size = t.fontSize != null ? t.fontSize : (t.size != null ? t.size : 18);
+  const bold = t.bold != null ? t.bold : (t.fontWeight >= 600);
+  const italic = t.italic != null ? t.italic : (!!t.fontStyle && String(t.fontStyle).indexOf("italic") >= 0);
+  const alignRaw = t.align || "left";
+  const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[alignRaw] || "l";
+  const hex = pptxColorHex(t.color) || "000000";
+  const font = pptxFontName(t.font || t.fontFamily);
+  const mkRPr = (b, i) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""} dirty="0">`
+    + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
+    + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
+  const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
+  let paras;
+  if (Array.isArray(t.runs)) {
+    paras = t.runs.map((lineRuns) => {
+      const body = (lineRuns && lineRuns.length)
+        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
+        : emptyPara;
+      return `<a:p><a:pPr algn="${algn}"/>${body}</a:p>`;
+    }).join("");
+  } else {
+    const rPr = mkRPr(bold, italic);
+    const lines = String(t.text == null ? "" : t.text).split("\n");
+    paras = lines.map((line) => {
+      const run = line ? `<a:r>${rPr}<a:t>${pptxEsc(line)}</a:t></a:r>` : emptyPara;
+      return `<a:p><a:pPr algn="${algn}"/>${run}</a:p>`;
+    }).join("");
+  }
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`
+    + `<p:spPr>${pptxXfrm(t.x, t.y, t.w, t.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
+    + `<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
+    + paras + `</p:txBody></p:sp>`;
+}
+
+// m: { x,y,w,h }, rid → embedded picture (raster fallback for image-heavy slides)
+function pptxPic(id, rid, m) {
+  return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${pptxEsc(m.alt || "Image " + id)}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>`
+    + `<p:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+    + `<p:spPr>${pptxXfrm(m.x, m.y, m.w, m.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+}
+
+// s: { x,y,w,h, alt? }, ridPng → PNG-fallback image rel, ridSvg → native-SVG image rel.
+// Native "SVG with raster fallback" picture — the exact shape PowerPoint itself emits
+// when you Insert > Picture an .svg: the primary <a:blip r:embed> points at the PNG
+// (rendered by every client, incl. pre-365), and an asvg:svgBlip extension points at the
+// real vector SVG part (PowerPoint 2016/365 renders it crisp + offers "Convert to Shape").
+function pptxPicSvg(id, ridPng, ridSvg, s) {
+  const svgExt = `<a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">`
+    + `<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="${ridSvg}"/>`
+    + `</a:ext></a:extLst>`;
+  return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${pptxEsc(s.alt || "SVG " + id)}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>`
+    + `<p:blipFill><a:blip r:embed="${ridPng}">${svgExt}</a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+    + `<p:spPr>${pptxXfrm(s.x, s.y, s.w, s.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+}
+
+// Transparent rect over a link rect carrying a hlinkClick (r: declared on slide root).
+function pptxLinkSp(id, rid, l) {
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Link ${id}"><a:hlinkClick r:id="${rid}"/></p:cNvPr><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`
+    + `<p:spPr>${pptxXfrm(l.x, l.y, l.w, l.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr>`
+    + `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+}
+
+// ── native table (<a:tbl> graphicFrame) ─────────────────────────────────────
+// Emits a GENUINELY EDITABLE PowerPoint table (cell text is retype-able, not a
+// picture). tbl IR: { x,y,w,h, cols, borderColor?, borderWidth?,
+//   rows:[{ header?:bool, bg?:color, h?:px, cells:[{text, color?, fontWeight?,
+//   fontSize?, align?, fontFamily?}] }] }. Geometry in 960×540 px space.
+// A `<a:tbl>` that carries banding attributes (firstRow/bandRow) MUST reference a
+// table style via `<a:tblPr><a:tableStyleId>…`; a table with NO tableStyleId is a
+// well-documented PowerPoint "repair" trigger (LibreOffice / python-pptx tolerate
+// it, real PowerPoint does not). We paint every cell's own borders/fills/text
+// explicitly in <a:tcPr>, so we point at the built-in "No Style, No Grid" style
+// (GUID below) — it adds no borders/banding of its own, letting our per-cell paint
+// fully control appearance. The GUID must exist as a built-in style OR be defined
+// in a tableStyles.xml part; this one is built-in, and buildPptx also ships a
+// minimal tableStyles.xml (with matching `def`) referenced from presentation rels,
+// mirroring the known-good package python-pptx emits.
+const PPTX_TABLE_STYLE_ID = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}";
+const PPTX_TABLE_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="${PPTX_TABLE_STYLE_ID}"/>`;
+
+function pptxTableCellXml(cell, tbl, isHeader, rowBg) {
+  const size = cell.fontSize || (isHeader ? 11 : 13);
+  const bold = (cell.fontWeight || 400) >= 600;
+  const hex = pptxColorHex(cell.color) || (isHeader ? "FFFFFF" : "000000");
+  const font = pptxFontName(cell.fontFamily);
+  const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[cell.align] || "l";
+  const txt = String(cell.text == null ? "" : cell.text);
+  const run = txt
+    ? `<a:r><a:rPr lang="en-US" sz="${pptxCpt(size)}"${bold ? ' b="1"' : ""} dirty="0"><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
+      + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr><a:t>${pptxEsc(txt)}</a:t></a:r>`
+    : `<a:endParaRPr lang="en-US"/>`;
+  const brdHex = pptxColorHex(tbl.borderColor);
+  const lnW = pptxEmu(tbl.borderWidth || 1);
+  const lnPaint = brdHex ? `<a:solidFill><a:srgbClr val="${brdHex}"/></a:solidFill>` : "<a:noFill/>";
+  // border children MUST precede the fill child in <a:tcPr> (schema order)
+  const borders = ["L", "R", "T", "B"].map((s) => `<a:ln${s} w="${lnW}" cap="flat"><a:prstDash val="solid"/>${lnPaint}</a:ln${s}>`).join("");
+  const fill = rowBg ? pptxSolidFill(rowBg) : "<a:noFill/>";
+  return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="${algn}"/>${run}</a:p></a:txBody>`
+    + `<a:tcPr marL="${pptxEmu(12)}" marR="${pptxEmu(12)}" marT="${pptxEmu(6)}" marB="${pptxEmu(6)}" anchor="ctr">${borders}${fill}</a:tcPr></a:tc>`;
+}
+
+function pptxTableFrame(id, tbl) {
+  const cols = Math.max(1, tbl.cols || (tbl.rows[0] && tbl.rows[0].cells.length) || 1);
+  const totalEmu = pptxEmu(Math.max(1, tbl.w));
+  const colW = Math.max(1, Math.round(totalEmu / cols));
+  const grid = Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join("");
+  const firstRow = tbl.rows[0] && tbl.rows[0].header ? "1" : "0";
+  const trs = (tbl.rows || []).map((row) => {
+    // Every <a:tr> MUST carry exactly `cols` <a:tc> children to match the
+    // declared <a:tblGrid> — a short source row (fewer cells than the column
+    // count, which Vela's table renderer/deck format both permit) pad with
+    // empty cells; an over-long row (shouldn't happen, but be defensive) is
+    // truncated. Ragged rows otherwise emit malformed OOXML that LibreOffice
+    // mis-renders (shifted banding/missing text) and PowerPoint may flag as
+    // needing repair.
+    let rowCells = row.cells || [];
+    if (rowCells.length < cols) {
+      rowCells = rowCells.concat(Array.from({ length: cols - rowCells.length }, () => ({ text: "" })));
+    } else if (rowCells.length > cols) {
+      rowCells = rowCells.slice(0, cols);
+    }
+    const cells = rowCells.map((c) => pptxTableCellXml(c, tbl, !!row.header, row.bg)).join("");
+    return `<a:tr h="${pptxEmu(row.h || 24)}">${cells}</a:tr>`;
+  }).join("");
+  return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table ${id}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>`
+    + `<p:xfrm><a:off x="${pptxEmu(tbl.x)}" y="${pptxEmu(tbl.y)}"/><a:ext cx="${totalEmu}" cy="${pptxEmu(Math.max(1, tbl.h))}"/></p:xfrm>`
+    + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">`
+    + `<a:tbl><a:tblPr firstRow="${firstRow}" bandRow="1"><a:tableStyleId>${PPTX_TABLE_STYLE_ID}</a:tableStyleId></a:tblPr><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>`
+    + `</a:graphicData></a:graphic></p:graphicFrame>`;
+}
+
+// ── raster image bytes helpers ───────────────────────────────────────────────
+// Decode a data: URI to raw bytes + a PPT-safe media extension. Returns null for
+// non-data URIs (external URL → resolved async by pptxResolveImages).
+function pptxDataUriToBytes(src) {
+  const m = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(src || "");
+  if (!m) return null;
+  const mime = (m[1] || "").toLowerCase();
+  const isB64 = !!m[2];
+  const payload = m[3] || "";
+  let bytes;
+  try {
+    if (isB64) {
+      const bin = atob(payload.replace(/\s+/g, ""));
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(payload));
+    }
+  } catch (e) { return null; }
+  const ext = mime.indexOf("png") >= 0 ? "png"
+    : (mime.indexOf("jpeg") >= 0 || mime.indexOf("jpg") >= 0) ? "jpeg"
+    : mime.indexOf("gif") >= 0 ? "gif"
+    : mime.indexOf("svg") >= 0 ? "svg"
+    : mime.indexOf("webp") >= 0 ? "webp" : "png";
+  return { data: bytes, ext };
+}
+
+// Rasterize an <img> src (external URL, or a format PPT renders poorly like webp)
+// to PNG bytes via Image → canvas → toBlob. Async; rejects on CORS/load failure.
+function pptxImgToPng(src, w, h, scale) {
+  return new Promise((resolve, reject) => {
+    const s = scale || 2;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const iw = Math.max(1, Math.round(img.naturalWidth || w || 1));
+        const ih = Math.max(1, Math.round(img.naturalHeight || h || 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = iw * s; canvas.height = ih * s;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error("pptx img→png: toBlob returned null")); return; }
+          const fr = new FileReader();
+          fr.onload = () => resolve(new Uint8Array(fr.result));
+          fr.onerror = () => reject(fr.error || new Error("pptx img→png: read failed"));
+          fr.readAsArrayBuffer(blob);
+        }, "image/png");
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error("pptx img→png: image failed to load"));
+    img.src = src;
+  });
+}
+
+// Fill each image entry's raw bytes (async). data: URIs decode inline; external
+// URLs / webp rasterize to PNG. Call on page.images before buildPptx(). Failures
+// are non-fatal — an unresolved entry (no .data) is skipped by buildPptx.
+async function pptxResolveImages(images, opts) {
+  opts = opts || {};
+  for (const im of images || []) {
+    if (!im || im.data || !im.src) continue;
+    try {
+      const d = pptxDataUriToBytes(im.src);
+      if (d && d.ext !== "webp") { im.data = d.data; im.ext = d.ext; continue; }
+      im.data = await pptxImgToPng(im.src, im.w, im.h, opts.scale);
+      im.ext = "png";
+    } catch (e) {
+      if (typeof console !== "undefined") console.warn("[pptx] image embed skipped:", e && e.message);
+    }
+  }
+  return images;
+}
+
+// ── per-slide assembly ──────────────────────────────────────────────────────
+function pptxBuildSlide(page, idx) {
+  const media = []; // {name, data}
+  const rels = [];  // {id, type, target, mode?}
+  let rc = 0;
+  const nextRid = () => `rId${++rc}`;
+  const shapes = [];
+  let sid = 1; // shape id 1 is the group; children are 2+
+  let si = 0;  // per-slide media index for svg/png pairs
+  let ii = 0;  // per-slide media index for embedded images
+  const W = page.w || PPTX_SLIDE_W;
+  const H = page.h || PPTX_SLIDE_H;
+
+  // full-bleed background (solid and/or gradient)
+  if (page.bgGradient || page.bg) {
+    shapes.push(pptxBox(++sid, { x: 0, y: 0, w: W, h: H, bg: page.bg, gradient: page.bgGradient, borderRadius: 0 }));
+  }
+
+  // raster-fallback whole-slide image (image-heavy slides — mirrors the PDF path)
+  if (page.imageData) {
+    const rid = nextRid();
+    const name = `slide${idx}_bg.jpeg`;
+    media.push({ name: `ppt/media/${name}`, data: page.imageData });
+    rels.push({ id: rid, type: PPTX_REL_IMAGE, target: `../media/${name}` });
+    shapes.push(pptxPic(++sid, rid, { x: 0, y: 0, w: W, h: H }));
+  }
+
+  for (const b of page.boxes || []) shapes.push(pptxBox(++sid, b));
+  for (const c of page.circles || []) shapes.push(pptxEllipse(++sid, c));
+  // Native, editable PowerPoint tables (<a:tbl> graphicFrame) for `table` blocks.
+  for (const tb of page.tables || []) {
+    if (!tb || !tb.rows || !tb.rows.length) continue;
+    shapes.push(pptxTableFrame(++sid, tb));
+  }
+  // Embedded pictures for `image` blocks (base64 data: URI or resolved URL).
+  for (const im of page.images || []) {
+    if (!im || !im.data) continue;
+    ii++;
+    const ext = (im.ext || "png").toLowerCase();
+    const rid = nextRid();
+    const name = `slide${idx}_img${ii}.${ext}`;
+    media.push({ name: `ppt/media/${name}`, data: im.data });
+    rels.push({ id: rid, type: PPTX_REL_IMAGE, target: `../media/${name}` });
+    shapes.push(pptxPic(++sid, rid, im));
+  }
+  // Native SVG pictures (Lucide icons, flow/cycle/funnel connectors, svg block) —
+  // vector part + PNG fallback. Placed above shapes, below text labels.
+  for (const s of page.svgs || []) {
+    if (!s || !s.svg) continue;
+    si++;
+    const ridSvg = nextRid();
+    const svgName = `slide${idx}_svg${si}.svg`;
+    media.push({ name: `ppt/media/${svgName}`, data: s.svg });
+    rels.push({ id: ridSvg, type: PPTX_REL_IMAGE, target: `../media/${svgName}` });
+    if (s.pngFallback) {
+      const ridPng = nextRid();
+      const pngName = `slide${idx}_svg${si}.png`;
+      media.push({ name: `ppt/media/${pngName}`, data: s.pngFallback });
+      rels.push({ id: ridPng, type: PPTX_REL_IMAGE, target: `../media/${pngName}` });
+      shapes.push(pptxPicSvg(++sid, ridPng, ridSvg, s));
+    } else {
+      // No raster fallback available — embed the SVG as a plain picture. Modern PPT and
+      // LibreOffice render it; only very old SVG-blind clients show nothing for this shape.
+      shapes.push(pptxPic(++sid, ridSvg, s));
+    }
+  }
+  for (const t of page.texts || []) if (t && t.text) shapes.push(pptxTextSp(++sid, t));
+  for (const l of page.links || []) {
+    if (!l || !l.href) continue;
+    const rid = nextRid();
+    rels.push({ id: rid, type: PPTX_REL_HLINK, target: l.href, mode: "External" });
+    shapes.push(pptxLinkSp(++sid, rid, l));
+  }
+
+  const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"`
+    + ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+    + ` xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">`
+    + `<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`
+    + `<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`
+    + shapes.join("")
+    + `</p:spTree></p:cSld><p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr></p:sld>`;
+
+  const layoutRid = nextRid();
+  rels.push({ id: layoutRid, type: PPTX_REL_LAYOUT, target: "../slideLayouts/slideLayout1.xml" });
+  const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+    + rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${pptxEsc(r.target)}"${r.mode ? ` TargetMode="${r.mode}"` : ""}/>`).join("")
+    + `</Relationships>`;
+
+  return { slideXml, relsXml, media };
+}
+
+// ── package skeleton (shared master + layout + theme) ───────────────────────
+const pptxContentTypes = (slideCount, mediaExts, hasTables) => {
+  const defaults = new Set(["rels", "xml", ...mediaExts]);
+  const defTags = [...defaults].map((e) => {
+    const ct = e === "rels" ? "application/vnd.openxmlformats-package.relationships+xml"
+      : e === "xml" ? "application/xml"
+      : e === "png" ? "image/png"
+      : (e === "jpeg" || e === "jpg") ? "image/jpeg"
+      : e === "svg" ? "image/svg+xml" : "application/octet-stream";
+    return `<Default Extension="${e}" ContentType="${ct}"/>`;
+  }).join("");
+  let overrides = `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>`
+    + `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>`
+    + `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`
+    + `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>`;
+  if (hasTables)
+    overrides += `<Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>`;
+  for (let i = 1; i <= slideCount; i++)
+    overrides += `<Override PartName="/ppt/slides/slide${i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">${defTags}${overrides}</Types>`;
+};
+
+const PPTX_ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+  + `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>`
+  + `</Relationships>`;
+
+function pptxPresentationXml(slideCount, w, h) {
+  let sldIds = "";
+  for (let i = 1; i <= slideCount; i++) sldIds += `<p:sldId id="${255 + i}" r:id="rId${i + 1}"/>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"`
+    + ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+    + ` xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">`
+    + `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId${slideCount + 2}"/></p:sldMasterIdLst>`
+    + `<p:sldIdLst>${sldIds}</p:sldIdLst>`
+    + `<p:sldSz cx="${pptxEmu(w)}" cy="${pptxEmu(h)}" type="screen16x9"/>`
+    + `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+}
+
+function pptxPresentationRels(slideCount, hasTables) {
+  let r = "";
+  for (let i = 1; i <= slideCount; i++)
+    r += `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i}.xml"/>`;
+  r += `<Relationship Id="rId${slideCount + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>`;
+  r += `<Relationship Id="rId${slideCount + 3}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>`;
+  if (hasTables)
+    r += `<Relationship Id="rId${slideCount + 4}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${r}</Relationships>`;
+}
+
+const PPTX_THEME = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Vela"><a:themeElements>`
+  + `<a:clrScheme name="Vela"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>`
+  + `<a:dk2><a:srgbClr val="0F172A"/></a:dk2><a:lt2><a:srgbClr val="E2E8F0"/></a:lt2>`
+  + `<a:accent1><a:srgbClr val="3B82F6"/></a:accent1><a:accent2><a:srgbClr val="8B5CF6"/></a:accent2><a:accent3><a:srgbClr val="22C55E"/></a:accent3>`
+  + `<a:accent4><a:srgbClr val="F59E0B"/></a:accent4><a:accent5><a:srgbClr val="EF4444"/></a:accent5><a:accent6><a:srgbClr val="14B8A6"/></a:accent6>`
+  + `<a:hlink><a:srgbClr val="60A5FA"/></a:hlink><a:folHlink><a:srgbClr val="A855F7"/></a:folHlink></a:clrScheme>`
+  + `<a:fontScheme name="Vela"><a:majorFont><a:latin typeface="Sora"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>`
+  + `<a:minorFont><a:latin typeface="DM Sans"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>`
+  + `<a:fmtScheme name="Vela"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>`
+  + `<a:lnStyleLst><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>`
+  + `<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>`
+  + `<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme>`
+  + `</a:themeElements></a:theme>`;
+
+const PPTX_SLIDE_MASTER = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">`
+  + `<p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`
+  + `<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`
+  + `<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>`
+  + `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>`
+  + `<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>`;
+
+const PPTX_SLIDE_MASTER_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+  + `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`
+  + `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>`;
+
+const PPTX_SLIDE_LAYOUT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+  + `<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">`
+  + `<p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`
+  + `<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>`
+  + `<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr></p:sldLayout>`;
+
+const PPTX_SLIDE_LAYOUT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+  + `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>`;
+
+// ── library-free STORE ZIP writer (browser: Uint8Array, no Node Buffer/zlib) ─
+function pptxU8(data) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  return new TextEncoder().encode(String(data));
+}
+
+const PPTX_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function pptxCrc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = PPTX_CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function pptxZip(files) {
+  const chunks = [];   // local headers + names + data (STORE)
+  const central = [];  // central directory records
+  let offset = 0;
+  const mk = (size) => { const b = new Uint8Array(size); return { b, v: new DataView(b.buffer) }; };
+  for (const f of files) {
+    const nameBuf = pptxU8(f.name);
+    const data = pptxU8(f.data);
+    const crc = pptxCrc32(data);
+    const { b: local, v: lv } = mk(30);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);   // version needed
+    lv.setUint16(6, 0, true);    // flags
+    lv.setUint16(8, 0, true);    // method 0 = STORE
+    lv.setUint16(10, 0, true);   // mod time
+    lv.setUint16(12, 0x21, true); // mod date (deterministic)
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, nameBuf.length, true);
+    lv.setUint16(28, 0, true);
+    chunks.push(local, nameBuf, data);
+
+    const { b: cen, v: cv } = mk(46);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);   // version made by
+    cv.setUint16(6, 20, true);   // version needed
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);   // method STORE
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0x21, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBuf.length, true);
+    cv.setUint32(42, offset, true);
+    central.push(cen, nameBuf);
+
+    offset += 30 + nameBuf.length + data.length;
+  }
+  let cenSize = 0;
+  for (const c of central) cenSize += c.length;
+  const { b: end, v: ev } = mk(22);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cenSize, true);
+  ev.setUint32(16, offset, true);
+
+  const parts = [...chunks, ...central, end];
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+// ── public entry ────────────────────────────────────────────────────────────
+// buildPptx(pages, opts)
+//   pages: Array<page>, each page (all coords in 960×540 px space):
+//     { w?, h?,                              // slide dims (default 960×540)
+//       bg?:        color | null,            // solid slide background
+//       bgGradient?:{angleDeg,stops} | null, // full-bleed gradient background
+//       boxes?:     [{x,y,w,h, bg?|fill?, gradient?, borders?/line?, borderRadius?/radius?}],
+//       circles?:   [{cx,cy,r, bg?|fill?, borderWidth?,borderColor? / line?}],
+//       texts?:     [{x,y,w,h, text, fontSize?/size?, color, fontWeight?/bold?, fontStyle?/italic?, fontFamily?/font?, align?}],
+//       links?:     [{href,x,y,w,h}],
+//       tables?:    [{x,y,w,h, cols, borderColor?, borderWidth?,
+//                     rows:[{header?, bg?, h?, cells:[{text, color?, fontWeight?, fontSize?, align?, fontFamily?}]}]}],
+//                   // native editable PowerPoint tables (<a:tbl> graphicFrame).
+//       images?:    [{x,y,w,h, data:Uint8Array, ext:"png"|"jpeg"|"gif"|"svg", alt?}],
+//                   // embedded pictures for `image` blocks; `data` is filled from a
+//                   // data: URI (sync) or an external URL (async pptxResolveImages()).
+//       svgs?:      [{x,y,w,h, svg:string, pngFallback?:Uint8Array, alt?}],
+//                   // native SVG pictures (Lucide icons / flow / cycle / svg block).
+//                   // `svg` is standalone serialized markup; `pngFallback` is the
+//                   // browser-rasterized PNG (async — fill via pptxRasterizeSvgs()
+//                   // before calling buildPptx so the asvg:svgBlip+PNG pattern emits).
+//       imageData?: Uint8Array (JPEG) }      // whole-slide raster fallback
+//     (`color` = a parseColor() {r,g,b,a} object OR a css/hex string.)
+//   opts: reserved (unused today).
+//   Returns: a Blob of MIME
+//     application/vnd.openxmlformats-officedocument.presentationml.presentation.
+//   NB: the artifact sandbox blocks blob: URLs, so a UI caller (PPTX-5) should
+//   read the bytes via `await blob.arrayBuffer()` and build a base64 data: URI
+//   for the <a download> href (same pattern as the PDF modal).
+function buildPptx(pages, opts) {
+  opts = opts || {};
+  const list = Array.isArray(pages) ? pages : [];
+  const files = [];
+  const mediaExts = new Set(["png"]); // others (jpeg/svg) added on demand
+  const allMedia = [];
+  const W = (list[0] && list[0].w) || PPTX_SLIDE_W;
+  const H = (list[0] && list[0].h) || PPTX_SLIDE_H;
+  // A table needs a tableStyleId + tableStyles.xml part to open in PowerPoint
+  // without a repair prompt (see PPTX_TABLE_STYLE_ID). Only ship that part when a
+  // deck actually has a table, so table-free decks stay minimal.
+  const hasTables = list.some((p) => p && Array.isArray(p.tables)
+    && p.tables.some((t) => t && Array.isArray(t.rows) && t.rows.length));
+
+  list.forEach((page, i) => {
+    const { slideXml, relsXml, media } = pptxBuildSlide(page || {}, i + 1);
+    files.push({ name: `ppt/slides/slide${i + 1}.xml`, data: slideXml });
+    files.push({ name: `ppt/slides/_rels/slide${i + 1}.xml.rels`, data: relsXml });
+    for (const m of media) {
+      mediaExts.add(m.name.split(".").pop().toLowerCase());
+      allMedia.push(m);
+    }
+  });
+
+  files.unshift({ name: "[Content_Types].xml", data: pptxContentTypes(list.length, [...mediaExts], hasTables) });
+  files.push({ name: "_rels/.rels", data: PPTX_ROOT_RELS });
+  files.push({ name: "ppt/presentation.xml", data: pptxPresentationXml(list.length, W, H) });
+  files.push({ name: "ppt/_rels/presentation.xml.rels", data: pptxPresentationRels(list.length, hasTables) });
+  if (hasTables) files.push({ name: "ppt/tableStyles.xml", data: PPTX_TABLE_STYLES });
+  files.push({ name: "ppt/theme/theme1.xml", data: PPTX_THEME });
+  files.push({ name: "ppt/slideMasters/slideMaster1.xml", data: PPTX_SLIDE_MASTER });
+  files.push({ name: "ppt/slideMasters/_rels/slideMaster1.xml.rels", data: PPTX_SLIDE_MASTER_RELS });
+  files.push({ name: "ppt/slideLayouts/slideLayout1.xml", data: PPTX_SLIDE_LAYOUT });
+  files.push({ name: "ppt/slideLayouts/_rels/slideLayout1.xml.rels", data: PPTX_SLIDE_LAYOUT_RELS });
+  for (const m of allMedia) files.push(m);
+
+  const bytes = pptxZip(files);
+  return new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
+}
+
+// ── DOM extraction ──────────────────────────────────────────────────────────
+// NEW element-grouped text extractor (vs. part-pdf.jsx's per-visual-line
+// extractTextRuns). Emits ONE box per text-bearing element so PowerPoint reflows
+// wrapped paragraphs natively — fixes the spike's duplicated/overlapping text.
+// Effective (composited) color comes from parseColor()/_compositeBg; unresolvable
+// colors are skipped (never faked). Visually-hidden nodes are skipped.
+function pptxExtractTextBoxes(container, containerRect) {
+  const boxes = [];
+  const seen = new Set();
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const cw = containerRect.width, ch = containerRect.height;
+  const isInline = (el) => {
+    const d = window.getComputedStyle(el).display;
+    return d === "inline" || d === "inline-block" || d === "inline-flex" || d === "contents";
+  };
+
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode;
+    const raw = textNode.textContent;
+    if (!raw || !raw.trim()) continue;
+    const parent = textNode.parentElement;
+    if (!parent) continue;
+
+    // Resolve the BLOCK-level element that owns this text. part-blocks.jsx's
+    // parseInline() renders inline **bold** / *italic* / links as <span
+    // style="font-weight:700"> / <em> / <a> INSIDE the paragraph/heading element —
+    // climb past any inline-display ancestors so ONE box owns the whole paragraph
+    // and its formatting becomes RUNS within it. (Previously each inline span was
+    // treated as its own element → a separate text box floating at the span's
+    // mid-line rect, so bold/italic segments appeared misplaced/overlapping.)
+    // Hygiene exclusions run on `parent` (a descendant of blockEl) so closest()
+    // still walks the full ancestor chain — including any inline wrapper we climb
+    // through — matching the prior per-element semantics (e.g. the slide-counter
+    // pill's data-no-pdf guard, SVG text).
+    if (parent.closest("svg")) continue;
+    if (parent.closest("[data-zoom-badge]") || parent.closest("[data-no-pdf]")) continue;
+
+    let blockEl = parent;
+    while (blockEl && blockEl !== container && isInline(blockEl)) blockEl = blockEl.parentElement;
+    if (!blockEl || blockEl === container) blockEl = parent;
+
+    if (seen.has(blockEl)) continue; // one box per block element
+    seen.add(blockEl);
+
+    const style = window.getComputedStyle(blockEl);
+    if (_isExportHidden(style)) continue;
+    const color = parseColor(style.color);
+    if (!color) continue; // skip genuinely invisible / unresolvable text
+
+    const tt = style.textTransform;
+    const applyTransform = (s) => tt === "uppercase" ? s.toUpperCase() : (tt === "lowercase" ? s.toLowerCase() : s);
+
+    // Recursively collect the block's inline content into lines of STYLED RUNS.
+    // Each run carries its own bold/italic (inherited through nested inline spans),
+    // so a single reflowable PowerPoint text box reproduces mixed formatting. A
+    // <br> starts a new line/paragraph (explicit "\n" in source); a block-level
+    // child is left for the walker to emit as its own box (NOT marked seen here).
+    const lines = [[]];
+    const pushRun = (txt, bold, italic) => { if (txt) lines[lines.length - 1].push({ text: txt, bold, italic }); };
+    const walkInline = (node, bold, italic) => {
+      for (const n of node.childNodes) {
+        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic); continue; }
+        if (n.nodeType !== 1) continue;
+        if (n.tagName === "BR") { lines.push([]); continue; }
+        if (String(n.tagName).toLowerCase() === "svg") continue; // icons handled separately
+        if (!isInline(n)) continue; // block child → its own box via the walker
+        const cs = window.getComputedStyle(n);
+        const b = bold || (parseInt(cs.fontWeight) || 400) >= 600;
+        const it = italic || (String(cs.fontStyle).indexOf("italic") >= 0);
+        seen.add(n); // absorb this inline element so its text nodes don't spawn a box
+        walkInline(n, b, it);
+      }
+    };
+    const baseBold = (parseInt(style.fontWeight) || 400) >= 600;
+    const baseItalic = String(style.fontStyle).indexOf("italic") >= 0;
+    walkInline(blockEl, baseBold, baseItalic);
+
+    // Normalize whitespace per line: collapse runs of whitespace to single spaces,
+    // trim the outer edges, drop emptied runs, then apply text-transform per run.
+    const runs = lines.map((lineRuns) => {
+      let rs = lineRuns.map((r) => ({ text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
+      if (rs.length) {
+        rs[0].text = rs[0].text.replace(/^\s+/, "");
+        rs[rs.length - 1].text = rs[rs.length - 1].text.replace(/\s+$/, "");
+      }
+      rs = rs.filter((r) => r.text !== "");
+      for (const r of rs) r.text = applyTransform(r.text);
+      return rs;
+    });
+    const text = runs.map((rs) => rs.map((r) => r.text).join("")).join("\n");
+    if (!text.trim()) continue;
+
+    const rect = blockEl.getBoundingClientRect();
+    let x = rect.left - containerRect.left;
+    let y = rect.top - containerRect.top;
+    let w = rect.width;
+    let h = rect.height;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > cw) w = cw - x;
+    if (y + h > ch) h = ch - y;
+    if (w < 1 || h < 1) continue;
+    if (y + h < 0 || y > ch || x + w < 0 || x > cw) continue;
+
+    const vs = getVisualScale(blockEl, container);
+    const fontSize = (parseFloat(style.fontSize) || 14) * vs;
+    const fontWeight = parseInt(style.fontWeight) || 400;
+    const fontStyle = style.fontStyle || "normal";
+    const fontFamily = style.fontFamily || "";
+    // Horizontal alignment: textAlign covers normal text, but a flex/grid container
+    // (e.g. a numbered step/badge circle) centers its glyph via justify-content —
+    // which textAlign does NOT reflect. Map that so the number sits centered in its
+    // box instead of hugging the left edge.
+    let align = style.textAlign || "left";
+    const disp = style.display;
+    if (disp === "flex" || disp === "inline-flex" || disp === "grid" || disp === "inline-grid") {
+      const jc = style.justifyContent;
+      if (jc === "center" || jc === "space-around" || jc === "space-evenly") align = "center";
+      else if (jc === "flex-end" || jc === "end" || jc === "right") align = "right";
+    }
+
+    boxes.push({ x, y, w, h, text, runs, fontSize, color, fontWeight, fontStyle, fontFamily, align });
+  }
+  return boxes;
+}
+
+// Set part-pdf.jsx's shared _compositeBg global for this slide so parseColor()
+// alpha-composites against the true slide background (mirrors the PDF path).
+function pptxSetCompositeBg(slide, el) {
+  const rawBgStr = (slide && slide.bg) || window.getComputedStyle(el).backgroundColor;
+  const rgbM = rawBgStr && rawBgStr.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (rgbM) {
+    _compositeBg = { r: parseInt(rgbM[1]) / 255, g: parseInt(rgbM[2]) / 255, b: parseInt(rgbM[3]) / 255 };
+    return rawBgStr;
+  }
+  const hexM = rawBgStr && rawBgStr.match(/#([0-9a-f]{3,8})/i);
+  if (hexM) {
+    let h = hexM[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    _compositeBg = { r: parseInt(h.substring(0, 2), 16) / 255, g: parseInt(h.substring(2, 4), 16) / 255, b: parseInt(h.substring(4, 6), 16) / 255 };
+    return rawBgStr;
+  }
+  _compositeBg = { r: 10 / 255, g: 15 / 255, b: 28 / 255 }; // fallback #0a0f1c
+  return rawBgStr;
+}
+
+// ── native-SVG capture (Lucide icons, flow/cycle/funnel connectors, svg block) ──
+// The PDF path converts each inline <svg> to bezier PDF path-ops (extractSVGs,
+// part-pdf.jsx). For PPTX we instead embed the live vector directly: serialize the
+// DOM <svg> to a standalone file and rasterize a PNG fallback, then emit both as a
+// native "SVG with PNG fallback" picture (pptxPicSvg). We only reuse extractSVGs'
+// geometry approach (bounding box + container clip) — the PDF path-op strings are
+// not PPTX-compatible, so the serialization below is written fresh.
+
+// Serialize a live DOM <svg> to a standalone, self-contained SVG string. Computed
+// paint/stroke/font values are inlined onto every element (as inline style, which
+// wins over presentation attributes) so the icon renders identically out of its CSS
+// / currentColor / CSS-variable context — getComputedStyle has already resolved
+// currentColor and var() to concrete rgb()/px values.
+const PPTX_SVG_STYLE_PROPS = [
+  "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin",
+  "stroke-dasharray", "stroke-opacity", "fill-opacity", "opacity",
+  "color", "stop-color", "stop-opacity",
+];
+const PPTX_SVG_TEXT_PROPS = ["font-family", "font-size", "font-weight", "font-style", "text-anchor"];
+function pptxSerializeSvg(svg) {
+  const clone = svg.cloneNode(true);
+  const srcEls = [svg, ...svg.querySelectorAll("*")];
+  const dstEls = [clone, ...clone.querySelectorAll("*")];
+  const n = Math.min(srcEls.length, dstEls.length);
+  for (let i = 0; i < n; i++) {
+    const cs = window.getComputedStyle(srcEls[i]);
+    const dst = dstEls[i];
+    if (!dst.style) continue;
+    for (const p of PPTX_SVG_STYLE_PROPS) {
+      const v = cs.getPropertyValue(p);
+      if (v && v.trim() && v !== "normal") dst.style.setProperty(p, v.trim());
+    }
+    const tag = (dst.tagName || "").toLowerCase();
+    if (tag === "text" || tag === "tspan") {
+      for (const p of PPTX_SVG_TEXT_PROPS) {
+        const v = cs.getPropertyValue(p);
+        if (v && v.trim()) dst.setAttribute(p, v.trim());
+      }
+    }
+  }
+  const rect = svg.getBoundingClientRect();
+  const pw = Math.max(1, Math.round(rect.width));
+  const ph = Math.max(1, Math.round(rect.height));
+  if (!clone.getAttribute("viewBox")) clone.setAttribute("viewBox", `0 0 ${pw} ${ph}`);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  if (svg.querySelector("image, use") || svg.querySelector("[*|href]")) {
+    clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  }
+  clone.setAttribute("width", pw);
+  clone.setAttribute("height", ph);
+  const body = new XMLSerializer().serializeToString(clone);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>\r\n${body}`;
+}
+
+// Rasterize a serialized SVG string to PNG bytes via Image → canvas → toBlob (the
+// pre-365 fallback blip). Async — the Image must load the SVG data URI first.
+function pptxSvgToPng(svgStr, w, h, scale) {
+  return new Promise((resolve, reject) => {
+    const s = scale || 2; // 2× the on-slide box for crisp fallback
+    const pw = Math.max(1, Math.round((w || 1) * s));
+    const ph = Math.max(1, Math.round((h || 1) * s));
+    const uri = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = pw; canvas.height = ph;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, pw, ph);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error("pptx svg→png: toBlob returned null")); return; }
+          const fr = new FileReader();
+          fr.onload = () => resolve(new Uint8Array(fr.result));
+          fr.onerror = () => reject(fr.error || new Error("pptx svg→png: read failed"));
+          fr.readAsArrayBuffer(blob);
+        }, "image/png");
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error("pptx svg→png: SVG image failed to load"));
+    img.src = uri;
+  });
+}
+
+// Fill each svg entry's `pngFallback` (async). Call on page.svgs after
+// pptxExtractSlidePage() and before buildPptx(). Failures are non-fatal — an entry
+// with no pngFallback still emits a (degraded) plain-SVG picture in buildPptx.
+async function pptxRasterizeSvgs(svgs, opts) {
+  opts = opts || {};
+  for (const s of svgs || []) {
+    if (!s || !s.svg || s.pngFallback) continue;
+    try {
+      s.pngFallback = await pptxSvgToPng(s.svg, s.w, s.h, opts.scale);
+    } catch (e) {
+      if (typeof console !== "undefined") console.warn("[pptx] svg raster fallback skipped:", e && e.message);
+    }
+  }
+  return svgs;
+}
+
+// Walk every inline <svg> in the container → [{x,y,w,h, svg, alt}] (geometry in
+// 960×540 px space, mirroring extractSVGs' bounding-box + container clip). No
+// pngFallback yet — that is filled asynchronously by pptxRasterizeSvgs(). Applies the
+// same visibility / zoom-badge hygiene as the other extractors.
+function pptxExtractSVGEntries(container, containerRect) {
+  const out = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  container.querySelectorAll("svg").forEach((svg) => {
+    // Serialize only the outermost <svg> (skip an <svg> nested inside another).
+    if (svg.parentElement && svg.parentElement.closest("svg")) return;
+    if (svg.closest("[data-zoom-badge]") || svg.closest("[data-no-pdf]")) return;
+    if (_isExportHidden(window.getComputedStyle(svg))) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    let x = rect.left - containerRect.left;
+    let y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return; // fully off-slide
+    let svgStr;
+    try { svgStr = pptxSerializeSvg(svg); } catch (e) { return; }
+    if (!svgStr || svgStr.indexOf("<svg") < 0) return;
+    out.push({ x, y, w, h, svg: svgStr, alt: svg.getAttribute("aria-label") || "diagram" });
+  });
+  return out;
+}
+
+// ── native table extraction ──────────────────────────────────────────────────
+// Detect `table` blocks in the rendered DOM and lift them to native-table IR.
+// part-blocks.jsx wraps EVERY rendered block in `<div data-block-type={b.type}>`
+// (both its editable and non-editable render branches), so a `table` block's DOM
+// root is reliably marked `data-block-type="table"` — independent of its internal
+// border/grid styling. That wrapper carries no layout/border of its own; the
+// actual bordered grid structure is its single rendered child (case "table" in
+// part-blocks.jsx). Header row = the first row with no top border (the renderer
+// gives body rows a `borderTop`, the header none).
+function pptxExtractTables(container, containerRect) {
+  const tables = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  const colsOf = (el) => {
+    const t = window.getComputedStyle(el).gridTemplateColumns;
+    return t && t !== "none" ? t.trim().split(/\s+/).filter(Boolean).length : 0;
+  };
+  container.querySelectorAll('[data-block-type="table"]').forEach((wrapEl) => {
+    if (_isExportHidden(window.getComputedStyle(wrapEl))) return;
+
+    const rect = wrapEl.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return;
+    const x = rect.left - containerRect.left, y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return;
+
+    // Border color/width come from the table's own rendered root (for the OOXML
+    // outline) — not used as a detection signal now that discovery is exact.
+    const tableRoot = wrapEl.firstElementChild || wrapEl;
+    const ts = window.getComputedStyle(tableRoot);
+    const brdW = parseFloat(ts.borderTopWidth) || 0;
+    const brdColor = parseColor(ts.borderTopColor) || parseColor(ts.borderColor);
+
+    const rows = Array.from(tableRoot.children).filter((el) => {
+      const d = window.getComputedStyle(el).display;
+      return d === "grid" || d === "inline-grid";
+    });
+    if (!rows.length) return;
+    const cols = colsOf(rows[0]);
+
+    const outRows = rows.map((rowEl, ri) => {
+      const rs = window.getComputedStyle(rowEl);
+      const rowRect = rowEl.getBoundingClientRect();
+      const noTopBorder = (parseFloat(rs.borderTopWidth) || 0) < 0.5;
+      const header = ri === 0 && noTopBorder;
+      const rowBg = parseColor(rs.backgroundColor);
+      const cells = [];
+      for (const cellEl of rowEl.children) {
+        const cs = window.getComputedStyle(cellEl);
+        let text = (cellEl.textContent || "").replace(/\s+/g, " ").trim();
+        const tt = cs.textTransform;
+        if (tt === "uppercase") text = text.toUpperCase();
+        else if (tt === "lowercase") text = text.toLowerCase();
+        cells.push({
+          text,
+          color: parseColor(cs.color),
+          fontWeight: parseInt(cs.fontWeight) || 400,
+          // Apply the fitScale shrink-to-fit factor to the font, same as the text-box
+          // extractor. Geometry (x/y/w/h, row heights) comes from getBoundingClientRect
+          // and is already scaled, but getComputedStyle().fontSize is NOT — so without
+          // this the cell text emits full-size on a shrunk slide, growing rows past
+          // their region and overflowing the blocks below.
+          fontSize: (parseFloat(cs.fontSize) || 14) * getVisualScale(cellEl, container),
+          align: cs.textAlign || "left",
+          fontFamily: cs.fontFamily || "",
+        });
+      }
+      return { header, bg: rowBg, h: rowRect.height, cells };
+    });
+    tables.push({ x, y, w, h, cols, rows: outRows, borderColor: brdColor, borderWidth: brdW, _rect: { x, y, w, h } });
+  });
+  return tables;
+}
+
+// ── image-block extraction ───────────────────────────────────────────────────
+// Walk every rendered <img> → embedded-picture IR (geometry in 960×540 px space).
+// data: URIs decode to bytes inline (the common Vela case — pasted images); other
+// srcs keep `.src` for the async pptxResolveImages() pass. Same visibility/zoom
+// hygiene as the other extractors.
+function pptxExtractImages(container, containerRect) {
+  const out = [];
+  const cw = containerRect.width, ch = containerRect.height;
+  container.querySelectorAll("img").forEach((img) => {
+    if (img.closest("[data-zoom-badge]") || img.closest("[data-no-pdf]")) return;
+    if (_isExportHidden(window.getComputedStyle(img))) return;
+    const src = img.currentSrc || img.src;
+    if (!src) return;
+    const rect = img.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    let x = rect.left - containerRect.left, y = rect.top - containerRect.top;
+    const w = rect.width, h = rect.height;
+    if (x + w < 0 || x > cw || y + h < 0 || y > ch) return;
+    const entry = { x, y, w, h, src, alt: img.getAttribute("alt") || "image" };
+    const d = pptxDataUriToBytes(src);
+    if (d && d.ext !== "webp") { entry.data = d.data; entry.ext = d.ext; }
+    out.push(entry);
+  });
+  return out;
+}
+
+// Whole-slide raster hybrid — mirrors the vector-PDF `slideHasImages` fallback
+// (part-pdf.jsx): image-heavy slides can't be faithfully lifted to native shapes,
+// so the ENTIRE slide is captured as one full-bleed JPEG picture (page.imageData,
+// which buildPptx already emits full-bleed). Async (canvas capture); the caller
+// invokes this INSTEAD of pptxExtractSlidePage for slides where slideHasImages()
+// is true. Links stay native/clickable over the raster.
+async function pptxCaptureSlideRaster(el, slide, opts) {
+  opts = opts || {};
+  const containerRect = el.getBoundingClientRect();
+  const slideBg = (slide && (slide.bgGradient || slide.bg)) || null;
+  const canvas = await domToCanvas(el, PPTX_SLIDE_W, PPTX_SLIDE_H, opts.scale || 3, slideBg);
+  const imageData = await canvasToJpegBytes(canvas, opts.quality || 0.95);
+  const links = (typeof extractLinks === "function") ? extractLinks(el, containerRect) : [];
+  return { w: PPTX_SLIDE_W, h: PPTX_SLIDE_H, imageData, links };
+}
+
+// Extract one page IR from an already-rendered off-screen slide container (the
+// element carrying <SlideContent>, sized 960×540, class "no-anim vela-pdf-capture").
+// This is what a PptxExportModal (PPTX-5) calls per slide before buildPptx().
+// Reuses the part-pdf.jsx extractors as-is (fitScale already baked into the DOM).
+// NB: `svgs` entries carry serialized markup but NO pngFallback yet — the caller must
+// `await pptxRasterizeSvgs(page.svgs)` before buildPptx() to embed the PNG fallback.
+function pptxExtractSlidePage(el, containerRect, slide) {
+  const rawBgStr = pptxSetCompositeBg(slide, el);
+  const slideBg = parseColor((slide && slide.bg) || rawBgStr) || parseColor("#0a0f1c");
+  const slideGrad = parseLinearGradient((slide && slide.bgGradient) || rawBgStr) || null;
+
+  // Native tables first, so their cell backgrounds/borders/text (otherwise picked
+  // up as generic boxes + text boxes) are excluded — the <a:tbl> owns that region.
+  const tables = pptxExtractTables(el, containerRect);
+  const tableRects = tables.map((t) => t._rect);
+  const inTable = (cx, cy) => tableRects.some((r) => cx >= r.x - 1 && cx <= r.x + r.w + 1 && cy >= r.y - 1 && cy <= r.y + r.h + 1);
+
+  let boxes = extractBoxes(el, containerRect);
+  let circles = extractCircles(el, containerRect);
+  let texts = pptxExtractTextBoxes(el, containerRect);
+  if (tableRects.length) {
+    boxes = boxes.filter((b) => !inTable(b.x + b.w / 2, b.y + b.h / 2));
+    texts = texts.filter((t) => !inTable(t.x + t.w / 2, t.y + t.h / 2));
+    circles = circles.filter((c) => !inTable(c.cx, c.cy));
+  }
+
+  return {
+    w: PPTX_SLIDE_W,
+    h: PPTX_SLIDE_H,
+    bg: slideBg,
+    bgGradient: slideGrad,
+    boxes,
+    circles,
+    texts,
+    tables,
+    images: pptxExtractImages(el, containerRect),
+    svgs: pptxExtractSVGEntries(el, containerRect),
+    links: extractLinks(el, containerRect),
+  };
+}
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
@@ -15264,6 +16451,295 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
+    </div>
+  );
+}
+
+// ━━━ PowerPoint (.pptx) Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native, editable .pptx export. Mirrors VectorPdfExportModal's phase machine
+// (choose → exporting → done/error) and off-screen per-slide render loop, but a
+// PPTX slide is fixed 16:9 (the 960×540 virtual canvas maps exactly onto a
+// 12192000×6858000 EMU slide), so there is NO ratio picker. Each slide renders
+// off-screen at 960×540, buildPptx()'s companion pptxExtractSlidePage() pulls the
+// per-slide IR straight out of the DOM (no scaling — fitScale is already baked in),
+// then buildPptx() emits the OOXML+ZIP Blob. The artifact sandbox blocks blob:
+// URLs, so the bytes are base64-encoded into a data: URI for the <a download>
+// (same pattern the PDF modal uses for its own bytes).
+function PptxExportModal({ slides, branding, deckTitle, onClose }) {
+  const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [pptxInfo, setPptxInfo] = useState(null); // { size } for stats
+  const [pptxDataUri, setPptxDataUri] = useState(null);
+  const [thumbs, setThumbs] = useState([]);
+  const offscreenRef = useRef(null);
+  const [renderIdx, setRenderIdx] = useState(-1);
+  const pagesRef = useRef([]);
+  const [showBranding, setShowBranding] = useState(false);
+  const showBrandingRef = useRef(showBranding);
+  showBrandingRef.current = showBranding;
+
+  const startExport = useCallback(() => {
+    setPhase("exporting");
+    setProgress(0);
+    setErrorMsg("");
+    pagesRef.current = [];
+    setThumbs([]);
+    setRenderIdx(0);
+  }, []);
+
+  useEffect(() => {
+    if (renderIdx < 0 || renderIdx >= slides.length || phase !== "exporting") return;
+    const el = offscreenRef.current;
+    if (!el) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const slide = slides[renderIdx];
+        const containerRect = el.getBoundingClientRect();
+        let page;
+        if (typeof pptxCaptureSlideRaster === "function" && typeof slideHasImages === "function" && slideHasImages(slide)) {
+          // Image-heavy slide: whole-slide raster hybrid (mirrors the vector-PDF
+          // slideHasImages fallback) — one full-bleed picture instead of native
+          // per-block extraction, so photo slides still round-trip faithfully.
+          page = await pptxCaptureSlideRaster(el, slide);
+        } else {
+          // One native page IR straight from the off-screen DOM (fixed 960×540 space).
+          page = pptxExtractSlidePage(el, containerRect, slide);
+          // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
+          // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
+          if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
+            await pptxRasterizeSvgs(page.svgs);
+          }
+          // Resolve any image blocks whose bytes aren't inline (external URLs / webp).
+          if (typeof pptxResolveImages === "function" && page.images && page.images.length) {
+            await pptxResolveImages(page.images);
+          }
+        }
+
+        // Optional "Made with Vela" branding — a native, editable text box, kept
+        // off virtual title cards so it only marks real content slides.
+        if (showBrandingRef.current && !slide._virtual) {
+          page.texts = (page.texts || []).concat([{
+            x: VIRTUAL_W - 196, y: VIRTUAL_H - 26, w: 184, h: 16,
+            text: "Made with Vela", fontSize: 11, color: "#94a3b8",
+            fontWeight: 600, align: "right",
+          }]);
+        }
+        pagesRef.current.push(page);
+
+        // Thumbnail via the shared quick canvas capture (best-effort).
+        try {
+          const thumbCanvas = document.createElement("canvas");
+          const tw = 120, th = Math.round(120 * (VIRTUAL_H / VIRTUAL_W));
+          thumbCanvas.width = tw * 2; thumbCanvas.height = th * 2;
+          const tctx = thumbCanvas.getContext("2d");
+          const quickCanvas = await vectorDomToCanvas(el, VIRTUAL_W, VIRTUAL_H, 1);
+          tctx.drawImage(quickCanvas, 0, 0, quickCanvas.width, quickCanvas.height, 0, 0, tw * 2, th * 2);
+          setThumbs(prev => [...prev, thumbCanvas.toDataURL("image/jpeg", 0.5)]);
+        } catch (thumbErr) {
+          setThumbs(prev => [...prev, null]);
+        }
+
+        setProgress(((renderIdx + 1) / slides.length) * 100);
+
+        if (renderIdx + 1 < slides.length) {
+          setRenderIdx(renderIdx + 1);
+        } else {
+          // Finalize: emit the OOXML+ZIP Blob, then base64 → data: URI (blob: blocked).
+          const blob = buildPptx(pagesRef.current, {});
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          const CHUNK = 0x8000; // chunked so String.fromCharCode.apply never overflows
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+          }
+          const b64 = btoa(binary);
+          setPptxDataUri("data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64," + b64);
+          setPptxInfo({ size: bytes.length });
+          setPhase("done");
+        }
+      } catch (err) {
+        console.error("PPTX export error:", err);
+        setErrorMsg(`Export failed on slide ${renderIdx + 1}: ${err && err.message ? err.message : err}`);
+        setPhase("error");
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [renderIdx, phase, slides.length]);
+
+  const safeTitle = ((deckTitle || "vela-deck").replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60));
+  const currentSlide = renderIdx >= 0 && renderIdx < slides.length ? slides[renderIdx] : null;
+
+  return (
+    <div onClick={onClose} data-testid="pptx-export-modal" style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, width: "min(480px, 94vw)", maxHeight: "94vh", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {getIcon("FileDown", { size: 14, color: T.accent })}
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: 1 }}>POWERPOINT</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 8, color: T.green || "#34d399", background: `${T.green || "#34d399"}18`, padding: "1px 5px", borderRadius: 3, fontWeight: 600, letterSpacing: 0.5 }}>.PPTX</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 4px", lineHeight: 1 }}>{"✕"}</button>
+        </div>
+
+        <div style={{ display: "block", flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div style={{ padding: "20px 16px", overflowY: "auto" }}>
+          {phase === "choose" && <>
+            <div style={{ fontFamily: FONT.body, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>
+              Native, editable PowerPoint — real text boxes & shapes, 16:9
+            </div>
+            <div style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim, marginBottom: 16, padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: `1px solid ${T.border}` }}>
+              {slides.length} slides {"·"} 12192000{"×"}6858000 EMU (16:9)
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Show branding</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Made with Vela {"·"} corner caption</span>
+              </div>
+              <button data-testid="pptx-export-branding-toggle" onClick={() => setShowBranding(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: showBranding ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3, left: showBranding ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>
+            <button data-testid="pptx-export-start" onClick={startExport} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
+              letterSpacing: 1, transition: "opacity .15s",
+            }}>
+              EXPORT {slides.length} SLIDES
+            </button>
+          </>}
+
+          {(phase === "exporting" || phase === "done") && (() => {
+            const thumbW = 56, thumbH = Math.round(56 * (VIRTUAL_H / VIRTUAL_W));
+            const bigW = 140, bigH = Math.round(140 * (VIRTUAL_H / VIRTUAL_W));
+            const isExporting = phase === "exporting";
+            const maxVisible = 14;
+            const visibleThumbs = thumbs.slice(-maxVisible);
+            const prevThumbs = visibleThumbs.slice(0, -1);
+            const latestThumb = visibleThumbs.length > 0 ? visibleThumbs[visibleThumbs.length - 1] : null;
+            return <>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "0 auto 12px", minHeight: bigH + 8 }}>
+                  <div style={{ position: "relative", width: thumbW + Math.max(prevThumbs.length - 1, 0) * 14, height: thumbH + 16, flexShrink: 0 }}>
+                    {prevThumbs.map((src, i) => {
+                      const total = prevThumbs.length;
+                      const spread = Math.min(14, 160 / Math.max(total, 1));
+                      const x = i * spread;
+                      const tilt = ((i - (total - 1) / 2) / Math.max(total - 1, 1)) * 3;
+                      return src ? <img key={i} src={src} alt="" style={{
+                        position: "absolute", left: x, top: 8,
+                        width: thumbW, height: thumbH, objectFit: "cover",
+                        borderRadius: 3, border: `1px solid ${T.border}`,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+                        transform: `rotate(${tilt}deg)`,
+                        opacity: 0.7 + 0.3 * (i / Math.max(total - 1, 1)),
+                        zIndex: i,
+                      }} /> : null;
+                    })}
+                    {thumbs.length === 0 && <div style={{
+                      width: thumbW, height: thumbH, borderRadius: 3, border: `2px dashed ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      position: "absolute", left: 0, top: 8,
+                    }}>
+                      <div style={{ width: 12, height: 12, border: `2px solid ${T.accent}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    </div>}
+                  </div>
+                  {latestThumb ? <div style={{ position: "relative", flexShrink: 0 }}>
+                    <img src={latestThumb} alt="" style={{
+                      width: bigW, height: bigH, objectFit: "cover",
+                      borderRadius: 6, border: `2px solid ${T.accent}`,
+                      boxShadow: `0 8px 32px ${T.accent}30, 0 4px 16px rgba(0,0,0,0.4)`,
+                      animation: "pageIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+                    }} />
+                    <div style={{
+                      position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)",
+                      fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: "#fff",
+                      background: T.accent, padding: "2px 8px", borderRadius: 10,
+                      whiteSpace: "nowrap",
+                    }}>{thumbs.length} / {slides.length}</div>
+                  </div> : <div style={{
+                    width: bigW, height: bigH, borderRadius: 6, border: `2px dashed ${T.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                  }}>
+                    <div style={{ width: 20, height: 20, border: `2px solid ${T.accent}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                  </div>}
+                </div>
+
+                {isExporting ? <>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.text, marginBottom: 8 }}>
+                    Building slide {Math.min(renderIdx + 1, slides.length)} of {slides.length}
+                  </div>
+                  <div style={{ width: "100%", height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${T.accent}, ${T.green || "#34d399"})`, borderRadius: 2, transition: "width .3s ease" }} />
+                  </div>
+                </> : <>
+                  <div data-testid="pptx-export-done" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.green || "#34d399", fontWeight: 700, marginBottom: 4 }}>
+                    {"✅"} {slides.length} slides ready
+                  </div>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.textDim }}>
+                    native .pptx {"·"} {((pptxInfo?.size || 0) / 1024).toFixed(0)} KB
+                  </div>
+                </>}
+              </div>
+
+              {phase === "done" && <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <a data-testid="pptx-export-download" href={pptxDataUri} download={`${safeTitle}.pptx`} style={{
+                    flex: 1, padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+                    background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
+                    letterSpacing: 1, textAlign: "center", textDecoration: "none",
+                  }}>
+                    {"⬇"} DOWNLOAD PPTX
+                  </a>
+                  <button onClick={onClose} style={{
+                    padding: "10px 16px", fontFamily: FONT.mono, fontSize: 11, fontWeight: 600,
+                    background: "transparent", color: T.textDim, border: `1px solid ${T.border}`, borderRadius: 6, cursor: "pointer",
+                  }}>CLOSE</button>
+                </div>
+              </>}
+            </>;
+          })()}
+
+          {phase === "error" && <>
+            <div style={{ textAlign: "center", padding: "16px 0" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>{"❌"}</div>
+              <div data-testid="pptx-export-error" style={{ fontFamily: FONT.mono, fontSize: 11, color: "#ef4444", marginBottom: 8 }}>{errorMsg}</div>
+            </div>
+            <button onClick={onClose} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid #ef4444", borderRadius: 6, cursor: "pointer",
+            }}>CLOSE</button>
+          </>}
+        </div>
+        </div>
+      </div>
+
+      {/* Off-screen slide renderer — one slide at a time, fixed 960×540 (16:9). */}
+      {phase === "exporting" && currentSlide && (() => {
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        return (
+          <div style={{ position: "fixed", left: -9999, top: -9999, width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden", zIndex: -1 }}>
+            <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
+            <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden" }}>
+              <SlideContent slide={currentSlide} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} displayIndex={displayIndex} displayTotal={displayTotal} />
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -16064,6 +17540,7 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
+  const [pptxExport, setPptxExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
@@ -16632,13 +18109,14 @@ export default function App() {
           <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
                 {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
+                {total > 0 && <button data-testid="export-pptx-menu-item" onClick={() => { setPptxExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> PowerPoint (.pptx)</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
                 {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
@@ -16685,6 +18163,7 @@ export default function App() {
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
+            {total > 0 && <button data-testid="export-pptx-menu-item-mobile" onClick={() => { setPptxExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📊"} PowerPoint (.pptx)</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { if (!soReason) { setStandaloneExport(true); setMobileMenu(false); } }} disabled={!!soReason} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: soReason ? "not-allowed" : "pointer" }}>{"🌐"} Standalone HTML</button>; })()}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
@@ -16807,6 +18286,7 @@ export default function App() {
         if (isMobile) setMobileTab("chat");
       }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {pptxExport && <PptxExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPptxExport(false)} />}
       {standaloneExport && <StandaloneHtmlModal state={state} onClose={() => setStandaloneExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);

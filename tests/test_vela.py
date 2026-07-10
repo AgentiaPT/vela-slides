@@ -2604,6 +2604,98 @@ def run_e2e_tests():
     return result.returncode
 
 
+def run_pptx_e2e_tests():
+    """Run the native PowerPoint (.pptx) export e2e test (test_pptx_export.cjs).
+
+    Drives the real export UI via the offline render + Playwright, then verifies
+    the produced .pptx structurally in Node. If Playwright/Chromium is unavailable
+    the Node harness prints 'PPTX-SKIP: ...' and exits 0 — treated as a soft-skip.
+    After the Node harness succeeds, an OPTIONAL python-pptx read-back runs extra
+    semantic assertions; it skips cleanly (does not fail the gate) when python-pptx
+    is not installed. This suite must never hard-fail CI on a missing optional dep.
+    """
+    print("\n── PPTX Export E2E Tests (test_pptx_export.cjs) ──")
+    test_script = os.path.join(REPO_ROOT, "tests", "test_pptx_export.cjs")
+    if not os.path.exists(test_script):
+        print("  ⚠️  test_pptx_export.cjs not found, skipping")
+        return 0
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("  ⚠️  Node.js not available, skipping pptx e2e tests")
+        return 0
+
+    # Fixed path so the python-pptx read-back below can find the produced deck.
+    import tempfile
+    out_pptx = os.path.join(tempfile.gettempdir(), "vela-pptx-export", "tech-talk.pptx")
+
+    try:
+        result = subprocess.run(
+            ["node", test_script, "--out", out_pptx],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        print("  ❌ PPTX e2e tests timed out (300s)")
+        return 1
+
+    output = result.stdout + result.stderr
+    if "PPTX-SKIP" in output or "Playwright not found" in output:
+        reason = next((l for l in output.splitlines() if "PPTX-SKIP" in l), "Playwright not installed")
+        print(f"  ⚠️  {reason.strip()} — skipping pptx e2e tests")
+        return 0
+
+    print(result.stdout)
+    if result.stderr and result.returncode != 0:
+        print(result.stderr)
+
+    if result.returncode == 0:
+        m = re.search(r'(\d+)\s+passed', result.stdout)
+        print(f"  ✅ {m.group(1) if m else '?'} pptx e2e assertions passed")
+    else:
+        print(f"  ❌ PPTX e2e tests failed (exit code {result.returncode})")
+        return result.returncode
+
+    # ── Optional python-pptx read-back (graceful skip if the dep is absent) ──
+    if os.path.exists(out_pptx):
+        try:
+            from pptx import Presentation
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
+        except ImportError:
+            print("  ⚠️  python-pptx not installed, skipping read-back assertions")
+            return 0
+        try:
+            prs = Presentation(out_pptx)
+            n_text = n_auto = n_pic = n_tbl = 0
+            for slide in prs.slides:
+                for sh in slide.shapes:
+                    if sh.has_text_frame and sh.text_frame.text.strip():
+                        n_text += 1
+                    if sh.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+                        n_auto += 1
+                    if sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                        n_pic += 1
+                    if getattr(sh, "has_table", False):
+                        n_tbl += 1
+            print(f"  ℹ️  python-pptx read-back: {len(prs.slides)} slides · "
+                  f"{n_text} text boxes · {n_auto} autoshapes · {n_pic} pictures · {n_tbl} tables")
+            rb_fail = 0
+            if len(prs.slides) < 5:
+                print("  ❌ read-back: fewer than 5 slides"); rb_fail = 1
+            if n_text < 1:
+                print("  ❌ read-back: no editable text boxes (export would be non-editable)"); rb_fail = 1
+            if n_auto < 1:
+                print("  ❌ read-back: no native autoshapes"); rb_fail = 1
+            if n_tbl < 1:
+                print("  ❌ read-back: no native table"); rb_fail = 1
+            if rb_fail:
+                return 1
+            print("  ✅ python-pptx read-back assertions passed")
+        except Exception as e:
+            print(f"  ❌ python-pptx read-back error: {e}")
+            return 1
+    return 0
+
+
 # ━━━ Offline Study Notes (v12.32) Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_study_notes():
@@ -3157,6 +3249,7 @@ if __name__ == "__main__":
         extra_fails += run_server_tests()
         extra_fails += run_concat_sync()
         extra_fails += run_e2e_tests()
+        extra_fails += run_pptx_e2e_tests()
 
     total_fails = fails + (1 if extra_fails else 0)
 

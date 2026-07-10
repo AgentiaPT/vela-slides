@@ -25,6 +25,295 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   );
 }
 
+// ━━━ PowerPoint (.pptx) Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native, editable .pptx export. Mirrors VectorPdfExportModal's phase machine
+// (choose → exporting → done/error) and off-screen per-slide render loop, but a
+// PPTX slide is fixed 16:9 (the 960×540 virtual canvas maps exactly onto a
+// 12192000×6858000 EMU slide), so there is NO ratio picker. Each slide renders
+// off-screen at 960×540, buildPptx()'s companion pptxExtractSlidePage() pulls the
+// per-slide IR straight out of the DOM (no scaling — fitScale is already baked in),
+// then buildPptx() emits the OOXML+ZIP Blob. The artifact sandbox blocks blob:
+// URLs, so the bytes are base64-encoded into a data: URI for the <a download>
+// (same pattern the PDF modal uses for its own bytes).
+function PptxExportModal({ slides, branding, deckTitle, onClose }) {
+  const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [pptxInfo, setPptxInfo] = useState(null); // { size } for stats
+  const [pptxDataUri, setPptxDataUri] = useState(null);
+  const [thumbs, setThumbs] = useState([]);
+  const offscreenRef = useRef(null);
+  const [renderIdx, setRenderIdx] = useState(-1);
+  const pagesRef = useRef([]);
+  const [showBranding, setShowBranding] = useState(false);
+  const showBrandingRef = useRef(showBranding);
+  showBrandingRef.current = showBranding;
+
+  const startExport = useCallback(() => {
+    setPhase("exporting");
+    setProgress(0);
+    setErrorMsg("");
+    pagesRef.current = [];
+    setThumbs([]);
+    setRenderIdx(0);
+  }, []);
+
+  useEffect(() => {
+    if (renderIdx < 0 || renderIdx >= slides.length || phase !== "exporting") return;
+    const el = offscreenRef.current;
+    if (!el) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const slide = slides[renderIdx];
+        const containerRect = el.getBoundingClientRect();
+        let page;
+        if (typeof pptxCaptureSlideRaster === "function" && typeof slideHasImages === "function" && slideHasImages(slide)) {
+          // Image-heavy slide: whole-slide raster hybrid (mirrors the vector-PDF
+          // slideHasImages fallback) — one full-bleed picture instead of native
+          // per-block extraction, so photo slides still round-trip faithfully.
+          page = await pptxCaptureSlideRaster(el, slide);
+        } else {
+          // One native page IR straight from the off-screen DOM (fixed 960×540 space).
+          page = pptxExtractSlidePage(el, containerRect, slide);
+          // SVG icons/blocks embed as native <p:pic> synchronously, but their PNG
+          // fallback (for pre-365 PowerPoint) is rasterized in a separate async pass.
+          if (typeof pptxRasterizeSvgs === "function" && page.svgs && page.svgs.length) {
+            await pptxRasterizeSvgs(page.svgs);
+          }
+          // Resolve any image blocks whose bytes aren't inline (external URLs / webp).
+          if (typeof pptxResolveImages === "function" && page.images && page.images.length) {
+            await pptxResolveImages(page.images);
+          }
+        }
+
+        // Optional "Made with Vela" branding — a native, editable text box, kept
+        // off virtual title cards so it only marks real content slides.
+        if (showBrandingRef.current && !slide._virtual) {
+          page.texts = (page.texts || []).concat([{
+            x: VIRTUAL_W - 196, y: VIRTUAL_H - 26, w: 184, h: 16,
+            text: "Made with Vela", fontSize: 11, color: "#94a3b8",
+            fontWeight: 600, align: "right",
+          }]);
+        }
+        pagesRef.current.push(page);
+
+        // Thumbnail via the shared quick canvas capture (best-effort).
+        try {
+          const thumbCanvas = document.createElement("canvas");
+          const tw = 120, th = Math.round(120 * (VIRTUAL_H / VIRTUAL_W));
+          thumbCanvas.width = tw * 2; thumbCanvas.height = th * 2;
+          const tctx = thumbCanvas.getContext("2d");
+          const quickCanvas = await vectorDomToCanvas(el, VIRTUAL_W, VIRTUAL_H, 1);
+          tctx.drawImage(quickCanvas, 0, 0, quickCanvas.width, quickCanvas.height, 0, 0, tw * 2, th * 2);
+          setThumbs(prev => [...prev, thumbCanvas.toDataURL("image/jpeg", 0.5)]);
+        } catch (thumbErr) {
+          setThumbs(prev => [...prev, null]);
+        }
+
+        setProgress(((renderIdx + 1) / slides.length) * 100);
+
+        if (renderIdx + 1 < slides.length) {
+          setRenderIdx(renderIdx + 1);
+        } else {
+          // Finalize: emit the OOXML+ZIP Blob, then base64 → data: URI (blob: blocked).
+          const blob = buildPptx(pagesRef.current, {});
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          const CHUNK = 0x8000; // chunked so String.fromCharCode.apply never overflows
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+          }
+          const b64 = btoa(binary);
+          setPptxDataUri("data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64," + b64);
+          setPptxInfo({ size: bytes.length });
+          setPhase("done");
+        }
+      } catch (err) {
+        console.error("PPTX export error:", err);
+        setErrorMsg(`Export failed on slide ${renderIdx + 1}: ${err && err.message ? err.message : err}`);
+        setPhase("error");
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [renderIdx, phase, slides.length]);
+
+  const safeTitle = ((deckTitle || "vela-deck").replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60));
+  const currentSlide = renderIdx >= 0 && renderIdx < slides.length ? slides[renderIdx] : null;
+
+  return (
+    <div onClick={onClose} data-testid="pptx-export-modal" style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, width: "min(480px, 94vw)", maxHeight: "94vh", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {getIcon("FileDown", { size: 14, color: T.accent })}
+            <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, letterSpacing: 1 }}>POWERPOINT</span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 8, color: T.green || "#34d399", background: `${T.green || "#34d399"}18`, padding: "1px 5px", borderRadius: 3, fontWeight: 600, letterSpacing: 0.5 }}>.PPTX</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 4px", lineHeight: 1 }}>{"✕"}</button>
+        </div>
+
+        <div style={{ display: "block", flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div style={{ padding: "20px 16px", overflowY: "auto" }}>
+          {phase === "choose" && <>
+            <div style={{ fontFamily: FONT.body, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>
+              Native, editable PowerPoint — real text boxes & shapes, 16:9
+            </div>
+            <div style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim, marginBottom: 16, padding: "6px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: `1px solid ${T.border}` }}>
+              {slides.length} slides {"·"} 12192000{"×"}6858000 EMU (16:9)
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Show branding</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>Made with Vela {"·"} corner caption</span>
+              </div>
+              <button data-testid="pptx-export-branding-toggle" onClick={() => setShowBranding(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: showBranding ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3, left: showBranding ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>
+            <button data-testid="pptx-export-start" onClick={startExport} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
+              letterSpacing: 1, transition: "opacity .15s",
+            }}>
+              EXPORT {slides.length} SLIDES
+            </button>
+          </>}
+
+          {(phase === "exporting" || phase === "done") && (() => {
+            const thumbW = 56, thumbH = Math.round(56 * (VIRTUAL_H / VIRTUAL_W));
+            const bigW = 140, bigH = Math.round(140 * (VIRTUAL_H / VIRTUAL_W));
+            const isExporting = phase === "exporting";
+            const maxVisible = 14;
+            const visibleThumbs = thumbs.slice(-maxVisible);
+            const prevThumbs = visibleThumbs.slice(0, -1);
+            const latestThumb = visibleThumbs.length > 0 ? visibleThumbs[visibleThumbs.length - 1] : null;
+            return <>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 0 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "0 auto 12px", minHeight: bigH + 8 }}>
+                  <div style={{ position: "relative", width: thumbW + Math.max(prevThumbs.length - 1, 0) * 14, height: thumbH + 16, flexShrink: 0 }}>
+                    {prevThumbs.map((src, i) => {
+                      const total = prevThumbs.length;
+                      const spread = Math.min(14, 160 / Math.max(total, 1));
+                      const x = i * spread;
+                      const tilt = ((i - (total - 1) / 2) / Math.max(total - 1, 1)) * 3;
+                      return src ? <img key={i} src={src} alt="" style={{
+                        position: "absolute", left: x, top: 8,
+                        width: thumbW, height: thumbH, objectFit: "cover",
+                        borderRadius: 3, border: `1px solid ${T.border}`,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+                        transform: `rotate(${tilt}deg)`,
+                        opacity: 0.7 + 0.3 * (i / Math.max(total - 1, 1)),
+                        zIndex: i,
+                      }} /> : null;
+                    })}
+                    {thumbs.length === 0 && <div style={{
+                      width: thumbW, height: thumbH, borderRadius: 3, border: `2px dashed ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      position: "absolute", left: 0, top: 8,
+                    }}>
+                      <div style={{ width: 12, height: 12, border: `2px solid ${T.accent}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    </div>}
+                  </div>
+                  {latestThumb ? <div style={{ position: "relative", flexShrink: 0 }}>
+                    <img src={latestThumb} alt="" style={{
+                      width: bigW, height: bigH, objectFit: "cover",
+                      borderRadius: 6, border: `2px solid ${T.accent}`,
+                      boxShadow: `0 8px 32px ${T.accent}30, 0 4px 16px rgba(0,0,0,0.4)`,
+                      animation: "pageIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+                    }} />
+                    <div style={{
+                      position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)",
+                      fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, color: "#fff",
+                      background: T.accent, padding: "2px 8px", borderRadius: 10,
+                      whiteSpace: "nowrap",
+                    }}>{thumbs.length} / {slides.length}</div>
+                  </div> : <div style={{
+                    width: bigW, height: bigH, borderRadius: 6, border: `2px dashed ${T.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                  }}>
+                    <div style={{ width: 20, height: 20, border: `2px solid ${T.accent}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                  </div>}
+                </div>
+
+                {isExporting ? <>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 11, color: T.text, marginBottom: 8 }}>
+                    Building slide {Math.min(renderIdx + 1, slides.length)} of {slides.length}
+                  </div>
+                  <div style={{ width: "100%", height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${T.accent}, ${T.green || "#34d399"})`, borderRadius: 2, transition: "width .3s ease" }} />
+                  </div>
+                </> : <>
+                  <div data-testid="pptx-export-done" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.green || "#34d399", fontWeight: 700, marginBottom: 4 }}>
+                    {"✅"} {slides.length} slides ready
+                  </div>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: T.textDim }}>
+                    native .pptx {"·"} {((pptxInfo?.size || 0) / 1024).toFixed(0)} KB
+                  </div>
+                </>}
+              </div>
+
+              {phase === "done" && <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <a data-testid="pptx-export-download" href={pptxDataUri} download={`${safeTitle}.pptx`} style={{
+                    flex: 1, padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+                    background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
+                    letterSpacing: 1, textAlign: "center", textDecoration: "none",
+                  }}>
+                    {"⬇"} DOWNLOAD PPTX
+                  </a>
+                  <button onClick={onClose} style={{
+                    padding: "10px 16px", fontFamily: FONT.mono, fontSize: 11, fontWeight: 600,
+                    background: "transparent", color: T.textDim, border: `1px solid ${T.border}`, borderRadius: 6, cursor: "pointer",
+                  }}>CLOSE</button>
+                </div>
+              </>}
+            </>;
+          })()}
+
+          {phase === "error" && <>
+            <div style={{ textAlign: "center", padding: "16px 0" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>{"❌"}</div>
+              <div data-testid="pptx-export-error" style={{ fontFamily: FONT.mono, fontSize: 11, color: "#ef4444", marginBottom: 8 }}>{errorMsg}</div>
+            </div>
+            <button onClick={onClose} style={{
+              width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
+              background: "rgba(239,68,68,0.2)", color: "#ef4444", border: "1px solid #ef4444", borderRadius: 6, cursor: "pointer",
+            }}>CLOSE</button>
+          </>}
+        </div>
+        </div>
+      </div>
+
+      {/* Off-screen slide renderer — one slide at a time, fixed 960×540 (16:9). */}
+      {phase === "exporting" && currentSlide && (() => {
+        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        let nonVirtualBefore = 0;
+        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
+        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        return (
+          <div style={{ position: "fixed", left: -9999, top: -9999, width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden", zIndex: -1 }}>
+            <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
+            <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden" }}>
+              <SlideContent slide={currentSlide} index={renderIdx} total={slides.length} branding={currentSlide._virtual ? null : branding} displayIndex={displayIndex} displayTotal={displayTotal} />
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 // ━━━ Deck Stats Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Opened from the header stat pill. The header shows presentation totals (hidden
 // slides excluded); this dialog breaks down visible vs hidden (CR: hide/unhide).
@@ -821,6 +1110,7 @@ export default function App() {
   const [showStats, setShowStats] = useState(false);
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
+  const [pptxExport, setPptxExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
   const [mergeDialog, setMergeDialog] = useState(null); // { localDeck, patchDeck }
   const [mdIncludeNotes, setMdIncludeNotes] = useState(true);
@@ -1389,13 +1679,14 @@ export default function App() {
           <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
                 {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
+                {total > 0 && <button data-testid="export-pptx-menu-item" onClick={() => { setPptxExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> PowerPoint (.pptx)</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
                 {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
@@ -1442,6 +1733,7 @@ export default function App() {
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
             <button onClick={() => { setJsonModal(jsonModal ? null : "copy"); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"{ }"} JSON</button>
             {total > 0 && <button onClick={() => { setPdfExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📄"} PDF</button>}
+            {total > 0 && <button data-testid="export-pptx-menu-item-mobile" onClick={() => { setPptxExport(true); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📊"} PowerPoint (.pptx)</button>}
             {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📝"} Markdown</button>}
             {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { if (!soReason) { setStandaloneExport(true); setMobileMenu(false); } }} disabled={!!soReason} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: soReason ? "not-allowed" : "pointer" }}>{"🌐"} Standalone HTML</button>; })()}
             {total > 0 && <button onClick={() => { exportDeck(); setMobileMenu(false); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"📤"} Export Vela</button>}
@@ -1564,6 +1856,7 @@ export default function App() {
         if (isMobile) setMobileTab("chat");
       }} />}
       {pdfExport && <PdfExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPdfExport(false)} />}
+      {pptxExport && <PptxExportModal slides={collectAllSlides(state.lanes, state.branding)} branding={state.branding} deckTitle={state.deckTitle} onClose={() => setPptxExport(false)} />}
       {standaloneExport && <StandaloneHtmlModal state={state} onClose={() => setStandaloneExport(false)} />}
       {mergeDialog && <MergePatchDialog localDeck={mergeDialog.localDeck} patchDeck={mergeDialog.patchDeck} onComplete={(result) => {
         setMergeDialog(null);

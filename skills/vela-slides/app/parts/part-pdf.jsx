@@ -995,6 +995,14 @@ function compositeColor(fg) {
   };
 }
 
+// Skip nodes that are visually hidden so they never leak into exports (PDF/PPTX).
+// display:none already yields a 0-size rect (caught by the size checks); this adds
+// visibility:hidden and opacity:0 (e.g. the hover-only zoom-badge overlay, which
+// stays in the DOM at opacity:0 until hovered).
+function _isExportHidden(style) {
+  return style.visibility === "hidden" || style.opacity === "0" || style.display === "none";
+}
+
 function parseColor(str) {
   if (!str || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
   // rgb(r, g, b) or rgba(r, g, b, a)
@@ -1370,12 +1378,13 @@ function measureText(text, fontSize) {
 
 function extractBoxes(container, containerRect) {
   const boxes = [];
-  const skipSelectors = "[data-zoom-badge], [data-no-pdf]";
   const elements = container.querySelectorAll("*");
   const scaleCache = new Map();
   for (const el of elements) {
     if (el.tagName === "SVG" || el.closest("svg")) continue;
+    if (el.closest("[data-zoom-badge], [data-no-pdf]")) continue;
     const style = window.getComputedStyle(el);
+    if (_isExportHidden(style)) continue;
     // Skip elements that will be drawn as circles (borderRadius >= 50% of size AND roughly square)
     const brCheck = parseFloat(style.borderRadius) || 0;
     const elRect = el.getBoundingClientRect();
@@ -1709,6 +1718,7 @@ function extractCircles(container, containerRect) {
   for (const el of elements) {
     if (el.closest("svg")) continue;
     const style = window.getComputedStyle(el);
+    if (_isExportHidden(style)) continue;
     const br = style.borderRadius;
     if (!br || br === "0px") continue;
     const rect = el.getBoundingClientRect();
