@@ -95,8 +95,15 @@ Two fresh **opus, max-effort** validators, blind to the sprint history, driving 
 
 **In-scope defects found: 0.**
 
+### Post-integration fix-round (caught by CI, not the blind gate)
+- **CR4 regressed native `.pptx` table export.** The worker had also changed the code/table blocks' own `overflow` (wrapping their content in an inner div) — defense-in-depth beyond the actual column-edge clip. But the toolbar is a DOM **sibling** of a block's own root, so those changes were unnecessary, and the table one made the grid rows *grandchildren* of the table root; `pptxExtractTables` reads the root's **direct** children → `tables=0`. The CI `pptx` e2e step caught it (`5 failed`), though the PR-comment "all passed" masked it (that comment's total excludes the `pptx` and `npm audit` steps — see below). **Fix:** reverted code/table to their original single-container roots (toolbar still un-clipped — confirmed in-browser), keeping only the column-wrapper fix. Added a regression guard in `test_block_toolbar_clip.cjs` for the extractor's direct-children contract. PPTX e2e back to **25/25**.
+- **Blind-gate gap (lesson):** Validator B drove PPTX export and saw it *complete* (1.32 MB) without a JS error — but only checked "no crash", not "the table serialized as a **native** `<a:tbl>`". A no-crash export can still silently drop a table. The CI read-back assertion is what caught it; a future blind PPTX check should assert native-table presence, not just completion.
+
 ### Out-of-scope / pre-existing (not fixed here)
 - During PPTX off-screen render, the console logs `Error: <path> attribute d: Expected number, "M 87.5% 4 L …"` — an SVG `<path d>` built with a **percentage** coordinate (invalid in path data). It does **not** crash the export and is unrelated to the overflow/parsing changes. Worth a follow-up (a divider/gridline SVG should use px, not `%`, in `d`).
+
+### CI-status comment vs job status (worth knowing)
+- The `ci.yml` "Test Suite" job runs `npm audit --audit-level=high` and the `pptx` e2e read-back **in addition to** the seven suites the PR-comment bot tallies. The bot's "✅ All checks passed — N/N" line is computed **only** from those seven suites' exit codes, so the job can be **red** while the comment reads green (as it did here for the table regression). When triaging, trust the **check-run/job conclusion**, not the comment total.
 
 ---
 
