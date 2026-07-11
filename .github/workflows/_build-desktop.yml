@@ -55,7 +55,7 @@ jobs:
         run: pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
       - name: Regenerate monolith
-        run: python3 skills/vela-slides/scripts/concat.py
+        run: python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
 
       - name: Preprocess vela.jsx for Neutralino
         run: python3 vela-neutralino/scripts/sync-vela.py

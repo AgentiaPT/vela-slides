@@ -22,7 +22,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const IMPORTS = path.join(__dirname, "..", "skills", "vela-slides", "app", "parts", "part-imports.jsx");
+const IMPORTS = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
 const src = fs.readFileSync(IMPORTS, "utf8");
 
 let pass = 0, failCount = 0;
@@ -238,7 +238,7 @@ if (/Array\.isArray\(clean\.quadrants\)/.test(src) && /for \(const q of clean\.q
   ok("sanitizeBlock scrubs block.quadrants (color + layout)");
 else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
 {
-  const BLOCKS = path.join(__dirname, "..", "skills", "vela-slides", "app", "parts", "part-blocks.jsx");
+  const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
   const bsrc = fs.readFileSync(BLOCKS, "utf8");
   if (/backgroundImage = cssUrl\(slide\.bgImage\)/.test(bsrc)) ok("bgImage render sink uses cssUrl()");
   else bad("bgImage sink not routed through cssUrl (wiring missing)");

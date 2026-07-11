@@ -17,10 +17,13 @@ import re
 import subprocess
 import sys
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SKILL_DIR = os.path.dirname(SCRIPT_DIR)
+# This dev script lives at tools/vela-dev/scripts/, but it reads and patches
+# the lean shipped skill (vela.py + SKILL.md under skills/vela-slides/).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))                # tools/vela-dev/scripts
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))  # repo root
+SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")
 SKILL_MD = os.path.join(SKILL_DIR, "SKILL.md")
-VELA_PY = os.path.join(SCRIPT_DIR, "vela.py")
+VELA_PY = os.path.join(SKILL_DIR, "scripts", "vela.py")
 
 # Markers in SKILL.md where the auto-generated section lives
 START_MARKER = "<!-- BEGIN AUTO-GENERATED CLI REFERENCE -->"

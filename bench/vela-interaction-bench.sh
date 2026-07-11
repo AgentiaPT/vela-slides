@@ -47,7 +47,7 @@ fi
 command -v $PW >/dev/null 2>&1 || npx --version >/dev/null 2>&1 || { echo "✗ need @playwright/cli (npm i @playwright/cli)" >&2; exit 1; }
 
 echo "▶ building offline render of $DECK"
-node skills/vela-slides/scripts/render-offline.js "$DECK" "$RENDER" >/dev/null
+node tools/vela-dev/scripts/render-offline.js "$DECK" "$RENDER" >/dev/null
 
 echo "▶ opening session '$SESSION' (pinned Chromium, file:// access)"
 pw close >/dev/null 2>&1 || true

@@ -9,7 +9,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "skills/vela-slides/app/parts/part-icons.jsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-icons.jsx"), "utf8");
 
 function extractFn(name) {
   const start = src.indexOf(`function ${name}(`);

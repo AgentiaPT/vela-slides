@@ -15,17 +15,17 @@ Browser [sees reply]   ← SSE :8787/events  ← reply tool     ← Claude respo
 
 ```bash
 # 1. Install deps (one-time)
-cd skills/vela-slides/channel
+cd tools/vela-dev/channel
 npm install
 
 # 2. Add to .mcp.json (project root)
-# { "mcpServers": { "vela-channel": { "command": "npx", "args": ["tsx", "skills/vela-slides/channel/vela-channel.ts"] } } }
+# { "mcpServers": { "vela-channel": { "command": "npx", "args": ["tsx", "tools/vela-dev/channel/vela-channel.ts"] } } }
 
 # 3. Start Claude Code with channel enabled
 claude --dangerously-load-development-channels server:vela-channel
 
 # 4. In another terminal, start the live preview
-python3 skills/vela-slides/scripts/serve.py decks/your-deck.json --port 3030
+python3 tools/vela-dev/scripts/serve.py decks/your-deck.json --port 3030
 ```
 
 ## Browser Integration

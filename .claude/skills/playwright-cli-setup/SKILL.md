@@ -77,7 +77,7 @@ Before bumping the pin, check the new version's transitive `playwright` dep
 ```bash
 # 1. Build an OFFLINE render (transpiled, deck injected via STARTUP_PATCH).
 #    Do NOT serve.py / esm.sh here — the React/lucide CDNs are blocked.
-node skills/vela-slides/scripts/render-offline.js examples/vela-demo.vela /tmp/vout
+node tools/vela-dev/scripts/render-offline.js examples/vela-demo.vela /tmp/vout
 
 # 2. Open a persistent session on the render (file:// works via the config).
 npx playwright-cli -s=vela open "file:///tmp/vout/render.html"

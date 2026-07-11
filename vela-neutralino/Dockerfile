@@ -3,7 +3,7 @@
 # Produces the same single-file per-OS binaries CI ships, but locally via Docker
 # so a workstation needs neither Node/pnpm nor the `neu` CLI on PATH.
 #
-# Run from the REPO ROOT (build context must include skills/ for concat + sync):
+# Run from the REPO ROOT (build context must include tools/ + skills/ for concat + sync):
 #
 #   docker build -f vela-neutralino/Dockerfile -o type=local,dest=vela-neutralino/dist .
 #
@@ -58,7 +58,7 @@ USER node
 RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
 # Regenerate the monolith from parts, then preprocess it for the Neutralino shell.
-RUN python3 skills/vela-slides/scripts/concat.py \
+RUN python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx \
     && python3 vela-neutralino/scripts/sync-vela.py
 
 # Fetch the pinned Neutralino runtime, verify it against committed SHA256 pins,

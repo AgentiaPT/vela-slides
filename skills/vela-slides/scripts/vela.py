@@ -9,7 +9,6 @@ Usage:
 
 Resources:
   deck     Deck-level operations (list, validate, extract, split, dump, stats, find, extract-text, patch-text, replace-text, assemble, ship, compact, expand, turbo)
-  server   Local server operations (start)
   slide    Slide-level operations (view, edit, remove, move, duplicate, insert, remove-block)
 
 Exit codes:
@@ -1013,13 +1012,6 @@ CAPABILITIES = {
             },
             "description": "Deck-level operations (auto-detects full/compact/turbo format)"
         },
-        "server": {
-            "commands": {
-                "start": "vela server start <folder-or-file> [--port N] [--replace] [--ai] — Jupyter-style deck browser with live sync (--ai enables Vera via the local `claude` CLI; OFF by default)",
-                "stop": "vela server stop [--port N] — stop a running Vela server",
-            },
-            "description": "Local server operations"
-        },
         "slide": {
             "commands": {
                 "view": "vela slide view <deck.vela> <N> — show slide content summary",
@@ -1210,11 +1202,11 @@ def deck_ship(args):
     # Handle --demo flag (bundled demo deck showcasing all block types)
     elif "--demo" in filtered:
         filtered = [a for a in filtered if a != "--demo"]
-        demo_path = os.path.join(SKILL_ROOT, "examples", "vela-demo.vela")
+        demo_path = os.path.join(SKILL_ROOT, "examples", "vela-demo.json")
         if not os.path.isfile(demo_path):
             _err(EXIT_NOT_FOUND, "Demo deck not found",
                  suggestions=[f"Expected at: {demo_path}"])
-        work_path = os.path.join(OUTPUT_DIR, "vela-demo.vela")
+        work_path = os.path.join(OUTPUT_DIR, "vela-demo.json")
         os.makedirs(os.path.dirname(work_path) or '.', exist_ok=True)
         shutil.copy2(demo_path, work_path)
         filtered = [work_path]
@@ -2482,79 +2474,6 @@ def deck_split(args):
         sys.exit(EXIT_OK)
 
 
-# ── SERVER START ───────────────────────────────────────────────────────
-
-def server_start(args):
-    """Start local server (Jupyter-style). Usage: vela server start <folder-or-file> [--port 3030] [--no-open] [--no-auth] [--token TOKEN] [--ai]
-
-    AI is OFF by default. Pass --ai to let Vera run the local `claude` CLI (opt-in;
-    uses your Claude Code credentials/spend, tool-sandboxed, loopback + token-gated)."""
-    if not args:
-        _err(EXIT_USAGE, "Missing path", suggestions=["vela server start /path/to/decks/", "vela server start /path/to/deck.vela"])
-    path = args[0]
-    if not os.path.isfile(path) and not os.path.isdir(path):
-        _err(EXIT_NOT_FOUND, f"Path not found: {path}")
-
-    # Forward all extra flags directly to serve.py
-    serve_args = [sys.executable, os.path.join(SCRIPTS_DIR, "serve.py"), path] + args[1:]
-
-    try:
-        proc = subprocess.run(serve_args)
-        sys.exit(proc.returncode)
-    except KeyboardInterrupt:
-        sys.exit(0)
-
-
-# ── SERVER STOP ────────────────────────────────────────────────────────
-
-def server_stop(args):
-    """Stop a running Vela server. Usage: vela server stop [--port PORT]"""
-    port = None
-    for i, a in enumerate(args):
-        if a == "--port" and i + 1 < len(args):
-            port = int(args[i + 1])
-
-    runtime_file = os.path.join(os.getcwd(), ".vela.env")
-    if not os.path.exists(runtime_file):
-        _err(EXIT_NOT_FOUND, "No running server found (.vela.env not present)")
-
-    try:
-        with open(runtime_file, encoding="utf-8") as f:
-            info = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        _err(EXIT_FAIL, f"Cannot read .vela.env: {e}")
-
-    pid = info.get("pid")
-    srv_port = info.get("port")
-    if not pid:
-        _err(EXIT_FAIL, "No PID in .vela.env")
-
-    if port and srv_port != port:
-        _err(EXIT_NOT_FOUND, f"Server on port {srv_port}, not {port}")
-
-    # Kill the process
-    try:
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
-                           capture_output=True, timeout=5)
-        else:
-            os.kill(pid, 15)  # SIGTERM — lets cleanup handlers run
-    except ProcessLookupError:
-        pass  # already dead
-    except (OSError, subprocess.TimeoutExpired) as e:
-        _err(EXIT_FAIL, f"Failed to stop server (PID {pid}): {e}")
-
-    # Clean up runtime files
-    for name in (".vela.env", ".vela.pid"):
-        try:
-            os.unlink(os.path.join(os.getcwd(), name))
-        except OSError:
-            pass
-
-    print(f"Stopped Vela server (PID {pid}, port {srv_port})")
-    sys.exit(EXIT_OK)
-
-
 # ── ZIP ────────────────────────────────────────────────────────────────
 
 def deck_zip(args):
@@ -2708,10 +2627,6 @@ COMMANDS = {
         "remove-block": slide_remove_block,
         "append": slide_append,
     },
-    "server": {
-        "start": server_start,
-        "stop": server_stop,
-    }
 }
 
 def main():

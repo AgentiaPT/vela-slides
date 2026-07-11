@@ -10,7 +10,7 @@ const http = require('http');
 const DECK_PATH = path.join(__dirname, '..', 'examples', 'vela-demo.vela');
 const SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
 const PORT = 13030;
-const SERVE_SCRIPT = path.join(__dirname, '..', 'skills', 'vela-slides', 'scripts', 'serve.py');
+const SERVE_SCRIPT = path.join(__dirname, '..', 'tools', 'vela-dev', 'scripts', 'serve.py');
 
 function waitForServer(port, maxWait = 15000) {
   return new Promise((resolve, reject) => {

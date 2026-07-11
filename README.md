@@ -58,13 +58,13 @@ Full CLI access, live browser preview, file system integration:
 ```bash
 git clone https://github.com/AgentiaPT/vela-slides.git
 cd vela-slides
-python3 skills/vela-slides/scripts/vela.py server start examples/
+python3 tools/vela-dev/scripts/serve.py examples/
 # → Opens browser at localhost:3030 with deck browser and live editing
 ```
 
 The `vela` CLI is plain Python with structured JSON I/O — any coding-agent CLI that can run shell commands can drive it (Claude Code, GitHub Copilot CLI, Codex CLI, Aider, Cursor's terminal agent, custom agents, etc.). Agents that load the bundled SKILL.md gain Vela's deck conventions and can generate, edit, translate, and rebrand decks while saving 80-97% of tokens vs manual JSON editing. SKILL.md follows the [Claude Skills](https://www.anthropic.com/news/claude-skills) format but is just markdown — drop it into any agent's prompt or system context.
 
-**Channel bridge** (experimental): Connect the browser UI to your coding-agent CLI for click-to-edit workflows. See [`skills/vela-slides/channel/README.md`](skills/vela-slides/channel/README.md).
+**Channel bridge** (experimental): Connect the browser UI to your coding-agent CLI for click-to-edit workflows. See [`tools/vela-dev/channel/README.md`](tools/vela-dev/channel/README.md).
 
 ### 3. Run as a Desktop App
 
@@ -207,22 +207,31 @@ See [`examples/`](examples/) for themed sample decks (startup pitch, tech talk, 
 ```
 vela-slides/
 ├── skills/
-│   └── vela-slides/          ← Installable skill folder (ZIP for Claude.ai)
+│   └── vela-slides/          ← Installable skill folder — LEAN payload (ZIP for Claude.ai)
 │       ├── SKILL.md           ← Skill prompt + workflows
 │       ├── app/
-│       │   ├── parts/         ← Modular source (13 part-files)
-│       │   └── vela.jsx ← Assembled monolith (auto-generated)
+│       │   └── vela.jsx       ← Assembled monolith (auto-generated, ship template)
 │       ├── scripts/
-│       │   ├── vela.py        ← CLI: deck/slide operations + zip
+│       │   ├── vela.py        ← CLI: deck/slide operations + ship + zip
 │       │   ├── assemble.py    ← Inject deck JSON → final .jsx
-│       │   ├── concat.py      ← Parts → monolith builder
-│       │   ├── validate.py    ← Deck JSON quality checks
-│       │   ├── serve.py       ← Local dev server with live reload
-│       │   ├── lint.py        ← Code linting checks
-│       │   └── sync-skill-docs.py ← Sync CLI reference into SKILL.md
+│       │   └── validate.py    ← Deck JSON quality checks
 │       ├── references/        ← Block schema, design patterns, themes, formats
-│       ├── examples/          ← vela-demo.vela (bundled demo deck)
-│       └── evals/             ← Skill quality test cases
+│       └── examples/          ← vela-demo.json (bundled demo deck)
+├── src/
+│   └── parts/                 ← App source — modular part-*.jsx files (edit these)
+├── tools/vela-dev/            ← Dev/test/CI toolchain (never shipped)
+│   ├── local.html            ← Local-preview shell
+│   ├── scripts/
+│   │   ├── concat.py          ← Parts → monolith builder
+│   │   ├── serve.py           ← Local dev server with live reload
+│   │   ├── agent_backend.py   ← Loopback AI channel (local `claude` CLI)
+│   │   ├── render-offline.js  ← Offline in-container render harness
+│   │   ├── vela-drive.js      ← Headless screenshot/UI-battery/video driver
+│   │   ├── lint.py            ← Code linting checks
+│   │   └── sync-skill-docs.py ← Sync CLI reference into SKILL.md
+│   ├── channel/               ← Node/pnpm MCP bridge
+│   ├── references/            ← app-editing.md (dev doc)
+│   └── evals/                 ← Skill quality test cases
 ├── vela-neutralino/           ← Desktop app shell (Neutralino.js + pluggable coding-agent bridge)
 │   ├── neutralino.config.json
 │   ├── resources/             ← index.html, vela.jsx (synced from skills/), vendored deps

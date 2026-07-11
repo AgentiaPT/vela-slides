@@ -96,7 +96,7 @@ The codebase contains zero:
 
 ### Local Development Server (`serve.py`)
 
-The `vela server start` command starts a local HTTP server for live editing. Security measures:
+Running `tools/vela-dev/scripts/serve.py <folder>` starts a local HTTP server for live editing. Security measures:
 
 | Control | Detail |
 |---------|--------|
@@ -185,8 +185,8 @@ Automated-scanner output and AI-generated reports **without manual verification 
 ### Scope
 
 **In scope:**
-- Python scripts under `skills/vela-slides/scripts/` (vela.py, serve.py, assemble.py, validate.py, concat.py, lint.py)
-- The Vela JSX application (`app/parts/*.jsx`, `app/vela.jsx`)
+- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py)
+- The Vela JSX application (`src/parts/*.jsx`, built into `skills/vela-slides/app/vela.jsx`)
 - Deck JSON parsing, validation, and sanitization
 - Local development server endpoints and file handling
 - SVG sanitization pipeline

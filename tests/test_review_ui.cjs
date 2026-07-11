@@ -57,10 +57,11 @@ function resolvePlaywright() {
 function buildTestHTML() {
   fs.mkdirSync(SERVE_DIR, { recursive: true });
 
-  // Assemble the deck
+  // Rebuild the monolith from parts (dev toolchain), then assemble the deck.
   console.log('Assembling deck...');
+  execSync('python3 tools/vela-dev/scripts/concat.py', { cwd: ROOT, stdio: 'pipe' });
   execSync(
-    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts --output "${ASSEMBLED}"`,
+    `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
   );
 

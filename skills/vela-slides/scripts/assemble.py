@@ -6,18 +6,16 @@ Injects deck JSON into Vela template → ready-to-use .jsx artifact.
 
 Usage:
   python3 assemble.py <deck.vela> [output.jsx]
-  python3 assemble.py <deck.vela> --from-parts [output.jsx]
   python3 assemble.py <deck.vela> --output <output.jsx>
 
---from-parts: rebuild template from parts/ before injecting (use after app edits)
-Without flag: uses pre-built vela.jsx (fast path for deck-only generation)
+Injects the deck into the prebuilt skills/vela-slides/app/vela.jsx monolith.
+(Rebuilding vela.jsx from parts is a dev/CI concern — see tools/vela-dev/scripts/concat.py.)
 """
 
-import sys, json, os, re, subprocess
+import sys, json, os, re
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(SKILL_DIR, "app", "vela.jsx")
-CONCAT_SCRIPT = os.path.join(SKILL_DIR, "scripts", "concat.py")
 
 def escape_for_script_context(json_str):
     """Make a JSON string safe to embed inline in an HTML <script> block.
@@ -78,19 +76,7 @@ def slugify(text):
     s = re.sub(r'[\s_]+', '-', s)
     return s[:60] or "vela-deck"
 
-def assemble(deck_json_path, output_path=None, from_parts=False, minify=False):
-    # Step 0: optionally rebuild template from parts
-    if from_parts:
-        print("Rebuilding template from parts...")
-        result = subprocess.run(
-            [sys.executable, CONCAT_SCRIPT],
-            capture_output=True, text=True
-        )
-        print(result.stdout)
-        if result.returncode != 0:
-            print(f"ERROR: concat failed:\n{result.stderr}", file=sys.stderr)
-            sys.exit(1)
-
+def assemble(deck_json_path, output_path=None, minify=False):
     # Step 1: read deck JSON
     with open(deck_json_path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
@@ -166,7 +152,6 @@ if __name__ == "__main__":
     if '--help' in sys.argv or '-h' in sys.argv or len(sys.argv) < 2:
         print(__doc__.strip())
         sys.exit(0)
-    from_parts = '--from-parts' in sys.argv
     minify = '--minify' in sys.argv
     # Parse --output <path> flag
     out_path = None
@@ -174,7 +159,7 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     i = 0
     while i < len(argv):
-        if argv[i] in ('--from-parts', '--minify'):
+        if argv[i] == '--minify':
             i += 1
             continue
         if argv[i] == '--output' and i + 1 < len(argv):
@@ -185,11 +170,11 @@ if __name__ == "__main__":
         i += 1
 
     if not filtered:
-        print("Usage: python3 assemble.py <deck.vela> [--from-parts] [--output <path>] [output.jsx]", file=sys.stderr)
+        print("Usage: python3 assemble.py <deck.vela> [--output <path>] [output.jsx]", file=sys.stderr)
         sys.exit(1)
 
     deck_path = filtered[0]
     # Positional output path as fallback
     if not out_path and len(filtered) > 1:
         out_path = filtered[1]
-    assemble(deck_path, out_path, from_parts, minify)
+    assemble(deck_path, out_path, minify)
