@@ -295,6 +295,9 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
+// Buffer (px) reserved above/right of a cols-layout column's inner crop box so
+// an edge block's hover toolbar (negative top/right offset) isn't clipped.
+const COL_TOOLBAR_PAD = 12;
 
 // Patch a single item in block.items and call onChange
 function patchItemAt(block, onChange, idx, patch) {
@@ -1648,11 +1651,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const colsRow = (
         <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
-          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          {/* Outer stays overflow:"visible" so a column-edge block's hover toolbar
+              (which pokes -8/-10px above/right of the block) isn't clipped. The
+              inner wrapper keeps the original vertical crop for tall content, but
+              its clip box is nudged up+right by COL_TOOLBAR_PAD so that escape
+              room lands inside it while its content area still lines up exactly
+              where it used to (padding cancels the top/right position shift). */}
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+            </div>
           </div>
-          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+            </div>
           </div>
         </div>
       );

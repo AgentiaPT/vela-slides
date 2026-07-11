@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.0";
+const VELA_VERSION = "13.1";
 const VELA_CHANGELOG = [
+  { v: "13.1", d: ["Export: fixed an intermittent crash ('str.includes is not a function') that aborted export on slides with a non-string background — gradient/color parsing now tolerates any value.", "Dialogs now scroll instead of clipping in short/narrow panes — fixes empty-looking About/Recent Changes.", "Escape closes the icon picker consistently with other dialogs.", "Block hover-toolbar icons no longer clipped at a column's edge.", "Artifact mode shows a dismissible reminder that the deck lives in browser/Claude.ai storage — export often to back up."] },
   { v: "13.0", d: ["Native PowerPoint (.pptx) export — the deck exports as a fully editable .pptx with real text boxes, shapes and tables (not flattened images), vector diagrams as native SVG with PNG fallback, and gradient/color fidelity carried through.", "Milestone release consolidating the .pptx exporter."] },
   { v: "12.88", d: ["PowerPoint export: fixed inline bold/italic text appearing misplaced — bold and italic segments now stay as runs within their paragraph instead of floating to a separate box.", "Fixed numbers/labels centered via flex/grid (e.g. step-number circles) hugging the left edge — centering is now carried through.", "Fixed table text on shrink-to-fit slides exporting oversized and overflowing the blocks below — cell fonts now use the same scale as the rest of the slide.", "Regression tests added."] },
   { v: "12.87", d: ["PowerPoint export: fixed a repair prompt real PowerPoint could still show on first open — a run whose measured font size collapsed to zero emitted an out-of-range size PowerPoint rejects; exported font sizes are now clamped to PowerPoint's valid range.", "Regression test added."] },
@@ -1643,7 +1644,7 @@ function IconPicker({ value, onPick, onClose }) {
           {value && <button onClick={() => onPick(null)} style={{ fontFamily: FONT.mono, fontSize: 11, color: T.red, background: "none", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>Clear</button>}
         </div>
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search icons (e.g. rocket, shield, chart)…"
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const r = searchIconNames(q); if (r[0]) onPick(r[0]); } }}
+          onKeyDown={(e) => { if (e.key === "Escape") { onClose(); return; } e.stopPropagation(); if (e.key === "Enter") { const r = searchIconNames(q); if (r[0]) onPick(r[0]); } }}
           style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", fontFamily: FONT.body, fontSize: 14, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", marginBottom: 12, flexShrink: 0 }} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 4, flex: 1, minHeight: 0, overflowY: "auto", marginBottom: 12 }}>
           {!ready && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: T.textDim, padding: 8 }}>Loading icons…</span>}
@@ -1653,7 +1654,7 @@ function IconPicker({ value, onPick, onClose }) {
         <div style={{ display: "flex", gap: 6, alignItems: "center", borderTop: `1px solid ${T.border}`, paddingTop: 12, flexShrink: 0 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, flexShrink: 0 }}>Emoji / name:</span>
           <input value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="🚀 or AlertTriangle"
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && raw.trim()) onPick(raw.trim()); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { onClose(); return; } e.stopPropagation(); if (e.key === "Enter" && raw.trim()) onPick(raw.trim()); }}
             style={{ flex: 1, padding: "6px 10px", fontFamily: FONT.mono, fontSize: 13, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, outline: "none" }} />
           <button onClick={() => { if (raw.trim()) onPick(raw.trim()); }} style={{ padding: "6px 12px", fontFamily: FONT.body, fontSize: 13, background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Set</button>
         </div>
@@ -1977,6 +1978,9 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
+// Buffer (px) reserved above/right of a cols-layout column's inner crop box so
+// an edge block's hover toolbar (negative top/right offset) isn't clipped.
+const COL_TOOLBAR_PAD = 12;
 
 // Patch a single item in block.items and call onChange
 function patchItemAt(block, onChange, idx, patch) {
@@ -3330,11 +3334,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const colsRow = (
         <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
-          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          {/* Outer stays overflow:"visible" so a column-edge block's hover toolbar
+              (which pokes -8/-10px above/right of the block) isn't clipped. The
+              inner wrapper keeps the original vertical crop for tall content, but
+              its clip box is nudged up+right by COL_TOOLBAR_PAD so that escape
+              room lands inside it while its content area still lines up exactly
+              where it used to (padding cancels the top/right position shift). */}
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+            </div>
           </div>
-          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+            </div>
           </div>
         </div>
       );
@@ -11490,7 +11504,7 @@ async function domToCanvas(element, w, h, scale = 2, slideBg = null) {
   ctx.scale(scale, scale);
 
   // 3.5. Pre-fill canvas with slide background to prevent transparent→black on JPEG
-  if (slideBg) {
+  if (slideBg && typeof slideBg === "string") {
     if (slideBg.includes("gradient")) {
       // Gradient — will be rendered by foreignObject, but pre-fill with a solid base
       // Extract first color from gradient as fallback base
@@ -12310,7 +12324,7 @@ function _isExportHidden(style) {
 }
 
 function parseColor(str) {
-  if (!str || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
+  if (typeof str !== "string" || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
   // rgb(r, g, b) or rgba(r, g, b, a)
   const rgbM = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
   if (rgbM) {
@@ -12338,7 +12352,7 @@ function parseColor(str) {
 
 // ━━━ CSS linear-gradient parsing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function parseLinearGradient(str) {
-  if (!str || !str.includes("linear-gradient")) return null;
+  if (typeof str !== "string" || !str.includes("linear-gradient")) return null;
   const match = str.match(/linear-gradient\((.+)\)/s);
   if (!match) return null;
   const inner = match[1].trim();
@@ -16448,7 +16462,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   }, [onClose, onEnter, extraKeys]);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
     </div>
@@ -17538,6 +17552,13 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  // CR: in a Claude.ai artifact the deck only lives in browser localStorage
+  // (no file) — nudge users to export/back up. Dismiss persists for the
+  // session (sessionStorage) so it doesn't reappear on every re-render but
+  // does come back if the artifact is reloaded fresh.
+  const [storageWarningDismissed, setStorageWarningDismissed] = useState(() => {
+    try { return sessionStorage.getItem("vela-storage-warning-dismissed") === "1"; } catch { return false; }
+  });
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [pptxExport, setPptxExport] = useState(false);
@@ -18173,6 +18194,20 @@ export default function App() {
           </div>
         </div>}
       </header>}
+
+      {/* ── STORAGE WARNING (artifact mode only) ────────────── */}
+      {velaIsArtifactMode() && !storageWarningDismissed && (
+        <div data-testid="storage-warning" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", background: T.amber + "15", borderBottom: `1px solid ${T.amber}40`, fontFamily: FONT.mono, fontSize: 11, color: T.text }}>
+          <span style={{ fontSize: 13 }}>⚠️</span>
+          <span style={{ flex: 1 }}>This deck is saved in Claude.ai / your browser's local storage, not a file — it can be lost if storage is cleared. Export often (📤 Export) to back up your work.</span>
+          <button
+            data-testid="storage-warning-dismiss"
+            onClick={() => { setStorageWarningDismissed(true); try { sessionStorage.setItem("vela-storage-warning-dismissed", "1"); } catch {} }}
+            title="Dismiss"
+            style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 14, fontFamily: FONT.mono, lineHeight: 1, padding: "2px 4px", flexShrink: 0 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* ── BODY ────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>

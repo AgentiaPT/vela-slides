@@ -252,7 +252,7 @@ function IconPicker({ value, onPick, onClose }) {
           {value && <button onClick={() => onPick(null)} style={{ fontFamily: FONT.mono, fontSize: 11, color: T.red, background: "none", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>Clear</button>}
         </div>
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search icons (e.g. rocket, shield, chart)…"
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const r = searchIconNames(q); if (r[0]) onPick(r[0]); } }}
+          onKeyDown={(e) => { if (e.key === "Escape") { onClose(); return; } e.stopPropagation(); if (e.key === "Enter") { const r = searchIconNames(q); if (r[0]) onPick(r[0]); } }}
           style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", fontFamily: FONT.body, fontSize: 14, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", marginBottom: 12, flexShrink: 0 }} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 4, flex: 1, minHeight: 0, overflowY: "auto", marginBottom: 12 }}>
           {!ready && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: T.textDim, padding: 8 }}>Loading icons…</span>}
@@ -262,7 +262,7 @@ function IconPicker({ value, onPick, onClose }) {
         <div style={{ display: "flex", gap: 6, alignItems: "center", borderTop: `1px solid ${T.border}`, paddingTop: 12, flexShrink: 0 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim, flexShrink: 0 }}>Emoji / name:</span>
           <input value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="🚀 or AlertTriangle"
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && raw.trim()) onPick(raw.trim()); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { onClose(); return; } e.stopPropagation(); if (e.key === "Enter" && raw.trim()) onPick(raw.trim()); }}
             style={{ flex: 1, padding: "6px 10px", fontFamily: FONT.mono, fontSize: 13, background: T.bgInput, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, outline: "none" }} />
           <button onClick={() => { if (raw.trim()) onPick(raw.trim()); }} style={{ padding: "6px 12px", fontFamily: FONT.body, fontSize: 13, background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Set</button>
         </div>

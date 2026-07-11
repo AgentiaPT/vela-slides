@@ -184,7 +184,7 @@ async function domToCanvas(element, w, h, scale = 2, slideBg = null) {
   ctx.scale(scale, scale);
 
   // 3.5. Pre-fill canvas with slide background to prevent transparent→black on JPEG
-  if (slideBg) {
+  if (slideBg && typeof slideBg === "string") {
     if (slideBg.includes("gradient")) {
       // Gradient — will be rendered by foreignObject, but pre-fill with a solid base
       // Extract first color from gradient as fallback base
@@ -1004,7 +1004,7 @@ function _isExportHidden(style) {
 }
 
 function parseColor(str) {
-  if (!str || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
+  if (typeof str !== "string" || str === "transparent" || str === "rgba(0, 0, 0, 0)") return null;
   // rgb(r, g, b) or rgba(r, g, b, a)
   const rgbM = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
   if (rgbM) {
@@ -1032,7 +1032,7 @@ function parseColor(str) {
 
 // ━━━ CSS linear-gradient parsing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function parseLinearGradient(str) {
-  if (!str || !str.includes("linear-gradient")) return null;
+  if (typeof str !== "string" || !str.includes("linear-gradient")) return null;
   const match = str.match(/linear-gradient\((.+)\)/s);
   if (!match) return null;
   const inner = match[1].trim();
