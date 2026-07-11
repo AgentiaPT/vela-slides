@@ -1,11 +1,11 @@
 ---
 name: vela-slides
-version: 13.1
-updated: 2026-07-08
+version: 13.2
+updated: 2026-07-11
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2
 compatibility: Requires Python 3 and Bash. Designed for Claude Code.
-allowed-tools: Bash(python3 skills/vela-slides/scripts/*), Bash(python3 tests/test_vela.py*), Read, Write, Edit, Glob, Grep
+allowed-tools: Bash(python3 skills/vela-slides/scripts/vela.py*), Read, Write, Edit, Glob, Grep
 effort: low
 ---
 
@@ -16,7 +16,6 @@ Senior presentation designer. Assertion headlines, varied block types, grouped s
 ## Fast Paths
 
 ```bash
-vela server start <folder-or-file> [--port 3030]      # local preview
 vela deck ship <deck.json> --output <name.jsx>       # ship existing
 vela deck ship --sample --output <name.jsx>           # ship starter deck
 vela deck ship --demo --output <name.jsx>             # ship demo deck (all block types)
@@ -82,18 +81,16 @@ You MUST complete the deck in exactly 2 tool calls. No exceptions. No Read. No v
 Use the Write tool to write the entire compact deck JSON to the output file.
 ```
 
-**Call 2** — Ship or serve:
+**Call 2** — Ship:
 ```bash
 vela deck ship <file> --output <name.jsx>
 ```
-Or for local preview: `vela server start <file> --port 3030`
 
-Done. Do not speak before, between, or after tool calls. NEVER read or print `.vela.env`.
+Done. Do not speak before, between, or after tool calls.
 
 ## CLI
 
 ```
 vela deck ship|validate|list|stats|replace-text|extract|extract-text|patch-text
-vela server start [--port N] [--replace] [--no-auth]
 vela slide edit|view|remove|move|duplicate|insert|remove-block
 ```

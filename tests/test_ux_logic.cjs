@@ -3,7 +3,7 @@
 // (TOGGLE_SLIDE_HIDDEN, INSERT_ITEM). Pure functions extracted from source.
 const fs = require("fs");
 const path = require("path");
-const P = (f) => path.join(__dirname, "..", "skills/vela-slides/app/parts", f);
+const P = (f) => path.join(__dirname, "..", "tools/vela-dev/app/parts", f);
 const imports = fs.readFileSync(P("part-imports.jsx"), "utf8");
 const list = fs.readFileSync(P("part-list.jsx"), "utf8");
 const reducer = fs.readFileSync(P("part-reducer.jsx"), "utf8");

@@ -15,10 +15,14 @@ import sys, os, json, re, subprocess, tempfile, shutil, copy, time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")
-PARTS_DIR = os.path.join(SKILL_DIR, "app", "parts")
 TEMPLATE = os.path.join(SKILL_DIR, "app", "vela.jsx")
-SCRIPTS = os.path.join(SKILL_DIR, "scripts")
+SCRIPTS = os.path.join(SKILL_DIR, "scripts")           # lean shipped scripts: vela.py, validate.py, assemble.py
 EXAMPLES = os.path.join(REPO_ROOT, "examples")
+# Dev/CI toolchain lives outside the shipped skill (see tools/vela-dev/).
+DEV_DIR = os.path.join(REPO_ROOT, "tools", "vela-dev")
+DEV_SCRIPTS = os.path.join(DEV_DIR, "scripts")         # concat.py, serve.py, sync-skill-docs.py, *.js …
+DEV_APP = os.path.join(DEV_DIR, "app")                 # local.html, parts/
+PARTS_DIR = os.path.join(DEV_APP, "parts")
 
 passes = 0
 fails = 0
@@ -93,8 +97,8 @@ def test_unit():
         fail("vela-demo.vela exists")
 
     # 5. Scripts exist and are valid Python
-    for script in ["concat.py", "assemble.py", "validate.py"]:
-        path = os.path.join(SCRIPTS, script)
+    for script, sdir in [("concat.py", DEV_SCRIPTS), ("assemble.py", SCRIPTS), ("validate.py", SCRIPTS)]:
+        path = os.path.join(sdir, script)
         if os.path.exists(path):
             result = subprocess.run(
                 [sys.executable, "-c", f"import py_compile; py_compile.compile({path!r}, doraise=True)"],
@@ -1001,8 +1005,8 @@ def test_ip_hygiene():
 
     # 2. Copyright header in build scripts
     script_count = 0
-    for f in ["concat.py", "assemble.py", "validate.py"]:
-        path = os.path.join(SCRIPTS, f)
+    for f, sdir in [("concat.py", DEV_SCRIPTS), ("assemble.py", SCRIPTS), ("validate.py", SCRIPTS)]:
+        path = os.path.join(sdir, f)
         if os.path.exists(path):
             content = open(path, encoding="utf-8").read()[:200]
             if "© 2025-present Rui Quintino" in content:
@@ -1077,7 +1081,7 @@ def test_integration():
         # 1. Concat builds successfully
         out_template = os.path.join(tmpdir, "vela-built.jsx")
         result = subprocess.run(
-            [sys.executable, os.path.join(SCRIPTS, "concat.py"), PARTS_DIR, out_template],
+            [sys.executable, os.path.join(DEV_SCRIPTS, "concat.py"), PARTS_DIR, out_template],
             capture_output=True, text=True
         )
         if result.returncode == 0 and os.path.exists(out_template):
@@ -1284,7 +1288,7 @@ def test_v10_features():
 def test_channel_local():
     print("\n── Channel & Local HTML Tests ──")
 
-    local_html = os.path.join(SKILL_DIR, "app", "local.html")
+    local_html = os.path.join(DEV_APP, "local.html")
     if not os.path.exists(local_html):
         fail("local.html exists")
         return
@@ -1342,7 +1346,7 @@ def test_channel_local():
         fail("Storage polyfill")
 
     # Channel server
-    channel_ts = os.path.join(SKILL_DIR, "channel", "vela-channel.ts")
+    channel_ts = os.path.join(DEV_DIR, "channel", "vela-channel.ts")
     if os.path.exists(channel_ts):
         ch = open(channel_ts, encoding="utf-8").read()
         if "claude/channel" in ch:
@@ -1361,7 +1365,7 @@ def test_channel_local():
         fail("Channel server file exists")
 
     # Serve.py
-    serve_py = os.path.join(SKILL_DIR, "scripts", "serve.py")
+    serve_py = os.path.join(DEV_SCRIPTS, "serve.py")
     if os.path.exists(serve_py):
         srv = open(serve_py, encoding="utf-8").read()
         if "127.0.0.1" in srv and "--host" in srv:
@@ -1395,7 +1399,7 @@ def test_server_hardening():
     print("\n── Server Hardening & Lifecycle Tests ──")
 
     tpl = open(os.path.join(SKILL_DIR, "app", "vela.jsx"), encoding="utf-8").read()
-    serve_src = open(os.path.join(SCRIPTS, "serve.py"), encoding="utf-8").read()
+    serve_src = open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8").read()
     vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
     skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
 
@@ -1535,45 +1539,31 @@ def test_server_hardening():
     else:
         fail("sys.executable usage")
 
-    # ── CLI: vela server start/stop ──
-    if 'def server_start' in vela_src:
-        ok("server_start function present")
+    # ── Lean skill: server command was relocated out of the shipped skill ──
+    # The local-preview server (serve.py) now lives under tools/vela-dev/ and is
+    # invoked directly; the `vela server` command was dropped from vela.py.
+    if 'def server_start' not in vela_src and 'def server_stop' not in vela_src:
+        ok("vela.py no longer ships the local-server command")
     else:
-        fail("server_start function")
+        fail("server command relocated", "server_start/server_stop still in vela.py")
 
-    if 'def server_stop' in vela_src:
-        ok("server_stop function present")
-    else:
-        fail("server_stop function")
-
-    if '"server"' in vela_src and '"start": server_start' in vela_src and '"stop": server_stop' in vela_src:
-        ok("server resource registered with start/stop commands")
-    else:
-        fail("server resource routing")
-
-    # Test CLI capabilities include server
     result = subprocess.run([sys.executable, os.path.join(SCRIPTS, "vela.py"), "--capabilities", "--json"],
                             capture_output=True, text=True)
-    if '"server"' in result.stdout and '"start"' in result.stdout and '"stop"' in result.stdout:
-        ok("--capabilities lists server start/stop")
+    if '"server"' not in result.stdout:
+        ok("--capabilities no longer lists server")
     else:
         fail("--capabilities server", result.stdout[:200])
 
-    # ── SKILL.md updated ──
-    if 'vela server start' in skill_md:
-        ok("SKILL.md references vela server start")
+    # ── SKILL.md: lean, author→ship only ──
+    if 'vela server start' not in skill_md:
+        ok("SKILL.md no longer references vela server start")
     else:
-        fail("SKILL.md server start")
+        fail("SKILL.md server start", "SKILL.md still references vela server start")
 
     if 'vela deck serve' not in skill_md:
         ok("SKILL.md no longer references vela deck serve")
     else:
         fail("SKILL.md still has deck serve")
-
-    if 'Token hygiene' in skill_md or 'NEVER read or print' in skill_md:
-        ok("SKILL.md has token hygiene rule")
-    else:
-        fail("SKILL.md token hygiene")
 
     # ── .vela example decks exist ──
     examples_dir = os.path.join(REPO_ROOT, "examples")
@@ -2088,7 +2078,7 @@ def test_cli_commands():
             json.dump(test_deck, f, ensure_ascii=False)
 
         # ── sync-skill-docs.py exists ──
-        sync_script = os.path.join(SCRIPTS, "sync-skill-docs.py")
+        sync_script = os.path.join(DEV_SCRIPTS, "sync-skill-docs.py")
         if os.path.exists(sync_script):
             r = subprocess.run([sys.executable, sync_script], capture_output=True, text=True, cwd=REPO_ROOT)
             if r.returncode == 0 and "Preview" in r.stdout or "CLI Quick Reference" in r.stdout:
@@ -2119,7 +2109,7 @@ def test_serve_auth():
 
     TOKEN = "test-auth-token-xyz789"
     PORT = 3099  # unlikely to conflict
-    SERVE_PY = os.path.join(SCRIPTS, "serve.py")
+    SERVE_PY = os.path.join(DEV_SCRIPTS, "serve.py")
     STARTER = os.path.join(EXAMPLES, "vela-demo.vela")
 
     # Create a temp .vela file for folder-mode tests (server only lists .vela files)
@@ -2493,7 +2483,7 @@ def test_serve_auth():
         os.unlink(VELA_DECK)
 
     # ── Static code checks for auth (serve.py source) ──
-    with open(os.path.join(SCRIPTS, "serve.py"), encoding="utf-8") as _f:
+    with open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8") as _f:
         serve_src = _f.read()
 
     if "hmac.compare_digest" in serve_src:
@@ -2569,7 +2559,7 @@ def run_concat_sync():
     with open(original, "r", encoding="utf-8") as f:
         before = f.read()
     subprocess.run(
-        [sys.executable, os.path.join(REPO_ROOT, "skills", "vela-slides", "scripts", "concat.py")],
+        [sys.executable, os.path.join(DEV_SCRIPTS, "concat.py")],
         capture_output=True, text=True
     )
     with open(original, "r", encoding="utf-8") as f:
@@ -2578,7 +2568,7 @@ def run_concat_sync():
         print("  ✅ Template in sync with parts")
         return 0
     else:
-        print("  ❌ vela.jsx is out of sync with parts! Run: python3 skills/vela-slides/scripts/concat.py")
+        print("  ❌ vela.jsx is out of sync with parts! Run: python3 tools/vela-dev/scripts/concat.py")
         return 1
 
 def run_e2e_tests():

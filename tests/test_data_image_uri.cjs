@@ -24,7 +24,7 @@ catch (e) {
 }
 
 const REPO = path.resolve(__dirname, "..");
-const SRC = path.join(REPO, "skills/vela-slides/app/parts/part-imports.jsx");
+const SRC = path.join(REPO, "tools/vela-dev/app/parts/part-imports.jsx");
 const source = fs.readFileSync(SRC, "utf8");
 
 const grabs = {

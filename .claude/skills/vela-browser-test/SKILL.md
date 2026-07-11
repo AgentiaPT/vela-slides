@@ -87,7 +87,7 @@ rendering or the sanitizers.
 To test the actual serve.py → STARTUP_PATCH pipeline, boot a server on a temp
 decks folder and point the probe at a vendored-deps build (CDN is blocked):
 ```bash
-python3 skills/vela-slides/scripts/serve.py /tmp/decks --port 3031 --no-open --no-auth --channel-port 0 &
+python3 tools/vela-dev/scripts/serve.py /tmp/decks --port 3031 --no-open --no-auth --channel-port 0 &
 ```
 Without vendored react/babel the page won't hydrate, so for sink-level questions
 prefer Layer 2 with the exact emitted markup; use the live server mainly for the

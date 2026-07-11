@@ -34,29 +34,29 @@ transpiled in Node, loaded as an EXTERNAL `<script>`.**
 ## Quick start
 ```bash
 # 1. Build the monolith (only after editing part-files)
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 
 # 2. Build an offline render of a deck (STARTUP_PATCH-injected, transpiled)
-node skills/vela-slides/scripts/render-offline.js examples/vela-demo.vela /tmp/vout
+node tools/vela-dev/scripts/render-offline.js examples/vela-demo.vela /tmp/vout
 
 # 3a. Boot-check + screenshot (great for eyeballing a change)
-node skills/vela-slides/scripts/vela-drive.js shot /tmp/vout/render.html /tmp/shot.png --w 1280 --h 800
+node tools/vela-dev/scripts/vela-drive.js shot /tmp/vout/render.html /tmp/shot.png --w 1280 --h 800
 #     add: --eval "window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight'}))" --wait 500
 
 # 3b. Run the in-app UI-test battery headless (needs the window.__velaRunUITests hook,
 #     see part-uitest.jsx). Exits non-zero on any failure; --json dumps results.
-node skills/vela-slides/scripts/vela-drive.js uitests /tmp/vout/render.html --json /tmp/ui.json
+node tools/vela-dev/scripts/vela-drive.js uitests /tmp/vout/render.html --json /tmp/ui.json
 
 # 3c. Record a demo video (webm). scenario.js: module.exports = async (page, h) => {...}
 #     helpers h = { key, click, type, wait, shot, caption, clearCaption, page }
-node skills/vela-slides/scripts/vela-drive.js video /tmp/vout/render.html /tmp/vid --script scenario.js
+node tools/vela-dev/scripts/vela-drive.js video /tmp/vout/render.html /tmp/vid --script scenario.js
 
 # 3d. Test AI integration against the local `claude` CLI (real round-trips).
 #     One command: starts the tool-sandboxed channel backend (agent_backend.py)
 #     on a free loopback port, builds an agent-mode render, boots it, and runs
 #     the real Vera engine helpers (callClaudeAPI, callVera, generateSlide),
 #     asserting deck mutations. Each probe is a paid claude call — dev/QA only.
-node skills/vela-slides/scripts/vela-drive.js ai examples/vela-demo.vela --json /tmp/ai.json
+node tools/vela-dev/scripts/vela-drive.js ai examples/vela-demo.vela --json /tmp/ai.json
 #     limit which probes run: --only ping,veraAddSlide
 ```
 
@@ -74,7 +74,7 @@ AI into any other harness mode, build with `render-offline.js … --channel-port
 **AI is opt-in / OFF by default.** The channel spawns the user's `claude` (their
 credentials/spend), so it never starts implicitly. Enable it deliberately:
 `vela-drive.js ai` (dev/testing), `render-offline.js … --channel-port N`, or, for
-a real served session, `vela server start <folder> --ai`. The channel is
+a real served session, `python3 tools/vela-dev/scripts/serve.py <folder> --ai`. The channel is
 loopback-only, Host/Origin-checked, token-gated, and caps concurrent spawns.
 
 ## Gotchas already solved (don't rediscover)

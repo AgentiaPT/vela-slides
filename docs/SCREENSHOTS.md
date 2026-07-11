@@ -55,7 +55,7 @@ The Vela server compiles JSX via in-browser Babel — the 1MB monolith takes **1
 **Server must run in the same bash invocation as the node script.** Background processes (`&`) don't persist across separate Bash tool calls. Use this pattern:
 
 ```bash
-python3 skills/vela-slides/scripts/serve.py decks/ --no-open --no-auth --port 3034 &
+python3 tools/vela-dev/scripts/serve.py decks/ --no-open --no-auth --port 3034 &
 sleep 6
 node decks/screenshot-deck.mjs
 kill %1 2>/dev/null

@@ -82,6 +82,7 @@ evals/results/
 opus-4-6.*
 *.jsx
 !skills/vela-slides/app/**/*.jsx
+!tools/vela-dev/app/**/*.jsx
 agentic-react-slides.json
 tests/contact-slide.json
 

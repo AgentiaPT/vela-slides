@@ -25,7 +25,7 @@ Export menu — where users already are, and where every other Vela export lives
 
 ## 2. Current state — the vector-PDF pipeline is the foundation
 
-All export lives in `skills/vela-slides/app/parts/part-pdf.jsx`, **hand-rolled with
+All export lives in `tools/vela-dev/app/parts/part-pdf.jsx`, **hand-rolled with
 no external library** (a `.pdf` is written byte-by-byte). There are two PDF engines:
 
 - **Raster** (`PdfExportModal`, ~:576) — DOM→canvas→JPEG per page. Flat pixels.

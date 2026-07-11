@@ -16,7 +16,7 @@ pnpm install
 python3 tests/test_vela.py --all
 
 # Start local server
-python3 skills/vela-slides/scripts/vela.py server start examples/ --port 3030
+python3 tools/vela-dev/scripts/serve.py examples/ --port 3030
 ```
 
 ## WSL2 / Mounted Drive Performance
@@ -130,16 +130,16 @@ npx playwright install chromium         # downloads Chromium browser
 
 ```bash
 # Start (opens browser with auth token)
-python3 skills/vela-slides/scripts/vela.py server start <folder> --port 3030
+python3 tools/vela-dev/scripts/serve.py <folder> --port 3030
 
 # Stop
-python3 skills/vela-slides/scripts/vela.py server stop
+# Stop with Ctrl+C in the server terminal (or kill the PID in .vela.env)
 
 # Replace existing server on same port
-python3 skills/vela-slides/scripts/vela.py server start <folder> --port 3030 --replace
+python3 tools/vela-dev/scripts/serve.py <folder> --port 3030 --replace
 
 # No auth (local dev only)
-python3 skills/vela-slides/scripts/vela.py server start <folder> --no-auth
+python3 tools/vela-dev/scripts/serve.py <folder> --no-auth
 ```
 
 The server writes runtime info to `.vela.env` (gitignored). On exit, cleanup handlers remove it automatically.
@@ -148,10 +148,10 @@ The server writes runtime info to `.vela.env` (gitignored). On exit, cleanup han
 
 ```bash
 # Rebuild monolith from parts
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 
 # Assemble with a deck
-python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela
 
 # Validate deck JSON
 python3 skills/vela-slides/scripts/validate.py examples/vela-demo.vela

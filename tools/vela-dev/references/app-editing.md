@@ -104,13 +104,13 @@ When fixing a bug, adding a feature, or improving the Vela engine itself:
 
 ```bash
 # Edit the part in place — never edit vela.jsx by hand
-skills/vela-slides/app/parts/part-<name>.jsx
+tools/vela-dev/app/parts/part-<name>.jsx
 ```
 
 ### Step 3: Rebuild monolith from parts
 
 ```bash
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 ```
 
 This rebuilds `app/vela.jsx` from all 13 parts in fixed order.
@@ -118,10 +118,12 @@ This rebuilds `app/vela.jsx` from all 13 parts in fixed order.
 ### Step 4: Test with a deck (optional)
 
 ```bash
-python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts
+python3 tools/vela-dev/scripts/concat.py
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela
 ```
 
-The `--from-parts` flag runs concat + assemble in one step.
+Run `concat.py` first to rebuild the monolith from your edited parts, then
+`assemble.py` injects the deck into it.
 
 ### Step 5: Run tests
 
@@ -150,8 +152,8 @@ grep -c "const STARTUP_PATCH = null;" skills/vela-slides/app/vela.jsx
 ### If parts included (zip with part-*.jsx files):
 
 ```bash
-cp /path/to/part-*.jsx skills/vela-slides/app/parts/
-python3 skills/vela-slides/scripts/concat.py
+cp /path/to/part-*.jsx tools/vela-dev/app/parts/
+python3 tools/vela-dev/scripts/concat.py
 ```
 
 Verify:

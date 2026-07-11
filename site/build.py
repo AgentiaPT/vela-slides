@@ -54,16 +54,17 @@ def _sanitize_css_color(value, fallback="#000000"):
     return fallback
 
 SKILL_DIR = os.path.join(ROOT, "skills", "vela-slides")
+DEV_DIR = os.path.join(ROOT, "tools", "vela-dev")   # app parts + build toolchain (dev-only)
 TEMPLATE_JSX = os.path.join(SKILL_DIR, "app", "vela.jsx")
 EXAMPLES_DIR = os.path.join(ROOT, "examples")
-CONCAT_SCRIPT = os.path.join(SKILL_DIR, "scripts", "concat.py")
+CONCAT_SCRIPT = os.path.join(DEV_DIR, "scripts", "concat.py")
 
 DEFAULT_OUTPUT = os.path.join(ROOT, "_site")
 
 
 def get_vela_version():
     """Extract VELA_VERSION from part-imports.jsx."""
-    path = os.path.join(SKILL_DIR, "app", "parts", "part-imports.jsx")
+    path = os.path.join(DEV_DIR, "app", "parts", "part-imports.jsx")
     with open(path) as f:
         for line in f:
             m = re.search(r'VELA_VERSION\s*=\s*"([^"]+)"', line)

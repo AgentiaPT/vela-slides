@@ -30,7 +30,7 @@ function resolveRepoRoot(argv) {
   const i = argv.indexOf('--repo-root');
   if (i >= 0 && argv[i + 1]) return path.resolve(argv[i + 1]);
   if (process.env.HYPER_SPRINT_REPO_ROOT) return path.resolve(process.env.HYPER_SPRINT_REPO_ROOT);
-  return path.resolve(__dirname, '..', '..', '..'); // skills/vela-slides/scripts -> repo root
+  return path.resolve(__dirname, '..', '..', '..'); // tools/vela-dev/scripts -> repo root
 }
 
 function build(deckPath, outDir, opts = {}) {

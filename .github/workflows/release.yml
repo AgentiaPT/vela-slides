@@ -47,7 +47,7 @@ jobs:
         run: |
           VERSION=$(python3 -c "
           import re
-          content = open('skills/vela-slides/app/parts/part-imports.jsx').read()
+          content = open('tools/vela-dev/app/parts/part-imports.jsx').read()
           m = re.search(r'const VELA_VERSION\s*=\s*\"([^\"]+)\"', content)
           print(m.group(1) if m else 'unknown')
           ")
@@ -74,7 +74,7 @@ jobs:
         run: |
           NOTES=$(python3 -c "
           import re
-          content = open('skills/vela-slides/app/parts/part-imports.jsx').read()
+          content = open('tools/vela-dev/app/parts/part-imports.jsx').read()
           m = re.search(r'const VELA_CHANGELOG\s*=\s*\[([^\]]+)\]', content, re.DOTALL)
           if m:
               entry = re.search(r'd:\s*\"([^\"]+)\"', m.group(1))
@@ -123,7 +123,7 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          python3 skills/vela-slides/scripts/concat.py skills/vela-slides/app/parts skills/vela-slides/app/vela.jsx
+          python3 tools/vela-dev/scripts/concat.py tools/vela-dev/app/parts skills/vela-slides/app/vela.jsx
           cd skills
           zip -r "../vela-slides-skill-${TAG}.zip" vela-slides/
           cd ..

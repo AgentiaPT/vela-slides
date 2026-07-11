@@ -40,13 +40,16 @@ MAX_THREADS = 20
 
 
 # ── Paths & imports ───────────────────────────────────────────────────
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))          # tools/vela-dev/scripts
+DEV_DIR = os.path.dirname(SCRIPT_DIR)                             # tools/vela-dev
+REPO_ROOT = os.path.dirname(os.path.dirname(DEV_DIR))            # repo root
+SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")    # lean shipped skill
+# vela.py / assemble.py stay in the lean skill; import them from there.
+sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
 from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
-SKILL_DIR = os.path.dirname(SCRIPT_DIR)
-TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")
-LOCAL_HTML_PATH = os.path.join(SKILL_DIR, "app", "local.html")
+TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
+LOCAL_HTML_PATH = os.path.join(DEV_DIR, "app", "local.html")     # dev preview shell
 
 # Content-Security-Policy for the local dev server. The hosted Claude.ai
 # artifact runs inside a sandboxed iframe whose CSP already blocks outbound

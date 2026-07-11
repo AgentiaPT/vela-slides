@@ -83,7 +83,7 @@ These are consumed at runtime via CDN (see §5), not bundled. The `package.json`
 | `lucide-react` | ^0.344.0 | ISC | 280+ SVG icons |
 | `@babel/standalone` | ^7.24.0 | MIT | In-browser JSX transpilation |
 
-### Channel `package.json` — `skills/vela-slides/channel/`
+### Channel `package.json` — `tools/vela-dev/channel/`
 
 | Package | Version | Type | License | Purpose |
 |---------|---------|------|---------|---------|
@@ -246,13 +246,13 @@ All build scripts use **only Python stdlib**. No external packages.
 
 | Script | Path | Stdlib imports | Shells out to |
 |--------|------|----------------|---------------|
-| `concat.py` | `scripts/concat.py` | `sys`, `os` | — |
-| `assemble.py` | `scripts/assemble.py` | `sys`, `json`, `os`, `re`, `subprocess` | `concat.py` (optional, via `--from-parts`) |
-| `validate.py` | `scripts/validate.py` | `sys`, `json`, `os` | — |
-| `vela.py` | `scripts/vela.py` | `json`, `sys`, `os`, `subprocess`, `copy`, `shutil` | `validate.py`, `assemble.py`, `serve.py` |
-| `serve.py` | `scripts/serve.py` | `hashlib`, `hmac`, `http.server`, `http.cookies`, `secrets`, `threading`, `concurrent.futures`, `urllib.parse`, `webbrowser`, `os`, `sys`, `json`, `re`, `time` | `webbrowser.open()` or `cmd.exe` (Windows) |
-| `sync-skill-docs.py` | `scripts/sync-skill-docs.py` | `subprocess`, `os`, `re` | `git` |
-| `lint.py` | `scripts/lint.py` | `sys`, `os`, `re` | — |
+| `concat.py` | `tools/vela-dev/scripts/concat.py` | `sys`, `os` | — |
+| `assemble.py` | `skills/vela-slides/scripts/assemble.py` | `sys`, `json`, `os`, `re` | — (injects into prebuilt `vela.jsx`) |
+| `validate.py` | `skills/vela-slides/scripts/validate.py` | `sys`, `json`, `os` | — |
+| `vela.py` | `skills/vela-slides/scripts/vela.py` | `json`, `sys`, `os`, `subprocess`, `copy`, `shutil` | `validate.py`, `assemble.py` |
+| `serve.py` | `tools/vela-dev/scripts/serve.py` | `hashlib`, `hmac`, `http.server`, `http.cookies`, `secrets`, `threading`, `concurrent.futures`, `urllib.parse`, `webbrowser`, `os`, `sys`, `json`, `re`, `time` | `webbrowser.open()` or `cmd.exe` (Windows) |
+| `sync-skill-docs.py` | `tools/vela-dev/scripts/sync-skill-docs.py` | `subprocess`, `os`, `re` | `git` |
+| `lint.py` | `tools/vela-dev/scripts/lint.py` | `sys`, `os`, `re` | — |
 
 ---
 

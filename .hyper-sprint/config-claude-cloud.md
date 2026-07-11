@@ -33,11 +33,11 @@ adds bring-up overhead for no gain.
   && ls /opt/pw-browsers/chromium-*/chrome-linux/chrome >/dev/null && echo "provisioned ✓"
 
 # 2. build sync + suite (the real gate)
-python3 skills/vela-slides/scripts/concat.py     # ~0.2s — must print "in sync"
+python3 tools/vela-dev/scripts/concat.py     # ~0.2s — must print "in sync"
 python3 tests/test_vela.py                        # ~17s — BASELINE: 354 passed / 0 failed (drifts upward as main grows — treat as "last known good," re-check if it's lower)
 
 # 3. ONE browser smoke (~8s) — single launch drives editor→present→gallery
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 node .hyper-sprint/render-offline.js examples/vela-demo.vela /tmp/vout
 node <SCRATCH>/drive.mjs file:///tmp/vout/render.html <shotDir>
 ```
@@ -60,10 +60,10 @@ is false and AI features are correctly skipped/disabled).
 
 Two ways, both reuse `agent_backend.py` (the ONE sandboxed place that spawns `claude
 -p`, locked to `--tools "" --strict-mcp-config --setting-sources ""`) + the repo's
-`skills/vela-slides/scripts/render-offline.js --channel-port` (NOT the root
+`tools/vela-dev/scripts/render-offline.js --channel-port` (NOT the root
 `.hyper-sprint/render-offline.js`, which has no channel support):
 
-- **Committed probes (repeatable/CI-style):** `node skills/vela-slides/scripts/vela-drive.js
+- **Committed probes (repeatable/CI-style):** `node tools/vela-dev/scripts/vela-drive.js
   ai <deck.vela> [--only ping,veraAddSlide,generateSlide,veraChatUI] [--json out.json]`.
   Add a new probe to `AI_PROBES` in `vela-drive.js` for each new AI feature (e.g.
   `deckFromSource`) so it stays verifiable.

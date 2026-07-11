@@ -7,9 +7,15 @@ AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,0
 ## Architecture
 
 ```
-Source (13 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
-     ↑ edit these                         ↑ monolith                  ↑ with deck data
+Source part-files          →  concat.py       →  vela.jsx  →  assemble.py  →  final.jsx
+(tools/vela-dev/app/parts)    (tools/vela-dev)    ↑ ships in     (skill)        ↑ with deck data
+ ↑ edit these                                     skills/vela-slides/app/
 ```
+
+The app source (part-files) and the build/preview/AI toolchain live in
+`tools/vela-dev/` (dev-only, never shipped). The **lean skill** —
+`skills/vela-slides/` — carries only the compiled `vela.jsx` plus the
+author→ship scripts (`vela.py`, `validate.py`, `assemble.py`).
 
 **No bundler.** Python stdlib concatenation in fixed dependency order (~10ms).
 
@@ -75,9 +81,12 @@ Layout: spacer, divider
 
 ```bash
 vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
-vela server start|stop
 vela slide view|edit|remove|move|duplicate|insert|remove-block
 ```
+
+The shipped skill authors and ships decks only. The local-preview server, offline
+render harness, and AI backend live in `tools/vela-dev/` (see below) and are never
+part of the installed skill.
 
 Exit codes: 0=success, 1=fail, 2=usage, 3=not-found, 4=validation, 5=conflict.
 Supports `--json` for structured output and `--dry-run` for previews.
@@ -89,7 +98,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 ```
 
 All checks must pass before committing.
@@ -98,10 +107,11 @@ All checks must pass before committing.
 
 ```bash
 # Rebuild monolith from parts
-python3 skills/vela-slides/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 
-# Assemble with a deck
-python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --from-parts
+# Assemble with a deck (rebuild the monolith first if you edited parts)
+python3 tools/vela-dev/scripts/concat.py
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela
 
 # Validate deck JSON
 python3 skills/vela-slides/scripts/validate.py deck.vela
@@ -124,17 +134,24 @@ Single Linux build emits all win/linux/mac binaries (`neu build` bundles prebuil
 ## Key Directories
 
 ```
-skills/vela-slides/
-  app/parts/           ← 13 source part-files (edit these)
-  app/vela.jsx ← auto-generated monolith
-  scripts/             ← vela.py, concat.py, assemble.py, validate.py, serve.py, sync-skill-docs.py
-  references/          ← block-schema.md, design-patterns.md, themes.md
-  SKILL.md             ← skill prompt v12.24
-examples/              ← vela-demo.vela, themed example decks
-decks/                 ← working deck files (gitignored)
-docs/                  ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
-evals/                 ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
-tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
+skills/vela-slides/      ← LEAN PAYLOAD (what installs / ships)
+  app/vela.jsx           ← auto-generated monolith (ship template)
+  scripts/               ← vela.py, assemble.py, validate.py (author→ship only)
+  references/            ← block-schema.md, design-patterns.md, formats.md, themes.md
+  examples/vela-demo.json ← for `vela deck ship --demo`
+  SKILL.md               ← skill prompt
+tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
+  app/parts/             ← source part-files (edit these)
+  app/local.html         ← local-preview shell
+  scripts/               ← concat.py, serve.py, agent_backend.py, render-offline.js,
+                            vela-drive.js, lint.py, sync-skill-docs.py
+  channel/               ← Node/pnpm MCP bridge
+  evals/, references/    ← evals.json, app-editing.md
+examples/                ← vela-demo.vela, themed example decks
+decks/                   ← working deck files (gitignored)
+docs/                    ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)
+evals/                   ← skill version benchmarking (see docs/EVAL-RUNBOOK.md)
+tests/                   ← test_vela.py, test_serve.py
 ```
 
 ## AI Features (Vera Engine)
@@ -146,9 +163,9 @@ tests/                 ← test_vela.py (349 tests), test_serve.py (84 tests)
 
 ## IMPORTANT: Version Bump Required for Skill Changes
 
-**Any change to files under `skills/vela-slides/` MUST include a `VELA_VERSION` bump.** CI will block the PR otherwise.
+**Any change to the shipped skill (`skills/vela-slides/`) or the app source (`tools/vela-dev/app/parts/`) MUST include a `VELA_VERSION` bump.** CI will block the PR otherwise.
 
-- `VELA_VERSION` lives in `skills/vela-slides/app/parts/part-imports.jsx` (format: `major.minor`, e.g. `"10.2"` → `"10.3"`)
+- `VELA_VERSION` lives in `tools/vela-dev/app/parts/part-imports.jsx` (format: `major.minor`, e.g. `"10.2"` → `"10.3"`)
 - Increment the minor version for each change. Bump major only for large rewrites.
 - Also update `VELA_CHANGELOG` in the same file with a brief description of the change.
 - **Changelog entries MUST be concise bullets — never walls of text.** Prefer a short array of terse points (`d: ["…", "…"]`), which the About dialog renders as a bulleted list; a single trivial change may stay a one-line string (`d: "…"`). Keep each bullet to one line, no marketing prose. **Never include sensitive information or exploit/reproduction detail** — security entries follow the *Security-Fix Disclosure Discipline* below (class of issue + what the fix does only). The About "Recent Changes" list is user-facing, so bloated entries make it unusable.
@@ -232,12 +249,12 @@ vendored-UMD recipe (Node-transpiled external script). The committed `vela-drive
 scripts (repeatable automation only):
 
 ```bash
-python3 skills/vela-slides/scripts/concat.py                                   # after editing parts
-node skills/vela-slides/scripts/render-offline.js <deck.vela> /tmp/vout        # build offline render
-node skills/vela-slides/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
-node skills/vela-slides/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
-node skills/vela-slides/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
-node skills/vela-slides/scripts/vela-drive.js ai       examples/vela-demo.vela --json /tmp/ai.json         # test AI vs local `claude` CLI
+python3 tools/vela-dev/scripts/concat.py                                   # after editing parts
+node tools/vela-dev/scripts/render-offline.js <deck.vela> /tmp/vout        # build offline render
+node tools/vela-dev/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
+node tools/vela-dev/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
+node tools/vela-dev/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
+node tools/vela-dev/scripts/vela-drive.js ai       examples/vela-demo.vela --json /tmp/ai.json         # test AI vs local `claude` CLI
 ```
 
 **AI integration testing:** the `ai` mode drives real Vera/AI features against
@@ -248,8 +265,9 @@ and asserts deck mutations. That lockdown is the security contract shared with
 the Neutralino gatekeeper (`vela-neutralino/extensions/agent/main.go`), enforced
 by a parity test in `tests/test_serve.py`. **AI is OFF by default** — it spawns
 the user's `claude` (their credentials/spend), so it is strictly opt-in:
-`vela server start <folder> --ai` (loopback-only, token-gated), or the `ai`
-harness mode / `render-offline.js --channel-port …` for dev/testing.
+`python3 tools/vela-dev/scripts/serve.py <folder> --ai` (loopback-only,
+token-gated), or the `ai` harness mode / `render-offline.js --channel-port …`
+for dev/testing.
 
 Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;

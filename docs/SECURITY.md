@@ -96,7 +96,7 @@ The codebase contains zero:
 
 ### Local Development Server (`serve.py`)
 
-The `vela server start` command starts a local HTTP server for live editing. Security measures:
+Running `tools/vela-dev/scripts/serve.py <folder>` starts a local HTTP server for live editing. Security measures:
 
 | Control | Detail |
 |---------|--------|

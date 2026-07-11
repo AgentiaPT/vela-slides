@@ -8,7 +8,7 @@
  * embedded SVG, tables). No synthetic direct call to buildPptx: the modal drives it.
  *
  * Boots the app via the canonical offline render builder
- * (skills/vela-slides/scripts/render-offline.js), the same recipe the desktop
+ * (tools/vela-dev/scripts/render-offline.js), the same recipe the desktop
  * shell + vela-drive.js use, so it stays in sync with the one true offline boot.
  *
  * Usage:
@@ -28,7 +28,7 @@ const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
 const DECK = path.join(ROOT, 'examples', 'tech-talk.vela');
-const RENDER_OFFLINE = path.join(ROOT, 'skills', 'vela-slides', 'scripts', 'render-offline.js');
+const RENDER_OFFLINE = path.join(ROOT, 'tools', 'vela-dev', 'scripts', 'render-offline.js');
 
 // Where to leave the produced .pptx so the Python runner can read it back.
 function resolveOutPath() {
