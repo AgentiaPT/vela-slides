@@ -2,12 +2,12 @@
   "deckTitle": "Vela Slides — Live Demo",
   "lanes": [
     {
-      "id": "5e884eb9",
+      "id": "ce3a1e75",
       "title": "Introduction",
       "collapsed": false,
       "items": [
         {
-          "id": "f491f168",
+          "id": "3ddc484f",
           "title": "Title",
           "notes": "",
           "comments": [],
@@ -286,7 +286,7 @@
           "createdAt": "2026-03-23T23:14:42.515Z"
         },
         {
-          "id": "a8180106",
+          "id": "42d44976",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -297,7 +297,7 @@
           "createdAt": "2026-07-07T06:21:29.438Z"
         },
         {
-          "id": "ffb68be0",
+          "id": "4a4d35a3",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -308,7 +308,7 @@
           "createdAt": "2026-07-07T07:05:59.935Z"
         },
         {
-          "id": "35215c75",
+          "id": "8df720c3",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -319,7 +319,7 @@
           "createdAt": "2026-07-07T07:08:12.808Z"
         },
         {
-          "id": "634dbaa8",
+          "id": "2b480a0a",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -330,7 +330,7 @@
           "createdAt": "2026-07-07T08:54:15.569Z"
         },
         {
-          "id": "5095b36a",
+          "id": "43abc08b",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -341,7 +341,7 @@
           "createdAt": "2026-07-07T09:32:01.428Z"
         },
         {
-          "id": "f8c03b2f",
+          "id": "eb42a80f",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -352,7 +352,7 @@
           "createdAt": "2026-07-07T09:44:20.252Z"
         },
         {
-          "id": "4ad39d1d",
+          "id": "b1827159",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -363,7 +363,7 @@
           "createdAt": "2026-07-07T09:54:52.677Z"
         },
         {
-          "id": "ef820427",
+          "id": "936f0488",
           "title": "New section",
           "notes": "",
           "comments": [],
@@ -372,16 +372,27 @@
           "order": 9,
           "slides": [],
           "createdAt": "2026-07-07T14:12:29.077Z"
+        },
+        {
+          "id": "c48518b0",
+          "title": "New section",
+          "notes": "",
+          "comments": [],
+          "status": "todo",
+          "importance": "should",
+          "order": 10,
+          "slides": [],
+          "createdAt": "2026-07-11T21:07:55.118Z"
         }
       ]
     },
     {
-      "id": "b2c6ecc1",
+      "id": "5a7de0e1",
       "title": "What's New — v12",
       "collapsed": false,
       "items": [
         {
-          "id": "3beb8db3",
+          "id": "b9191465",
           "title": "v12 Features",
           "notes": "Student mode, studyNotes, copy & reveal features",
           "comments": [
@@ -708,12 +719,12 @@
       ]
     },
     {
-      "id": "a01957cb",
+      "id": "3792bff0",
       "title": "Block Showcase",
       "collapsed": false,
       "items": [
         {
-          "id": "39263ef5",
+          "id": "111ef8b2",
           "title": "Text & Typography",
           "notes": "",
           "comments": [],
@@ -820,7 +831,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "fcade85c",
+          "id": "da912a3e",
           "title": "Process & Flow",
           "notes": "",
           "comments": [],
@@ -975,7 +986,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "233d1cf3",
+          "id": "1892b64e",
           "title": "Data & Metrics",
           "notes": "",
           "comments": [],
@@ -1199,7 +1210,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "072949b5",
+          "id": "fe83fe20",
           "title": "Code & Visual",
           "notes": "",
           "comments": [],
@@ -1393,7 +1404,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "1d7d87f4",
+          "id": "08399e66",
           "title": "New Primitives",
           "notes": "Showcases the 6 new block types added in v12.25",
           "comments": [
@@ -1672,7 +1683,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "2e792c77",
+          "id": "0b47e369",
           "title": "Layout: Columns",
           "notes": "",
           "comments": [],
@@ -1862,12 +1873,12 @@
       ]
     },
     {
-      "id": "fcb50e5d",
+      "id": "1332c0e4",
       "title": "AI & Platform",
       "collapsed": false,
       "items": [
         {
-          "id": "2d7f5a7c",
+          "id": "5a096946",
           "title": "Vera AI",
           "notes": "",
           "comments": [],
@@ -2116,7 +2127,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "30e48061",
+          "id": "515214f6",
           "title": "CLI & Skill",
           "notes": "",
           "comments": [],
@@ -2206,7 +2217,7 @@
           "createdAt": "2026-03-23T23:14:42.516Z"
         },
         {
-          "id": "74a2afa7",
+          "id": "4687478c",
           "title": "Runtimes & Desktop",
           "notes": "",
           "comments": [],
@@ -2504,7 +2515,7 @@
           "createdAt": "2026-06-01T00:30:48.654Z"
         },
         {
-          "id": "edfd55e4",
+          "id": "1362396e",
           "title": "Platform Features",
           "notes": "",
           "comments": [],
@@ -2829,12 +2840,12 @@
       ]
     },
     {
-      "id": "8cca2139",
+      "id": "ed0038b6",
       "title": "Closing",
       "collapsed": false,
       "items": [
         {
-          "id": "98cf3cb0",
+          "id": "dcacb050",
           "title": "Get Started",
           "notes": "",
           "comments": [],
@@ -3244,7 +3255,7 @@
       ]
     },
     {
-      "id": "8fa19bd8",
+      "id": "2c4749cc",
       "title": "Main",
       "collapsed": false,
       "items": []
