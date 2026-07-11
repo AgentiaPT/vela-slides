@@ -1,21 +1,24 @@
 // Regression test for CR4: block-level hover toolbar (the 🎯🔗💬👁✕ cluster
-// rendered by renderBlockItem in part-blocks.jsx, positioned at top:-8/right:-8
-// just outside a block's own box) getting its circular buttons clipped.
+// rendered by renderBlockItem in part-blocks.jsx at top:-8/right:-8, just
+// outside a block's own box) getting its circular buttons clipped.
 //
-// Root cause (confirmed by an in-browser repro — see CR4 notes): the toolbar is
-// a DOM *sibling* of the block's own rendered root, so a block's own overflow
-// never clips it directly. The genuine clipping ancestor is the isCols
-// layout's L/R column wrappers (`overflow:"hidden"`, tightly hugging their
-// blocks with zero margin) — ANY block sitting at a column's top/right edge,
-// code and table included, had its toolbar cut there. code/table's own
-// overflow:auto/hidden containers are fixed too (defense in depth / matches
-// the block-root pattern) even though they were never literally an ancestor
-// of this particular toolbar in the paths exercised.
+// Root cause (confirmed by an in-browser repro): the toolbar is a DOM *sibling*
+// of the block's own rendered root (both are children of the `data-block-type`
+// wrapper), so a block's OWN overflow can never clip it. The genuine clipping
+// ancestor is the isCols layout's L/R column wrappers (`overflow:"hidden"`,
+// hugging their blocks with zero margin) — ANY block at a column's top/right
+// edge had its toolbar cut there. The fix keeps the columns' OUTER wrapper
+// overflow:"visible" and moves the vertical crop onto an inner wrapper nudged
+// by COL_TOOLBAR_PAD so the toolbar has escape room.
 //
-// This is a source-pattern test (CSS-in-JS strings, not a runnable function):
-// it extracts the three fixed regions from part-blocks.jsx and asserts the
-// clipping container is now overflow:"visible" on the outside with the
-// original crop preserved on an inner element.
+// IMPORTANT — do NOT "fix" the code/table blocks by wrapping their content in an
+// extra <div>: those own-overflow containers were never the toolbar's clip
+// ancestor, AND the .pptx/PDF table extractors read the table root's DIRECT
+// children as the grid rows (pptxExtractTables: `tableRoot.children` filtered to
+// display:grid). An intermediate wrapper makes the rows grandchildren → the
+// exporter finds tables=0. Checks 1–2 below guard that contract.
+//
+// Source-pattern test (CSS-in-JS strings, not a runnable function).
 const fs = require("fs");
 const path = require("path");
 
@@ -26,22 +29,6 @@ let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };
 const bad = (n, d) => { fail++; console.log("  ❌ " + n + (d ? " — " + d : "")); };
 
-// ── Extract a function's body (brace-matched). Finds the body's opening "{"
-// as the FIRST "{" after the parameter list's closing ")" — not just the
-// first "{" after the name, which would land inside a destructured param
-// like `function CodeBlock({ block, cls, ... }) {`. ────────────────────────
-function extractFunction(name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`function ${name} not found`);
-  const parenClose = src.indexOf(") {", start);
-  if (parenClose < 0) throw new Error(`function ${name} body not found`);
-  let i = parenClose + 2, depth = 0;
-  for (; i < src.length; i++) { if (src[i] === "{") depth++; else if (src[i] === "}") { depth--; if (depth === 0) { i++; break; } } }
-  return src.slice(start, i);
-}
-
-// ── Extract a `case "x": { ... }` block (brace-matched from the case's own
-// opening brace) ─────────────────────────────────────────────────────────
 function extractCase(name) {
   const marker = `case "${name}": {`;
   const start = src.indexOf(marker);
@@ -52,54 +39,48 @@ function extractCase(name) {
   return src.slice(start, i);
 }
 
-// ── Extract the `{ ... }` object body of the first `style={{...}}` found at
-// or after `fromIndex` (brace-matched — safe against `${...}` template
-// interpolations inside the style values, which a naive [^}]* regex is not).
-function extractStyleObj(text, fromIndex = 0) {
-  const marker = "style={{";
-  const mi = text.indexOf(marker, fromIndex);
-  if (mi < 0) return null;
-  let i = mi + marker.length - 1, depth = 0; // start at the object's opening "{"
-  const objStart = i;
-  for (; i < text.length; i++) { if (text[i] === "{") depth++; else if (text[i] === "}") { depth--; if (depth === 0) { i++; break; } } }
-  return { text: text.slice(objStart, i), start: mi, end: i };
-}
-
-// ── 1. CodeBlock: outer box must not clip; scroll moves to an inner wrapper ─
-{
-  const fn = extractFunction("CodeBlock");
-  const outer = extractStyleObj(fn, fn.indexOf("return <div className={cls}"));
-  if (!outer) bad("CodeBlock outer div found", "pattern not found");
-  else {
-    const outerVisible = /overflow:\s*"visible"/.test(outer.text);
-    const outerNotAuto = !/overflow:\s*"auto"/.test(outer.text);
-    const inner = extractStyleObj(fn, outer.end);
-    const hasInnerScroll = !!inner && /overflow:\s*"auto"/.test(inner.text);
-    if (outerVisible && outerNotAuto && hasInnerScroll) ok("CodeBlock: outer overflow:visible, scroll moved to inner wrapper");
-    else bad("CodeBlock: outer overflow:visible, scroll moved to inner wrapper",
-      `outerVisible=${outerVisible} outerNotAuto=${outerNotAuto} hasInnerScroll=${hasInnerScroll}`);
-  }
-}
-
-// ── 2. table block: outer box must not clip; corner-mask moves to an inner
-//      wrapper ─────────────────────────────────────────────────────────────
+// ── 1. table extractor contract: the FIRST element inside the table root must be
+//      a grid row (headers / rows), NOT an intermediate wrapper div. This is
+//      exactly what pptxExtractTables walks (tableRoot.children → display:grid). ─
 {
   const caseSrc = extractCase("table");
-  const outer = extractStyleObj(caseSrc, caseSrc.indexOf("return <div className={cls}"));
-  if (!outer) bad("table outer div found", "pattern not found");
-  else {
-    const outerVisible = /overflow:\s*"visible"/.test(outer.text);
-    const outerNotHidden = !/overflow:\s*"hidden"/.test(outer.text);
-    const inner = extractStyleObj(caseSrc, outer.end);
-    const hasInnerCrop = !!inner && /overflow:\s*"hidden"/.test(inner.text);
-    if (outerVisible && outerNotHidden && hasInnerCrop) ok("table: outer overflow:visible, corner-mask moved to inner wrapper");
-    else bad("table: outer overflow:visible, corner-mask moved to inner wrapper",
-      `outerVisible=${outerVisible} outerNotHidden=${outerNotHidden} hasInnerCrop=${hasInnerCrop}`);
-  }
+  const rootIdx = caseSrc.indexOf("return <div className={cls}");
+  const after = rootIdx >= 0 ? caseSrc.slice(rootIdx) : "";
+  // The first child expression after the root's own style={{...}}> should be the
+  // header/rows grid — recognizable by gridTemplateColumns. A plain wrapper
+  // <div style={{ borderRadius: 8, overflow: "hidden" }}> with no grid is the
+  // regression we are guarding against.
+  const rootClose = after.indexOf("}}>");
+  const body = rootClose >= 0 ? after.slice(rootClose + 3) : "";
+  const firstDiv = body.indexOf("<div");
+  const firstDivChunk = firstDiv >= 0 ? body.slice(firstDiv, firstDiv + 220) : "";
+  const firstChildIsGrid = /gridTemplateColumns/.test(firstDivChunk);
+  if (firstChildIsGrid) ok("table: grid rows are direct children of the table root (pptx extractor contract)");
+  else bad("table: grid rows are direct children of the table root (pptx extractor contract)",
+    `first child chunk: ${JSON.stringify(firstDivChunk.slice(0, 80))}`);
 }
 
-// ── 3. isCols layout L/R columns: outer must not clip; inner keeps the crop
-//      with a buffer so the block-level toolbar has escape room ───────────
+// ── 2. code block: single-container root (no extra content wrapper) — keeps the
+//      block-root shape the extractors expect. ────────────────────────────────
+{
+  const start = src.indexOf("function CodeBlock(");
+  const fnChunk = start >= 0 ? src.slice(start, start + 2000) : "";
+  const rootIdx = fnChunk.indexOf("return <div className={cls}");
+  const after = rootIdx >= 0 ? fnChunk.slice(rootIdx) : "";
+  const rootClose = after.indexOf("}}>");
+  const body = rootClose >= 0 ? after.slice(rootClose + 3) : "";
+  // First child after the root should be the label/text (EditableText), not a
+  // nested styled wrapper <div style={{...}}>.
+  const firstDiv = body.indexOf("<div style={{");
+  const firstEditable = body.indexOf("<EditableText");
+  const noLeadingWrapper = firstEditable >= 0 && (firstDiv < 0 || firstEditable < firstDiv);
+  if (noLeadingWrapper) ok("code block: content is a direct child of the block root (no extra wrapper)");
+  else bad("code block: content is a direct child of the block root (no extra wrapper)",
+    `firstEditable=${firstEditable} firstDiv=${firstDiv}`);
+}
+
+// ── 3. isCols layout L/R columns (the ACTUAL toolbar clip fix): outer wrapper
+//      overflow:"visible", inner keeps the crop with a COL_TOOLBAR_PAD buffer. ──
 {
   const start = src.indexOf('key="__cols-row"');
   if (start < 0) bad("__cols-row block found", "marker not found");
@@ -116,9 +97,6 @@ function extractStyleObj(text, fromIndex = 0) {
       const outerStyle = outerMatch ? outerMatch[1] : "";
       const outerVisible = /overflow:\s*"visible"/.test(outerStyle);
       const outerNotHidden = !/overflow:\s*"hidden"/.test(outerStyle);
-      const hasInnerHidden = /overflow:\s*"hidden"/.test(block) && block.indexOf('overflow: "hidden"') > (outerMatch ? outerMatch.index + outerMatch[0].length - block.length : 0);
-      // Simplest robust check: exactly one "hidden" overflow occurrence in the
-      // block (the inner crop wrapper), and it comes after the outer's style block.
       const hiddenCount = (block.match(/overflow:\s*"hidden"/g) || []).length;
       const pad = /COL_TOOLBAR_PAD/.test(block);
       const good = outerVisible && outerNotHidden && hiddenCount === 1 && pad;
@@ -130,9 +108,7 @@ function extractStyleObj(text, fromIndex = 0) {
   }
 }
 
-// ── 4. Sanity: the block-level hover toolbar itself is untouched (still pokes
-//      outside the block at top:-8/right:-8) — we fixed the clippers, not the
-//      toolbar's intentional escape design. ────────────────────────────────
+// ── 4. Sanity: the block-level hover toolbar keeps its intentional escape offset ─
 {
   const hasToolbarOffset = /top:\s*-8,\s*right:\s*-8/.test(src);
   if (hasToolbarOffset) ok("block-level hover toolbar keeps its top:-8/right:-8 escape offset");
