@@ -295,6 +295,9 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
+// Buffer (px) reserved above/right of a cols-layout column's inner crop box so
+// an edge block's hover toolbar (negative top/right offset) isn't clipped.
+const COL_TOOLBAR_PAD = 12;
 
 // Patch a single item in block.items and call onChange
 function patchItemAt(block, onChange, idx, patch) {
@@ -679,9 +682,15 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
       });
     }
   };
-  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
-    {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
-    <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
+  // Outer box stays overflow:"visible" so the block-level hover toolbar (rendered
+  // by the caller just outside this element, poking above/right via negative
+  // offsets) never gets clipped. The scroll/crop that overflow:"auto" used to do
+  // for tall/wide code moves onto this inner content wrapper instead.
+  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, border: `1px solid ${st.border}`, overflow: "visible", ...block.style }}>
+    <div style={{ padding: "16px 20px", overflow: "auto", borderRadius: 8 }}>
+      {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+      <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
+    </div>
     {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
   </div>;
 }
@@ -956,7 +965,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
-      return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
+      // Outer box stays overflow:"visible" so the block-level hover toolbar isn't
+      // clipped. overflow:"hidden" (needed to mask the header bg's square corners
+      // against the rounded border) moves onto this inner wrapper instead.
+      return <div className={cls} style={{ borderRadius: 8, overflow: "visible", border: `1px solid ${brdColor}`, ...block.style }}>
+        <div style={{ borderRadius: 8, overflow: "hidden" }}>
         {headers.length > 0 && <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: hdrBg }}>
           {headers.map((h, hi) => <EditableText key={hi} text={h} editable={textEditable} onSave={(v) => {
             const nh = [...headers]; nh[hi] = v; onChange?.({ headers: nh });
@@ -969,6 +982,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           }} style={{ padding: "9px 14px", fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>)}
         {canEdit && <AddItem label="Add row" accent={st.accent} style={{ borderRadius: 0, border: "none", borderTop: `1px solid ${brdColor}` }} onAdd={() => onChange({ rows: [...rows, Array.from({ length: cols }, (_, j) => j === 0 ? "New row" : "Value")] })} />}
+        </div>
       </div>;
     }
 
@@ -1648,11 +1662,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const colsRow = (
         <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
-          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+          {/* Outer stays overflow:"visible" so a column-edge block's hover toolbar
+              (which pokes -8/-10px above/right of the block) isn't clipped. The
+              inner wrapper keeps the original vertical crop for tall content, but
+              its clip box is nudged up+right by COL_TOOLBAR_PAD so that escape
+              room lands inside it while its content area still lines up exactly
+              where it used to (padding cancels the top/right position shift). */}
+          <div key="__cols-L" style={{ flex: slide.contentFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+            </div>
           </div>
-          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden" }}>
-            {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+          <div key="__cols-R" style={{ flex: slide.imageFlex || 1, minWidth: 0, overflow: "visible" }}>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+            </div>
           </div>
         </div>
       );

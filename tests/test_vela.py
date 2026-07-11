@@ -492,6 +492,36 @@ def test_security():
     else:
         fail("Standalone HTML export machinery suite", f"missing: {standalone_script}")
 
+    # 9d3. Sprint "lifeboat" regression suites — one node cjs per change request.
+    #   export robustness (CR1): parseLinearGradient/parseColor/domToCanvas tolerate non-string bg
+    #   modal scroll     (CR3): ModalBackdrop card has maxHeight + overflowY (no clip in short panes)
+    #   storage warning  (CR2): artifact-mode backup/local-storage notice + dismiss test-ids
+    #   block toolbar    (CR4): hover-toolbar clipping containers no longer crop the tool circles
+    #   icon picker esc  (CR5): IconPicker inputs let Escape reach the modal (don't swallow it)
+    for fname, label in [
+        ("tests/test_export_robustness.cjs",  "Export robustness (CR1 str.includes)"),
+        ("tests/test_modal_scroll.cjs",       "Modal scroll/overflow (CR3 release notes)"),
+        ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
+        ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
+        ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+    ]:
+        script = os.path.join(REPO_ROOT, fname)
+        if os.path.exists(script):
+            try:
+                r = subprocess.run(["node", script], capture_output=True, text=True, timeout=60)
+                if r.returncode == 0:
+                    m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                    count = m.group(1) if m else "?"
+                    ok(f"{label} ({count} cases)")
+                else:
+                    fail(label, f"node {fname} exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+            except FileNotFoundError:
+                fail(label, "node not on PATH")
+            except subprocess.TimeoutExpired:
+                fail(label, "timeout after 60s")
+        else:
+            fail(label, f"missing: {script}")
+
     # 9c. guidelines control/bidi strip (v12.64) — behavioral: pull the exact
     # char-class the importer applies and run a sample through it. Removing the
     # strip (or omitting bidi/zero-width) fails this check (red).

@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.0";
+const VELA_VERSION = "13.1";
 const VELA_CHANGELOG = [
+  { v: "13.1", d: ["Export: fixed an intermittent crash ('str.includes is not a function') that aborted export on slides with a non-string background — gradient/color parsing now tolerates any value.", "Dialogs now scroll instead of clipping in short/narrow panes — fixes empty-looking About/Recent Changes.", "Escape closes the icon picker consistently with other dialogs.", "Block hover-toolbar icons no longer clipped at a column's edge.", "Artifact mode shows a dismissible reminder that the deck lives in browser/Claude.ai storage — export often to back up."] },
   { v: "13.0", d: ["Native PowerPoint (.pptx) export — the deck exports as a fully editable .pptx with real text boxes, shapes and tables (not flattened images), vector diagrams as native SVG with PNG fallback, and gradient/color fidelity carried through.", "Milestone release consolidating the .pptx exporter."] },
   { v: "12.88", d: ["PowerPoint export: fixed inline bold/italic text appearing misplaced — bold and italic segments now stay as runs within their paragraph instead of floating to a separate box.", "Fixed numbers/labels centered via flex/grid (e.g. step-number circles) hugging the left edge — centering is now carried through.", "Fixed table text on shrink-to-fit slides exporting oversized and overflowing the blocks below — cell fonts now use the same scale as the rest of the slide.", "Regression tests added."] },
   { v: "12.87", d: ["PowerPoint export: fixed a repair prompt real PowerPoint could still show on first open — a run whose measured font size collapsed to zero emitted an out-of-range size PowerPoint rejects; exported font sizes are now clamped to PowerPoint's valid range.", "Regression test added."] },

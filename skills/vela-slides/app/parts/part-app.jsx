@@ -18,7 +18,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
   }, [onClose, onEnter, extraKeys]);
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
     </div>
@@ -1108,6 +1108,13 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  // CR: in a Claude.ai artifact the deck only lives in browser localStorage
+  // (no file) — nudge users to export/back up. Dismiss persists for the
+  // session (sessionStorage) so it doesn't reappear on every re-render but
+  // does come back if the artifact is reloaded fresh.
+  const [storageWarningDismissed, setStorageWarningDismissed] = useState(() => {
+    try { return sessionStorage.getItem("vela-storage-warning-dismissed") === "1"; } catch { return false; }
+  });
   const [newDeckDialog, setNewDeckDialog] = useState(false);
   const [pdfExport, setPdfExport] = useState(false);
   const [pptxExport, setPptxExport] = useState(false);
@@ -1743,6 +1750,20 @@ export default function App() {
           </div>
         </div>}
       </header>}
+
+      {/* ── STORAGE WARNING (artifact mode only) ────────────── */}
+      {velaIsArtifactMode() && !storageWarningDismissed && (
+        <div data-testid="storage-warning" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", background: T.amber + "15", borderBottom: `1px solid ${T.amber}40`, fontFamily: FONT.mono, fontSize: 11, color: T.text }}>
+          <span style={{ fontSize: 13 }}>⚠️</span>
+          <span style={{ flex: 1 }}>This deck is saved in Claude.ai / your browser's local storage, not a file — it can be lost if storage is cleared. Export often (📤 Export) to back up your work.</span>
+          <button
+            data-testid="storage-warning-dismiss"
+            onClick={() => { setStorageWarningDismissed(true); try { sessionStorage.setItem("vela-storage-warning-dismissed", "1"); } catch {} }}
+            title="Dismiss"
+            style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 14, fontFamily: FONT.mono, lineHeight: 1, padding: "2px 4px", flexShrink: 0 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* ── BODY ────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
