@@ -99,9 +99,10 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.2";
+const VELA_VERSION = "13.3";
 const VELA_CHANGELOG = [
-  { v: "13.2", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },
+  { v: "13.3", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },
+  { v: "13.2", d: "PowerPoint export: single-line values (metric numbers, badges, short titles) no longer wrap to two lines on a deck's first open in PowerPoint." },
   { v: "13.1", d: ["Export: fixed an intermittent crash ('str.includes is not a function') that aborted export on slides with a non-string background — gradient/color parsing now tolerates any value.", "Dialogs now scroll instead of clipping in short/narrow panes — fixes empty-looking About/Recent Changes.", "Escape closes the icon picker consistently with other dialogs.", "Block hover-toolbar icons no longer clipped at a column's edge.", "Artifact mode shows a dismissible reminder that the deck lives in browser/Claude.ai storage — export often to back up."] },
   { v: "13.0", d: ["Native PowerPoint (.pptx) export — the deck exports as a fully editable .pptx with real text boxes, shapes and tables (not flattened images), vector diagrams as native SVG with PNG fallback, and gradient/color fidelity carried through.", "Milestone release consolidating the .pptx exporter."] },
   { v: "12.88", d: ["PowerPoint export: fixed inline bold/italic text appearing misplaced — bold and italic segments now stay as runs within their paragraph instead of floating to a separate box.", "Fixed numbers/labels centered via flex/grid (e.g. step-number circles) hugging the left edge — centering is now carried through.", "Fixed table text on shrink-to-fit slides exporting oversized and overflowing the blocks below — cell fonts now use the same scale as the rest of the slide.", "Regression tests added."] },
@@ -15491,6 +15492,14 @@ function pptxTextSp(id, t) {
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
   const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
+  // A box only tall enough for one line (metric numbers, badges, short titles) is
+  // genuinely single-line: never let PowerPoint re-wrap it. Bare <a:normAutofit/>
+  // does NOT shrink on first paint, so a box whose width is a few % too tight under
+  // PowerPoint's font-substitution metrics wraps until an unrelated relayout fires.
+  // Gate on HEIGHT, not runs.length: soft (width) wraps aren't captured as separate
+  // runs, so a tall paragraph must keep wrap="square" + normAutofit to reflow.
+  const singleLine = t.h > 0 && t.h <= size * 1.6; // one line-height (~1.2–1.5) + margin; 2 lines ≳ 2.4×
+  const wrap = singleLine ? "none" : "square";
   let paras;
   if (Array.isArray(t.runs)) {
     paras = t.runs.map((lineRuns) => {
@@ -15509,7 +15518,7 @@ function pptxTextSp(id, t) {
   }
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`
     + `<p:spPr>${pptxXfrm(t.x, t.y, t.w, t.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
-    + `<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
+    + `<p:txBody><a:bodyPr wrap="${wrap}" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
     + paras + `</p:txBody></p:sp>`;
 }
 

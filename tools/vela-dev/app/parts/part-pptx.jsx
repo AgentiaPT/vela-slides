@@ -218,6 +218,14 @@ function pptxTextSp(id, t) {
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
   const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
+  // A box only tall enough for one line (metric numbers, badges, short titles) is
+  // genuinely single-line: never let PowerPoint re-wrap it. Bare <a:normAutofit/>
+  // does NOT shrink on first paint, so a box whose width is a few % too tight under
+  // PowerPoint's font-substitution metrics wraps until an unrelated relayout fires.
+  // Gate on HEIGHT, not runs.length: soft (width) wraps aren't captured as separate
+  // runs, so a tall paragraph must keep wrap="square" + normAutofit to reflow.
+  const singleLine = t.h > 0 && t.h <= size * 1.6; // one line-height (~1.2–1.5) + margin; 2 lines ≳ 2.4×
+  const wrap = singleLine ? "none" : "square";
   let paras;
   if (Array.isArray(t.runs)) {
     paras = t.runs.map((lineRuns) => {
@@ -236,7 +244,7 @@ function pptxTextSp(id, t) {
   }
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`
     + `<p:spPr>${pptxXfrm(t.x, t.y, t.w, t.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>`
-    + `<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
+    + `<p:txBody><a:bodyPr wrap="${wrap}" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>`
     + paras + `</p:txBody></p:sp>`;
 }
 
