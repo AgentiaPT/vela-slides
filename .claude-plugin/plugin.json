@@ -1,7 +1,6 @@
 {
   "name": "vela-slides",
-  "version": "2.6.0",
-  "description": "Create, edit, translate, rebrand, or present slide decks. Use when the user wants presentations, slides, decks, or keynotes — even without mentioning Vela by name.",
+  "description": "Create, edit, translate, rebrand, or present slide decks. Use when the user wants presentations, slides, decks, or keynotes in vela format.",
   "author": {
     "name": "Rui Quintino",
     "email": "info@agentia.pt"
