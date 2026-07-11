@@ -22,7 +22,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SRC_PATH = path.join(__dirname, "..", "tools/vela-dev/app/parts/part-blocks.jsx");
+const SRC_PATH = path.join(__dirname, "..", "src/parts/part-blocks.jsx");
 const src = fs.readFileSync(SRC_PATH, "utf8");
 
 let pass = 0, fail = 0;

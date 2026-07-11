@@ -21,8 +21,8 @@ EXAMPLES = os.path.join(REPO_ROOT, "examples")
 # Dev/CI toolchain lives outside the shipped skill (see tools/vela-dev/).
 DEV_DIR = os.path.join(REPO_ROOT, "tools", "vela-dev")
 DEV_SCRIPTS = os.path.join(DEV_DIR, "scripts")         # concat.py, serve.py, sync-skill-docs.py, *.js …
-DEV_APP = os.path.join(DEV_DIR, "app")                 # local.html, parts/
-PARTS_DIR = os.path.join(DEV_APP, "parts")
+PARTS_DIR = os.path.join(REPO_ROOT, "src", "parts")    # app source part-files (first-class)
+LOCAL_HTML = os.path.join(DEV_DIR, "local.html")       # dev preview shell (served by serve.py)
 
 passes = 0
 fails = 0
@@ -1288,7 +1288,7 @@ def test_v10_features():
 def test_channel_local():
     print("\n── Channel & Local HTML Tests ──")
 
-    local_html = os.path.join(DEV_APP, "local.html")
+    local_html = LOCAL_HTML
     if not os.path.exists(local_html):
         fail("local.html exists")
         return

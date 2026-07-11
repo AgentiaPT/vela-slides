@@ -104,7 +104,7 @@ When fixing a bug, adding a feature, or improving the Vela engine itself:
 
 ```bash
 # Edit the part in place — never edit vela.jsx by hand
-tools/vela-dev/app/parts/part-<name>.jsx
+src/parts/part-<name>.jsx
 ```
 
 ### Step 3: Rebuild monolith from parts
@@ -152,7 +152,7 @@ grep -c "const STARTUP_PATCH = null;" skills/vela-slides/app/vela.jsx
 ### If parts included (zip with part-*.jsx files):
 
 ```bash
-cp /path/to/part-*.jsx tools/vela-dev/app/parts/
+cp /path/to/part-*.jsx src/parts/
 python3 tools/vela-dev/scripts/concat.py
 ```
 

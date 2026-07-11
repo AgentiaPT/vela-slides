@@ -34,7 +34,7 @@ const { execSync } = require("child_process");
 function findRepoRoot(start) {
   let d = start;
   for (let i = 0; i < 8; i++) {
-    if (fs.existsSync(path.join(d, "tools/vela-dev/app/parts/part-imports.jsx"))) return d;
+    if (fs.existsSync(path.join(d, "src/parts/part-imports.jsx"))) return d;
     const up = path.dirname(d);
     if (up === d) break;
     d = up;

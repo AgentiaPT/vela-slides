@@ -5,7 +5,7 @@ Vela Concat — Builds monolith from parts.
 
 Two modes:
   1. Default (no args):  python3 concat.py
-     Reads parts from tools/vela-dev/app/parts/
+     Reads app source part-files from src/parts/
      Outputs monolith to skills/vela-slides/app/vela.jsx
 
   2. From working dir:   python3 concat.py /path/to/parts/ [output.jsx]
@@ -35,11 +35,12 @@ PART_ORDER = [
     "part-app.jsx",
 ]
 
-# concat.py lives at tools/vela-dev/scripts/ — parts are dev-side, but the
-# built monolith ships from the lean skill dir (skills/vela-slides/app/vela.jsx).
+# concat.py (dev tooling) lives at tools/vela-dev/scripts/, reads the app source
+# part-files from src/parts/, and writes the built monolith into the lean shipped
+# skill dir (skills/vela-slides/app/vela.jsx).
 DEV_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # tools/vela-dev
 REPO_ROOT = os.path.dirname(os.path.dirname(DEV_DIR))                  # repo root
-SKILL_PARTS = os.path.join(DEV_DIR, "app", "parts")
+SKILL_PARTS = os.path.join(REPO_ROOT, "src", "parts")
 SKILL_TEMPLATE = os.path.join(REPO_ROOT, "skills", "vela-slides", "app", "vela.jsx")
 
 def concat(parts_dir, output_path):

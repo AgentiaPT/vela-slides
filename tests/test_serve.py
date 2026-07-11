@@ -23,12 +23,12 @@ import unittest
 
 # ── Path setup ────────────────────────────────────────────────────────
 # serve.py / agent_backend.py / local.html are dev-only tooling under
-# tools/vela-dev/; only the built monolith (vela.jsx) ships from the skill dir.
+# tools/vela-dev/; the app source part-files live in src/parts/, and only the
+# built monolith (vela.jsx) ships from the skill dir.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "tools", "vela-dev", "scripts")
-DEV_APP_DIR = os.path.join(REPO_ROOT, "tools", "vela-dev", "app")
 TEMPLATE_PATH = os.path.join(REPO_ROOT, "skills", "vela-slides", "app", "vela.jsx")
-LOCAL_HTML_PATH = os.path.join(DEV_APP_DIR, "local.html")
+LOCAL_HTML_PATH = os.path.join(REPO_ROOT, "tools", "vela-dev", "local.html")
 
 sys.path.insert(0, SCRIPTS_DIR)
 

@@ -18,14 +18,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map. Quick referen
 
 | Changing... | Edit this file |
 |---|---|
-| Block rendering (how slides look) | `tools/vela-dev/app/parts/part-blocks.jsx` |
-| AI behavior, system prompts | `tools/vela-dev/app/parts/part-engine.jsx` |
-| PDF/markdown export | `tools/vela-dev/app/parts/part-pdf.jsx` |
-| State management | `tools/vela-dev/app/parts/part-reducer.jsx` |
-| Import/export, sanitization | `tools/vela-dev/app/parts/part-imports.jsx` |
-| Slide panel, presenter mode | `tools/vela-dev/app/parts/part-slides.jsx` |
-| Chat panel | `tools/vela-dev/app/parts/part-chat.jsx` |
-| Top-level app shell | `tools/vela-dev/app/parts/part-app.jsx` |
+| Block rendering (how slides look) | `src/parts/part-blocks.jsx` |
+| AI behavior, system prompts | `src/parts/part-engine.jsx` |
+| PDF/markdown export | `src/parts/part-pdf.jsx` |
+| State management | `src/parts/part-reducer.jsx` |
+| Import/export, sanitization | `src/parts/part-imports.jsx` |
+| Slide panel, presenter mode | `src/parts/part-slides.jsx` |
+| Chat panel | `src/parts/part-chat.jsx` |
+| Top-level app shell | `src/parts/part-app.jsx` |
 
 ### 2. Edit the part-file directly
 
@@ -34,7 +34,7 @@ Never edit `vela.jsx` by hand — it's auto-generated.
 ### 3. Rebuild the monolith
 
 ```bash
-python3 tools/vela-dev/scripts/concat.py tools/vela-dev/app/parts skills/vela-slides/app/vela.jsx
+python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
 ```
 
 ### 4. Test

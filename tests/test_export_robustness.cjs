@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "tools/vela-dev/app/parts/part-pdf.jsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf.jsx"), "utf8");
 
 function extract(name) {
   const start = src.indexOf(`function ${name}(`);

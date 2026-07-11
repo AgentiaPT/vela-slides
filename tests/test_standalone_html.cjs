@@ -34,7 +34,7 @@ const path = require("path");
 const vm = require("vm");
 
 const REPO = path.resolve(__dirname, "..");
-const PDF_SRC_PATH = path.join(REPO, "tools/vela-dev/app/parts/part-pdf.jsx");
+const PDF_SRC_PATH = path.join(REPO, "src/parts/part-pdf.jsx");
 const VELA_JSX_PATH = path.join(REPO, "skills/vela-slides/app/vela.jsx");
 const DEMO_DECK_PATH = path.join(REPO, "examples/vela-demo.vela");
 const BABEL_PATH = path.join(REPO, "vela-neutralino/resources/vendor/babel.min.js");

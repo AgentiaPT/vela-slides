@@ -217,10 +217,10 @@ vela-slides/
 │       │   └── validate.py    ← Deck JSON quality checks
 │       ├── references/        ← Block schema, design patterns, themes, formats
 │       └── examples/          ← vela-demo.json (bundled demo deck)
+├── src/
+│   └── parts/                 ← App source — modular part-*.jsx files (edit these)
 ├── tools/vela-dev/            ← Dev/test/CI toolchain (never shipped)
-│   ├── app/
-│   │   ├── parts/             ← Modular source part-files (edit these)
-│   │   └── local.html         ← Local-preview shell
+│   ├── local.html            ← Local-preview shell
 │   ├── scripts/
 │   │   ├── concat.py          ← Parts → monolith builder
 │   │   ├── serve.py           ← Local dev server with live reload

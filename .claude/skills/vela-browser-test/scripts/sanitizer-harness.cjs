@@ -2,7 +2,7 @@
 /**
  * Vela real-sanitizer harness.
  *
- * Loads the ACTUAL deck sanitizers from tools/vela-dev/app/parts/part-imports.jsx
+ * Loads the ACTUAL deck sanitizers from src/parts/part-imports.jsx
  * into a jsdom context (so DOMParser/document behave like the artifact runtime) and
  * exposes them for payload testing. This runs production code — NOT a reimplementation.
  *
@@ -28,7 +28,7 @@ const vm = require("vm");
 function findRepoRoot(start) {
   let d = start;
   for (let i = 0; i < 8; i++) {
-    if (fs.existsSync(path.join(d, "tools/vela-dev/app/parts/part-imports.jsx"))) return d;
+    if (fs.existsSync(path.join(d, "src/parts/part-imports.jsx"))) return d;
     const up = path.dirname(d); if (up === d) break; d = up;
   }
   return process.cwd();
@@ -46,7 +46,7 @@ if (!jsdom) {
 }
 const { JSDOM } = jsdom;
 
-const SRC = path.join(REPO, "tools/vela-dev/app/parts/part-imports.jsx");
+const SRC = path.join(REPO, "src/parts/part-imports.jsx");
 const lines = fs.readFileSync(SRC, "utf8").split("\n");
 const uidLine = lines.find((l) => l.startsWith("const uid ="));
 const startIdx = lines.findIndex((l) => l.startsWith("const now ="));

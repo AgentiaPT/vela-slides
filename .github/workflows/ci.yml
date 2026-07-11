@@ -25,12 +25,12 @@ jobs:
         id: version_check
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          IMPORTS_FILE="tools/vela-dev/app/parts/part-imports.jsx"
+          IMPORTS_FILE="src/parts/part-imports.jsx"
 
           # Check if any skill payload OR app-source files changed. The version
-          # source of truth (part-imports.jsx) lives under tools/vela-dev/app/parts/
+          # source of truth (part-imports.jsx) lives under src/parts/
           # now; the shipped vela.jsx regen still trips the skills/vela-slides/ path.
-          SKILL_CHANGES=$(git diff --name-only "$BASE_SHA"...HEAD -- 'skills/vela-slides/' 'tools/vela-dev/app/parts/' || true)
+          SKILL_CHANGES=$(git diff --name-only "$BASE_SHA"...HEAD -- 'skills/vela-slides/' 'src/parts/' || true)
 
           if [ -z "$SKILL_CHANGES" ]; then
             echo "✅ No skill files changed — version bump not required."
@@ -241,7 +241,7 @@ jobs:
           set +e
           start_time=$(date +%s)
           cp skills/vela-slides/app/vela.jsx /tmp/original.jsx
-          output=$(python3 tools/vela-dev/scripts/concat.py tools/vela-dev/app/parts skills/vela-slides/app/vela.jsx 2>&1)
+          output=$(python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx 2>&1)
           diff_output=$(diff /tmp/original.jsx skills/vela-slides/app/vela.jsx 2>&1)
           if [ -n "$diff_output" ]; then
             exit_code=1

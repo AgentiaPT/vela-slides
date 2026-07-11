@@ -7,15 +7,15 @@ AI-native presentation engine for Claude.ai. Single-file React app (~1.1MB, 15,0
 ## Architecture
 
 ```
-Source part-files          →  concat.py       →  vela.jsx  →  assemble.py  →  final.jsx
-(tools/vela-dev/app/parts)    (tools/vela-dev)    ↑ ships in     (skill)        ↑ with deck data
- ↑ edit these                                     skills/vela-slides/app/
+Source part-files  →  concat.py         →  vela.jsx           →  assemble.py  →  final.jsx
+(src/parts)           (tools/vela-dev)      ships in skill dir     (skill)        ↑ with deck data
+ ↑ edit these                               skills/vela-slides/app/
 ```
 
-The app source (part-files) and the build/preview/AI toolchain live in
-`tools/vela-dev/` (dev-only, never shipped). The **lean skill** —
-`skills/vela-slides/` — carries only the compiled `vela.jsx` plus the
-author→ship scripts (`vela.py`, `validate.py`, `assemble.py`).
+The app source (part-files) lives in `src/parts/`. The build/preview/AI
+toolchain lives in `tools/vela-dev/` — both dev-only, never shipped. The
+**lean skill** — `skills/vela-slides/` — carries only the compiled `vela.jsx`
+plus the author→ship scripts (`vela.py`, `validate.py`, `assemble.py`).
 
 **No bundler.** Python stdlib concatenation in fixed dependency order (~10ms).
 
@@ -140,9 +140,10 @@ skills/vela-slides/      ← LEAN PAYLOAD (what installs / ships)
   references/            ← block-schema.md, design-patterns.md, formats.md, themes.md
   examples/vela-demo.json ← for `vela deck ship --demo`
   SKILL.md               ← skill prompt
+src/                     ← APP SOURCE (edit these; built into vela.jsx, never shipped raw)
+  parts/                 ← part-*.jsx source part-files
 tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
-  app/parts/             ← source part-files (edit these)
-  app/local.html         ← local-preview shell
+  local.html             ← local-preview shell
   scripts/               ← concat.py, serve.py, agent_backend.py, render-offline.js,
                             vela-drive.js, lint.py, sync-skill-docs.py
   channel/               ← Node/pnpm MCP bridge
@@ -163,9 +164,9 @@ tests/                   ← test_vela.py, test_serve.py
 
 ## IMPORTANT: Version Bump Required for Skill Changes
 
-**Any change to the shipped skill (`skills/vela-slides/`) or the app source (`tools/vela-dev/app/parts/`) MUST include a `VELA_VERSION` bump.** CI will block the PR otherwise.
+**Any change to the shipped skill (`skills/vela-slides/`) or the app source (`src/parts/`) MUST include a `VELA_VERSION` bump.** CI will block the PR otherwise.
 
-- `VELA_VERSION` lives in `tools/vela-dev/app/parts/part-imports.jsx` (format: `major.minor`, e.g. `"10.2"` → `"10.3"`)
+- `VELA_VERSION` lives in `src/parts/part-imports.jsx` (format: `major.minor`, e.g. `"10.2"` → `"10.3"`)
 - Increment the minor version for each change. Bump major only for large rewrites.
 - Also update `VELA_CHANGELOG` in the same file with a brief description of the change.
 - **Changelog entries MUST be concise bullets — never walls of text.** Prefer a short array of terse points (`d: ["…", "…"]`), which the About dialog renders as a bulleted list; a single trivial change may stay a one-line string (`d: "…"`). Keep each bullet to one line, no marketing prose. **Never include sensitive information or exploit/reproduction detail** — security entries follow the *Security-Fix Disclosure Discipline* below (class of issue + what the fix does only). The About "Recent Changes" list is user-facing, so bloated entries make it unusable.

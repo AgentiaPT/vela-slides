@@ -261,7 +261,7 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
 
     def test_event_name_matches_across_boot_and_monolith(self):
         boot_js = read("vela-neutralino", "resources", "js", "nl-boot.js")
-        imports_jsx = read("tools", "vela-dev", "app", "parts", "part-imports.jsx")
+        imports_jsx = read("src", "parts", "part-imports.jsx")
         self.assertIn('dispatchEvent(new Event("vela-agent-update"))', boot_js)
         self.assertIn('"vela-agent-update"', imports_jsx)
         self.assertIn("useAIAvailable", imports_jsx)

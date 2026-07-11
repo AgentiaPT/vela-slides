@@ -58,7 +58,7 @@ USER node
 RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
 # Regenerate the monolith from parts, then preprocess it for the Neutralino shell.
-RUN python3 tools/vela-dev/scripts/concat.py tools/vela-dev/app/parts skills/vela-slides/app/vela.jsx \
+RUN python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx \
     && python3 vela-neutralino/scripts/sync-vela.py
 
 # Fetch the pinned Neutralino runtime, verify it against committed SHA256 pins,
