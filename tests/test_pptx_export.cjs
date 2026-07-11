@@ -371,6 +371,28 @@ async function driveExport(page) {
           inlineFmt.centered, JSON.stringify(inlineFmt));
       }
 
+      // Regression: a single-line text box (metric number, badge, short title) must
+      // export wrap="none" so PowerPoint never re-wraps it. A bare <a:normAutofit/>
+      // does NOT shrink on first paint, so a box a few % too tight under PowerPoint's
+      // font-substitution metrics wrapped a value like "27" onto two lines until an
+      // unrelated relayout (e.g. opening a task pane) forced the deferred autofit.
+      // Gate is box HEIGHT (one line-height): a tall/multi-line box keeps wrap="square".
+      const wrapMode = await page.evaluate(() => {
+        if (typeof pptxTextSp !== 'function') return null;
+        const single = pptxTextSp(4, { x: 0, y: 0, w: 120, h: 24, fontSize: 40, text: '27' });
+        const multi = pptxTextSp(5, { x: 0, y: 0, w: 300, h: 120, fontSize: 18, text: 'a long paragraph that wraps' });
+        const wrapOf = (xml) => (xml.match(/<a:bodyPr wrap="(\w+)"/) || [])[1] || null;
+        return { single: wrapOf(single), multi: wrapOf(multi) };
+      });
+      if (wrapMode === null) {
+        check('wrap unit: pptxTextSp reachable in page scope', false, 'pptxTextSp not global');
+      } else {
+        check('single-line text box exports wrap="none" (no first-paint wrap in PowerPoint)',
+          wrapMode.single === 'none', JSON.stringify(wrapMode));
+        check('multi-line text box keeps wrap="square" (reflow preserved)',
+          wrapMode.multi === 'square', JSON.stringify(wrapMode));
+      }
+
       // Regression: table cell fonts must carry the fitScale shrink-to-fit factor
       // (same as text boxes). Geometry from getBoundingClientRect is already scaled,
       // but getComputedStyle().fontSize is NOT — so an unscaled cell font oversizes
