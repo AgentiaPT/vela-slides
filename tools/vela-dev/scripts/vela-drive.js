@@ -21,9 +21,35 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const { spawn } = require('child_process');
-const { chromium } = require('/home/user/vela-slides/node_modules/playwright');
+// Resolve Playwright portably — plain `playwright` resolves from the repo's
+// node_modules in CI/local; the repo-root fallback covers odd cwd/link layouts.
+function resolveChromium() {
+  const candidates = ['playwright', path.join(__dirname, '..', '..', '..', 'node_modules', 'playwright')];
+  for (const p of candidates) { try { return require(p).chromium; } catch {} }
+  throw new Error('Playwright not found — run: npm ci && npx playwright install chromium');
+}
+const chromium = resolveChromium();
 
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Container-pinned Chromium fallback: only this remote container ships a
+// prebuilt Chromium under /opt/pw-browsers (Playwright's bundled build isn't
+// downloaded here). CI installs the bundled browser, so launch() prefers that
+// and only pins when the default launch fails. Mirrors tests/test_pptx_export.cjs.
+function findPinnedChromium() {
+  if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE && fs.existsSync(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE))
+    return process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+  const base = '/opt/pw-browsers';
+  try {
+    const dirs = fs.readdirSync(base).filter(d => /^chromium-\d+$/.test(d)).sort();
+    for (const d of dirs.reverse()) {
+      // Support both Playwright chromium layouts (older chrome-linux, newer chrome-linux64).
+      for (const layout of ['chrome-linux', 'chrome-linux64']) {
+        const exe = path.join(base, d, layout, 'chrome');
+        if (fs.existsSync(exe)) return exe;
+      }
+    }
+  } catch {}
+  return null;
+}
 const SCRIPTS = __dirname;
 const args = process.argv.slice(2);
 const mode = args[0];
@@ -31,7 +57,16 @@ const htmlPath = args[1] && path.resolve(args[1]);
 function flag(name, def) { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; }
 
 async function launch(recordDir, viewport) {
-  const browser = await chromium.launch({ headless: true, executablePath: CHROME, args: ['--no-sandbox'] });
+  const launchArgs = ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'];
+  let browser;
+  try {
+    // Prefer Playwright's bundled browser (present in CI + normal dev installs).
+    browser = await chromium.launch({ headless: true, args: launchArgs });
+  } catch (e) {
+    const pinned = findPinnedChromium();
+    if (!pinned) throw e;
+    browser = await chromium.launch({ headless: true, args: launchArgs, executablePath: pinned });
+  }
   const ctx = await browser.newContext(Object.assign({ viewport: viewport || { width: 1280, height: 800 } },
     recordDir ? { recordVideo: { dir: recordDir, size: viewport || { width: 1280, height: 800 } } } : {}));
   const page = await ctx.newPage();

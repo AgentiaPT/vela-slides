@@ -77,6 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Record job start time
+        id: jobtimer
+        # Captured right after checkout so the PR comment can report total CI
+        # wall time (setup + install + every test step) — the figure GitHub
+        # bills against, rounded up to the whole minute.
+        run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -114,197 +121,389 @@ jobs:
         # critical is worth investigating immediately.
         run: npm audit --audit-level=high
 
-      - name: Run unit tests
-        id: unit
-        run: |
-          set +e
-          start_time=$(date +%s)
-          output=$(python3 tests/test_vela.py --unit 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          # Parse test counts from summary line: "✅ N passed  ❌ M failed"
-          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
-          failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
-
-      - name: Run integration tests
-        id: integration
+      - name: Run non-browser stacks + browser install (concurrent)
+        id: phase1
         if: always()
+        # Runs all SIX non-browser test stacks in the background alongside the
+        # Chromium download, then `wait`s. The ~45s `playwright install` — the
+        # real wall-time floor — overlaps the ~11s of tests, so the browser
+        # install is (nearly) free. Backgrounded subshells cannot set parent
+        # shell vars, so each stack writes its result to files under
+        # /tmp/st_<key>.* and the parent reads them back after `wait` to emit
+        # $GITHUB_OUTPUT. This file-based fan-out mirrors the exact pattern in
+        # tools/vela-dev/scripts/ci-local.sh. Each stack keeps its own verbatim
+        # count-parsing. The phase exits non-zero iff ANY stack (or the
+        # playwright install) failed, so the job goes red on any failure.
         run: |
           set +e
-          start_time=$(date +%s)
-          output=$(python3 tests/test_vela.py --integration 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
-          failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
 
-      - name: Run server tests
-        id: server
-        if: always()
-        run: |
-          set +e
-          start_time=$(date +%s)
-          output=$(python3 -m unittest tests.test_serve -v 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
-          failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
+          run_unit() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(python3 tests/test_vela.py --unit 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_unit.ec
+            printf '%s' "${passed:-0}" > /tmp/st_unit.passed
+            printf '%s' "${failed:-0}" > /tmp/st_unit.failed
+            printf '%ss' "$elapsed" > /tmp/st_unit.el
+            echo "$output" > /tmp/st_unit.out
+          }
 
-      - name: Run desktop gatekeeper invariant tests
-        id: desktop
-        if: always()
-        run: |
-          set +e
-          start_time=$(date +%s)
-          output=$(python3 -m unittest tests.test_desktop -v 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
-          failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
+          run_int() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(python3 tests/test_vela.py --integration 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '❌\s+\K\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_int.ec
+            printf '%s' "${passed:-0}" > /tmp/st_int.passed
+            printf '%s' "${failed:-0}" > /tmp/st_int.failed
+            printf '%ss' "$elapsed" > /tmp/st_int.el
+            echo "$output" > /tmp/st_int.out
+          }
 
-      - name: Run gatekeeper Go unit tests
-        id: gotest
-        if: always()
-        run: |
-          set +e
-          start_time=$(date +%s)
-          output=$(cd vela-neutralino/extensions/agent && go test -v ./... 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -cE '^--- PASS:')
-          failed=$(echo "$output" | grep -cE '^--- FAIL:')
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
+          run_srv() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(python3 -m unittest tests.test_serve -v 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
+            failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
+            printf '%s' "$ec" > /tmp/st_srv.ec
+            printf '%s' "${passed:-0}" > /tmp/st_srv.passed
+            printf '%s' "${failed:-0}" > /tmp/st_srv.failed
+            printf '%ss' "$elapsed" > /tmp/st_srv.el
+            echo "$output" > /tmp/st_srv.out
+          }
 
-      - name: Verify concat produces identical template
-        id: concat
-        if: always()
-        run: |
-          set +e
-          start_time=$(date +%s)
-          cp skills/vela-slides/app/vela.jsx /tmp/original.jsx
-          output=$(python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx 2>&1)
-          diff_output=$(diff /tmp/original.jsx skills/vela-slides/app/vela.jsx 2>&1)
-          if [ -n "$diff_output" ]; then
-            exit_code=1
-            output="❌ vela.jsx is out of sync with parts!
+          run_desktop() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(python3 -m unittest tests.test_desktop -v 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -cE '^\S+ .* ok$')
+            failed=$(echo "$output" | grep -cE '^\S+ .* FAIL$')
+            printf '%s' "$ec" > /tmp/st_desktop.ec
+            printf '%s' "${passed:-0}" > /tmp/st_desktop.passed
+            printf '%s' "${failed:-0}" > /tmp/st_desktop.failed
+            printf '%ss' "$elapsed" > /tmp/st_desktop.el
+            echo "$output" > /tmp/st_desktop.out
+          }
+
+          run_gotest() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(cd vela-neutralino/extensions/agent && go test -v ./... 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -cE '^--- PASS:')
+            failed=$(echo "$output" | grep -cE '^--- FAIL:')
+            printf '%s' "$ec" > /tmp/st_gotest.ec
+            printf '%s' "${passed:-0}" > /tmp/st_gotest.passed
+            printf '%s' "${failed:-0}" > /tmp/st_gotest.failed
+            printf '%ss' "$elapsed" > /tmp/st_gotest.el
+            echo "$output" > /tmp/st_gotest.out
+          }
+
+          run_concat() {
+            local start_time output ec elapsed diff_output
+            start_time=$(date +%s)
+            # Non-destructive sync check: concat to a temp file and diff it
+            # against the committed template. This never rewrites the committed
+            # skills/.../vela.jsx, so it cannot race the unit/integration stacks
+            # (which read that file) — concat.py writes in-place, non-atomically.
+            output=$(python3 tools/vela-dev/scripts/concat.py src/parts /tmp/vela_concat_check.jsx 2>&1)
+            diff_output=$(diff skills/vela-slides/app/vela.jsx /tmp/vela_concat_check.jsx 2>&1)
+            if [ -n "$diff_output" ]; then
+              ec=1
+              output="❌ vela.jsx is out of sync with parts!
           Run: python3 tools/vela-dev/scripts/concat.py
           Then commit the updated template.
 
           Diff:
           $diff_output"
-          else
-            exit_code=0
-            output="✅ Template in sync with parts"
-          fi
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
+            else
+              ec=0
+              output="✅ Template in sync with parts"
+            fi
+            elapsed=$(( $(date +%s) - start_time ))
+            printf '%s' "$ec" > /tmp/st_concat.ec
+            printf '%ss' "$elapsed" > /tmp/st_concat.el
+            echo "$output" > /tmp/st_concat.out
+          }
 
-      - name: Install Playwright browser
-        if: always()
-        # npm packages (react, react-dom, @babel/standalone, lucide-react,
-        # playwright) are already installed by the locked `npm ci` step at
-        # the top of the job. Only the Chromium binary still needs fetching
-        # — Playwright's npm package is just the driver, the browser is a
-        # separate download.
-        run: npx playwright install --with-deps chromium
+          run_pw() {
+            # Only the Chromium binary still needs fetching — Playwright's npm
+            # package (the driver) is already installed by the locked `npm ci`
+            # step above. This is the long pole; it overlaps every test stack.
+            local start_time output ec elapsed
+            start_time=$(date +%s)
+            output=$(npx playwright install --with-deps chromium 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            printf '%s' "$ec" > /tmp/st_pw.ec
+            printf '%ss' "$elapsed" > /tmp/st_pw.el
+            echo "$output" > /tmp/st_pw.out
+          }
 
-      - name: Run e2e UI tests
-        id: e2e
+          emit() { # <outkey> <filekey> <has_counts:0|1>
+            local ok=$1 fk=$2 hc=$3
+            echo "${ok}_exit=$(cat /tmp/st_$fk.ec)" >> "$GITHUB_OUTPUT"
+            echo "${ok}_time=$(cat /tmp/st_$fk.el)" >> "$GITHUB_OUTPUT"
+            if [ "$hc" = "1" ]; then
+              echo "${ok}_passed=$(cat /tmp/st_$fk.passed)" >> "$GITHUB_OUTPUT"
+              echo "${ok}_failed=$(cat /tmp/st_$fk.failed)" >> "$GITHUB_OUTPUT"
+            fi
+            # Multi-line stdout: random-EOF-marker heredoc so a stack's output
+            # (attacker-controllable) can't break $GITHUB_OUTPUT parsing.
+            local EOF_MARKER; EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+            echo "${ok}_output<<$EOF_MARKER" >> "$GITHUB_OUTPUT"
+            cat "/tmp/st_$fk.out" >> "$GITHUB_OUTPUT"
+            echo "$EOF_MARKER" >> "$GITHUB_OUTPUT"
+          }
+
+          # Fan out: six non-browser stacks + the Chromium install, concurrently.
+          run_unit &
+          run_int &
+          run_srv &
+          run_desktop &
+          run_gotest &
+          run_concat &
+          run_pw &
+          wait
+
+          # Echo each stack's captured stdout into the step log for visibility.
+          for k in unit int srv desktop gotest concat pw; do
+            echo "===== $k ====="
+            cat "/tmp/st_$k.out"
+          done
+
+          # Parent reads the result files and emits $GITHUB_OUTPUT.
+          emit unit    unit    1
+          emit int     int     1
+          emit srv     srv     1
+          emit desktop desktop 1
+          emit gotest  gotest  1
+          emit concat  concat  0
+          emit pw      pw      0
+
+          # Phase fails iff any stack (or the playwright install) failed.
+          fail=0
+          for k in unit int srv desktop gotest concat pw; do
+            [ "$(cat /tmp/st_$k.ec)" != "0" ] && fail=1
+          done
+          exit $fail
+
+      - name: Run browser stacks (concurrent)
+        id: phase2
         if: always()
+        # The three browser stacks (e2e review UI, PPTX export e2e, in-app UI
+        # battery) each launch their own Chromium (installed by phase1) against
+        # the offline render — CDNs are blocked, so the offline render is the
+        # only way to boot the full app. They run concurrently and were verified
+        # stable under contention. Same file-based fan-out as phase1: each stack
+        # writes /tmp/st_<key>.* and the parent emits $GITHUB_OUTPUT after
+        # `wait`. `if: always()` so this still runs (and the comment still
+        # posts) when phase1 fails.
         run: |
           set +e
-          start_time=$(date +%s)
-          output=$(node tests/test_review_ui.cjs 2>&1)
-          exit_code=$?
-          elapsed=$(( $(date +%s) - start_time ))
-          echo "$output"
-          passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
-          failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
-          passed=${passed:-0}
-          failed=${failed:-0}
-          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "$output" >> $GITHUB_OUTPUT
-          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          echo "passed=$passed" >> $GITHUB_OUTPUT
-          echo "failed=$failed" >> $GITHUB_OUTPUT
-          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
-          exit $exit_code
 
-      - name: Run PPTX export e2e tests
-        id: pptx
-        if: always()
-        # Drives the real .pptx export via the offline render + Chromium
-        # (installed above), then reads the deck back with python-pptx. The
-        # harness soft-skips (exit 0) if Playwright/Chromium is unavailable.
-        run: python3 -c "import sys; sys.path.insert(0, 'tests'); from test_vela import run_pptx_e2e_tests; sys.exit(run_pptx_e2e_tests())"
+          run_e2e() {
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_review_ui.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_e2e.ec
+            printf '%s' "${passed:-0}" > /tmp/st_e2e.passed
+            printf '%s' "${failed:-0}" > /tmp/st_e2e.failed
+            printf '%ss' "$elapsed" > /tmp/st_e2e.el
+            echo "$output" > /tmp/st_e2e.out
+          }
+
+          run_pptx() {
+            # No outputs block by design — pptx just needs to run and have its
+            # exit count toward the phase result.
+            local output ec
+            output=$(python3 -c "import sys; sys.path.insert(0, 'tests'); from test_vela import run_pptx_e2e_tests; sys.exit(run_pptx_e2e_tests())" 2>&1)
+            ec=$?
+            printf '%s' "$ec" > /tmp/st_pptx.ec
+            echo "$output" > /tmp/st_pptx.out
+          }
+
+          run_uib() {
+            # Runs the in-app UI battery headless against the offline render +
+            # Chromium. Gates on any non-AI failure; AI-requiring tests skip
+            # cleanly (driver treats pass:"skip" as non-failing) and do NOT
+            # fail the job — they are subtracted from the passed count.
+            local start_time output ec elapsed passed failed skipped
+            start_time=$(date +%s)
+            # No concat here: the committed vela.jsx is the artifact under test,
+            # and phase1's sync check already gates parts↔template drift.
+            # Regenerating it concurrently with the e2e/pptx stacks (which also
+            # read it via the offline render) would race a non-atomic 1MB write.
+            node tools/vela-dev/scripts/render-offline.js examples/vela-demo.vela /tmp/vela-uibattery >/dev/null 2>&1
+            output=$(node tools/vela-dev/scripts/vela-drive.js uitests /tmp/vela-uibattery/render.html --json /tmp/vela-uibattery/ui.json 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            # Driver prints: "UITESTS <passed> passed, <failed> failed, <total> total"
+            # where <passed> includes AI-skips; subtract them for an accurate count.
+            passed=$(echo "$output" | grep -oP 'UITESTS\s+\K\d+' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            skipped=$(node -e "try{const r=require('/tmp/vela-uibattery/ui.json');process.stdout.write(String(r.filter(x=>x.pass==='skip').length))}catch(e){process.stdout.write('0')}")
+            passed=${passed:-0}
+            failed=${failed:-0}
+            skipped=${skipped:-0}
+            passed=$(( passed - skipped ))
+            printf '%s' "$ec" > /tmp/st_uib.ec
+            printf '%s' "$passed" > /tmp/st_uib.passed
+            printf '%s' "$failed" > /tmp/st_uib.failed
+            printf '%s' "$skipped" > /tmp/st_uib.skipped
+            printf '%ss' "$elapsed" > /tmp/st_uib.el
+            echo "$output" > /tmp/st_uib.out
+          }
+
+          run_journey() {
+            # Full end-to-end authoring journey against the offline render +
+            # Chromium. Self-contained (builds its own render/server). Prints
+            # "✅ N passed (~Xs)" on success / "❌ N passed, M failed" on failure
+            # and exits non-zero on any failure — the exit code gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_journey_e2e.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_journey.ec
+            printf '%s' "${passed:-0}" > /tmp/st_journey.passed
+            printf '%s' "${failed:-0}" > /tmp/st_journey.failed
+            printf '%ss' "$elapsed" > /tmp/st_journey.el
+            echo "$output" > /tmp/st_journey.out
+          }
+
+          run_dnd() {
+            # Drag-and-drop reorder e2e against the offline render + Chromium.
+            # Self-contained. Prints "N passed, M failed" and exits non-zero on
+            # any failure — the exit code gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_dnd_e2e.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_dnd.ec
+            printf '%s' "${passed:-0}" > /tmp/st_dnd.passed
+            printf '%s' "${failed:-0}" > /tmp/st_dnd.failed
+            printf '%ss' "$elapsed" > /tmp/st_dnd.el
+            echo "$output" > /tmp/st_dnd.out
+          }
+
+          run_pdf() {
+            # Canvas/vector PDF export e2e against the offline render + Chromium.
+            # Self-contained. Prints "✅ N passed  ❌ M failed" and exits non-zero
+            # on failure. If Chromium is unavailable it soft-skips (prints
+            # "PDF-SKIP: …" and exits 0), which counts as a pass — the exit code
+            # gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_pdf_export.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_pdf.ec
+            printf '%s' "${passed:-0}" > /tmp/st_pdf.passed
+            printf '%s' "${failed:-0}" > /tmp/st_pdf.failed
+            printf '%ss' "$elapsed" > /tmp/st_pdf.el
+            echo "$output" > /tmp/st_pdf.out
+          }
+
+          # Fan out: six browser stacks, concurrently.
+          run_e2e &
+          run_pptx &
+          run_uib &
+          run_journey &
+          run_dnd &
+          run_pdf &
+          wait
+
+          # Echo each stack's captured stdout into the step log for visibility.
+          for k in e2e pptx uib journey dnd pdf; do
+            echo "===== $k ====="
+            cat "/tmp/st_$k.out"
+          done
+
+          # Emit e2e (counts) and uib (counts + skip).
+          echo "e2e_exit=$(cat /tmp/st_e2e.ec)" >> "$GITHUB_OUTPUT"
+          echo "e2e_time=$(cat /tmp/st_e2e.el)" >> "$GITHUB_OUTPUT"
+          echo "e2e_passed=$(cat /tmp/st_e2e.passed)" >> "$GITHUB_OUTPUT"
+          echo "e2e_failed=$(cat /tmp/st_e2e.failed)" >> "$GITHUB_OUTPUT"
+          E2E_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "e2e_output<<$E2E_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_e2e.out >> "$GITHUB_OUTPUT"
+          echo "$E2E_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "uib_exit=$(cat /tmp/st_uib.ec)" >> "$GITHUB_OUTPUT"
+          echo "uib_time=$(cat /tmp/st_uib.el)" >> "$GITHUB_OUTPUT"
+          echo "uib_passed=$(cat /tmp/st_uib.passed)" >> "$GITHUB_OUTPUT"
+          echo "uib_failed=$(cat /tmp/st_uib.failed)" >> "$GITHUB_OUTPUT"
+          echo "uib_skipped=$(cat /tmp/st_uib.skipped)" >> "$GITHUB_OUTPUT"
+          UIB_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "uib_output<<$UIB_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_uib.out >> "$GITHUB_OUTPUT"
+          echo "$UIB_EOF" >> "$GITHUB_OUTPUT"
+
+          # pptx: exit only (no table row), still surfaced for debugging.
+          echo "pptx_exit=$(cat /tmp/st_pptx.ec)" >> "$GITHUB_OUTPUT"
+          PPTX_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "pptx_output<<$PPTX_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_pptx.out >> "$GITHUB_OUTPUT"
+          echo "$PPTX_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "journey_exit=$(cat /tmp/st_journey.ec)" >> "$GITHUB_OUTPUT"
+          echo "journey_time=$(cat /tmp/st_journey.el)" >> "$GITHUB_OUTPUT"
+          echo "journey_passed=$(cat /tmp/st_journey.passed)" >> "$GITHUB_OUTPUT"
+          echo "journey_failed=$(cat /tmp/st_journey.failed)" >> "$GITHUB_OUTPUT"
+          JOURNEY_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "journey_output<<$JOURNEY_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_journey.out >> "$GITHUB_OUTPUT"
+          echo "$JOURNEY_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "dnd_exit=$(cat /tmp/st_dnd.ec)" >> "$GITHUB_OUTPUT"
+          echo "dnd_time=$(cat /tmp/st_dnd.el)" >> "$GITHUB_OUTPUT"
+          echo "dnd_passed=$(cat /tmp/st_dnd.passed)" >> "$GITHUB_OUTPUT"
+          echo "dnd_failed=$(cat /tmp/st_dnd.failed)" >> "$GITHUB_OUTPUT"
+          DND_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "dnd_output<<$DND_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_dnd.out >> "$GITHUB_OUTPUT"
+          echo "$DND_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "pdf_exit=$(cat /tmp/st_pdf.ec)" >> "$GITHUB_OUTPUT"
+          echo "pdf_time=$(cat /tmp/st_pdf.el)" >> "$GITHUB_OUTPUT"
+          echo "pdf_passed=$(cat /tmp/st_pdf.passed)" >> "$GITHUB_OUTPUT"
+          echo "pdf_failed=$(cat /tmp/st_pdf.failed)" >> "$GITHUB_OUTPUT"
+          PDF_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "pdf_output<<$PDF_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_pdf.out >> "$GITHUB_OUTPUT"
+          echo "$PDF_EOF" >> "$GITHUB_OUTPUT"
+
+          # Phase fails iff any browser stack (including pptx) failed.
+          fail=0
+          for k in e2e pptx uib journey dnd pdf; do
+            [ "$(cat /tmp/st_$k.ec)" != "0" ] && fail=1
+          done
+          exit $fail
 
       - name: Post test status comment on PR
         if: always() && github.event_name == 'pull_request'
@@ -316,40 +515,62 @@ jobs:
         # template literal and executes arbitrary JS with the workflow's
         # GITHUB_TOKEN. Pass everything via env: + process.env instead.
         env:
-          UNIT_EXIT: ${{ steps.unit.outputs.exit_code }}
-          INT_EXIT: ${{ steps.integration.outputs.exit_code }}
-          SRV_EXIT: ${{ steps.server.outputs.exit_code }}
-          DESKTOP_EXIT: ${{ steps.desktop.outputs.exit_code }}
-          GOTEST_EXIT: ${{ steps.gotest.outputs.exit_code }}
-          CONCAT_EXIT: ${{ steps.concat.outputs.exit_code }}
-          E2E_EXIT: ${{ steps.e2e.outputs.exit_code }}
-          UNIT_OUTPUT: ${{ steps.unit.outputs.output }}
-          INT_OUTPUT: ${{ steps.integration.outputs.output }}
-          SRV_OUTPUT: ${{ steps.server.outputs.output }}
-          DESKTOP_OUTPUT: ${{ steps.desktop.outputs.output }}
-          GOTEST_OUTPUT: ${{ steps.gotest.outputs.output }}
-          CONCAT_OUTPUT: ${{ steps.concat.outputs.output }}
-          E2E_OUTPUT: ${{ steps.e2e.outputs.output }}
-          UNIT_PASSED: ${{ steps.unit.outputs.passed }}
-          UNIT_FAILED: ${{ steps.unit.outputs.failed }}
-          UNIT_TIME: ${{ steps.unit.outputs.elapsed }}
-          INT_PASSED: ${{ steps.integration.outputs.passed }}
-          INT_FAILED: ${{ steps.integration.outputs.failed }}
-          INT_TIME: ${{ steps.integration.outputs.elapsed }}
-          SRV_PASSED: ${{ steps.server.outputs.passed }}
-          SRV_FAILED: ${{ steps.server.outputs.failed }}
-          SRV_TIME: ${{ steps.server.outputs.elapsed }}
-          DESKTOP_PASSED: ${{ steps.desktop.outputs.passed }}
-          DESKTOP_FAILED: ${{ steps.desktop.outputs.failed }}
-          DESKTOP_TIME: ${{ steps.desktop.outputs.elapsed }}
-          GOTEST_PASSED: ${{ steps.gotest.outputs.passed }}
-          GOTEST_FAILED: ${{ steps.gotest.outputs.failed }}
-          GOTEST_TIME: ${{ steps.gotest.outputs.elapsed }}
-          CONCAT_TIME: ${{ steps.concat.outputs.elapsed }}
-          E2E_PASSED: ${{ steps.e2e.outputs.passed }}
-          E2E_FAILED: ${{ steps.e2e.outputs.failed }}
-          E2E_TIME: ${{ steps.e2e.outputs.elapsed }}
+          UNIT_EXIT: ${{ steps.phase1.outputs.unit_exit }}
+          INT_EXIT: ${{ steps.phase1.outputs.int_exit }}
+          SRV_EXIT: ${{ steps.phase1.outputs.srv_exit }}
+          DESKTOP_EXIT: ${{ steps.phase1.outputs.desktop_exit }}
+          GOTEST_EXIT: ${{ steps.phase1.outputs.gotest_exit }}
+          CONCAT_EXIT: ${{ steps.phase1.outputs.concat_exit }}
+          E2E_EXIT: ${{ steps.phase2.outputs.e2e_exit }}
+          UIBATTERY_EXIT: ${{ steps.phase2.outputs.uib_exit }}
+          JOURNEY_EXIT: ${{ steps.phase2.outputs.journey_exit }}
+          DND_EXIT: ${{ steps.phase2.outputs.dnd_exit }}
+          PDF_EXIT: ${{ steps.phase2.outputs.pdf_exit }}
+          UNIT_OUTPUT: ${{ steps.phase1.outputs.unit_output }}
+          INT_OUTPUT: ${{ steps.phase1.outputs.int_output }}
+          SRV_OUTPUT: ${{ steps.phase1.outputs.srv_output }}
+          DESKTOP_OUTPUT: ${{ steps.phase1.outputs.desktop_output }}
+          GOTEST_OUTPUT: ${{ steps.phase1.outputs.gotest_output }}
+          CONCAT_OUTPUT: ${{ steps.phase1.outputs.concat_output }}
+          E2E_OUTPUT: ${{ steps.phase2.outputs.e2e_output }}
+          UIBATTERY_OUTPUT: ${{ steps.phase2.outputs.uib_output }}
+          JOURNEY_OUTPUT: ${{ steps.phase2.outputs.journey_output }}
+          DND_OUTPUT: ${{ steps.phase2.outputs.dnd_output }}
+          PDF_OUTPUT: ${{ steps.phase2.outputs.pdf_output }}
+          UNIT_PASSED: ${{ steps.phase1.outputs.unit_passed }}
+          UNIT_FAILED: ${{ steps.phase1.outputs.unit_failed }}
+          UNIT_TIME: ${{ steps.phase1.outputs.unit_time }}
+          INT_PASSED: ${{ steps.phase1.outputs.int_passed }}
+          INT_FAILED: ${{ steps.phase1.outputs.int_failed }}
+          INT_TIME: ${{ steps.phase1.outputs.int_time }}
+          SRV_PASSED: ${{ steps.phase1.outputs.srv_passed }}
+          SRV_FAILED: ${{ steps.phase1.outputs.srv_failed }}
+          SRV_TIME: ${{ steps.phase1.outputs.srv_time }}
+          DESKTOP_PASSED: ${{ steps.phase1.outputs.desktop_passed }}
+          DESKTOP_FAILED: ${{ steps.phase1.outputs.desktop_failed }}
+          DESKTOP_TIME: ${{ steps.phase1.outputs.desktop_time }}
+          GOTEST_PASSED: ${{ steps.phase1.outputs.gotest_passed }}
+          GOTEST_FAILED: ${{ steps.phase1.outputs.gotest_failed }}
+          GOTEST_TIME: ${{ steps.phase1.outputs.gotest_time }}
+          CONCAT_TIME: ${{ steps.phase1.outputs.concat_time }}
+          E2E_PASSED: ${{ steps.phase2.outputs.e2e_passed }}
+          E2E_FAILED: ${{ steps.phase2.outputs.e2e_failed }}
+          E2E_TIME: ${{ steps.phase2.outputs.e2e_time }}
+          UIBATTERY_PASSED: ${{ steps.phase2.outputs.uib_passed }}
+          UIBATTERY_FAILED: ${{ steps.phase2.outputs.uib_failed }}
+          UIBATTERY_SKIPPED: ${{ steps.phase2.outputs.uib_skipped }}
+          UIBATTERY_TIME: ${{ steps.phase2.outputs.uib_time }}
+          JOURNEY_PASSED: ${{ steps.phase2.outputs.journey_passed }}
+          JOURNEY_FAILED: ${{ steps.phase2.outputs.journey_failed }}
+          JOURNEY_TIME: ${{ steps.phase2.outputs.journey_time }}
+          DND_PASSED: ${{ steps.phase2.outputs.dnd_passed }}
+          DND_FAILED: ${{ steps.phase2.outputs.dnd_failed }}
+          DND_TIME: ${{ steps.phase2.outputs.dnd_time }}
+          PDF_PASSED: ${{ steps.phase2.outputs.pdf_passed }}
+          PDF_FAILED: ${{ steps.phase2.outputs.pdf_failed }}
+          PDF_TIME: ${{ steps.phase2.outputs.pdf_time }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          JOB_START: ${{ steps.jobtimer.outputs.epoch }}
         with:
           script: |
             const unitExit = process.env.UNIT_EXIT || '';
@@ -359,6 +580,10 @@ jobs:
             const gotestExit = process.env.GOTEST_EXIT || '';
             const concatExit = process.env.CONCAT_EXIT || '';
             const e2eExit = process.env.E2E_EXIT || '';
+            const uibatteryExit = process.env.UIBATTERY_EXIT || '';
+            const journeyExit = process.env.JOURNEY_EXIT || '';
+            const dndExit = process.env.DND_EXIT || '';
+            const pdfExit = process.env.PDF_EXIT || '';
 
             const unitOutput = process.env.UNIT_OUTPUT || '';
             const integrationOutput = process.env.INT_OUTPUT || '';
@@ -367,6 +592,10 @@ jobs:
             const gotestOutput = process.env.GOTEST_OUTPUT || '';
             const concatOutput = process.env.CONCAT_OUTPUT || '';
             const e2eOutput = process.env.E2E_OUTPUT || '';
+            const uibatteryOutput = process.env.UIBATTERY_OUTPUT || '';
+            const journeyOutput = process.env.JOURNEY_OUTPUT || '';
+            const dndOutput = process.env.DND_OUTPUT || '';
+            const pdfOutput = process.env.PDF_OUTPUT || '';
 
             const unitPassed = process.env.UNIT_PASSED || '0';
             const unitFailed = process.env.UNIT_FAILED || '0';
@@ -387,23 +616,45 @@ jobs:
             const e2ePassed = process.env.E2E_PASSED || '0';
             const e2eFailed = process.env.E2E_FAILED || '0';
             const e2eTime = process.env.E2E_TIME || '?';
+            const uibatteryPassed = process.env.UIBATTERY_PASSED || '0';
+            const uibatteryFailed = process.env.UIBATTERY_FAILED || '0';
+            const uibatterySkipped = process.env.UIBATTERY_SKIPPED || '0';
+            const uibatteryTime = process.env.UIBATTERY_TIME || '?';
+            const journeyPassed = process.env.JOURNEY_PASSED || '0';
+            const journeyFailed = process.env.JOURNEY_FAILED || '0';
+            const journeyTime = process.env.JOURNEY_TIME || '?';
+            const dndPassed = process.env.DND_PASSED || '0';
+            const dndFailed = process.env.DND_FAILED || '0';
+            const dndTime = process.env.DND_TIME || '?';
+            const pdfPassed = process.env.PDF_PASSED || '0';
+            const pdfFailed = process.env.PDF_FAILED || '0';
+            const pdfTime = process.env.PDF_TIME || '?';
 
             const sha = (process.env.HEAD_SHA || '').slice(0, 7);
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
-            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0' && uibatteryExit === '0' && journeyExit === '0' && dndExit === '0' && pdfExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
 
-            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed);
-            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed);
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed) + parseInt(uibatteryPassed) + parseInt(journeyPassed) + parseInt(dndPassed) + parseInt(pdfPassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed) + parseInt(uibatteryFailed) + parseInt(journeyFailed) + parseInt(dndFailed) + parseInt(pdfFailed);
             const totalTests = totalPassed + totalFailed;
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+
+            // Total CI wall time = now − job start (captured right after checkout).
+            // This is the billed figure (GitHub rounds job minutes up), so it is
+            // surfaced prominently for cost tracking.
+            const jobStart = parseInt(process.env.JOB_START || '0');
+            const wallSecs = jobStart ? Math.max(0, Math.floor(Date.now() / 1000) - jobStart) : 0;
+            const fmtDur = (s) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+            const billedMin = Math.ceil(wallSecs / 60);
 
             let body = `## 🧪 CI Test Results — Python 3.12 + Node 22 + Go 1.22\n\n`;
             body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
             if (totalFailed > 0) body += `, ${totalFailed} failed`;
             body += `\n\n`;
+            if (wallSecs > 0) body += `⏱️ **Total CI wall time: ${fmtDur(wallSecs)}** (~${billedMin} billed min)\n\n`;
             body += `| Check | Status | Tests | Time |\n|-------|--------|-------|------|\n`;
             body += `| Unit Tests | ${status(unitExit)} | ${unitPassed} passed${unitFailed !== '0' ? ', ' + unitFailed + ' failed' : ''} | ${unitTime} |\n`;
             body += `| Integration Tests | ${status(integrationExit)} | ${intPassed} passed${intFailed !== '0' ? ', ' + intFailed + ' failed' : ''} | ${intTime} |\n`;
@@ -411,6 +662,10 @@ jobs:
             body += `| Desktop Gatekeeper Tests | ${status(desktopExit)} | ${desktopPassed} passed${desktopFailed !== '0' ? ', ' + desktopFailed + ' failed' : ''} | ${desktopTime} |\n`;
             body += `| Gatekeeper Go Tests | ${status(gotestExit)} | ${gotestPassed} passed${gotestFailed !== '0' ? ', ' + gotestFailed + ' failed' : ''} | ${gotestTime} |\n`;
             body += `| E2E UI Tests | ${status(e2eExit)} | ${e2ePassed} passed${e2eFailed !== '0' ? ', ' + e2eFailed + ' failed' : ''} | ${e2eTime} |\n`;
+            body += `| In-App UI Battery | ${status(uibatteryExit)} | ${uibatteryPassed} passed${uibatteryFailed !== '0' ? ', ' + uibatteryFailed + ' failed' : ''}${uibatterySkipped !== '0' ? ', ' + uibatterySkipped + ' AI-skipped' : ''} | ${uibatteryTime} |\n`;
+            body += `| Journey E2E | ${status(journeyExit)} | ${journeyPassed} passed${journeyFailed !== '0' ? ', ' + journeyFailed + ' failed' : ''} | ${journeyTime} |\n`;
+            body += `| Drag & Drop E2E | ${status(dndExit)} | ${dndPassed} passed${dndFailed !== '0' ? ', ' + dndFailed + ' failed' : ''} | ${dndTime} |\n`;
+            body += `| PDF Export E2E | ${status(pdfExit)} | ${pdfPassed} passed${pdfFailed !== '0' ? ', ' + pdfFailed + ' failed' : ''} | ${pdfTime} |\n`;
             body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
 
             // Add error details for failed steps
@@ -421,6 +676,10 @@ jobs:
             if (desktopExit !== '0') failures.push({ name: 'Desktop Gatekeeper Tests', output: desktopOutput });
             if (gotestExit !== '0') failures.push({ name: 'Gatekeeper Go Tests', output: gotestOutput });
             if (e2eExit !== '0') failures.push({ name: 'E2E UI Tests', output: e2eOutput });
+            if (uibatteryExit !== '0') failures.push({ name: 'In-App UI Battery', output: uibatteryOutput });
+            if (journeyExit !== '0') failures.push({ name: 'Journey E2E', output: journeyOutput });
+            if (dndExit !== '0') failures.push({ name: 'Drag & Drop E2E', output: dndOutput });
+            if (pdfExit !== '0') failures.push({ name: 'PDF Export E2E', output: pdfOutput });
             if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
 
             if (failures.length > 0) {

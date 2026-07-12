@@ -508,6 +508,10 @@ def test_security():
         ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+        ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
+        ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
+        ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
+        ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
@@ -2090,6 +2094,17 @@ def test_cli_commands():
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Standalone CLI exit-code suite (untested subcommands + exact exit-code
+    # values + the _safe_resolve traversal guard). Runs as its own subprocess
+    # and folds its pass/fail tally in, same as the node .cjs suites above.
+    r = subprocess.run([sys.executable, os.path.join(REPO_ROOT, "tests", "test_cli.py")],
+                       capture_output=True, text=True)
+    m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+    if r.returncode == 0 and m and int(m.group(2)) == 0:
+        ok(f"CLI exit-code suite ({m.group(1)} checks)")
+    else:
+        fail("CLI exit-code suite (tests/test_cli.py)", (r.stdout + r.stderr)[-400:])
 
 
 # ━━━ Main ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
