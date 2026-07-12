@@ -372,14 +372,74 @@ jobs:
             echo "$output" > /tmp/st_uib.out
           }
 
-          # Fan out: three browser stacks, concurrently.
+          run_journey() {
+            # Full end-to-end authoring journey against the offline render +
+            # Chromium. Self-contained (builds its own render/server). Prints
+            # "✅ N passed (~Xs)" on success / "❌ N passed, M failed" on failure
+            # and exits non-zero on any failure — the exit code gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_journey_e2e.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_journey.ec
+            printf '%s' "${passed:-0}" > /tmp/st_journey.passed
+            printf '%s' "${failed:-0}" > /tmp/st_journey.failed
+            printf '%ss' "$elapsed" > /tmp/st_journey.el
+            echo "$output" > /tmp/st_journey.out
+          }
+
+          run_dnd() {
+            # Drag-and-drop reorder e2e against the offline render + Chromium.
+            # Self-contained. Prints "N passed, M failed" and exits non-zero on
+            # any failure — the exit code gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_dnd_e2e.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_dnd.ec
+            printf '%s' "${passed:-0}" > /tmp/st_dnd.passed
+            printf '%s' "${failed:-0}" > /tmp/st_dnd.failed
+            printf '%ss' "$elapsed" > /tmp/st_dnd.el
+            echo "$output" > /tmp/st_dnd.out
+          }
+
+          run_pdf() {
+            # Canvas/vector PDF export e2e against the offline render + Chromium.
+            # Self-contained. Prints "✅ N passed  ❌ M failed" and exits non-zero
+            # on failure. If Chromium is unavailable it soft-skips (prints
+            # "PDF-SKIP: …" and exits 0), which counts as a pass — the exit code
+            # gates the phase.
+            local start_time output ec elapsed passed failed
+            start_time=$(date +%s)
+            output=$(node tests/test_pdf_export.cjs 2>&1)
+            ec=$?
+            elapsed=$(( $(date +%s) - start_time ))
+            passed=$(echo "$output" | grep -oP '✅\s+\K\d+(?=\s+passed)' | tail -1)
+            failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+            printf '%s' "$ec" > /tmp/st_pdf.ec
+            printf '%s' "${passed:-0}" > /tmp/st_pdf.passed
+            printf '%s' "${failed:-0}" > /tmp/st_pdf.failed
+            printf '%ss' "$elapsed" > /tmp/st_pdf.el
+            echo "$output" > /tmp/st_pdf.out
+          }
+
+          # Fan out: six browser stacks, concurrently.
           run_e2e &
           run_pptx &
           run_uib &
+          run_journey &
+          run_dnd &
+          run_pdf &
           wait
 
           # Echo each stack's captured stdout into the step log for visibility.
-          for k in e2e pptx uib; do
+          for k in e2e pptx uib journey dnd pdf; do
             echo "===== $k ====="
             cat "/tmp/st_$k.out"
           done
@@ -411,9 +471,36 @@ jobs:
           cat /tmp/st_pptx.out >> "$GITHUB_OUTPUT"
           echo "$PPTX_EOF" >> "$GITHUB_OUTPUT"
 
+          echo "journey_exit=$(cat /tmp/st_journey.ec)" >> "$GITHUB_OUTPUT"
+          echo "journey_time=$(cat /tmp/st_journey.el)" >> "$GITHUB_OUTPUT"
+          echo "journey_passed=$(cat /tmp/st_journey.passed)" >> "$GITHUB_OUTPUT"
+          echo "journey_failed=$(cat /tmp/st_journey.failed)" >> "$GITHUB_OUTPUT"
+          JOURNEY_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "journey_output<<$JOURNEY_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_journey.out >> "$GITHUB_OUTPUT"
+          echo "$JOURNEY_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "dnd_exit=$(cat /tmp/st_dnd.ec)" >> "$GITHUB_OUTPUT"
+          echo "dnd_time=$(cat /tmp/st_dnd.el)" >> "$GITHUB_OUTPUT"
+          echo "dnd_passed=$(cat /tmp/st_dnd.passed)" >> "$GITHUB_OUTPUT"
+          echo "dnd_failed=$(cat /tmp/st_dnd.failed)" >> "$GITHUB_OUTPUT"
+          DND_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "dnd_output<<$DND_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_dnd.out >> "$GITHUB_OUTPUT"
+          echo "$DND_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "pdf_exit=$(cat /tmp/st_pdf.ec)" >> "$GITHUB_OUTPUT"
+          echo "pdf_time=$(cat /tmp/st_pdf.el)" >> "$GITHUB_OUTPUT"
+          echo "pdf_passed=$(cat /tmp/st_pdf.passed)" >> "$GITHUB_OUTPUT"
+          echo "pdf_failed=$(cat /tmp/st_pdf.failed)" >> "$GITHUB_OUTPUT"
+          PDF_EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "pdf_output<<$PDF_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/st_pdf.out >> "$GITHUB_OUTPUT"
+          echo "$PDF_EOF" >> "$GITHUB_OUTPUT"
+
           # Phase fails iff any browser stack (including pptx) failed.
           fail=0
-          for k in e2e pptx uib; do
+          for k in e2e pptx uib journey dnd pdf; do
             [ "$(cat /tmp/st_$k.ec)" != "0" ] && fail=1
           done
           exit $fail
@@ -436,6 +523,9 @@ jobs:
           CONCAT_EXIT: ${{ steps.phase1.outputs.concat_exit }}
           E2E_EXIT: ${{ steps.phase2.outputs.e2e_exit }}
           UIBATTERY_EXIT: ${{ steps.phase2.outputs.uib_exit }}
+          JOURNEY_EXIT: ${{ steps.phase2.outputs.journey_exit }}
+          DND_EXIT: ${{ steps.phase2.outputs.dnd_exit }}
+          PDF_EXIT: ${{ steps.phase2.outputs.pdf_exit }}
           UNIT_OUTPUT: ${{ steps.phase1.outputs.unit_output }}
           INT_OUTPUT: ${{ steps.phase1.outputs.int_output }}
           SRV_OUTPUT: ${{ steps.phase1.outputs.srv_output }}
@@ -444,6 +534,9 @@ jobs:
           CONCAT_OUTPUT: ${{ steps.phase1.outputs.concat_output }}
           E2E_OUTPUT: ${{ steps.phase2.outputs.e2e_output }}
           UIBATTERY_OUTPUT: ${{ steps.phase2.outputs.uib_output }}
+          JOURNEY_OUTPUT: ${{ steps.phase2.outputs.journey_output }}
+          DND_OUTPUT: ${{ steps.phase2.outputs.dnd_output }}
+          PDF_OUTPUT: ${{ steps.phase2.outputs.pdf_output }}
           UNIT_PASSED: ${{ steps.phase1.outputs.unit_passed }}
           UNIT_FAILED: ${{ steps.phase1.outputs.unit_failed }}
           UNIT_TIME: ${{ steps.phase1.outputs.unit_time }}
@@ -467,6 +560,15 @@ jobs:
           UIBATTERY_FAILED: ${{ steps.phase2.outputs.uib_failed }}
           UIBATTERY_SKIPPED: ${{ steps.phase2.outputs.uib_skipped }}
           UIBATTERY_TIME: ${{ steps.phase2.outputs.uib_time }}
+          JOURNEY_PASSED: ${{ steps.phase2.outputs.journey_passed }}
+          JOURNEY_FAILED: ${{ steps.phase2.outputs.journey_failed }}
+          JOURNEY_TIME: ${{ steps.phase2.outputs.journey_time }}
+          DND_PASSED: ${{ steps.phase2.outputs.dnd_passed }}
+          DND_FAILED: ${{ steps.phase2.outputs.dnd_failed }}
+          DND_TIME: ${{ steps.phase2.outputs.dnd_time }}
+          PDF_PASSED: ${{ steps.phase2.outputs.pdf_passed }}
+          PDF_FAILED: ${{ steps.phase2.outputs.pdf_failed }}
+          PDF_TIME: ${{ steps.phase2.outputs.pdf_time }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           JOB_START: ${{ steps.jobtimer.outputs.epoch }}
         with:
@@ -479,6 +581,9 @@ jobs:
             const concatExit = process.env.CONCAT_EXIT || '';
             const e2eExit = process.env.E2E_EXIT || '';
             const uibatteryExit = process.env.UIBATTERY_EXIT || '';
+            const journeyExit = process.env.JOURNEY_EXIT || '';
+            const dndExit = process.env.DND_EXIT || '';
+            const pdfExit = process.env.PDF_EXIT || '';
 
             const unitOutput = process.env.UNIT_OUTPUT || '';
             const integrationOutput = process.env.INT_OUTPUT || '';
@@ -488,6 +593,9 @@ jobs:
             const concatOutput = process.env.CONCAT_OUTPUT || '';
             const e2eOutput = process.env.E2E_OUTPUT || '';
             const uibatteryOutput = process.env.UIBATTERY_OUTPUT || '';
+            const journeyOutput = process.env.JOURNEY_OUTPUT || '';
+            const dndOutput = process.env.DND_OUTPUT || '';
+            const pdfOutput = process.env.PDF_OUTPUT || '';
 
             const unitPassed = process.env.UNIT_PASSED || '0';
             const unitFailed = process.env.UNIT_FAILED || '0';
@@ -512,15 +620,24 @@ jobs:
             const uibatteryFailed = process.env.UIBATTERY_FAILED || '0';
             const uibatterySkipped = process.env.UIBATTERY_SKIPPED || '0';
             const uibatteryTime = process.env.UIBATTERY_TIME || '?';
+            const journeyPassed = process.env.JOURNEY_PASSED || '0';
+            const journeyFailed = process.env.JOURNEY_FAILED || '0';
+            const journeyTime = process.env.JOURNEY_TIME || '?';
+            const dndPassed = process.env.DND_PASSED || '0';
+            const dndFailed = process.env.DND_FAILED || '0';
+            const dndTime = process.env.DND_TIME || '?';
+            const pdfPassed = process.env.PDF_PASSED || '0';
+            const pdfFailed = process.env.PDF_FAILED || '0';
+            const pdfTime = process.env.PDF_TIME || '?';
 
             const sha = (process.env.HEAD_SHA || '').slice(0, 7);
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
-            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0' && uibatteryExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0' && uibatteryExit === '0' && journeyExit === '0' && dndExit === '0' && pdfExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
 
-            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed) + parseInt(uibatteryPassed);
-            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed) + parseInt(uibatteryFailed);
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed) + parseInt(uibatteryPassed) + parseInt(journeyPassed) + parseInt(dndPassed) + parseInt(pdfPassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed) + parseInt(uibatteryFailed) + parseInt(journeyFailed) + parseInt(dndFailed) + parseInt(pdfFailed);
             const totalTests = totalPassed + totalFailed;
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
@@ -546,6 +663,9 @@ jobs:
             body += `| Gatekeeper Go Tests | ${status(gotestExit)} | ${gotestPassed} passed${gotestFailed !== '0' ? ', ' + gotestFailed + ' failed' : ''} | ${gotestTime} |\n`;
             body += `| E2E UI Tests | ${status(e2eExit)} | ${e2ePassed} passed${e2eFailed !== '0' ? ', ' + e2eFailed + ' failed' : ''} | ${e2eTime} |\n`;
             body += `| In-App UI Battery | ${status(uibatteryExit)} | ${uibatteryPassed} passed${uibatteryFailed !== '0' ? ', ' + uibatteryFailed + ' failed' : ''}${uibatterySkipped !== '0' ? ', ' + uibatterySkipped + ' AI-skipped' : ''} | ${uibatteryTime} |\n`;
+            body += `| Journey E2E | ${status(journeyExit)} | ${journeyPassed} passed${journeyFailed !== '0' ? ', ' + journeyFailed + ' failed' : ''} | ${journeyTime} |\n`;
+            body += `| Drag & Drop E2E | ${status(dndExit)} | ${dndPassed} passed${dndFailed !== '0' ? ', ' + dndFailed + ' failed' : ''} | ${dndTime} |\n`;
+            body += `| PDF Export E2E | ${status(pdfExit)} | ${pdfPassed} passed${pdfFailed !== '0' ? ', ' + pdfFailed + ' failed' : ''} | ${pdfTime} |\n`;
             body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
 
             // Add error details for failed steps
@@ -557,6 +677,9 @@ jobs:
             if (gotestExit !== '0') failures.push({ name: 'Gatekeeper Go Tests', output: gotestOutput });
             if (e2eExit !== '0') failures.push({ name: 'E2E UI Tests', output: e2eOutput });
             if (uibatteryExit !== '0') failures.push({ name: 'In-App UI Battery', output: uibatteryOutput });
+            if (journeyExit !== '0') failures.push({ name: 'Journey E2E', output: journeyOutput });
+            if (dndExit !== '0') failures.push({ name: 'Drag & Drop E2E', output: dndOutput });
+            if (pdfExit !== '0') failures.push({ name: 'PDF Export E2E', output: pdfOutput });
             if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
 
             if (failures.length > 0) {
