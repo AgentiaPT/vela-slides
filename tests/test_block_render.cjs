@@ -245,6 +245,14 @@ renders("branch checklist (all statuses)", {
 // metric: bare value with no label/icon (base fixture has both).
 renders("branch metric (value only, no label/icon)", { type: "metric", value: "1.2M" });
 
+// Regression: badge sizing math must be numeric px, not NaN derived from a rem
+// string — a NaN `gap` is dropped by React and collapses icon/text spacing.
+(function () {
+  const html = render({ type: "badge", text: "SECTION 01", icon: "Star", size: "xs" });
+  if (/gap:\s*\d+px/.test(html) && !/NaN/.test(html)) ok("badge renders a numeric gap (no NaN)");
+  else bad("badge gap regression (NaN math)", String(html).slice(0, 200));
+})();
+
 // A few extra branch variants for good measure.
 renders("branch progress (endpoint labels + annotation)", {
   type: "progress", showValue: true, leftLabel: "Beginner", rightLabel: "Expert",

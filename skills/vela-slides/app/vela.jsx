@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.6";
+const VELA_VERSION = "13.7";
 const VELA_CHANGELOG = [
+  { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
   { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
   { v: "13.5", d: "UI test battery ~38% faster headless — AI-dependent student-mode checks skip cleanly when AI is unavailable instead of waiting out long timeouts." },
   { v: "13.4", d: "CI now runs the in-app UI test battery headless; battery is order- and headless-robust (selects a slide per suite, state-aware review toggles)." },
@@ -2524,10 +2525,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "badge": {
       const badgeFontSize = SIZES[block.size || "xs"];
-      const badgeIconSize = badgeFontSize;
-      const badgePadV = Math.max(3, Math.round(badgeFontSize * 0.25));
-      const badgePadH = Math.max(10, Math.round(badgeFontSize * 0.8));
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontSize * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+      // SIZES values are rem strings (e.g. "0.85rem"). Convert to a px number
+      // for the icon-size / padding / gap math — arithmetic on the rem string
+      // yields NaN (which React silently drops, collapsing the intended gap).
+      const badgeFontPx = Math.round(parseFloat(badgeFontSize) * 16) || 14;
+      const badgeIconSize = badgeFontPx;
+      const badgePadV = Math.max(3, Math.round(badgeFontPx * 0.25));
+      const badgePadH = Math.max(10, Math.round(badgeFontPx * 0.8));
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>

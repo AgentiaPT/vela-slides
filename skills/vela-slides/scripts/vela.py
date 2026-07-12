@@ -2513,8 +2513,9 @@ def deck_zip(args):
 # ── DECK INIT / SLIDE APPEND (incremental deck building) ──────────────
 
 def deck_init(args):
-    """Create a deck skeleton. Usage: vela deck init <output.vela> --title "T" --palette '{"A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3"
-    Creates a valid compact deck with empty sections, ready for slide append."""
+    """Create a deck skeleton. Usage: vela deck init <output.vela> --title "T" --palette '{"A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3" [--force]
+    Creates a valid compact deck with empty sections, ready for slide append.
+    Refuses to overwrite an existing file (exit 5) unless --force is given."""
     if not args:
         _err(EXIT_USAGE, "Need: <output.vela> --title \"T\" --sections \"S1,S2\"")
 
@@ -2525,6 +2526,7 @@ def deck_init(args):
     palette = {}
     themes = {}
     sections = ["Main"]
+    force = False
 
     i = 0
     while i < len(rest):
@@ -2536,8 +2538,17 @@ def deck_init(args):
             themes = json.loads(rest[i + 1]); i += 2
         elif rest[i] == "--sections" and i + 1 < len(rest):
             sections = [s.strip() for s in rest[i + 1].split(",")]; i += 2
+        elif rest[i] == "--force":
+            force = True; i += 1
         else:
             i += 1
+
+    # Refuse to clobber an existing deck unless --force — a fresh `init` over a
+    # real deck would silently destroy it. This is the one genuine conflict
+    # (EXIT_CONFLICT) the CLI can hit.
+    if os.path.exists(path) and not force:
+        _err(EXIT_CONFLICT, f"File already exists: {path}",
+             suggestions=["Pass --force to overwrite", "Choose a different output path"])
 
     deck = {"n": title}
     if palette:

@@ -15,7 +15,7 @@ Focus (from coverage-analysis/01-reducer-cli-deck.md §2b):
                                 slide remove-block, slide append
   Exit-code VALUES ............ EXIT_OK=0, EXIT_FAIL=1, EXIT_USAGE=2,
                                 EXIT_NOT_FOUND=3, EXIT_VALIDATION=4,
-                                EXIT_CONFLICT=5 (unreachable — documented)
+                                EXIT_CONFLICT=5 (deck init overwrite guard)
   Security control ............ _safe_resolve path-traversal guard
 
 Run:  python3 tests/test_cli.py
@@ -372,17 +372,23 @@ def main():
         r = run_vela("deck", "find", good)
         check_exit(r, EXIT_USAGE, "deck find with no filters")
 
-        # ══ EXIT_CONFLICT (5) — reachability note ═══════════════════════
-        print("\n── EXIT_CONFLICT (5) reachability ──")
-        with open(VELA_PY, encoding="utf-8") as f:
-            src = f.read()
-        # The constant is defined but no code path ever passes it to _err(),
-        # so it cannot be triggered through the CLI. Assert that fact so a
-        # future change that starts using it will flip this test and prompt
-        # a real behavioral case to be added.
-        uses = src.count("EXIT_CONFLICT")
-        check(EXIT_CONFLICT == 5 and uses == 1,
-              "EXIT_CONFLICT=5 is defined but never raised (unreachable via CLI)")
+        # ══ EXIT_CONFLICT (5) — deck init overwrite guard ═══════════════
+        print("\n── EXIT_CONFLICT (5): deck init overwrite guard ──")
+        # init over an existing file without --force must conflict (exit 5) and
+        # leave the existing deck untouched.
+        r = run_vela("deck", "init", init_path, "--title", "Clobber")
+        check_exit(r, EXIT_CONFLICT, "deck init over existing file without --force (conflict)")
+        with open(init_path, encoding="utf-8") as f:
+            check(json.load(f).get("n") == "My Deck",
+                  "deck init conflict left the existing file intact")
+        # --force overwrites (throwaway path so init_path stays as-is)
+        force_path = os.path.join(tmpdir, "force.vela")
+        with open(force_path, "w", encoding="utf-8") as f:
+            f.write('{"n":"old"}')
+        r = run_vela("deck", "init", force_path, "--force", "--title", "Fresh")
+        check_exit(r, EXIT_OK, "deck init --force over existing file")
+        with open(force_path, encoding="utf-8") as f:
+            check(json.load(f).get("n") == "Fresh", "deck init --force overwrote the file")
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
