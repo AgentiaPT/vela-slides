@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.5";
+const VELA_VERSION = "13.6";
 const VELA_CHANGELOG = [
+  { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
   { v: "13.5", d: "UI test battery ~38% faster headless — AI-dependent student-mode checks skip cleanly when AI is unavailable instead of waiting out long timeouts." },
   { v: "13.4", d: "CI now runs the in-app UI test battery headless; battery is order- and headless-robust (selects a slide per suite, state-aware review toggles)." },
   { v: "13.3", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },

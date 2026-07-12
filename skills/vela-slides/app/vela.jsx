@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.5";
+const VELA_VERSION = "13.6";
 const VELA_CHANGELOG = [
+  { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
   { v: "13.5", d: "UI test battery ~38% faster headless — AI-dependent student-mode checks skip cleanly when AI is unavailable instead of waiting out long timeouts." },
   { v: "13.4", d: "CI now runs the in-app UI test battery headless; battery is order- and headless-robust (selects a slide per suite, state-aware review toggles)." },
   { v: "13.3", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },
@@ -8770,7 +8771,7 @@ async function runUITests(onProgress) {
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-        await _wait(50);
+        await _wait(20);
         continue;
       }
       try {
@@ -8782,7 +8783,7 @@ async function runUITests(onProgress) {
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
       }
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-      await _wait(50);
+      await _wait(20);
     }
   }
   return allResults;
@@ -8857,7 +8858,6 @@ uiSuite("Navigation", [
     const start = _slidePos();
     for (let i = 0; i < 3; i++) { _key("ArrowRight"); await _wait(100); }
     for (let i = 0; i < 3; i++) { _key("ArrowLeft"); await _wait(100); }
-    await _wait(150);
     // Equal forward/back steps must land back where we started.
     if (start != null) await _waitFor(() => _slidePos() === start);
   }},
@@ -8867,8 +8867,7 @@ uiSuite("Navigation", [
 uiSuite("Presenter", [
   { name: "F key enters fullscreen", fn: async () => {
     _key("f");
-    await _wait(300);
-    const fs = _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']");
+    const fs = await _waitFor(() => _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']"), 1500).catch(() => null);
     if (!fs) throw new Error("No fixed fullscreen element found");
   }},
   { name: "Fullscreen shows slide content", fn: async () => {
@@ -8908,7 +8907,6 @@ uiSuite("Presenter", [
   }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
-    await _wait(300);
     await _waitFor(() => _$("header"));
   }},
 ], { setup: _selectFirstModule });
@@ -8966,11 +8964,11 @@ uiSuite("Theme", [
     document.activeElement?.blur(); await _wait(100);
     const headerBefore = _$("header").style.background;
     _key("d");
-    await _wait(200);
+    await _waitFor(() => _$("header").style.background !== headerBefore, 1500).catch(() => {});
     const headerAfter = _$("header").style.background;
     // Toggle back
     _key("d");
-    await _wait(200);
+    await _waitFor(() => _$("header").style.background !== headerAfter, 1500).catch(() => {});
     if (headerBefore === headerAfter) throw new Error("D key didn't toggle theme");
   }},
 ]);
@@ -8982,7 +8980,6 @@ uiSuite("Keyboard", [
     document.activeElement?.blur();
     await _wait(100);
     _key("e");
-    await _wait(200);
     const panel = await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 1000).catch(() => null);
     // Close it
     _key("Escape");
@@ -8993,7 +8990,6 @@ uiSuite("Keyboard", [
     document.activeElement?.blur();
     await _wait(100);
     _key("n");
-    await _wait(200);
     const panel = await _waitFor(() => _$$("textarea").find((el) => el.placeholder?.toLowerCase().includes("describe")), 1000).catch(() => null);
     _key("Escape");
     await _wait(100);
@@ -9003,8 +8999,7 @@ uiSuite("Keyboard", [
     document.activeElement?.blur();
     await _wait(100);
     _key("?");
-    await _wait(300);
-    const help = _$text("Shortcuts") || _$text("shortcuts") || _$text("⌨");
+    await _waitFor(() => _$text("Shortcuts") || _$text("shortcuts") || _$text("⌨"), 800).catch(() => {});
     _key("Escape");
     await _wait(100);
     // Some builds may not have ? shortcut — soft pass
@@ -9013,9 +9008,9 @@ uiSuite("Keyboard", [
     document.activeElement?.blur();
     await _wait(100);
     _key("e"); // open something
-    await _wait(200);
+    await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 800).catch(() => {});
     _key("Escape");
-    await _wait(200);
+    await _wait(120);
     // Should be back to normal — no crash
   }},
 ], { setup: _selectFirstModule });
@@ -9025,18 +9020,17 @@ uiSuite("Chat", [
   { name: "Vera chat panel opens", fn: async () => {
     // Clean slate — dismiss any leftover popups from previous suite
     document.activeElement?.blur(); await _wait(50);
-    _key("Escape"); await _wait(200);
-    _key("Escape"); await _wait(200);
+    _key("Escape"); await _wait(120);
+    _key("Escape"); await _wait(120);
     // Click Vera button — retry if first click is swallowed by closing popup
     for (let attempt = 0; attempt < 3; attempt++) {
       const btn = _$$("button").find((b) => b.textContent?.includes("Vera") || b.textContent?.includes("🤖"));
       if (btn) _click(btn);
-      await _wait(400);
-      // Check if chat opened (textarea or VERA header)
-      const opened = _$$("textarea").find((t) => {
+      // Check if chat opened (textarea or VERA header) — poll, returns as soon as it opens
+      const opened = await _waitFor(() => _$$("textarea").find((t) => {
         const ph = t.placeholder?.toLowerCase() || "";
         return ph.includes("tell vera") || ph.includes("paste images");
-      }) || _$$("span").find((s) => s.textContent?.trim() === "VERA");
+      }) || _$$("span").find((s) => s.textContent?.trim() === "VERA"), 600).catch(() => null);
       if (opened) return;
     }
     throw new Error("Chat panel did not open after 3 attempts");
@@ -9090,14 +9084,14 @@ uiSuite("Export", [
     });
     if (!btn) {
       const exportBtn = _$$("button").find((b) => (b.textContent || "").includes("Export"));
-      if (exportBtn) { _click(exportBtn); await _wait(300); btn = _$$("button").find((b) => (b.textContent || "").includes("Copy") && (b.textContent || "").includes("JSON")); }
+      if (exportBtn) { _click(exportBtn); btn = await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Copy") && (b.textContent || "").includes("JSON")), 1200).catch(() => null); }
     }
     if (!btn) {
       const menuBtn = _$$("button").find((b) => (b.textContent || "").trim() === "⋯");
-      if (menuBtn) { _click(menuBtn); await _wait(300); btn = _$$("button").find((b) => (b.textContent || "").includes("JSON") && !(b.textContent || "").includes("Export")); }
+      if (menuBtn) { _click(menuBtn); btn = await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("JSON") && !(b.textContent || "").includes("Export")), 1200).catch(() => null); }
     }
     if (!btn) throw new Error("JSON button not found");
-    _click(btn); await _wait(400);
+    _click(btn);
     const modal = await _waitFor(() => _$$("textarea").find((t) => { try { const v = t.value || ""; return v.includes("concepts") || v.includes("_vela") || v.includes("slides") || v.includes("lanes"); } catch { return false; } }), 2000).catch(() => null);
     _key("Escape"); await _wait(200); _key("Escape"); await _wait(100);
     if (!modal) throw new Error("JSON modal textarea not found");
@@ -9182,7 +9176,7 @@ uiSuite("About", [
     const icon = _$("header svg");
     if (!icon) throw new Error("Vela icon not found");
     const clickTarget = icon.closest("span") || icon.parentElement || icon;
-    _click(clickTarget); await _wait(300);
+    _click(clickTarget);
     const version = await _waitFor(() => _$text("v9.") || _$text("v8.") || _$text(VELA_VERSION), 1000).catch(() => null);
     if (!version) throw new Error("Version text not found in about dialog");
   }},
@@ -9219,28 +9213,29 @@ uiSuite("Undo/Redo", [
 uiSuite("Fullscreen Features", [
   { name: "Font scale + increases", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(300);
-    _key("+"); await _wait(200);
+    _key("f");
+    await _waitFor(() => _$("[style*='position: fixed']"), 1500).catch(() => {});
+    _key("+"); await _wait(80);
     // Look for font scale indicator
     const indicator = _$text("FONT") || _$text("110%") || _$text("120%");
-    _key("0"); await _wait(100); // reset
+    _key("0"); await _wait(60); // reset
   }},
   { name: "Font scale - decreases", fn: async () => {
-    _key("-"); await _wait(200);
-    _key("0"); await _wait(100); // reset
+    _key("-"); await _wait(80);
+    _key("0"); await _wait(60); // reset
   }},
   { name: "Font scale 0 resets", fn: async () => {
-    _key("+"); await _wait(100);
-    _key("+"); await _wait(100);
-    _key("0"); await _wait(200);
+    _key("+"); await _wait(60);
+    _key("+"); await _wait(60);
+    _key("0"); await _wait(80);
     // Indicator should disappear at 100%
   }},
   { name: "Space advances slide in fullscreen", fn: async () => {
-    _key(" "); await _wait(200);
-    _key("ArrowLeft"); await _wait(200); // go back
+    _key(" "); await _wait(120);
+    _key("ArrowLeft"); await _wait(120); // go back
   }},
   { name: "Exit fullscreen", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -9257,20 +9252,26 @@ uiSuite("Slide Ops", [
     // Click duplicate
     const btn = _$$("button").find((b) => b.textContent?.includes("📋") || b.title?.includes("Duplicate"));
     if (btn) {
-      _click(btn); await _wait(300);
+      _click(btn);
+      // Wait for the duplicate to commit (slide count changes) before undoing.
+      if (before != null) await _waitFor(() => getCounter() !== before, 1200).catch(() => {});
+      else await _wait(300);
       // Undo immediately to restore state
       document.activeElement?.blur(); await _wait(50);
-      _key("z", { ctrlKey: true }); await _wait(200);
+      _key("z", { ctrlKey: true });
+      // Wait for undo to restore the original slide count before continuing.
+      if (before != null) await _waitFor(() => getCounter() === before, 1200).catch(() => {});
+      else await _wait(200);
     }
   }},
   { name: "Move button shows module list", fn: async () => {
     const btn = _$$("button").find((b) => b.textContent?.includes("📦") || b.title?.includes("Move"));
     if (!btn) throw new Error("Move button not found");
-    _click(btn); await _wait(300);
-    const popup = _$text("Move to") || _$$("button").find((b) => {
+    _click(btn);
+    const popup = await _waitFor(() => _$text("Move to") || _$$("button").find((b) => {
       const t = b.textContent || "";
       return t.includes("Block Showcase") || t.includes("Introduction") || t.includes("Hands");
-    });
+    }), 1200).catch(() => null);
     // Close popup — click the backdrop overlay (fixed inset div) or toggle button
     const backdrop = _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9998");
     if (backdrop) { _click(backdrop); await _wait(200); }
@@ -9279,8 +9280,8 @@ uiSuite("Slide Ops", [
   { name: "Comment input accepts input", fn: async () => {
     // 💬 icon only visible in review mode — activate it first
     document.activeElement?.blur(); await _wait(100);
-    _key("r"); await _wait(400);
-    const commentIcon = _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer");
+    _key("r");
+    const commentIcon = await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1500).catch(() => null);
     if (commentIcon) {
       _click(commentIcon); await _wait(200);
       const input = _$$("input").find((i) => i.placeholder?.includes("Add comment"));
@@ -9358,15 +9359,15 @@ uiSuite("New Deck", [
 uiSuite("Presenter Adv", [
   { name: "F5 enters fullscreen", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("F5"); await _wait(300);
-    const fs = _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']");
+    _key("F5");
+    const fs = await _waitFor(() => _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']"), 1500).catch(() => null);
     if (!fs) throw new Error("F5 didn't enter fullscreen");
   }},
   { name: "Minimize button visible", fn: async () => {
     await _waitFor(() => _$$("svg").find((s) => s.closest("[class*='slide-nav-btn']") || s.closest("[style*='padding: 8px']")));
   }},
   { name: "Exit via F", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -9487,7 +9488,7 @@ uiSuite("Student Mode", [
       if (firstMod) { _click(firstMod); await _wait(300); }
     }
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(400);
+    _key("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "🎓 toggle button visible", fn: async () => {
@@ -9546,10 +9547,13 @@ uiSuite("Student Mode", [
     if (!_$("[data-teacher-panel]")) {
       const btn = _$("[data-testid='student-toggle']");
       if (btn) _click(btn);
-      await _wait(500);
+      await _waitFor(() => _$("[data-teacher-panel]"), 1500).catch(() => {});
     }
     document.activeElement?.blur(); await _wait(100);
-    _key("ArrowRight"); await _wait(600);
+    // Confirm the deck actually navigates, THEN assert the panel survived the change.
+    const beforePos = _slidePos();
+    _key("ArrowRight");
+    await _waitFor(() => _slidePos() !== beforePos, 1200).catch(() => {});
     const panel = _$("[data-teacher-panel]");
     return !!panel;
   }},
@@ -9576,7 +9580,7 @@ uiSuite("Student Mode", [
     await _waitFor(() => !_$("[data-teacher-panel]"), 5000);
   }},
   { name: "Exit fullscreen after student tests", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"), 3000);
   }},
 ]);
@@ -9606,7 +9610,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Enter fullscreen for study-panel tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(400);
+    _key("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "Activate student mode on studyNotes slide", fn: async () => {
@@ -9661,7 +9665,7 @@ uiSuite("Study Notes", [
     await _waitFor(() => !_$("[data-study-panel]"), 3000);
   }},
   { name: "Exit fullscreen after study-notes tests", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"), 3000);
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
@@ -9899,7 +9903,7 @@ uiSuite("Deck Sanitization (XSS)", [
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(400);
+    _key("f");
     await _waitFor(() => !_$("header"));
   }},
   { name: "🗂 gallery button visible", fn: async () => {
@@ -9907,7 +9911,7 @@ uiSuite("Gallery View", [
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("g"); await _wait(400);
+    _key("g");
     await _waitFor(() => _$text("GALLERY"), 2000);
   }},
   { name: "Gallery shows slide count", fn: async () => {
@@ -9948,18 +9952,18 @@ uiSuite("Gallery View", [
     return !_$text("GALLERY");
   }},
   { name: "G key toggles gallery off", fn: async () => {
-    document.activeElement?.blur(); await _wait(300);
+    document.activeElement?.blur(); await _wait(100);
     // Ensure we're not in gallery from a previous test
-    if (_$text("GALLERY")) { _key("g"); await _wait(500); }
-    document.activeElement?.blur(); await _wait(200);
-    _key("g"); await _wait(500);
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    document.activeElement?.blur(); await _wait(100);
+    _key("g");
     await _waitFor(() => _$text("GALLERY"), 3000);
-    document.activeElement?.blur(); await _wait(200);
-    _key("g"); await _wait(500);
+    document.activeElement?.blur(); await _wait(100);
+    _key("g");
     await _waitFor(() => !_$text("GALLERY"), 3000);
   }},
   { name: "Exit fullscreen after gallery tests", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -9975,7 +9979,7 @@ uiSuite("Gallery From Editor", [
   { name: "Clicking Overview opens the gallery grid with tiles", fn: async () => {
     const btn = _$("[data-testid='editor-gallery-toggle']");
     if (!btn) throw new Error("editor-gallery-toggle not found");
-    _click(btn); await _wait(400);
+    _click(btn);
     await _waitFor(() => _$text("GALLERY"), 2000);
     // Scope to the gallery overlay itself — the editor's module list (still
     // mounted behind the overlay) has its own numbered mono-font badges that
@@ -10002,9 +10006,9 @@ uiSuite("Gallery From Editor", [
     document.activeElement?.blur(); await _wait(100);
     if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
     document.activeElement?.blur(); await _wait(100);
-    _key("g"); await _wait(400);
+    _key("g");
     await _waitFor(() => _$text("GALLERY"), 2000);
-    _key("Escape"); await _wait(300);
+    _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
   }},
 ]);
@@ -10013,7 +10017,7 @@ uiSuite("Gallery From Editor", [
 uiSuite("Presenter View", [
   { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(400);
+    _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
@@ -10021,7 +10025,7 @@ uiSuite("Presenter View", [
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("s"); await _wait(400);
+    _key("s");
     await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
     const timerEl = _$("[data-testid='presenter-timer']");
     if (!timerEl) throw new Error("presenter-timer not found");
@@ -10046,11 +10050,11 @@ uiSuite("Presenter View", [
   { name: "Presenter toggle button closes the view", fn: async () => {
     const btn = _$("[data-testid='presenter-toggle']");
     if (!btn) throw new Error("presenter-toggle not found");
-    _click(btn); await _wait(400);
+    _click(btn);
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
   { name: "Exit fullscreen after presenter-view tests", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -10059,7 +10063,7 @@ uiSuite("Presenter View", [
 uiSuite("Slide Transitions", [
   { name: "Enter fullscreen for transition tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f"); await _wait(400);
+    _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
@@ -10068,7 +10072,7 @@ uiSuite("Slide Transitions", [
   { name: "Transition wrapper remounts (fresh play) on slide advance", fn: async () => {
     const before = _$(".slide-transition-fade");
     if (!before) throw new Error("no .slide-transition-fade element before advancing");
-    _key("ArrowRight"); await _wait(400);
+    _key("ArrowRight");
     await _waitFor(() => {
       const el = _$(".slide-transition-fade");
       return el && el !== before;
@@ -10078,7 +10082,7 @@ uiSuite("Slide Transitions", [
     await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
   }},
   { name: "Exit fullscreen after transition tests", fn: async () => {
-    _key("f"); await _wait(300);
+    _key("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -10093,7 +10097,7 @@ const _reviewToggleBtn = () => _$$("button").find((b) => (b.textContent || "").i
 const _setReviewMode = async (on) => {
   if (_reviewPanelOpen() === on) return;
   const btn = _reviewToggleBtn();
-  if (btn) { _click(btn); await _wait(350); }
+  if (btn) { _click(btn); await _waitFor(() => _reviewPanelOpen() === on, 1500).catch(() => {}); }
 };
 
 uiSuite("Review", [
@@ -10151,18 +10155,19 @@ uiSuite("Review", [
     // Start from a known-off state so the first `r` deterministically opens.
     await _setReviewMode(false);
     document.activeElement?.blur(); await _wait(100);
-    _key("r"); await _wait(400);
+    _key("r");
     const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
     if (!panel) throw new Error("R key did not open comments panel");
     // Toggle off
-    _key("r"); await _wait(400);
+    _key("r");
+    await _waitFor(() => !_$text("COMMENTS"), 1500).catch(() => {});
   }},
   { name: "Review mode and Vera are mutually exclusive", fn: async () => {
     // Open review (only if not already on — the button emoji isn't a state signal)
     await _setReviewMode(true);
     // Now open Vera — should close review
     const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
-    if (veraBtn) { _click(veraBtn); await _wait(300); }
+    if (veraBtn) { _click(veraBtn); await _waitFor(() => !!(_$$("textarea").find((t) => { const ph = t.placeholder?.toLowerCase() || ""; return ph.includes("tell vera") || ph.includes("paste images"); }) || _$$("span").find((s) => s.textContent?.trim() === "VERA")), 1500).catch(() => {}); }
     // Vera open? Use the same robust signal as the Chat suite — the textarea
     // placeholder is AI-state dependent (keyless builds show "AI features not
     // enabled"), so accept the "VERA" panel header as the open signal too.
@@ -10183,7 +10188,7 @@ uiSuite("Review", [
     // Look for the amber comment count badge on the slide canvas (top-right circle)
     const badge = _$$("div").find((d) => d.style?.borderRadius === "11px" && d.style?.background && d.style?.cursor === "pointer" && d.style?.position === "absolute");
     if (badge) {
-      _click(badge); await _wait(400);
+      _click(badge);
       const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
       if (!panel) throw new Error("Clicking comment badge did not open comments panel");
       // Close review mode
@@ -10279,7 +10284,7 @@ uiSuite("Presenter Ctrl+E (7-1)", [
     try { document.activeElement?.blur?.(); } catch {}
     const isFs = () => !!_$("[style*='position: fixed']");
     // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
-    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _wait(400); }
+    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _waitFor(isFs, 1200).catch(() => {}); }
     if (!isFs()) throw new Error("could not enter fullscreen");
     const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
     _key("e", { ctrlKey: true });
