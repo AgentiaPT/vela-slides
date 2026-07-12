@@ -34,7 +34,24 @@ const fs = require('fs');
 const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
-const DECK = path.join(ROOT, 'examples', 'vela-demo.vela');
+// Small dedicated fixture (3 slides) instead of the 28-slide demo deck: the PDF
+// export machinery is proven identically with 3 pages, while the per-slide
+// render/finalize loop (~350-450ms/slide × 2 paths) shrinks ~9×. Keeps a heading
+// ("Vela") and body ("slide") so the vector text-layer assertion still finds
+// extractable words. Full format (lanes/items/slides) so expectedPageCount reads it.
+const DECK = (() => {
+  const deck = {
+    deckTitle: "PDF Export Smoke",
+    lanes: [{ title: "Deck", items: [{ title: "Module", slides: [
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "heading", text: "Vela Slides" }] },
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "A slide with body text for the vector text layer." }] },
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#10b981", blocks: [{ type: "metric", value: "42", label: "Answer" }] },
+    ] }] }],
+  };
+  const p = path.join(os.tmpdir(), 'vela-pdf-fixture.vela');
+  fs.writeFileSync(p, JSON.stringify(deck));
+  return p;
+})();
 const RENDER_OFFLINE = path.join(ROOT, 'tools', 'vela-dev', 'scripts', 'render-offline.js');
 
 // ── Expected page count — replicate collectAllSlides() counting from the deck ──
@@ -113,6 +130,12 @@ function check(name, cond, detail) {
 // ── Boot the offline render in a fresh page ──────────────────────────────────
 async function bootPage(browser, renderHtml) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  // Abort web-font requests so `document.fonts.ready` (awaited per vector slide in
+  // vectorDomToCanvas) resolves immediately instead of waiting out the blocked-CDN
+  // timeout. The PDF's vector text uses the fonts embedded in vela.jsx, and raster
+  // capture just falls back to system fonts — so neither assertion is affected.
+  await page.route('**/*', (route) =>
+    route.request().resourceType() === 'font' ? route.abort() : route.continue());
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
   await page.goto('file://' + renderHtml, { timeout: 60000, waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__velaBooted || window.__velaBootError, { timeout: 30000 });
@@ -283,14 +306,23 @@ function assertPdf(label, buf, expectedPages, { vector }) {
 
   let fatal = null;
   try {
-    for (const variant of [{ label: 'raster', vector: false }, { label: 'vector', vector: true }]) {
-      console.log(`\n── ${variant.label.toUpperCase()} PDF export ──`);
+    // Both export paths are independent (each in its own page: full app boot +
+    // render + finalize). Run them concurrently so wall time is the slower path,
+    // not the sum — each is dominated by fixed per-export cost, not slide count.
+    const variants = [{ label: 'raster', vector: false }, { label: 'vector', vector: true }];
+    const results = await Promise.all(variants.map(async (variant) => {
       const page = await bootPage(browser, renderHtml);
-      const info = await drivePdfExport(page, variant);
-      const buf = Buffer.from(info.b64, 'base64');
-      console.log(`Exported ${variant.label} PDF: ${buf.length} bytes, download="${info.download}"`);
+      try {
+        const info = await drivePdfExport(page, variant);
+        return { variant, buf: Buffer.from(info.b64, 'base64'), download: info.download };
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }));
+    for (const { variant, buf, download } of results) {
+      console.log(`\n── ${variant.label.toUpperCase()} PDF export ──`);
+      console.log(`Exported ${variant.label} PDF: ${buf.length} bytes, download="${download}"`);
       assertPdf(variant.label, buf, expectedPages, variant);
-      await page.close();
     }
   } catch (e) {
     fatal = e;
