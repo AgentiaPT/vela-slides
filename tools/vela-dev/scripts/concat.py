@@ -16,7 +16,7 @@ Concatenation order is fixed (matches dependency graph):
   imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 """
 
-import sys, os
+import sys, os, tempfile
 
 PART_ORDER = [
     "part-imports.jsx",
@@ -61,9 +61,23 @@ def concat(parts_dir, output_path):
 
     result = ''.join(chunks)
 
-    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-    with open(output_path, 'w', encoding="utf-8") as f:
-        f.write(result)
+    # Atomic write: build into a temp file in the same directory, then
+    # os.replace() into place. os.replace is atomic on POSIX, so a concurrent
+    # reader (e.g. a test rendering vela.jsx while another stack regenerates it
+    # in a parallel CI run) always sees a complete old-or-new file, never a
+    # half-written one. A plain open('w') truncates then streams ~1MB and would
+    # expose that partial state to readers.
+    out_dir = os.path.dirname(output_path) or '.'
+    os.makedirs(out_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix='.concat-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding="utf-8") as f:
+            f.write(result)
+        os.replace(tmp_path, output_path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
     size_kb = os.path.getsize(output_path) // 1024
     print(f"\n✅ Built: {output_path}")
