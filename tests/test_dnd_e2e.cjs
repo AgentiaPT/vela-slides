@@ -9,7 +9,7 @@
  *
  * Usage:
  *   node tests/test_dnd_e2e.cjs               # auto-setup + run
- *   node tests/test_dnd_e2e.cjs --skip-setup  # reuse running server on :8766
+ *   node tests/test_dnd_e2e.cjs --skip-setup  # reuse running server on :8767
  *
  * ── Fidelity ────────────────────────────────────────────────────────
  * Vela's DnD does NOT round-trip through dataTransfer (its getData() is
@@ -39,7 +39,7 @@ const fs = require('fs');
 const http = require('http');
 
 // ── Config ───────────────────────────────────────────────────────────
-const PORT = 8766; // distinct from test_review_ui.cjs (8765) so both can run
+const PORT = 8767; // distinct port per e2e suite (review 8765, journey 8766) so all can co-run concurrently
 const SERVE_DIR = path.join(require('os').tmpdir(), 'vela-dnd-e2e-serve');
 const ROOT = path.resolve(__dirname, '..');
 const ASSEMBLED = path.join(SERVE_DIR, 'assembled.jsx');
