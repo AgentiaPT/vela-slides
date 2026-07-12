@@ -5,34 +5,37 @@
 
 ## Architecture
 
-The skill has two layers: a **modular app** (13 part-files) and a **deck injection pipeline**.
+The skill has two layers: a **modular app** (14 part-files) and a **deck injection pipeline**.
 
 ```
-app/
-├── parts/                  # Modular source (edit these for app changes)
-│   ├── part-imports.jsx    #  ~665L — constants, sanitizers, helpers, storage
-│   ├── part-icons.jsx      #  ~189L — icon resolution system
-│   ├── part-blocks.jsx     #  ~906L — all 21 block renderers, EditableText
-│   ├── part-reducer.jsx    #  ~180L — state management, dispatch actions
-│   ├── part-engine.jsx     # ~1043L — AI tools, system prompts, slide ops
-│   ├── part-slides.jsx     # ~1926L — SlidePanel, Fullscreen, Branding
-│   ├── part-list.jsx       #  ~384L — Lane, ConceptRow, AI adder
-│   ├── part-chat.jsx       #  ~425L — ChatPanel, tool trace cards
-│   ├── part-test.jsx       #  ~244L — VelaBatteryTest
-│   ├── part-uitest.jsx     # ~1100L — 95 UI tests in 22 suites
-│   ├── part-demo.jsx       #  ~861L — Cinematic demo mode (18 scenes)
-│   ├── part-pdf.jsx        # ~3513L — PDF/MD export
-│   └── part-app.jsx        # ~1216L — main VelaApp component
-└── vela.jsx                # Auto-generated monolith (concat of all parts)
+src/parts/                   # Modular source (edit these for app changes)
+├── part-imports.jsx    # ~1400L — constants, sanitizers, helpers, storage
+├── part-icons.jsx      #  ~290L — icon resolution system
+├── part-blocks.jsx     # ~1730L — all 27 block renderers, EditableText
+├── part-reducer.jsx    #  ~300L — state management, dispatch actions
+├── part-engine.jsx     # ~1240L — AI tools, system prompts, slide ops
+├── part-slides.jsx     # ~2410L — SlidePanel, Fullscreen, Branding
+├── part-list.jsx       #  ~530L — Lane, ConceptRow, AI adder
+├── part-chat.jsx       #  ~440L — ChatPanel, tool trace cards
+├── part-test.jsx       #  ~330L — VelaBatteryTest
+├── part-uitest.jsx     # ~1860L — 185 UI tests in 33 suites
+├── part-demo.jsx       #  ~860L — Cinematic demo mode (18 scenes)
+├── part-pdf.jsx        # ~3950L — PDF export (raster + vector), markdown export
+├── part-pptx.jsx       # ~1180L — native editable PowerPoint (.pptx) export
+└── part-app.jsx        # ~1910L — main VelaApp component
 
-scripts/
-├── vela.py                 # CLI entry point (vela deck ..., vela slide ...)
-├── concat.py               # parts/ → vela.jsx
-├── assemble.py             # vela.jsx + deck.vela → final.jsx
-├── validate.py             # Quality checks on deck JSON
-├── serve.py                # Local dev server with live reload
-├── lint.py                 # Code linting checks
-└── sync-skill-docs.py      # Sync CLI reference into SKILL.md
+skills/vela-slides/
+├── app/vela.jsx             # Auto-generated monolith (concat of all parts)
+└── scripts/                 # Author→ship only (shipped with the skill)
+    ├── vela.py               # CLI entry point (vela deck ..., vela slide ...)
+    ├── assemble.py            # vela.jsx + deck.vela → final.jsx
+    └── validate.py            # Quality checks on deck JSON
+
+tools/vela-dev/scripts/      # Dev/test/CI toolchain (never shipped)
+├── concat.py                # parts/ → vela.jsx
+├── serve.py                  # Local dev server with live reload
+├── lint.py                   # Code linting checks
+└── sync-skill-docs.py        # Sync CLI reference into SKILL.md
 ```
 
 ### Dependency Graph (strictly top-down, no circular deps)
@@ -45,27 +48,29 @@ imports → icons → blocks → reducer → engine → slides
                                        test    uitest
                                         ↓        ↓
                                        demo     pdf
-                                         ↘     ↙
-                                          app
+                                        ↓        ↓
+                                         ↘     pptx
+                                           ↘   ↙
+                                            app
 ```
 
 ### Concatenation Order (fixed)
 
 ```
-imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → app
+imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 ```
 
 ### Why Modular Parts?
 
-The Vela app is ~12,650 lines / ~964KB. Editing a monolith that large carries real risks:
+The Vela app is ~18,421 lines / ~1.3MB. Editing a monolith that large carries real risks:
 
 | Concern | Monolith | Modular Parts |
 |---|---|---|
-| str_replace collision risk | High — many similar patterns across 12,650L | Low — part files are 180–3513L |
-| Context needed to edit | Must read entire 964KB file | Read only relevant part |
+| str_replace collision risk | High — many similar patterns across 18,421L | Low — part files are ~290–3950L |
+| Context needed to edit | Must read entire 1.3MB file | Read only relevant part |
 | Accidental side effects | Easy to break distant code | Edits are scoped to one module |
 | Rewriting a subsystem | Dangerous at monolith scale | Replace a single part file safely |
-| Finding what to edit | Grep through 12,650 lines | File name tells you where to look |
+| Finding what to edit | Grep through 18,421 lines | File name tells you where to look |
 
 ### Why Not Split + Bundler (Vite/Parcel)?
 
@@ -97,7 +102,8 @@ When fixing a bug, adding a feature, or improving the Vela engine itself:
 | Battery render tests | part-test.jsx |
 | UI integration tests | part-uitest.jsx |
 | Cinematic demo mode | part-demo.jsx |
-| PDF export, markdown export | part-pdf.jsx |
+| PDF export (raster + vector), markdown export | part-pdf.jsx |
+| PowerPoint (.pptx) export | part-pptx.jsx |
 | Top-level app shell, modals, shortcuts | part-app.jsx |
 
 ### Step 2: Edit the part-file directly
@@ -113,7 +119,7 @@ src/parts/part-<name>.jsx
 python3 tools/vela-dev/scripts/concat.py
 ```
 
-This rebuilds `app/vela.jsx` from all 13 parts in fixed order.
+This rebuilds `skills/vela-slides/app/vela.jsx` from all 14 parts in fixed order.
 
 ### Step 4: Test with a deck (optional)
 
@@ -128,8 +134,8 @@ Run `concat.py` first to rebuild the monolith from your edited parts, then
 ### Step 5: Run tests
 
 ```bash
-python3 tests/test_vela.py          # 161 core tests
-python3 -m unittest tests.test_serve # 91 server tests
+python3 tests/test_vela.py          # 361 tests
+python3 -m unittest tests.test_serve # 121 server tests
 ```
 
 ### Step 6: Version bump

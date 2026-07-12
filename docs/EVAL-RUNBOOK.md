@@ -27,7 +27,7 @@ python3 evals/scripts/gate.py evals/results/
 
 ```
 evals/
-├── eval-scenarios.json      ← 14 scenarios (6 create, 6 edit, 2 load)
+├── eval-scenarios.json      ← 15 scenarios (7 create, 6 edit, 2 load)
 ├── run-isolated.sh          ← Main runner: isolates each run in /tmp
 ├── fixtures/                ← Deck fixtures for edit scenarios
 │   ├── fixture-30.json      ← 30-slide deck
@@ -105,36 +105,37 @@ bash evals/run-isolated.sh all
 
 Deck copy: `evals/results/<version>/<scenario>-run<N>-deck.json`
 
-## Scenarios (14 total, 12 non-holdout)
+## Scenarios (15 total, 13 non-holdout)
 
-### Create (6)
+### Create (7 — 1 holdout)
 
-| ID | Slides | Difficulty | Key assertions |
-|----|--------|-----------|----------------|
-| `create-30` | 30 | Hard | slide_count(30), 11+ block types, format_compact |
-| `create-5` | 5 | Easy | slide_count(5), icon-row/flow/metric |
-| `create-blocks` | 21 | Hard | All 21 block types present |
-| `create-compact` | 6 | Medium | slide_count(6), format_compact |
-| `create-multi-module` | 12 | Medium | slide_count(12), 3 lanes, text_present |
-| `create-ship-serve` | 10 | Medium | JSON+JSX output, slide_count(10) |
+| ID | Slides | Difficulty | Holdout | Key assertions |
+|----|--------|-----------|---------|----------------|
+| `create-30` | 30 | Hard | No | slide_count(30), 11+ block types, format_compact |
+| `create-5` | 5 | Easy | No | slide_count(5), icon-row/flow/metric |
+| `create-blocks` | 21 | Hard | No | All 21 original block types present (fixed benchmark scope; doesn't grow with newer block types) |
+| `create-compact` | 6 | Medium | No | slide_count(6), format_compact |
+| `create-multi-module` | 12 | Medium | No | slide_count(12), 3 lanes, text_present |
+| `create-ship-serve` | 10 | Medium | No | JSON+JSX output, slide_count(10) |
+| `create-ambiguous` | — | Medium | **Yes** | Vague prompt, tests generalization |
 
-### Edit (6)
+### Edit (6 — 1 holdout)
 
-| ID | Fixture | Difficulty | Key assertions |
-|----|---------|-----------|----------------|
-| `edit-translate` | fixture-30 | Hard | slide_count(30), Portuguese text |
-| `edit-improve` | fixture-30 | Medium | Enhance slides 4,11,30 |
-| `edit-rebrand` | fixture-30 | Medium | Light theme colors |
-| `edit-delete` | fixture-30 | Medium | slide_count(23) |
-| `edit-add` | fixture-30 | Medium | slide_count(35), "Security" text |
-| `edit-error-recovery` | malformed | Hard | Fix broken deck |
+| ID | Fixture | Difficulty | Holdout | Key assertions |
+|----|---------|-----------|---------|----------------|
+| `edit-translate` | fixture-30 | Hard | No | slide_count(30), Portuguese text |
+| `edit-improve` | fixture-30 | Medium | No | Enhance slides 4,11,30 |
+| `edit-rebrand` | fixture-30 | Medium | No | Light theme colors |
+| `edit-delete` | fixture-30 | Medium | No | slide_count(23) |
+| `edit-add` | fixture-30 | Medium | No | slide_count(35), "Security" text |
+| `edit-error-recovery` | malformed | Hard | **Yes** | Fix broken deck |
 
-### Load (2 — 1 holdout)
+### Load (2)
 
 | ID | Holdout | Notes |
 |----|---------|-------|
 | `load-sample` | No | `vela deck ship --sample` |
-| `create-ambiguous` | **Yes** | Vague prompt, tests generalization |
+| `load-extract` | No | Extract deck JSON from an existing `.jsx` artifact, re-ship it |
 
 ## Assertion Types
 
