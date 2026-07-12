@@ -8,7 +8,7 @@ Exhaustive inventory of every runtime, package, library, CDN resource, browser A
 
 | Runtime | Version | Where specified | Used by |
 |---------|---------|-----------------|---------|
-| **Python** | 3.12 | `.github/workflows/ci.yml` (line 71) | All build scripts, CLI, tests, dev server |
+| **Python** | 3.12 | `.github/workflows/ci.yml` (line 90) | All build scripts, CLI, tests, dev server |
 | **Node.js** | 18+ (implicit) | `"type": "module"` in channel `package.json` | Channel bridge only (`vela-channel.ts`) |
 | **Browser** | ES2020+ | — | Vela app (React SPA in artifact sandbox) |
 
@@ -217,9 +217,16 @@ APIs used by the Vela app at runtime in the browser:
 
 | Action | Version | Used in workflow |
 |--------|---------|-----------------|
-| `actions/checkout` | v4 | `ci.yml`, `evals-check.yml`, `release.yml` |
-| `actions/setup-python` | v5 | `ci.yml`, `evals-check.yml`, `release.yml` |
-| `actions/github-script` | v7 | `ci.yml` (PR comment posting) |
+| `actions/checkout` | v6.0.3 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml` |
+| `actions/setup-python` | v6.2.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml` |
+| `actions/setup-node` | v6.4.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `release.yml` |
+| `actions/setup-go` | v6.5.0 | `ci.yml`, `copilot-setup-steps.yml` |
+| `actions/github-script` | v9.0.0 | `ci.yml` (PR comment posting), `release-preview-trigger.yml`, `release-preview.yml` |
+| `actions/upload-artifact` | v7.0.1 | `_build-desktop.yml`, `release-preview.yml`, `release.yml` |
+| `actions/download-artifact` | v8.0.1 | `release-preview.yml`, `release.yml` |
+| `actions/upload-pages-artifact` | v5.0.0 | `pages.yml` |
+| `actions/deploy-pages` | v5.0.0 | `pages.yml` |
+| `actions/attest-build-provenance` | v1 | `release-preview.yml`, `release.yml` |
 
 ### CI runner
 
@@ -276,7 +283,7 @@ All build scripts use **only Python stdlib**. No external packages.
 | CDN JS libraries | 4 | html2canvas, Babel, React (esm.sh), lucide-react (esm.sh) |
 | CDN fonts | 3 families (8 TTFs) | Sora, DM Sans, Space Mono |
 | External APIs | 1 | Anthropic Messages API |
-| GitHub Actions | 3 | checkout, setup-python, github-script |
+| GitHub Actions | 10 | checkout, setup-python, setup-node, setup-go, github-script, upload-artifact, download-artifact, upload-pages-artifact, deploy-pages, attest-build-provenance |
 | Browser APIs | 8 | Web Storage, Fetch, Canvas, Clipboard, Fullscreen, EventSource, WebSocket, crypto |
 
 **Design principle:** Minimal external dependencies. The Python side is pure stdlib. The browser side loads libraries from CDN at runtime — no bundler, no `node_modules` in production.
