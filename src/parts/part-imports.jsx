@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.3";
+const VELA_VERSION = "13.4";
 const VELA_CHANGELOG = [
+  { v: "13.4", d: "CI now runs the in-app UI test battery headless; battery is order- and headless-robust (selects a slide per suite, state-aware review toggles)." },
   { v: "13.3", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },
   { v: "13.2", d: "PowerPoint export: single-line values (metric numbers, badges, short titles) no longer wrap to two lines on a deck's first open in PowerPoint." },
   { v: "13.1", d: ["Export: fixed an intermittent crash ('str.includes is not a function') that aborted export on slides with a non-string background — gradient/color parsing now tolerates any value.", "Dialogs now scroll instead of clipping in short/narrow panes — fixes empty-looking About/Recent Changes.", "Escape closes the icon picker consistently with other dialogs.", "Block hover-toolbar icons no longer clipped at a column's edge.", "Artifact mode shows a dismissible reminder that the deck lives in browser/Claude.ai storage — export often to back up."] },

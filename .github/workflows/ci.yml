@@ -306,6 +306,43 @@ jobs:
         # harness soft-skips (exit 0) if Playwright/Chromium is unavailable.
         run: python3 -c "import sys; sys.path.insert(0, 'tests'); from test_vela import run_pptx_e2e_tests; sys.exit(run_pptx_e2e_tests())"
 
+      - name: Run in-app UI battery (headless)
+        id: uibattery
+        if: always()
+        # Runs the 185-test in-app UI battery (src/parts/part-uitest.jsx) headless
+        # against the offline render + Chromium (installed above). CDNs are blocked
+        # so the offline render is the only way to boot the full app. Gates on any
+        # non-AI failure; the AI-requiring tests skip cleanly with no API channel
+        # (driver treats pass:"skip" as non-failing) and do NOT fail the job.
+        run: |
+          set +e
+          start_time=$(date +%s)
+          python3 tools/vela-dev/scripts/concat.py >/dev/null 2>&1
+          node tools/vela-dev/scripts/render-offline.js examples/vela-demo.vela /tmp/vela-uibattery >/dev/null 2>&1
+          output=$(node tools/vela-dev/scripts/vela-drive.js uitests /tmp/vela-uibattery/render.html --json /tmp/vela-uibattery/ui.json 2>&1)
+          exit_code=$?
+          elapsed=$(( $(date +%s) - start_time ))
+          echo "$output"
+          # Driver prints: "UITESTS <passed> passed, <failed> failed, <total> total"
+          # where <passed> includes AI-skips; subtract them for an accurate count.
+          passed=$(echo "$output" | grep -oP 'UITESTS\s+\K\d+' | tail -1)
+          failed=$(echo "$output" | grep -oP '\d+(?=\s+failed)' | tail -1)
+          skipped=$(node -e "try{const r=require('/tmp/vela-uibattery/ui.json');process.stdout.write(String(r.filter(x=>x.pass==='skip').length))}catch(e){process.stdout.write('0')}")
+          passed=${passed:-0}
+          failed=${failed:-0}
+          skipped=${skipped:-0}
+          passed=$(( passed - skipped ))
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "output<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          echo "passed=$passed" >> $GITHUB_OUTPUT
+          echo "failed=$failed" >> $GITHUB_OUTPUT
+          echo "skipped=$skipped" >> $GITHUB_OUTPUT
+          echo "elapsed=${elapsed}s" >> $GITHUB_OUTPUT
+          exit $exit_code
+
       - name: Post test status comment on PR
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -323,6 +360,7 @@ jobs:
           GOTEST_EXIT: ${{ steps.gotest.outputs.exit_code }}
           CONCAT_EXIT: ${{ steps.concat.outputs.exit_code }}
           E2E_EXIT: ${{ steps.e2e.outputs.exit_code }}
+          UIBATTERY_EXIT: ${{ steps.uibattery.outputs.exit_code }}
           UNIT_OUTPUT: ${{ steps.unit.outputs.output }}
           INT_OUTPUT: ${{ steps.integration.outputs.output }}
           SRV_OUTPUT: ${{ steps.server.outputs.output }}
@@ -330,6 +368,7 @@ jobs:
           GOTEST_OUTPUT: ${{ steps.gotest.outputs.output }}
           CONCAT_OUTPUT: ${{ steps.concat.outputs.output }}
           E2E_OUTPUT: ${{ steps.e2e.outputs.output }}
+          UIBATTERY_OUTPUT: ${{ steps.uibattery.outputs.output }}
           UNIT_PASSED: ${{ steps.unit.outputs.passed }}
           UNIT_FAILED: ${{ steps.unit.outputs.failed }}
           UNIT_TIME: ${{ steps.unit.outputs.elapsed }}
@@ -349,6 +388,10 @@ jobs:
           E2E_PASSED: ${{ steps.e2e.outputs.passed }}
           E2E_FAILED: ${{ steps.e2e.outputs.failed }}
           E2E_TIME: ${{ steps.e2e.outputs.elapsed }}
+          UIBATTERY_PASSED: ${{ steps.uibattery.outputs.passed }}
+          UIBATTERY_FAILED: ${{ steps.uibattery.outputs.failed }}
+          UIBATTERY_SKIPPED: ${{ steps.uibattery.outputs.skipped }}
+          UIBATTERY_TIME: ${{ steps.uibattery.outputs.elapsed }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
@@ -359,6 +402,7 @@ jobs:
             const gotestExit = process.env.GOTEST_EXIT || '';
             const concatExit = process.env.CONCAT_EXIT || '';
             const e2eExit = process.env.E2E_EXIT || '';
+            const uibatteryExit = process.env.UIBATTERY_EXIT || '';
 
             const unitOutput = process.env.UNIT_OUTPUT || '';
             const integrationOutput = process.env.INT_OUTPUT || '';
@@ -367,6 +411,7 @@ jobs:
             const gotestOutput = process.env.GOTEST_OUTPUT || '';
             const concatOutput = process.env.CONCAT_OUTPUT || '';
             const e2eOutput = process.env.E2E_OUTPUT || '';
+            const uibatteryOutput = process.env.UIBATTERY_OUTPUT || '';
 
             const unitPassed = process.env.UNIT_PASSED || '0';
             const unitFailed = process.env.UNIT_FAILED || '0';
@@ -387,15 +432,19 @@ jobs:
             const e2ePassed = process.env.E2E_PASSED || '0';
             const e2eFailed = process.env.E2E_FAILED || '0';
             const e2eTime = process.env.E2E_TIME || '?';
+            const uibatteryPassed = process.env.UIBATTERY_PASSED || '0';
+            const uibatteryFailed = process.env.UIBATTERY_FAILED || '0';
+            const uibatterySkipped = process.env.UIBATTERY_SKIPPED || '0';
+            const uibatteryTime = process.env.UIBATTERY_TIME || '?';
 
             const sha = (process.env.HEAD_SHA || '').slice(0, 7);
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
             const status = (code) => code === '0' ? '✅ Passed' : '❌ Failed';
-            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
+            const overall = (unitExit === '0' && integrationExit === '0' && serverExit === '0' && desktopExit === '0' && gotestExit === '0' && concatExit === '0' && e2eExit === '0' && uibatteryExit === '0') ? '✅ All checks passed' : '❌ Some checks failed';
 
-            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed);
-            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed);
+            const totalPassed = parseInt(unitPassed) + parseInt(intPassed) + parseInt(srvPassed) + parseInt(desktopPassed) + parseInt(gotestPassed) + parseInt(e2ePassed) + parseInt(uibatteryPassed);
+            const totalFailed = parseInt(unitFailed) + parseInt(intFailed) + parseInt(srvFailed) + parseInt(desktopFailed) + parseInt(gotestFailed) + parseInt(e2eFailed) + parseInt(uibatteryFailed);
             const totalTests = totalPassed + totalFailed;
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
@@ -411,6 +460,7 @@ jobs:
             body += `| Desktop Gatekeeper Tests | ${status(desktopExit)} | ${desktopPassed} passed${desktopFailed !== '0' ? ', ' + desktopFailed + ' failed' : ''} | ${desktopTime} |\n`;
             body += `| Gatekeeper Go Tests | ${status(gotestExit)} | ${gotestPassed} passed${gotestFailed !== '0' ? ', ' + gotestFailed + ' failed' : ''} | ${gotestTime} |\n`;
             body += `| E2E UI Tests | ${status(e2eExit)} | ${e2ePassed} passed${e2eFailed !== '0' ? ', ' + e2eFailed + ' failed' : ''} | ${e2eTime} |\n`;
+            body += `| In-App UI Battery | ${status(uibatteryExit)} | ${uibatteryPassed} passed${uibatteryFailed !== '0' ? ', ' + uibatteryFailed + ' failed' : ''}${uibatterySkipped !== '0' ? ', ' + uibatterySkipped + ' AI-skipped' : ''} | ${uibatteryTime} |\n`;
             body += `| Template Sync | ${status(concatExit)} | — | ${concatTime} |\n\n`;
 
             // Add error details for failed steps
@@ -421,6 +471,7 @@ jobs:
             if (desktopExit !== '0') failures.push({ name: 'Desktop Gatekeeper Tests', output: desktopOutput });
             if (gotestExit !== '0') failures.push({ name: 'Gatekeeper Go Tests', output: gotestOutput });
             if (e2eExit !== '0') failures.push({ name: 'E2E UI Tests', output: e2eOutput });
+            if (uibatteryExit !== '0') failures.push({ name: 'In-App UI Battery', output: uibatteryOutput });
             if (concatExit !== '0') failures.push({ name: 'Template Sync', output: concatOutput });
 
             if (failures.length > 0) {

@@ -1,6 +1,6 @@
 ---
 name: vela-slides
-version: 13.3
+version: 13.4
 updated: 2026-07-11
 description: Create presentation decks using the Vela engine. Compact DSL format — never verbose JSON. Also loads, extracts, and edits existing decks.
 license: ELv2

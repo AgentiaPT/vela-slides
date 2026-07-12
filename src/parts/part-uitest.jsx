@@ -70,11 +70,32 @@ const _type = (el, text) => {
   target.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
+// Bring the editor to a known-good state before a suite that needs a slide on
+// screen: dismiss any overlay/fullscreen a prior suite may have left open, then
+// select the first module so a slide renders. Mirrors the bootstrap recipe in
+// tests/test_review_ui.cjs. Harness-independent — safe to run in-app (a module
+// is usually already selected) and headless (nothing selected yet). No-ops
+// cleanly when there is no module list (mobile/empty deck).
+const _selectFirstModule = async () => {
+  document.activeElement?.blur();
+  for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+  const row = _$(".concept-row");
+  if (!row) return;
+  _click(row);
+  await _waitFor(
+    () => _slidePos() != null || _$$("[data-block-type]").length > 0,
+    2500
+  ).catch(() => {});
+};
+
 // ── Test Runner ──────────────────────────────────────────────────────
 const UI_TEST_SUITES = [];
 
-function uiSuite(name, tests) {
-  UI_TEST_SUITES.push({ name, tests });
+// A suite may pass an optional `setup` (beforeAll) that runs once before its
+// tests — used to guarantee editor state (a selected slide) for suites that
+// would otherwise fail headless when no module has been clicked yet.
+function uiSuite(name, tests, opts = {}) {
+  UI_TEST_SUITES.push({ name, tests, setup: opts.setup });
 }
 
 async function runUITests(onProgress) {
@@ -83,6 +104,9 @@ async function runUITests(onProgress) {
   let done = 0, passed = 0, failed = 0, skipped = 0;
 
   for (const suite of UI_TEST_SUITES) {
+    if (typeof suite.setup === "function") {
+      try { await suite.setup(); } catch {}
+    }
     for (const test of suite.tests) {
       done++;
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, skipped, results: allResults });
@@ -184,7 +208,7 @@ uiSuite("Navigation", [
     // Equal forward/back steps must land back where we started.
     if (start != null) await _waitFor(() => _slidePos() === start);
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Presenter Suite ──────────────────────────────────────────────────
 uiSuite("Presenter", [
@@ -234,7 +258,7 @@ uiSuite("Presenter", [
     await _wait(300);
     await _waitFor(() => _$("header"));
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Toolbar Suite ────────────────────────────────────────────────────
 uiSuite("Toolbar", [
@@ -245,7 +269,10 @@ uiSuite("Toolbar", [
     });
   }},
   { name: "Edit button exists (✏️)", fn: async () => {
-    await _waitFor(() => _$$("button").find((b) => b.title?.includes("Edit") || b.textContent?.includes("✏")));
+    // CR-11 renamed the pencil to "⚡ AI Edit". Its title is AI-state dependent
+    // (degrades to the AI-unavailable message when keyless), so match the stable
+    // label too — identifies the same edit affordance headless or in-artifact.
+    await _waitFor(() => _$$("button").find((b) => b.title?.includes("Edit") || b.textContent?.includes("✏") || b.textContent?.includes("AI Edit")));
   }},
   { name: "Edit button renamed to AI Edit (CR-11)", fn: async () => {
     // The bottom-toolbar Edit button was renamed to disambiguate that it is
@@ -272,7 +299,7 @@ uiSuite("Toolbar", [
   { name: "Delete button exists (🗑)", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => b.title?.includes("Delete") || b.textContent?.includes("🗑")));
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Theme Suite ──────────────────────────────────────────────────────
 uiSuite("Theme", [
@@ -338,7 +365,7 @@ uiSuite("Keyboard", [
     await _wait(200);
     // Should be back to normal — no crash
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Chat Suite ───────────────────────────────────────────────────────
 uiSuite("Chat", [
@@ -399,7 +426,7 @@ uiSuite("Notes", [
       }
     }
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Export Suite ──────────────────────────────────────────────────────
 uiSuite("Export", [
@@ -1400,6 +1427,18 @@ uiSuite("Slide Transitions", [
 ]);
 
 // ── Review / Comments Suite ─────────────────────────────────────────
+// Review mode exposes no button-state signal — the header "💬 Comments" button
+// keeps its emoji whether review is on or off — so detect actual state from the
+// COMMENTS panel and toggle only when needed. Keeps the Review tests order-robust
+// so a prior test's residual mode can't flip the next test's toggle.
+const _reviewPanelOpen = () => !!_$text("COMMENTS");
+const _reviewToggleBtn = () => _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
+const _setReviewMode = async (on) => {
+  if (_reviewPanelOpen() === on) return;
+  const btn = _reviewToggleBtn();
+  if (btn) { _click(btn); await _wait(350); }
+};
+
 uiSuite("Review", [
   { name: "Review button visible in header", fn: async () => {
     await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Comments")));
@@ -1429,12 +1468,12 @@ uiSuite("Review", [
     await _waitFor(() => _$$("button").find((b) => (b.textContent || "").includes("Clear Done")));
   }},
   { name: "Module comment icon visible in review mode (💬)", fn: async () => {
-    // 💬 icon only visible in review mode — ensure review is active (toggled on by prior test)
-    const reviewOn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
-    if (reviewOn) { _click(reviewOn); await _wait(300); }
+    // 💬 module icon only shows in review mode — ensure review is actually on
+    // (independent of whatever state a prior test left behind).
+    await _setReviewMode(true);
     await _waitFor(() => _$$("span").find((s) => s.textContent?.includes("💬") && s.style?.cursor === "pointer"), 1000);
-    // Exit review mode
-    if (reviewOn) { _click(reviewOn); await _wait(300); }
+    // Return to editor mode for the following tests.
+    await _setReviewMode(false);
   }},
   { name: "Module comment icon hidden in editor mode", fn: async () => {
     // In editor mode (review off), 💬 toggle should NOT be in the module list
@@ -1452,6 +1491,8 @@ uiSuite("Review", [
     // May still be visible briefly — just verify no crash
   }},
   { name: "R key toggles review mode", fn: async () => {
+    // Start from a known-off state so the first `r` deterministically opens.
+    await _setReviewMode(false);
     document.activeElement?.blur(); await _wait(100);
     _key("r"); await _wait(400);
     const panel = await _waitFor(() => _$text("COMMENTS"), 2000).catch(() => null);
@@ -1460,20 +1501,24 @@ uiSuite("Review", [
     _key("r"); await _wait(400);
   }},
   { name: "Review mode and Vera are mutually exclusive", fn: async () => {
-    // Open review
-    const reviewBtn = _$$("button").find((b) => (b.textContent || "").includes("Comments") && (b.textContent || "").includes("💬"));
-    if (reviewBtn) { _click(reviewBtn); await _wait(300); }
+    // Open review (only if not already on — the button emoji isn't a state signal)
+    await _setReviewMode(true);
     // Now open Vera — should close review
     const veraBtn = _$$("button").find((b) => (b.textContent || "").includes("Vera") && (b.textContent || "").includes("🤖"));
     if (veraBtn) { _click(veraBtn); await _wait(300); }
-    // Vera should be open
-    const veraTa = _$$("textarea").find((t) => {
+    // Vera open? Use the same robust signal as the Chat suite — the textarea
+    // placeholder is AI-state dependent (keyless builds show "AI features not
+    // enabled"), so accept the "VERA" panel header as the open signal too.
+    const veraOpen = !!(_$$("textarea").find((t) => {
       const ph = t.placeholder?.toLowerCase() || "";
       return ph.includes("tell vera") || ph.includes("paste images");
-    });
+    }) || _$$("span").find((s) => s.textContent?.trim() === "VERA"));
+    // Mutual exclusion: opening Vera must have closed the review (COMMENTS) panel.
+    const reviewClosed = !_reviewPanelOpen();
     // Close Vera
     if (veraBtn) { _click(veraBtn); await _wait(200); }
-    if (!veraTa) throw new Error("Vera panel didn't open when switching from Review");
+    if (!veraOpen) throw new Error("Vera panel didn't open when switching from Review");
+    if (!reviewClosed) throw new Error("Review panel stayed open — not mutually exclusive with Vera");
   }},
   { name: "Comment badge click opens comments panel", fn: async () => {
     // Ensure review mode is off first
@@ -1490,7 +1535,7 @@ uiSuite("Review", [
     }
     // If no badge, test passes (no comments on current slide)
   }},
-]);
+], { setup: _selectFirstModule });
 
 // ── Sprint 7-1 UX batch ──────────────────────────────────────────────
 // Header slide count parsed from the header stat pill ("⏱24m · 28sl · 13§").
