@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.4";
+const VELA_VERSION = "13.5";
 const VELA_CHANGELOG = [
+  { v: "13.5", d: "UI test battery ~38% faster headless — AI-dependent student-mode checks skip cleanly when AI is unavailable instead of waiting out long timeouts." },
   { v: "13.4", d: "CI now runs the in-app UI test battery headless; battery is order- and headless-robust (selects a slide per suite, state-aware review toggles)." },
   { v: "13.3", d: "Leaner installed skill: dev/preview/AI tooling relocated out of the skill; it now does author → ship .jsx only." },
   { v: "13.2", d: "PowerPoint export: single-line values (metric numbers, badges, short titles) no longer wrap to two lines on a deck's first open in PowerPoint." },
@@ -9530,10 +9531,11 @@ uiSuite("Student Mode", [
     const panel = _$("[data-teacher-panel]");
     return !!panel && (panel.textContent || "").includes("Ask");
   }},
-  { name: "Follow-up questions appear", fn: async () => {
-    // API-dependent: Haiku may not always produce ---QUESTIONS--- separator
-    try { await _waitFor(() => _$text("EXPLORE FURTHER"), 30000); }
-    catch { /* soft — API/model dependent, panel functionality verified elsewhere */ }
+  { name: "Follow-up questions appear", requiresAI: true, fn: async () => {
+    // API-dependent: the "EXPLORE FURTHER" follow-ups only exist once the model
+    // has answered, so this is a real check only with AI available. Without it
+    // the wait would burn its full timeout and pass vacuously — skip instead.
+    await _waitFor(() => _$text("EXPLORE FURTHER"), 30000);
   }},
   { name: "Wheel scroll stays in panel", fn: async () => {
     const panel = _$("[data-teacher-panel]");
@@ -9551,7 +9553,10 @@ uiSuite("Student Mode", [
     const panel = _$("[data-teacher-panel]");
     return !!panel;
   }},
-  { name: "Previous slide has cached notes", fn: async () => {
+  { name: "Previous slide has cached notes", requiresAI: true, fn: async () => {
+    // Verifies AI-generated notes are cached per slide — only meaningful with
+    // AI available; headless there is nothing to cache, so skip rather than
+    // wait out the cache window and pass on the panel-shell text.
     await _wait(3000);
     _key("ArrowLeft"); await _wait(500);
     const panel = _$("[data-teacher-panel]");
