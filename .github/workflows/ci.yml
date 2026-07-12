@@ -77,6 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Record job start time
+        id: jobtimer
+        # Captured right after checkout so the PR comment can report total CI
+        # wall time (setup + install + every test step) — the figure GitHub
+        # bills against, rounded up to the whole minute.
+        run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -393,6 +400,7 @@ jobs:
           UIBATTERY_SKIPPED: ${{ steps.uibattery.outputs.skipped }}
           UIBATTERY_TIME: ${{ steps.uibattery.outputs.elapsed }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          JOB_START: ${{ steps.jobtimer.outputs.epoch }}
         with:
           script: |
             const unitExit = process.env.UNIT_EXIT || '';
@@ -449,10 +457,19 @@ jobs:
 
             const timestamp = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
 
+            // Total CI wall time = now − job start (captured right after checkout).
+            // This is the billed figure (GitHub rounds job minutes up), so it is
+            // surfaced prominently for cost tracking.
+            const jobStart = parseInt(process.env.JOB_START || '0');
+            const wallSecs = jobStart ? Math.max(0, Math.floor(Date.now() / 1000) - jobStart) : 0;
+            const fmtDur = (s) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+            const billedMin = Math.ceil(wallSecs / 60);
+
             let body = `## 🧪 CI Test Results — Python 3.12 + Node 22 + Go 1.22\n\n`;
             body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
             if (totalFailed > 0) body += `, ${totalFailed} failed`;
             body += `\n\n`;
+            if (wallSecs > 0) body += `⏱️ **Total CI wall time: ${fmtDur(wallSecs)}** (~${billedMin} billed min)\n\n`;
             body += `| Check | Status | Tests | Time |\n|-------|--------|-------|------|\n`;
             body += `| Unit Tests | ${status(unitExit)} | ${unitPassed} passed${unitFailed !== '0' ? ', ' + unitFailed + ' failed' : ''} | ${unitTime} |\n`;
             body += `| Integration Tests | ${status(integrationExit)} | ${intPassed} passed${intFailed !== '0' ? ', ' + intFailed + ' failed' : ''} | ${intTime} |\n`;
