@@ -48,7 +48,10 @@ const DECK = (() => {
       { bg: "#0f172a", color: "#e2e8f0", accent: "#10b981", blocks: [{ type: "metric", value: "42", label: "Answer" }] },
     ] }] }],
   };
-  const p = path.join(os.tmpdir(), 'vela-pdf-fixture.vela');
+  // Unique per-process path so concurrent runs (parallel CI stacks / devs) can't
+  // clobber each other's fixture.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-pdf-fixture-'));
+  const p = path.join(dir, 'fixture.vela');
   fs.writeFileSync(p, JSON.stringify(deck));
   return p;
 })();

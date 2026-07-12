@@ -12,14 +12,16 @@ const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf.jsx")
 function extract(name) {
   const start = src.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`function ${name} not found`);
-  // Skip the parameter list first (it may contain `{}` default values, e.g.
-  // `opts = {}`, which would otherwise fool the body brace-matcher below).
-  let p = src.indexOf("(", start), pd = 0;
-  for (; p < src.length; p++) { if (src[p] === "(") pd++; else if (src[p] === ")") { pd--; if (pd === 0) { p++; break; } } }
-  // brace-match the function body to its end
-  let i = src.indexOf("{", p), depth = 0;
-  for (; i < src.length; i++) { if (src[i] === "{") depth++; else if (src[i] === "}") { depth--; if (depth === 0) { i++; break; } } }
-  return src.slice(start, i);
+  // Capture from the declaration up to the next TOP-LEVEL declaration (a
+  // column-0 `function`/`const`/`let`/`var`). This avoids brace-counting the
+  // body entirely, so braces inside strings, template literals, comments, or
+  // JSX can't corrupt the boundary. (Inner declarations are indented, so the
+  // `\n`-anchored match only stops at module-level ones.) Mirrors the extractor
+  // in tests/test_engine_tools.cjs.
+  const after = start + `function ${name}`.length;
+  const m = src.slice(after).search(/\n(?:async function |function |const |let |var )/);
+  const end = m === -1 ? src.length : after + m;
+  return src.slice(start, end);
 }
 
 // deckToMarkdown references no external helpers (it iterates state.lanes itself

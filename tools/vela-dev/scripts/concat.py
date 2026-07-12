@@ -73,6 +73,11 @@ def concat(parts_dir, output_path):
     try:
         with os.fdopen(fd, 'w', encoding="utf-8") as f:
             f.write(result)
+        # mkstemp creates the temp file 0600; restore the umask-respecting mode a
+        # plain open('w') would have produced so the committed monolith keeps its
+        # normal readable permissions after os.replace().
+        umask = os.umask(0); os.umask(umask)
+        os.chmod(tmp_path, 0o666 & ~umask)
         os.replace(tmp_path, output_path)
     except BaseException:
         if os.path.exists(tmp_path):

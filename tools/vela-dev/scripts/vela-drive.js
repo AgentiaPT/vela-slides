@@ -41,8 +41,11 @@ function findPinnedChromium() {
   try {
     const dirs = fs.readdirSync(base).filter(d => /^chromium-\d+$/.test(d)).sort();
     for (const d of dirs.reverse()) {
-      const exe = path.join(base, d, 'chrome-linux', 'chrome');
-      if (fs.existsSync(exe)) return exe;
+      // Support both Playwright chromium layouts (older chrome-linux, newer chrome-linux64).
+      for (const layout of ['chrome-linux', 'chrome-linux64']) {
+        const exe = path.join(base, d, layout, 'chrome');
+        if (fs.existsSync(exe)) return exe;
+      }
     }
   } catch {}
   return null;
