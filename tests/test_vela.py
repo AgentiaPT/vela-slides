@@ -508,6 +508,8 @@ def test_security():
         ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+        ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
+        ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
