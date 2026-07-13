@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.8";
+const VELA_VERSION = "13.9";
 const VELA_CHANGELOG = [
+  { v: "13.9", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
   { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
@@ -2434,7 +2435,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <EditableIcon editable={textEditable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1 } : undefined} />
+        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1, textAlign: block.align } : undefined} />
       </div>;
     }
 
@@ -3432,12 +3433,17 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
-      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
-      // loaded deck has selectedId=null, which the presentation blank-gate treats as
-      // "not ready" and renders blank. Auto-select the first module so the shared deck
-      // opens straight into its first slide. Editor behavior is unchanged (flag off).
-      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
-        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      // CR1: a freshly loaded deck (selectedId=null) must open straight into the
+      // first slide of the first non-empty module — in BOTH editor and presentation
+      // modes. Previously this was gated on VELA_PRESENTATION_MODE, so the editor
+      // opened blank (the app-level auto-select effect could also miss on ordinary
+      // deck switches). Prefer the first module that actually HAS slides so we never
+      // land on an empty module and still render blank.
+      if (!loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.slides && i.slides.length > 0);
+          if (it) { loaded.selectedId = it.id; loaded.slideIndex = 0; break; }
+        }
       }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;
@@ -5141,7 +5147,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         ? { position: "absolute", inset: 0, background: bg, overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }
         : { position: "absolute", inset: 0, background: bg, overflow: "hidden" }
       : { width: "100%", aspectRatio, position: "relative", overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }}>
-      <div ref={innerRef} style={{
+      <div ref={innerRef} data-testid={bordered ? "slide-viewport" : undefined} style={{
         width: vw, height: vh,
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
@@ -7176,7 +7182,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
+                      default "auto"/Fit ratio) so the editor viewport height is
+                      content-independent and the toolbar below stays put. Elastic
+                      container-shaped "fill" is reserved for fullscreen/present. */}
+                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -7322,7 +7332,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
           <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -7339,7 +7349,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {slides.length > 0 && (() => {
           const curSlide = slides[slideIndex];
           const hasNotes = curSlide?.notes?.trim();
-          const notesOpen = showNotes || hasNotes;
+          // CR3: do NOT auto-expand the notes textarea just because a slide has
+          // notes — that made the notes bar a per-slide height changer, shrinking
+          // the elastic preview and pushing the slide toolbar (AI Edit / Improve)
+          // out of view when switching slides. The NOTES header stays a constant
+          // height for every slide (accent-coloured when notes exist); the user
+          // clicks it to reveal/edit. Keeps the toolbar position stable.
+          const notesOpen = showNotes;
           return <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel }}>
             <div onClick={() => setShowNotes((v) => !v)} style={{ padding: "3px 12px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <span style={{ fontSize: 10 }}>📝</span>
@@ -9680,6 +9696,88 @@ uiSuite("Study Notes", [
     await _wait(100);
   }},
 ]);
+
+// ── Editor UX regressions (CR1 selection · CR2 alignment · CR3 layout) ──
+// Asserts against the real rendered editor DOM:
+//   CR1 — a slide is selected/visible on load (never a blank editor).
+//   CR2 — a centered heading renders centered in the editor (icon-slot path),
+//         matching presenter alignment; a left icon does not left-align it.
+//   CR3 — the slide viewport is a fixed 16:9 box and the slide toolbar keeps
+//         the same on-screen position across slides of differing content.
+uiSuite("Editor UX (CR1–CR3)", [
+  { name: "CR1: a slide is selected & visible on load (not blank)", fn: async () => {
+    // The viewport marker only renders when a module/slide is selected.
+    await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+  }},
+  { name: "CR3: slide viewport renders at fixed 16:9", fn: async () => {
+    const vp = await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+    const r = vp.getBoundingClientRect();
+    if (r.width < 40 || r.height < 20) throw new Error(`viewport too small: ${r.width}x${r.height}`);
+    const ratio = r.width / r.height;
+    if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
+  }},
+  { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
+    // Light slide, no notes.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    await _wait(180);
+    const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    // Heavy slide with lots of content AND speaker notes — the pre-fix notes
+    // auto-expand + elastic viewport would shove the toolbar upward here.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "HEAVY CONTENT SLIDE" },
+      { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
+      { type: "text", text: "A long paragraph ".repeat(20) },
+    ], { notes: "Speaker notes line 1\nline 2\nline 3\nline 4\nline 5\nline 6" });
+    await _wait(180);
+    const tb2 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp2 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
+    if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
+    // Restore a benign single heading.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    await _wait(80);
+  }},
+  { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    // Inject a centered heading (NO icon → the editor still forces its icon-slot
+    // flex row, which is exactly the path that used to drop centering).
+    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    if (!okc) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    // Leaf element that actually holds the text node.
+    const leaf = await _waitFor(() => {
+      const cand = _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === "CENTERED TITLE UITEST");
+      return cand || null;
+    }, 3000);
+    // 1) Computed alignment on the text box must be centered (the fix sets
+    //    textAlign:center on the flex:1 child; the bug left it inheriting left).
+    const ta = getComputedStyle(leaf).textAlign;
+    if (ta !== "center") throw new Error(`heading textAlign=${ta} (expected center)`);
+    // 2) Geometric confirmation via a Range over the glyphs — the text ink box
+    //    must sit roughly centered within its container, not hugging the left.
+    const range = document.createRange();
+    range.selectNodeContents(leaf);
+    const gr = range.getBoundingClientRect();
+    const cr = leaf.getBoundingClientRect();
+    const leftGap = gr.left - cr.left;
+    const rightGap = cr.right - gr.right;
+    if (gr.width > 4 && cr.width - gr.width > 20) {
+      // Only meaningful when the container is wider than the glyphs.
+      if (leftGap < 8) throw new Error(`glyphs hug left edge (leftGap=${leftGap.toFixed(1)}) — not centered`);
+      if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
+    }
+  }},
+  { name: "CR2: cleanup injected blocks", fn: async () => {
+    // Best-effort: restore by selecting first module again (reload path).
+    // Injected block persists only in state; leaving it is harmless for later
+    // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
 
 // ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
 // The svg block previously used a regex chain that let unquoted and
@@ -17689,7 +17787,16 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; };
+    // Test-only: replace the current slide's blocks (used by the Editor UX
+    // alignment test — CR2 — to place a known centered heading and assert it
+    // renders centered in the editor path). No-op in production (unused).
+    window.__velaTestInjectBlocks = (blocks, extra) => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return false;
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
+      return true;
+    };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)

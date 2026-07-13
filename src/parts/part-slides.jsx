@@ -186,7 +186,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         ? { position: "absolute", inset: 0, background: bg, overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }
         : { position: "absolute", inset: 0, background: bg, overflow: "hidden" }
       : { width: "100%", aspectRatio, position: "relative", overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }}>
-      <div ref={innerRef} style={{
+      <div ref={innerRef} data-testid={bordered ? "slide-viewport" : undefined} style={{
         width: vw, height: vh,
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
@@ -2221,7 +2221,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
+                      default "auto"/Fit ratio) so the editor viewport height is
+                      content-independent and the toolbar below stays put. Elastic
+                      container-shaped "fill" is reserved for fullscreen/present. */}
+                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -2367,7 +2371,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
           <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -2384,7 +2388,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {slides.length > 0 && (() => {
           const curSlide = slides[slideIndex];
           const hasNotes = curSlide?.notes?.trim();
-          const notesOpen = showNotes || hasNotes;
+          // CR3: do NOT auto-expand the notes textarea just because a slide has
+          // notes — that made the notes bar a per-slide height changer, shrinking
+          // the elastic preview and pushing the slide toolbar (AI Edit / Improve)
+          // out of view when switching slides. The NOTES header stays a constant
+          // height for every slide (accent-coloured when notes exist); the user
+          // clicks it to reveal/edit. Keeps the toolbar position stable.
+          const notesOpen = showNotes;
           return <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel }}>
             <div onClick={() => setShowNotes((v) => !v)} style={{ padding: "3px 12px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <span style={{ fontSize: 10 }}>📝</span>

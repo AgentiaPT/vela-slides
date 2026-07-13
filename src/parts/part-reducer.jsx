@@ -14,12 +14,17 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
-      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
-      // loaded deck has selectedId=null, which the presentation blank-gate treats as
-      // "not ready" and renders blank. Auto-select the first module so the shared deck
-      // opens straight into its first slide. Editor behavior is unchanged (flag off).
-      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
-        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      // CR1: a freshly loaded deck (selectedId=null) must open straight into the
+      // first slide of the first non-empty module — in BOTH editor and presentation
+      // modes. Previously this was gated on VELA_PRESENTATION_MODE, so the editor
+      // opened blank (the app-level auto-select effect could also miss on ordinary
+      // deck switches). Prefer the first module that actually HAS slides so we never
+      // land on an empty module and still render blank.
+      if (!loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.slides && i.slides.length > 0);
+          if (it) { loaded.selectedId = it.id; loaded.slideIndex = 0; break; }
+        }
       }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;

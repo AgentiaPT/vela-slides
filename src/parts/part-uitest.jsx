@@ -1021,6 +1021,88 @@ uiSuite("Study Notes", [
   }},
 ]);
 
+// ── Editor UX regressions (CR1 selection · CR2 alignment · CR3 layout) ──
+// Asserts against the real rendered editor DOM:
+//   CR1 — a slide is selected/visible on load (never a blank editor).
+//   CR2 — a centered heading renders centered in the editor (icon-slot path),
+//         matching presenter alignment; a left icon does not left-align it.
+//   CR3 — the slide viewport is a fixed 16:9 box and the slide toolbar keeps
+//         the same on-screen position across slides of differing content.
+uiSuite("Editor UX (CR1–CR3)", [
+  { name: "CR1: a slide is selected & visible on load (not blank)", fn: async () => {
+    // The viewport marker only renders when a module/slide is selected.
+    await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+  }},
+  { name: "CR3: slide viewport renders at fixed 16:9", fn: async () => {
+    const vp = await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+    const r = vp.getBoundingClientRect();
+    if (r.width < 40 || r.height < 20) throw new Error(`viewport too small: ${r.width}x${r.height}`);
+    const ratio = r.width / r.height;
+    if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
+  }},
+  { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
+    // Light slide, no notes.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    await _wait(180);
+    const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    // Heavy slide with lots of content AND speaker notes — the pre-fix notes
+    // auto-expand + elastic viewport would shove the toolbar upward here.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "HEAVY CONTENT SLIDE" },
+      { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
+      { type: "text", text: "A long paragraph ".repeat(20) },
+    ], { notes: "Speaker notes line 1\nline 2\nline 3\nline 4\nline 5\nline 6" });
+    await _wait(180);
+    const tb2 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp2 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
+    if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
+    // Restore a benign single heading.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    await _wait(80);
+  }},
+  { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    // Inject a centered heading (NO icon → the editor still forces its icon-slot
+    // flex row, which is exactly the path that used to drop centering).
+    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    if (!okc) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    // Leaf element that actually holds the text node.
+    const leaf = await _waitFor(() => {
+      const cand = _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === "CENTERED TITLE UITEST");
+      return cand || null;
+    }, 3000);
+    // 1) Computed alignment on the text box must be centered (the fix sets
+    //    textAlign:center on the flex:1 child; the bug left it inheriting left).
+    const ta = getComputedStyle(leaf).textAlign;
+    if (ta !== "center") throw new Error(`heading textAlign=${ta} (expected center)`);
+    // 2) Geometric confirmation via a Range over the glyphs — the text ink box
+    //    must sit roughly centered within its container, not hugging the left.
+    const range = document.createRange();
+    range.selectNodeContents(leaf);
+    const gr = range.getBoundingClientRect();
+    const cr = leaf.getBoundingClientRect();
+    const leftGap = gr.left - cr.left;
+    const rightGap = cr.right - gr.right;
+    if (gr.width > 4 && cr.width - gr.width > 20) {
+      // Only meaningful when the container is wider than the glyphs.
+      if (leftGap < 8) throw new Error(`glyphs hug left edge (leftGap=${leftGap.toFixed(1)}) — not centered`);
+      if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
+    }
+  }},
+  { name: "CR2: cleanup injected blocks", fn: async () => {
+    // Best-effort: restore by selecting first module again (reload path).
+    // Injected block persists only in state; leaving it is harmless for later
+    // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
 // ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
 // The svg block previously used a regex chain that let unquoted and
 // whitespace-obfuscated javascript: URIs through. These assert the

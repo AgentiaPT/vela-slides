@@ -990,6 +990,61 @@ def test_known_bugs():
         ok("Chat send button uses arrow wrapper, no event leak")
 
 
+# ━━━ Editor UX Bug Tests (CR1–CR3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_editor_ux_bugs():
+    print("\n── Editor UX Bug Tests (CR1–CR3) ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    blocks  = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+
+    # ── CR1: opening a deck must default to the first slide of the first
+    #        non-empty module in EDITOR mode too — not only presentation mode.
+    load_case = reducer[reducer.index('case "LOAD"'):reducer.index('case "ADD_LANE"')]
+    if "VELA_PRESENTATION_MODE && !loaded.selectedId" in load_case:
+        fail("CR1: LOAD auto-select is gated on VELA_PRESENTATION_MODE — editor opens blank")
+    else:
+        ok("CR1: LOAD auto-select not gated solely on presentation mode")
+    if re.search(r'if \(!loaded\.selectedId\)', load_case) and "slides" in load_case:
+        ok("CR1: LOAD defaults to first module WITH slides regardless of mode")
+    else:
+        fail("CR1: LOAD does not default-select first non-empty module in editor")
+
+    # ── CR2: a centered heading must stay centered in the editor path too.
+    #        The editor forces an icon-slot flex row (headingIconSlot) whose
+    #        text child is flex:1 — without an explicit textAlign the centered
+    #        text collapses to the left. Presenter (no icon slot) keeps it
+    #        centered via hs.textAlign. The fix carries textAlign onto the
+    #        flex-child so both modes align identically.
+    heading_case = blocks[blocks.index('case "heading"'):blocks.index('case "text":')]
+    if "textAlign: block.align" in heading_case:
+        ok("CR2: heading icon-slot path preserves textAlign (centered in editor + presenter)")
+    else:
+        fail("CR2: heading centering dropped in editor icon-slot path (flex:1 child, no textAlign)")
+
+    # ── CR3: editor slide viewport must be a fixed 16:9 box and the slide
+    #        toolbar must not shift per-slide. The old default rendered the
+    #        auto ratio with mode="fill" (container-shaped, elastic) and the
+    #        notes bar auto-expanded per slide, pushing the toolbar around.
+    if 'mode={isAuto ? "fill" : "fit-viewport"}' in slides:
+        fail("CR3: editor uses elastic container-shaped 'fill' viewport (not fixed 16:9)")
+    else:
+        ok("CR3: editor viewport pinned to fixed-aspect (letterboxed) render")
+    if '"slide-viewport"' in slides:
+        ok("CR3: editor slide viewport is tagged (fixed-aspect box)")
+    else:
+        fail("CR3: no slide-viewport marker on editor preview box")
+    if 'data-testid="slide-toolbar"' in slides:
+        ok("CR3: slide toolbar is tagged for stable-position verification")
+    else:
+        fail("CR3: slide toolbar has no test marker")
+    if "const notesOpen = showNotes || hasNotes" in slides:
+        fail("CR3: notes bar auto-expands per slide — toolbar position varies")
+    else:
+        ok("CR3: notes bar does not auto-expand per slide (stable toolbar)")
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
@@ -3267,6 +3322,7 @@ if __name__ == "__main__":
         test_css_color_exfil()
         test_audit_2025_05_fixes()
         test_known_bugs()
+        test_editor_ux_bugs()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()

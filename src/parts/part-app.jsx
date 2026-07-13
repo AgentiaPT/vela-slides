@@ -1173,7 +1173,16 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; };
+    // Test-only: replace the current slide's blocks (used by the Editor UX
+    // alignment test — CR2 — to place a known centered heading and assert it
+    // renders centered in the editor path). No-op in production (unused).
+    window.__velaTestInjectBlocks = (blocks, extra) => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return false;
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
+      return true;
+    };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)
