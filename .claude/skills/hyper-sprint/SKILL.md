@@ -23,10 +23,24 @@ description: >-
 > or diagnostic/verification scripting inline. Every hands-on task → a sub-agent that
 > returns a compact verdict.
 >
-> **Hard budget: ≤50 main-loop turns.** When a worker dies (session/rate limit), spawn a
-> **replacement** sub-agent — never absorb its work into the hub. (A real sprint hit **375
-> turns** doing exactly that: a worker died mid-task and the orchestrator inline-wrote ~12
-> diagnostic/browser-driver scripts instead of delegating.)
+> **The objective is lowest total $/token cost over the whole sprint — turn count is only a
+> proxy.** Every turn re-reads the ENTIRE cached hub context, so hub cost ≈ **(standing
+> context size) × (number of turns)**. A long, complex sprint driving a big issue list will
+> *necessarily* run more turns — that's fine and expected. What must stay bounded is the
+> **per-turn hub cost**: keep the standing context **small AND FLAT for the whole session**,
+> not just thin at the start. A payload pinned early (a screenshot, a diff, a big doc) is
+> re-charged on *every later turn* for the rest of the run, so unchecked growth compounds
+> silently into the bill. Concrete anchor: one sprint's hub was **$59.74 across 72M
+> cache-read tokens over 375 turns**, and cache-reads were **94% of that sprint's 150M total
+> tokens** — the fix was a thin *and flat* hub, not fewer turns.
+>
+> **≤50 main-loop turns is a heuristic for a normal-size sprint, not a hard ceiling** — for a
+> genuinely large issue list, turns scale with cluster count. Measure and checkpoint real
+> spend mid-sprint (`assets/sprint-cost.py --audit`, principle 9) and course-correct on
+> **cost/tokens**, not on hitting a turn number. When a worker dies (session/rate limit),
+> spawn a **replacement** sub-agent — never absorb its work into the hub. (The 375-turn
+> sprint above blew its budget doing exactly that: a worker died mid-task and the
+> orchestrator inline-wrote ~12 diagnostic/browser-driver scripts instead of delegating.)
 >
 > **Trip-wire:** more than 2 consecutive inline diagnostic/driver round-trips on one
 > question = a missed delegation. Stop and delegate the whole investigation.
@@ -149,14 +163,39 @@ the premium context and biases the final gate). Three separate roles:
    sub-agent, which reports a one-line frame-check verdict; the orchestrator reads that verdict
    and must **not** pull the PNG into its own context to look (principle 3). Same rigor, without
    pinning a 20K-token image in the premium loop for the rest of the run.
-9. **Cost is a first-class deliverable, not an afterthought.** Track and report real spend,
-   not a guess. Run a **mid-sprint cost checkpoint** — `assets/sprint-cost.py` at roughly the
-   halfway point — so runaway hub bloat or an over-provisioned validator fleet is caught
-   *before* it compounds, not discovered in a post-mortem. **Run it with `--audit`**: besides
-   the per-agent cost table it flags the orchestrator's context bloat — image count + their
-   cache-read share, and the largest pinned tool-results — so a "images-in-hub" or
-   confirmation-drive regression is caught at turn ~150, not at the retro. The report's cost +
-   savings section (see *Proof artifact*) comes from the same script re-run at the end.
+9. **Cost is a first-class deliverable, not an afterthought — and it's the real optimization
+   target, not turns.** Hub cost compounds as **(standing context size) × (number of
+   turns)**: nearly every token in a long sprint is a cache-*read* of context pinned in an
+   earlier turn, re-billed on every turn since. Turn count naturally grows with a large,
+   complex issue list — that's expected and fine — so the only real lever is keeping the
+   **standing context thin AND flat** across the whole session, not just at the start. Track
+   and report real spend, not a guess. Run a **mid-sprint cost checkpoint** —
+   `assets/sprint-cost.py` at roughly the halfway point — so runaway hub bloat or an
+   over-provisioned validator fleet is caught *before* it compounds, not discovered in a
+   post-mortem. **Run it with `--audit`**: besides the per-agent cost table it flags the
+   orchestrator's context bloat — image count + their cache-read share, and the largest
+   pinned tool-results — so a "images-in-hub" or confirmation-drive regression is caught at
+   turn ~150, not at the retro. The report's cost + savings section (see *Proof artifact*)
+   comes from the same script re-run at the end.
+
+   **Long-session cost levers (what actually keeps a big-list sprint cheap):**
+   - **Pointers, not payloads** — recon/workers write detail to files, return a compact
+     index/verdict; every KB pinned in the hub is re-read × every remaining turn (principle 2).
+   - **Fat, batched delegations over many small round-trips** — give each worker a large,
+     self-contained objective (a whole cluster, not one issue at a time) so N issues cost far
+     fewer than N dispatch round-trips; fan out independent clusters in parallel rather than
+     dispatching one-at-a-time.
+   - **Never re-read or re-verify already-green work in the hub** — trust the standardized
+     verify output a worker pastes; the blind gate, not a hub re-check, is the real check
+     (principle 6).
+   - **Hub tool-results stay small** — verdicts, not dumps; **no images in the hub, ever**
+     (principle 3).
+   - **Shed stale context at phase boundaries** — across a long sprint, prefer a clean
+     boundary (end of a phase, after a merge) to compact or drop tool-results that are no
+     longer needed, rather than letting standing context ratchet upward turn after turn.
+   - **Replace, never absorb, a dead worker** — spawning a replacement sub-agent costs one
+     dispatch; absorbing its unfinished debug loop into the hub is what turns a normal sprint
+     into a 375-turn one (see the banner).
 10. **Don't fight the environment.** Detect a capability once (signing keys, network,
    missing binaries); if an op is impossible here, record it as a known limitation and
    move on — don't burn turns retrying "command not found" or an empty credential.
@@ -175,8 +214,8 @@ the premium context and biases the final gate). Three separate roles:
    adopts its partial edits and re-verifies them** — never absorb the dead worker's remaining
    work into the hub yourself; the partial work is usually salvageable and a clean restart
    throws away real progress for no reason, but doing it in the main loop is the exact move
-   that blew one sprint's turn budget to 375 (target ≤50, see the banner at the top of this
-   file).
+   that blew one sprint's hub cost to **$59.74 over 375 turns of 94% cache-read tokens**
+   (heuristic ≤50 for a normal sprint, see the cost-economy banner at the top of this file).
 13. **Report for steering, not just logging.** On a fixed cadence (not per-action) give a
    short, mobile-readable status: **done / total**, what's in flight, blockers. When the
    profile supports sending files/images, **attach screenshots of new or changed features**

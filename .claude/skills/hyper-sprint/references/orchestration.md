@@ -40,11 +40,18 @@ bill — it keeps the premium, always-re-read context tiny. Full enforceable che
 ## Orchestrator, not worker — orchestrator = thin
 
 The main context is the most expensive and the most *biased* context in the run — it
-accumulates every decision and every fixed bug. Protect it. **Hard budget: ≤50 main-loop
-turns** (SKILL.md banner) — one sprint blew past that to **375 turns** because, after a
-worker died on a session limit, the orchestrator absorbed its hands-on work instead of
-spawning a replacement (~12 inline diagnostic/browser-driver scripts written and run in the
-hub). Every hands-on task belongs to a sub-agent, always:
+accumulates every decision and every fixed bug. Protect it. **The target is lowest total
+cost, not fewest turns** (SKILL.md banner): hub cost ≈ (standing context size) × (number of
+turns), and nearly every token in a long sprint is a cache-read of context pinned earlier and
+re-billed every turn since. A large, complex issue list will legitimately need more turns —
+**≤50 is a heuristic for a normal sprint**, not a ceiling to defend past the point of
+absurdity — but the standing context itself must stay **small and flat** for the whole
+session, because a payload pinned on turn 10 is still being re-read on turn 400. One sprint
+blew past the heuristic to **375 turns and $59.74 (72M cache-read tokens, 94% of total)**
+because, after a worker died on a session limit, the orchestrator absorbed its hands-on work
+instead of spawning a replacement (~12 inline diagnostic/browser-driver scripts written and
+run in the hub) — the failure was the unbounded absorbed work, not the turn count per se.
+Every hands-on task belongs to a sub-agent, always:
 
 - **Delegate implementation.** Don't read whole files or write bulk edits in the main
   loop — spawn a worker. The orchestrator reads *recon summaries and worker results*, not
