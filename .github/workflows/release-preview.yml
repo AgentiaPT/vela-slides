@@ -136,9 +136,11 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
-          cd skills
-          zip -r "../vela-slides-skill-${TAG}.zip" vela-slides/
-          cd ..
+          # Build the upload ZIP with the hardened packager, not a raw `zip -r`:
+          # the test suite above imports the skill scripts and creates
+          # skills/vela-slides/scripts/__pycache__, which `zip -r` would pack.
+          # package-skill.py excludes __pycache__/*.pyc and skips symlinks.
+          python3 tools/vela-dev/scripts/package-skill.py --output "vela-slides-skill-${TAG}.zip"
           ls -lh vela-slides-skill-*.zip
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
