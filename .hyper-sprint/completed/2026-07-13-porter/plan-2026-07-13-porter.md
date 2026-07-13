@@ -61,4 +61,13 @@ Blind best-model hunt (engine-enforced deadline) clean + visual eval judge confi
 & layout close on all 4 fixtures + full suite green + proof report exists.
 
 ## What happened vs plan
-_(appended at close)_
+
+- 3 planned clusters landed as scoped (CR1‖CR2 parallel worktrees → merge → orchestrator concat
+  insert → CR3). Suite 361→362.
+- Blind gate round 1 found a real content-loss bug (reflowed grids > the sanitizer's 6-cell load
+  cap were truncated; a card-cluster cap dropped cards) → +1 unplanned fix-round: grid-split pass +
+  card-cap removal + a text safety-net + 7 regression guards. Version 13.9→13.10.
+- Fix-round vision QA hit a harness artifact (staggered block fade-in captured mid-animation);
+  disproved by DOM inspection, fixed in the capture harness (fade-settle), not the app.
+- Blind gate round 2 (fresh agent): CLEAN — nothing-lost verified on all 4 fixtures.
+- Final: 362 tests + 36 importer assertions green; feature complete; stop rule satisfied.
