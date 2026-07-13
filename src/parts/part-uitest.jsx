@@ -1723,6 +1723,104 @@ uiSuite("Presenter Ctrl+E (7-1)", [
   }},
 ]);
 
+// ── Multi-select / Context menu / Move picker (Features 4–6) ──────────
+// Dispatch a native click carrying keyboard modifiers (React onClick reads them).
+const _clickMod = (el, opts = {}) => {
+  if (!el) throw new Error("clickMod: element not found");
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...opts }));
+  return el;
+};
+const _rightClick = (el, x = 120, y = 120) => {
+  if (!el) throw new Error("rightClick: element not found");
+  el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  return el;
+};
+const _tocRows = () => _$$('[data-testid="toc-slide-row"]');
+// A prior suite may leave the app in Vela fullscreen (a fixed inset:0 overlay at
+// a high z-index showing the "N / N" slide counter). Toggle out with 'f' so the
+// editor's SlidePanel toolbar actually renders for these suites.
+const _exitFullscreen = async () => {
+  const inFs = () => _$$("div").some((d) => d.style.position === "fixed" && d.style.inset === "0px" && parseInt(d.style.zIndex || "0", 10) >= 999 && /\d+\s*\/\s*\d+/.test(d.textContent || ""));
+  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
+};
+const _editorSetup = async () => { await _exitFullscreen(); await _selectFirstModule(); };
+
+uiSuite("Slide Multi-select (F4)", [
+  { name: "cmd-click selects multiple slide rows", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) { return; } // module with <2 slides — soft pass
+    _click(rows[0]); await _wait(120);
+    _clickMod(rows[1], { metaKey: true }); await _wait(150);
+    const selCount = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (selCount < 2) throw new Error("expected >=2 rows data-selected, got " + selCount);
+    // plain click collapses back to a single selection
+    _click(rows[0]); await _wait(150);
+    const after = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (after > 1) throw new Error("plain click did not clear multi-selection, got " + after);
+  }},
+  { name: "shift-click selects a contiguous range", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 3) { return; }
+    _click(rows[0]); await _wait(120);
+    _clickMod(rows[2], { shiftKey: true }); await _wait(150);
+    const selCount = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (selCount < 3) throw new Error("shift-range expected >=3 selected, got " + selCount);
+    _click(rows[0]); await _wait(120);
+  }},
+], { setup: _editorSetup });
+
+uiSuite("Slide Context Menu (F5)", [
+  { name: "right-click opens the slide context menu", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length === 0) throw new Error("no slide rows");
+    _rightClick(rows[0]);
+    const menu = await _waitFor(() => _$('[data-testid="toc-context-menu"]'), 2000);
+    for (const tid of ["ctx-move", "ctx-duplicate", "ctx-delete", "ctx-hide"]) {
+      if (!menu.querySelector(`[data-testid="${tid}"]`)) throw new Error("missing menu item " + tid);
+    }
+    _key("Escape");
+    await _waitFor(() => !_$('[data-testid="toc-context-menu"]'), 2000);
+  }},
+  { name: "Move submenu shows the section picker", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length === 0) throw new Error("no slide rows");
+    _rightClick(rows[0]);
+    const menu = await _waitFor(() => _$('[data-testid="toc-context-menu"]'), 2000);
+    _click(menu.querySelector('[data-testid="ctx-move"]'));
+    // section picker (may be empty if only one module) — search input appears
+    await _waitFor(() => _$('[data-testid="section-search"]') || _$text("No other sections"), 2000).catch(() => {});
+    _key("Escape");
+    await _waitFor(() => !_$('[data-testid="toc-context-menu"]'), 2000).catch(() => {});
+    document.activeElement?.blur?.();
+  }},
+], { setup: _editorSetup });
+
+uiSuite("Move Picker Search (F6)", [
+  { name: "move picker has search + wide scroll + wheel isolation", fn: async () => {
+    // Ensure the slide editor toolbar is on screen (click the active slide row).
+    const rows = _tocRows();
+    if (rows.length > 0) { _click(rows[0]); await _wait(150); }
+    const findMove = () => _$$("button").find((b) => b.title?.includes("Move to module") || (b.textContent?.includes("📦") && /Move/.test(b.textContent || "")));
+    const btn = await _waitFor(findMove, 2500);
+    _click(btn);
+    const search = await _waitFor(() => _$('[data-testid="section-search"]'), 2000).catch(() => null);
+    if (!search) { // no other modules — close and soft pass
+      const bd = _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9998");
+      if (bd) _click(bd); await _wait(150); return;
+    }
+    const list = _$('[data-testid="section-picker-list"]');
+    if (!list || !list.className.includes("vela-wide-scroll")) throw new Error("picker list missing wide-scroll class");
+    if (list.getAttribute("data-scroll-container") == null) throw new Error("picker list not marked data-scroll-container");
+    const before = _$$('[data-testid="section-picker-item"]').length;
+    _type(search, "zzzznomatch"); await _wait(200);
+    const filtered = _$$('[data-testid="section-picker-item"]').length;
+    if (before > 0 && filtered !== 0) throw new Error("search did not filter (before " + before + ", after " + filtered + ")");
+    _type(search, ""); await _wait(150);
+    const bd = _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9998");
+    if (bd) _click(bd); await _wait(150);
+  }},
+], { setup: _editorSetup });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

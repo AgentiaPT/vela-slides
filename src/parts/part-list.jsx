@@ -9,6 +9,48 @@ let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "se
 const _setDrag = (p) => { _velaDrag = p; };
 const _clearDrag = () => { _velaDrag = null; };
 
+// ━━━ Reusable right-click context menu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Positioned at the cursor, clamped to the viewport, and closes on outside-click
+// or Escape. `children` is [menuFn, submenuFn]; each is called with a `move`
+// controller ({ open(), isOpen }) so a menu item can swap the panel to a submenu
+// (used for "Move to section" → SectionPicker).
+function ContextMenu({ x, y, onClose, testid, children }) {
+  const ref = useRef(null);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useEffect(() => {
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); } };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => { document.removeEventListener("mousedown", onDown, true); document.removeEventListener("keydown", onKey, true); };
+  }, [onClose]);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    let left = x, top = y;
+    if (left + r.width + 8 > window.innerWidth) left = Math.max(8, window.innerWidth - r.width - 8);
+    if (top + r.height + 8 > window.innerHeight) top = Math.max(8, window.innerHeight - r.height - 8);
+    setPos({ left, top });
+  }, [x, y, moveOpen]);
+  const move = { open: () => setMoveOpen(true), isOpen: moveOpen };
+  const kids = Array.isArray(children) ? children : [children];
+  return <div ref={ref} data-testid={testid} style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 10000, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 180, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }}>
+    {moveOpen ? (kids[1] ? kids[1](move) : null) : (kids[0] ? kids[0](move) : null)}
+  </div>;
+}
+
+function CtxItem({ label, icon, onClick, danger, arrow, testid }) {
+  return <button data-testid={testid} onClick={(e) => { e.stopPropagation(); onClick(); }}
+    style={{ ...S.btn({ fontSize: 13, textAlign: "left" }), display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer", color: danger ? T.red : T.text }}
+    onMouseEnter={(e) => e.currentTarget.style.background = (danger ? T.red : T.accent) + "20"}
+    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+    <span style={{ fontSize: 13, width: 16, textAlign: "center" }}>{icon}</span>
+    <span style={{ flex: 1 }}>{label}</span>
+    {arrow && <span style={{ color: T.textDim, fontSize: 11 }}>▸</span>}
+  </button>;
+}
+
 // Visual/theme keys that define a slide's "look" — copied when adding a blank
 // slide so it inherits the previous slide's styling but starts with no content.
 const SLIDE_STYLE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "padding", "p", "align", "gap", "contentFlex", "imageFlex", "theme", "t", "layout"];
@@ -136,11 +178,15 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
+  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, si } — right-click slide context menu
+  // Multi-selection applies only to the currently-selected module. An empty set
+  // means "just the active slide". `multiSel` is the effective explicit set.
+  const multiSel = (selected && Array.isArray(selectedSlideIndices)) ? selectedSlideIndices : [];
   const maxSlideDur = globalMaxSlideDur || 1;
   const activeSlideRef = useRef(null);
   useEffect(() => {
@@ -148,6 +194,38 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
       requestAnimationFrame(() => activeSlideRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
     }
   }, [slideIndex, selected]);
+
+  // Plain click = single-select (clears multi). Shift+click = range from the
+  // active slide (anchor) to the clicked row. Cmd/Ctrl+click = toggle a row in
+  // the multi-selection. `slideIndex` stays the "active" slide.
+  const handleSlideRowClick = (e, si) => {
+    e.stopPropagation();
+    if (editingSi === si) return;
+    if (!selected) dispatch({ type: "SELECT", id: item.id });
+    if (e.shiftKey) {
+      const anchor = selected ? slideIndex : si;
+      const lo = Math.min(anchor, si), hi = Math.max(anchor, si);
+      const range = []; for (let k = lo; k <= hi; k++) range.push(k);
+      dispatch({ type: "SET_SLIDE_SELECTION", indices: range, index: si });
+    } else if (e.metaKey || e.ctrlKey) {
+      const cur = new Set(multiSel);
+      if (selected && multiSel.length === 0) cur.add(slideIndex); // seed from active slide
+      if (cur.has(si)) cur.delete(si); else cur.add(si);
+      const arr = Array.from(cur).sort((a, b) => a - b);
+      dispatch({ type: "SET_SLIDE_SELECTION", indices: arr.length > 1 ? arr : [], index: si });
+    } else {
+      setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0);
+    }
+  };
+
+  // Apply a slide-toolbox action to the right-clicked slide, or to the whole
+  // multi-selection when the right-clicked row is part of it.
+  const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
+  const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); idxs.forEach((i) => dispatch({ type: "REMOVE_SLIDE", id: item.id, index: i })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
+  const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
+  const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
+  // Multi-move ascending with index-shift compensation keeps target order intact.
+  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); asc.forEach((orig, k) => dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: item.id, toId, index: orig - k })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
   const commitSlideTitle = (si) => {
@@ -268,6 +346,7 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
+        const isMultiSel = isActive || multiSel.includes(si);
         const isDragTop = dropTarget && dropTarget.index === si && dropTarget.pos === "top";
         const isDragBot = dropTarget && dropTarget.index === si && dropTarget.pos === "bottom";
         const sDur = s.duration || 0;
@@ -277,18 +356,21 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
         return <React.Fragment key={si}>
           <div
             ref={isActive ? activeSlideRef : null}
+            data-testid="toc-slide-row"
+            data-selected={isMultiSel ? "true" : undefined}
             draggable={editingSi !== si}
             onDragStart={(e) => handleSlideDragStart(e, si)}
             onDragEnd={handleSlideDragEnd}
             onDragOver={(e) => handleSlideDragOver(e, si)}
             onDragLeave={() => setDropTarget((p) => p && p.index === si ? null : p)}
             onDrop={(e) => handleSlideDrop(e, si)}
-            onClick={(e) => { e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); }}
+            onClick={(e) => handleSlideRowClick(e, si)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); if (!multiSel.includes(si)) setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); setCtxMenu({ x: e.clientX, y: e.clientY, si }); }}
             style={{
               padding: "3px 8px 3px 12px", fontSize: 14, fontFamily: FONT.body, cursor: editingSi === si ? "text" : "grab",
               color: isActive ? T.accent : T.textMuted, fontWeight: isActive ? 600 : 400,
-              borderLeft: `2px solid ${isActive ? T.accent : "transparent"}`,
-              background: isActive ? T.accent + "0a" : "transparent",
+              borderLeft: `2px solid ${isMultiSel ? T.accent : "transparent"}`,
+              background: isActive ? T.accent + "0a" : (isMultiSel ? T.accent + "22" : "transparent"),
               borderTop: isDragTop ? `2px solid ${T.accent}` : "2px solid transparent",
               borderBottom: isDragBot ? `2px solid ${T.accent}` : "2px solid transparent",
               borderRadius: "0 3px 3px 0", marginBottom: 1,
@@ -298,8 +380,8 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
               position: "relative",
               opacity: s.hidden ? 0.5 : 1,
             }}
-            onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; e.currentTarget.style.background = T.accent + "10"; }}
-            onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : "transparent"; }}
+            onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = T.text; if (!isMultiSel) e.currentTarget.style.background = T.accent + "10"; }}
+            onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = isActive ? T.accent + "0a" : (isMultiSel ? T.accent + "22" : "transparent"); }}
           >
             {sPct > 0 && <div title={`${fmtTime(sDur)}${s.timeLock ? " 🔒" : ""}`} style={{ position: "absolute", left: 0, bottom: 0, height: 2, width: `${sPct}%`, background: "#8B5CF630", borderRadius: "0 1px 1px 0", cursor: "default" }} />}
             <span style={{ fontFamily: FONT.mono, fontSize: 9, color: isActive ? T.accent : T.textDim, marginRight: 4, fontWeight: 700, minWidth: 14 }}>{(slideOffset || 0) + si + 1}</span>
@@ -325,12 +407,29 @@ function SlideListWithAdder({ item, selected, slideIndex, dispatch, guidelines, 
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
         </React.Fragment>;
       }); })()}
+      {ctxMenu && (() => {
+        const si = ctxMenu.si;
+        const hidden = item.slides[si]?.hidden;
+        const count = (multiSel.length > 1 && multiSel.includes(si)) ? multiSel.length : 1;
+        const suffix = count > 1 ? ` (${count})` : "";
+        const destMods = []; for (const l of (lanes || [])) for (const it of l.items) if (it.id !== item.id) destMods.push({ id: it.id, title: it.title, lane: l.title });
+        return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} testid="toc-context-menu">
+          {(move) => <>
+            <CtxItem testid="ctx-move" label={`Move to section${suffix}…`} icon="📦" arrow onClick={() => move.open()} />
+            <CtxItem testid="ctx-duplicate" label="Duplicate" icon="📋" onClick={() => { ctxDuplicate(si); setCtxMenu(null); }} />
+            <CtxItem testid="ctx-hide" label={hidden ? `Show${suffix}` : `Hide${suffix}`} icon={hidden ? "👁" : "🙈"} onClick={() => { ctxHide(si); setCtxMenu(null); }} />
+            <div style={{ height: 1, background: T.border + "80", margin: "3px 4px" }} />
+            <CtxItem testid="ctx-delete" label={`Delete${suffix}`} icon="🗑" danger onClick={() => { ctxDelete(si); setCtxMenu(null); }} />
+          </>}
+          {(move) => move.isOpen && <SectionPicker mods={destMods} emptyLabel="No other sections" onPick={(toId) => { ctxMove(si, toId); setCtxMenu(null); }} />}
+        </ContextMenu>;
+      })()}
     </div>
   );
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -490,13 +589,13 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
@@ -515,7 +614,7 @@ function ModuleList({ lanes, selectedId, slideIndex, dispatch, maxModuleTime, gu
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />

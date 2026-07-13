@@ -583,8 +583,10 @@ function ShortcutHelp({ onClose }) {
       ["⌘Z / Ctrl+Z", "Undo"],
       ["⌘⇧Z / Ctrl+Y", "Redo"],
       ["Click text", "Edit inline on slide"],
-      ["Ctrl+C", "Copy slide to clipboard"],
-      ["Ctrl+V", "Paste slide / image / JSON"],
+      ["⇧/⌘-click", "Multi-select slides in the list"],
+      ["Ctrl+C", "Copy selected slide(s) to clipboard"],
+      ["Ctrl+V", "Paste slide(s) / image / JSON"],
+      ["Right-click", "Slide menu (move / duplicate / delete / hide)"],
       ["Del", "Delete current slide"],
       ["R", "Toggle review / comments"],
     ]},
@@ -1788,7 +1790,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}

@@ -1045,6 +1045,124 @@ def test_editor_ux_bugs():
         ok("CR3: notes bar does not auto-expand per slide (stable toolbar)")
 
 
+def test_slide_editor_ux_features():
+    print("\n── Multi-select / Context-menu / Move-picker (Features 4–6) ──")
+
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # ── Feature 4: multi-slide clipboard ────────────────────────────
+    if "velaClipboardWriteSlides" in imports and "velaClipboardReadSlides" in imports:
+        ok("F4: multi-slide clipboard helpers exist (write/read Slides)")
+    else:
+        fail("F4: velaClipboardWriteSlides/ReadSlides missing")
+    read_fn = imports[imports.index("const velaClipboardReadSlides"):]
+    read_fn = read_fn[:read_fn.index("};") + 2]
+    if "_velaSlides" in read_fn and "_velaSlide" in read_fn:
+        ok("F4: read path accepts BOTH multi (_velaSlides) and legacy single (_velaSlide) envelopes")
+    else:
+        fail("F4: read path not back-compatible with legacy single envelope")
+    write_fn = imports[imports.index("const velaClipboardWriteSlides"):]
+    write_fn = write_fn[:write_fn.index("};") + 2]
+    if "_velaSlide:" in write_fn and "_velaSlides:" in write_fn:
+        ok("F4: single-slide copy still writes legacy envelope (older readers can paste)")
+    else:
+        fail("F4: single-slide copy does not preserve legacy envelope")
+    if "velaClipboardWriteSlides" in slides and "state.selectedSlideIndices" in slides:
+        ok("F4: Ctrl+C copies all selected slides (uses selectedSlideIndices)")
+    else:
+        fail("F4: copy handler does not use multi-selection")
+    if "velaClipboardReadSlides" in slides and "arr.forEach" in slides:
+        ok("F4: Ctrl+V inserts pasted slides sequentially")
+    else:
+        fail("F4: paste handler does not insert multiple slides")
+
+    # ── Feature 4: reducer multi-select state ───────────────────────
+    if "selectedSlideIndices" in reducer and 'case "SET_SLIDE_SELECTION"' in reducer:
+        ok("F4: reducer has selectedSlideIndices + SET_SLIDE_SELECTION action")
+    else:
+        fail("F4: reducer missing multi-select state/action")
+    if '"SET_SLIDE_SELECTION"' in reducer[reducer.index("NO_HISTORY"):reducer.index("MAX_HISTORY")]:
+        ok("F4: SET_SLIDE_SELECTION excluded from undo history")
+    else:
+        fail("F4: SET_SLIDE_SELECTION not in NO_HISTORY")
+    sel_case = reducer[reducer.index('case "SELECT"'):reducer.index('case "SET_FULLSCREEN"')]
+    if "selectedSlideIndices: []" in sel_case:
+        ok("F4: SELECT / SET_SLIDE_INDEX clear multi-selection")
+    else:
+        fail("F4: plain selection does not clear multi-selection")
+    if "handleSlideRowClick" in lst and "e.shiftKey" in lst and "e.metaKey || e.ctrlKey" in lst:
+        ok("F4: TOC slide rows support shift-range + cmd/ctrl-toggle select")
+    else:
+        fail("F4: TOC slide rows missing multi-select click logic")
+    if 'data-selected={isMultiSel ? "true" : undefined}' in lst:
+        ok("F4: selected rows carry data-selected marker + highlight")
+    else:
+        fail("F4: no data-selected marker on selected rows")
+
+    # ── Feature 5: right-click context menu ─────────────────────────
+    if "function ContextMenu(" in lst and 'testid="toc-context-menu"' in lst:
+        ok("F5: reusable ContextMenu component exists (toc-context-menu)")
+    else:
+        fail("F5: ContextMenu component / testid missing")
+    if "onContextMenu=" in lst:
+        ok("F5: TOC slide row wires onContextMenu")
+    else:
+        fail("F5: onContextMenu not attached to slide rows")
+    for tid in ["ctx-move", "ctx-duplicate", "ctx-delete", "ctx-hide"]:
+        if f'testid="{tid}"' in lst:
+            ok(f"F5: context menu has {tid} action")
+        else:
+            fail(f"F5: context menu missing {tid}")
+    for act in ["MOVE_SLIDE_TO_MODULE", "DUPLICATE_SLIDE", "REMOVE_SLIDE", "TOGGLE_SLIDE_HIDDEN"]:
+        if act in lst:
+            ok(f"F5: context menu dispatches {act}")
+        else:
+            fail(f"F5: context menu does not dispatch {act}")
+    # closes on outside-click / Escape
+    if 'addEventListener("mousedown"' in lst and 'e.key === "Escape"' in lst:
+        ok("F5: context menu closes on outside-click and Escape")
+    else:
+        fail("F5: context menu missing outside-click/Escape close")
+
+    # ── Feature 6: searchable move picker ───────────────────────────
+    if "function SectionPicker(" in slides and 'data-testid="section-search"' in slides:
+        ok("F6: SectionPicker has an autofocused search input (section-search)")
+    else:
+        fail("F6: SectionPicker search input missing")
+    picker = slides[slides.index("function SectionPicker("):slides.index("function SlidePanel(")]
+    if "toLowerCase().includes(ql)" in picker:
+        ok("F6: search filters sections case-insensitively")
+    else:
+        fail("F6: search does not filter sections")
+    if "vela-wide-scroll" in slides and "vela-wide-scroll::-webkit-scrollbar{width:10px}" in imports:
+        ok("F6: scoped wider scrollbar class (.vela-wide-scroll) applied to picker")
+    else:
+        fail("F6: wide-scrollbar scoped class missing")
+    if "::-webkit-scrollbar{width:5px}" in imports:
+        ok("F6: global scrollbar width unchanged (5px)")
+    else:
+        fail("F6: global scrollbar width was altered")
+    if "data-scroll-container" in picker and "onWheel={(e) => e.stopPropagation()}" in picker:
+        ok("F6: picker scroll list marked data-scroll-container + stops wheel (no slide change)")
+    else:
+        fail("F6: wheel over picker not isolated from slide-nav")
+    # move popover reuses SectionPicker
+    if "<SectionPicker" in slides and 'data-testid="move-picker"' in slides:
+        ok("F6: move-to-module popover renders SectionPicker")
+    else:
+        fail("F6: move popover does not reuse SectionPicker")
+
+    # help text mentions multi-select
+    if "Multi-select slides" in appjs:
+        ok("F4/F5: help dialog documents multi-select + right-click menu")
+    else:
+        fail("F4/F5: help dialog not updated")
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
@@ -3323,6 +3441,7 @@ if __name__ == "__main__":
         test_audit_2025_05_fixes()
         test_known_bugs()
         test_editor_ux_bugs()
+        test_slide_editor_ux_features()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()

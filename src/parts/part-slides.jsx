@@ -1287,6 +1287,44 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   );
 }
 
+// Reusable searchable section/module picker — renders a filter input + a
+// scrollable list of destination modules. Shared by the slide toolbar's
+// "Move to module" popover (Feature 6) and the section-list right-click context
+// menu (Feature 5). `mods` = [{ id, title, lane }]; onPick(id) fires on choice.
+// The scroll list is tagged data-scroll-container (+ stops wheel propagation) so
+// the SlidePanel wheel-nav listener does not change slides while scrolling it,
+// and carries .vela-wide-scroll for the wider scrollbar.
+function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other sections" }) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { if (autoFocus) { const t = setTimeout(() => inputRef.current?.focus(), 0); return () => clearTimeout(t); } }, []);
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? mods.filter((m) => (m.title || "").toLowerCase().includes(ql) || (m.lane || "").toLowerCase().includes(ql)) : mods;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minWidth: 200, maxWidth: "calc(100vw - 16px)" }}>
+      <div style={{ padding: "4px 8px 2px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>
+      <input ref={inputRef} data-testid="section-search" value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}
+        placeholder="Search sections…"
+        style={{ ...S.input({ padding: "4px 8px", fontSize: 12 }), margin: "0 4px 4px", width: "calc(100% - 8px)" }} />
+      <div data-scroll-container data-testid="section-picker-list" className="vela-wide-scroll"
+        onWheel={(e) => e.stopPropagation()}
+        style={{ maxHeight: 220, overflowY: "auto" }}>
+        {mods.length === 0
+          ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>{emptyLabel}</div>
+          : filtered.length === 0
+            ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No matches</div>
+            : filtered.map((m) => <button key={m.id} data-testid="section-picker-item" onClick={(e) => { e.stopPropagation(); onPick(m.id); }}
+                style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                {m.title}{m.lane ? <span style={{ color: T.textDim, fontSize: 10, marginLeft: 6 }}>{m.lane}</span> : null}
+              </button>)}
+      </div>
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
@@ -1753,23 +1791,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
-      // Ctrl+C → copy current slide to system clipboard
+      // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
+      // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
         const curSlides = slidesRef.current;
         const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
-        if (realIdx >= 0 && realIdx < curSlides.length) {
+        const multi = (state.selectedSlideIndices && state.selectedSlideIndices.length) ? [...state.selectedSlideIndices].sort((a, b) => a - b) : [realIdx];
+        const toCopy = multi.filter((i) => i >= 0 && i < curSlides.length).map((i) => curSlides[i]);
+        if (toCopy.length > 0) {
           e.preventDefault();
-          velaClipboardWriteSlide(curSlides[realIdx]).then((ok) => { if (ok) showNavToast("Slide copied"); });
+          velaClipboardWriteSlides(toCopy).then((ok) => { if (ok) showNavToast(toCopy.length > 1 ? `${toCopy.length} slides copied` : "Slide copied"); });
         }
       }
-      // Ctrl+V → paste slide from system clipboard
+      // Ctrl+V → paste slide(s) from system clipboard, inserted sequentially after
+      // the active slide (order preserved). Accepts old single-slide clipboards too.
       if ((e.ctrlKey || e.metaKey) && e.key === "v" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
-        velaClipboardReadSlide().then((slide) => {
-          if (!slide) return;
-          const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          dispatch({ type: "INSERT_SLIDE", id: concept.id, index: insertAt, slide });
-          dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
-          showNavToast("Slide pasted");
+        velaClipboardReadSlides().then((arr) => {
+          if (!arr || arr.length === 0) return;
+          const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
+          const insertAt = slides.length === 0 ? 0 : realIdx + 1;
+          arr.forEach((slide, k) => dispatch({ type: "INSERT_SLIDE", id: concept.id, index: insertAt + k, slide }));
+          dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
+          showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
         });
       }
       // Delete key → remove current slide (not in input/textarea)
@@ -1782,7 +1825,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -2407,7 +2450,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>;
         })()}
         {/* Move-to-module popover */}
-        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(260, allMods.length * 32 + 40); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 200, maxWidth: "calc(100vw - 16px)", maxHeight: 260, overflowY: "auto", zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><div style={{ padding: "4px 8px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>{allMods.length === 0 ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No other modules</div> : allMods.map((m) => <button key={m.id} onClick={() => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId: m.id, index: slideIndex }); setShowMoveToModule(false); }} style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{m.title}</button>)}</div></>; })()}
+        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); setShowMoveToModule(false); }} /></div></>; })()}
       </div>
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
