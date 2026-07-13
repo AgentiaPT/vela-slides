@@ -1008,7 +1008,6 @@ CAPABILITIES = {
                 "expand": "vela deck expand <compact.vela> <full.vela> — compact/turbo → full format",
                 "compact": "vela deck compact <full.vela> <compact.vela> — full → compact format",
                 "turbo": "vela deck turbo <deck.vela> <turbo.vela> — any → turbo format",
-                "zip": "vela deck zip [--output <path>] — build clean skill ZIP for Claude.ai upload",
             },
             "description": "Deck-level operations (auto-detects full/compact/turbo format)"
         },
@@ -2474,42 +2473,6 @@ def deck_split(args):
         sys.exit(EXIT_OK)
 
 
-# ── ZIP ────────────────────────────────────────────────────────────────
-
-def deck_zip(args):
-    """Build a clean skill ZIP for Claude.ai upload.
-    Usage: vela deck zip [--output <path>]"""
-    import zipfile
-    output_path, _ = _extract_output_flag(args)
-    if not output_path:
-        output_path = os.path.join(os.getcwd(), "vela-slides.zip")
-
-    skill_dir = SKILL_ROOT
-
-    EXCLUDE_DIRS = {"node_modules", "__pycache__", ".git", ".idea", ".vscode", ".claude"}
-    EXCLUDE_EXTS = {".pyc", ".pyo"}
-
-    count = 0
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(skill_dir):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-            for fname in files:
-                if any(fname.endswith(ext) for ext in EXCLUDE_EXTS):
-                    continue
-                full_path = os.path.join(root, fname)
-                rel_path = os.path.relpath(full_path, os.path.dirname(skill_dir))
-                zf.write(full_path, rel_path)
-                count += 1
-
-    size_kb = os.path.getsize(output_path) / 1024
-    if _is_json():
-        _ok({"path": output_path, "files": count, "size_kb": round(size_kb)},
-            f"ZIP created: {output_path} ({count} files, {size_kb:.0f} KB)")
-    else:
-        print(f"✅ ZIP created: {output_path}")
-        print(f"   {count} files | {size_kb:.0f} KB")
-        print(f"   Upload to: Claude.ai → Customize → Skills → + → Upload")
-
 # ── DECK INIT / SLIDE APPEND (incremental deck building) ──────────────
 
 def deck_init(args):
@@ -2625,7 +2588,6 @@ COMMANDS = {
         "extract-text": deck_extract_text,
         "patch-text": deck_patch_text,
         "split": deck_split,
-        "zip": deck_zip,
         "init": deck_init,
     },
     "slide": {
