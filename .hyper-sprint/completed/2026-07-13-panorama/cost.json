@@ -1,0 +1,203 @@
+{
+  "agents": [
+    {
+      "label": "orchestrator (main)",
+      "cost": 17.92,
+      "tokens": {
+        "in": 310,
+        "out": 211672,
+        "cw": 627643,
+        "cr": 17403772
+      },
+      "calls": 165,
+      "by_model": {
+        "opus": 17.92
+      }
+    },
+    {
+      "label": "aa1b4cd89b2c6112e",
+      "cost": 13.04,
+      "tokens": {
+        "in": 334,
+        "out": 10374,
+        "cw": 471575,
+        "cr": 19656089
+      },
+      "calls": 167,
+      "by_model": {
+        "opus": 13.04
+      }
+    },
+    {
+      "label": "a1d10db8ba7d2379a",
+      "cost": 9.79,
+      "tokens": {
+        "in": 260,
+        "out": 6453,
+        "cw": 379983,
+        "cr": 14498564
+      },
+      "calls": 130,
+      "by_model": {
+        "opus": 9.79
+      }
+    },
+    {
+      "label": "a80416f3921e06974",
+      "cost": 3.33,
+      "tokens": {
+        "in": 122,
+        "out": 7073,
+        "cw": 214117,
+        "cr": 3637157
+      },
+      "calls": 61,
+      "by_model": {
+        "opus": 3.33
+      }
+    },
+    {
+      "label": "aff4f21631c07280d",
+      "cost": 3.11,
+      "tokens": {
+        "in": 110,
+        "out": 863,
+        "cw": 282223,
+        "cr": 2652106
+      },
+      "calls": 55,
+      "by_model": {
+        "opus": 3.11
+      }
+    },
+    {
+      "label": "ac73bb15879bb440e",
+      "cost": 2.33,
+      "tokens": {
+        "in": 96,
+        "out": 7511,
+        "cw": 155769,
+        "cr": 2342087
+      },
+      "calls": 48,
+      "by_model": {
+        "opus": 2.33
+      }
+    },
+    {
+      "label": "a2c4b1533c826face",
+      "cost": 2.1,
+      "tokens": {
+        "in": 92,
+        "out": 5858,
+        "cw": 160427,
+        "cr": 1895380
+      },
+      "calls": 46,
+      "by_model": {
+        "opus": 2.1
+      }
+    },
+    {
+      "label": "a24e9c821e3bda609",
+      "cost": 1.57,
+      "tokens": {
+        "in": 50,
+        "out": 123,
+        "cw": 195021,
+        "cr": 690120
+      },
+      "calls": 25,
+      "by_model": {
+        "opus": 1.57
+      }
+    },
+    {
+      "label": "a068628d4c0699fce",
+      "cost": 1.45,
+      "tokens": {
+        "in": 52,
+        "out": 2465,
+        "cw": 155228,
+        "cr": 836550
+      },
+      "calls": 26,
+      "by_model": {
+        "opus": 1.45
+      }
+    },
+    {
+      "label": "a61fc1c63e9a5b163",
+      "cost": 1.29,
+      "tokens": {
+        "in": 60,
+        "out": 2293,
+        "cw": 107206,
+        "cr": 1117816
+      },
+      "calls": 30,
+      "by_model": {
+        "opus": 1.29
+      }
+    },
+    {
+      "label": "a1c0bb7704a711429",
+      "cost": 1.22,
+      "tokens": {
+        "in": 48,
+        "out": 1681,
+        "cw": 117860,
+        "cr": 872815
+      },
+      "calls": 24,
+      "by_model": {
+        "opus": 1.22
+      }
+    },
+    {
+      "label": "a7460260fcb58ed0f",
+      "cost": 1.12,
+      "tokens": {
+        "in": 70,
+        "out": 1334,
+        "cw": 65913,
+        "cr": 1357914
+      },
+      "calls": 35,
+      "by_model": {
+        "opus": 1.12
+      }
+    }
+  ],
+  "by_model": {
+    "opus": 58.26
+  },
+  "grand_total": 58.26,
+  "tokens": {
+    "in": 1604,
+    "out": 257700,
+    "cache_write": 2932965,
+    "cache_read": 66960370,
+    "total": 70152639
+  },
+  "pricing": {
+    "opus": [
+      5.0,
+      25.0,
+      6.25,
+      0.5
+    ],
+    "sonnet": [
+      2.0,
+      10.0,
+      2.5,
+      0.2
+    ],
+    "haiku": [
+      1.0,
+      5.0,
+      1.25,
+      0.1
+    ]
+  }
+}
