@@ -37,10 +37,14 @@ bill — it keeps the premium, always-re-read context tiny. Full enforceable che
   dir) — an uncommitted `NOTES/` file in the main tree is invisible to a worktree worker.
   Pass the path in.
 
-## Orchestrator = thin
+## Orchestrator, not worker — orchestrator = thin
 
 The main context is the most expensive and the most *biased* context in the run — it
-accumulates every decision and every fixed bug. Protect it:
+accumulates every decision and every fixed bug. Protect it. **Hard budget: ≤50 main-loop
+turns** (SKILL.md banner) — one sprint blew past that to **375 turns** because, after a
+worker died on a session limit, the orchestrator absorbed its hands-on work instead of
+spawning a replacement (~12 inline diagnostic/browser-driver scripts written and run in the
+hub). Every hands-on task belongs to a sub-agent, always:
 
 - **Delegate implementation.** Don't read whole files or write bulk edits in the main
   loop — spawn a worker. The orchestrator reads *recon summaries and worker results*, not

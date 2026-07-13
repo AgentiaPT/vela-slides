@@ -16,14 +16,29 @@ description: >-
 
 # Hyper Sprint
 
+> ## ⚠️ THE MAIN AGENT IS AN ORCHESTRATOR, NOT A WORKER
+>
+> It plans, delegates, integrates, and gates — and does **nothing else** in the main
+> context. It NEVER does bulk implementation, debugging, browser-driving, screenshotting,
+> or diagnostic/verification scripting inline. Every hands-on task → a sub-agent that
+> returns a compact verdict.
+>
+> **Hard budget: ≤50 main-loop turns.** When a worker dies (session/rate limit), spawn a
+> **replacement** sub-agent — never absorb its work into the hub. (A real sprint hit **375
+> turns** doing exactly that: a worker died mid-task and the orchestrator inline-wrote ~12
+> diagnostic/browser-driver scripts instead of delegating.)
+>
+> **Trip-wire:** more than 2 consecutive inline diagnostic/driver round-trips on one
+> question = a missed delegation. Stop and delegate the whole investigation.
+
 Deliver a batch of changes to a **verified zero-bug** state in one session, cheaply.
 This skill replaces an ad-hoc "implement everything and test it" prompt.
 
 ## Orchestration model (full detail: `references/orchestration.md`)
 
-Run as a **thin orchestrator** on the best model — plan, delegate, integrate, judge;
-**never do bulk implementation in the main context** (it burns the premium context and
-biases the final gate). Three separate roles:
+**Orchestrator, not worker —** run as a **thin orchestrator** on the best model — plan,
+delegate, integrate, judge; **never do bulk implementation in the main context** (it burns
+the premium context and biases the final gate). Three separate roles:
 
 - **Orchestrator** (main loop, best model): reads *recon summaries + worker results*, not
   raw source; partitions work; routes each worker's model/effort/isolation; drives the gate.
@@ -61,9 +76,9 @@ biases the final gate). Three separate roles:
    each **worker reads its own map file directly** into its isolated context. Put the shared
    notes at an **absolute path outside any worktree** (a session scratch dir) so worktree
    workers can read them, and pass that path in.
-3. **Hub hygiene: payloads to disk, pointers + verdicts in the hub (HARD RULE).** The
-   orchestrator must **never** read a worker's diff, a screenshot, or any large doc into the
-   main loop — it trusts the worker's pasted test-summary + one-line verdict, and re-drives
+3. **Orchestrator, not worker — hub hygiene: payloads to disk, pointers + verdicts in the
+   hub (HARD RULE).** The orchestrator must **never** read a worker's diff, a screenshot,
+   or any large doc into the main loop — it trusts the worker's pasted test-summary + one-line verdict, and re-drives
    only **by exception**, via a cheap sub-agent that returns a bare pass/fail (not the raw
    artifact). Frame-checks and one-off lookups (a pricing page, a doc for one config flag, a
    single number buried in a giant reference) are **delegated**, never fetched/read directly
@@ -90,8 +105,9 @@ biases the final gate). Three separate roles:
    verbatim** (the exact acceptance text for their change requests, not a paraphrase) and the
    **cluster-boundary check asserts against that same text** before merge — a paraphrase
    drifting from the spec is exactly what surfaces as an integration-time surprise later.
-6. **One canonical verify command; trust green, re-drive by exception.** The biggest
-   main-loop turn-inflator is the orchestrator re-verifying every worker by hand. Define a
+6. **Orchestrator, not worker — one canonical verify command; trust green, re-drive by
+   exception.** The biggest main-loop turn-inflator is the orchestrator re-verifying every
+   worker by hand. Define a
    *single* repo verify entrypoint; **workers paste its real output** and the orchestrator
    **trusts a green standardized run**, re-driving only on a worker's explicitly-flagged
    uncertainty. And **never hand-write bespoke drivers in the main context** — each ad-hoc
@@ -152,12 +168,15 @@ biases the final gate). Three separate roles:
    cheap/fast for mechanical work **and for verification-drivers** (the per-CR verifiers in
    principle 7 need enough model to follow a spec, not the flagship) — full routing table in
    `references/orchestration.md`.
-12. **Long-run resilience: heavy sub-agents can die mid-task.** Session limits, rate limits,
-   and container resets don't wait for a convenient boundary. Stagger heavy/long-running
-   sub-agents rather than firing them all at once (so one reset doesn't stall the whole fan-
-   out), and design the orchestrator to **adopt a dead worker's partial edits and re-verify
-   them** rather than discard and restart from scratch — the partial work is usually salvageable
-   and a clean restart throws away real progress for no reason.
+12. **Orchestrator, not worker — long-run resilience: heavy sub-agents can die mid-task.**
+   Session limits, rate limits, and container resets don't wait for a convenient boundary.
+   Stagger heavy/long-running sub-agents rather than firing them all at once (so one reset
+   doesn't stall the whole fan-out). When one dies, **spawn a replacement sub-agent that
+   adopts its partial edits and re-verifies them** — never absorb the dead worker's remaining
+   work into the hub yourself; the partial work is usually salvageable and a clean restart
+   throws away real progress for no reason, but doing it in the main loop is the exact move
+   that blew one sprint's turn budget to 375 (target ≤50, see the banner at the top of this
+   file).
 13. **Report for steering, not just logging.** On a fixed cadence (not per-action) give a
    short, mobile-readable status: **done / total**, what's in flight, blockers. When the
    profile supports sending files/images, **attach screenshots of new or changed features**
