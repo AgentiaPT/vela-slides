@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.9";
+const VELA_VERSION = "13.10";
 const VELA_CHANGELOG = [
+  { v: "13.10", d: "PowerPoint import: guarantee no visible text is lost — dense grids are split (not truncated) and any text the reflow mislays is salvaged into a fallback block." },
   { v: "13.9", d: "Import PowerPoint (.pptx) decks — reflowed into Vela blocks (semantic re-flow, positions discarded)." },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },

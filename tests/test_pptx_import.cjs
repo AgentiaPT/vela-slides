@@ -75,7 +75,7 @@ const prelude = `
 `;
 
 const combined = prelude + "\n" + importerSrc + "\n" + sanitizerSlice + "\n" +
-  "; return { pptxToVelaDeck, validateAndSanitizeDeck, sanitizeSlide };";
+  "; return { pptxToVelaDeck, validateAndSanitizeDeck, sanitizeSlide, _ppxSplitOversizedGrids, _ppxSalvageDroppedText };";
 
 let API;
 try {
@@ -464,6 +464,42 @@ function findBlock(slides, pred) {
     JSON.stringify(sanitizedCols.L).indexOf("LEFT_COLUMN_MARKER") !== -1 &&
     JSON.stringify(sanitizedCols.R).indexOf("RIGHT_COLUMN_MARKER") !== -1,
     JSON.stringify(sanitizedCols));
+
+  // ==========================================================================
+  // Content-loss guards: the load-path sanitizer caps grid cells at 6, so the
+  // importer must never emit an oversized grid, and must salvage any text the
+  // reflow drops. (Regression guards for the "nothing visible lost" invariant.)
+  // ==========================================================================
+  if (typeof API._ppxSplitOversizedGrids === "function") {
+    const bigGrid = { blocks: [{ type: "grid", cols: 3, gap: 18,
+      items: Array.from({ length: 10 }, (_, i) => ({ blocks: [{ type: "text", text: "CELL_" + i }] })) }] };
+    API._ppxSplitOversizedGrids(bigGrid);
+    const grids = bigGrid.blocks.filter((b) => b.type === "grid");
+    assert("oversized 10-cell grid is split into multiple grids", grids.length === 2, JSON.stringify(grids.map((g) => g.items.length)));
+    assert("no split grid exceeds the 6-cell sanitizer cap", grids.every((g) => g.items.length <= 6));
+    const allCells = JSON.stringify(bigGrid.blocks);
+    assert("every cell survives the split (CELL_0..CELL_9 all present)",
+      Array.from({ length: 10 }, (_, i) => "CELL_" + i).every((c) => allCells.indexOf(c) !== -1));
+    // and the split output survives the real load-path sanitizer with all 10 cells
+    const sanBig = validateAndSanitizeDeck({ lanes: [{ title: "t", items: [{ title: "t", slides: [{ bg: "#fff", blocks: bigGrid.blocks }] }] }] });
+    const sanStr = JSON.stringify(sanBig);
+    assert("all 10 grid cells present after validateAndSanitizeDeck (no load-path truncation)",
+      Array.from({ length: 10 }, (_, i) => "CELL_" + i).every((c) => sanStr.indexOf(c) !== -1));
+  }
+  if (typeof API._ppxSalvageDroppedText === "function") {
+    const shapes = [
+      { kind: "text", paras: [{ text: "EMITTED_ALREADY" }] },
+      { kind: "text", paras: [{ text: "DROPPED_BY_REFLOW" }] },
+      { kind: "decor", paras: [{ text: "DECOR_IGNORED" }] },
+    ];
+    const slide = { blocks: [{ type: "text", text: "EMITTED_ALREADY" }] };
+    const n = API._ppxSalvageDroppedText(slide, shapes);
+    const s = JSON.stringify(slide.blocks);
+    assert("salvage recovers text the reflow dropped", n >= 1 && s.indexOf("DROPPED_BY_REFLOW") !== -1, s);
+    assert("salvage does NOT duplicate already-emitted text",
+      (s.match(/EMITTED_ALREADY/g) || []).length === 1, s);
+    assert("salvage ignores non-text (decor) shapes", s.indexOf("DECOR_IGNORED") === -1, s);
+  }
 
   console.log(`\n  ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

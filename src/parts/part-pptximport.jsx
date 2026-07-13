@@ -1351,7 +1351,10 @@ function _ppxDetectCards(containers, body, W, H, defaultColor, accent, fontScale
   }
   realCards.sort((a, b) => (a[0].y - b[0].y) || (a[0].x - b[0].x));
   const consumed = new Set(), items = [];
-  for (const [c, inner] of realCards.slice(0, _PPX_GRID_MAX_COLS * 2)) {
+  // Emit every card — do NOT cap here (that silently dropped cards 7+ and their
+  // text). Oversized grids are split into <=6-cell grids by _ppxSplitOversizedGrids
+  // so nothing is lost on load.
+  for (const [c, inner] of realCards) {
     consumed.add(c);
     for (const s of inner) consumed.add(s);
     items.push(_ppxCardFromContainer(c, inner, W, H, defaultColor, accent, fontScale, bg, deckMedia, stats));
@@ -1588,6 +1591,67 @@ function _ppxSaturation(hexc) {
   } catch (e) { return 1.0; }
 }
 
+// The load-path sanitizer caps grid cells at 6 (part-imports.jsx sanitizeBlock:
+// `clean.items.slice(0, 6)`). A reflowed lattice can exceed that (e.g. a 2-row
+// 6-col grid = 12 cells), which would silently drop the overflow rows on load =
+// visible content lost. Split any oversized grid into consecutive <=6-cell grids
+// so every cell survives; cell order is preserved (a 2-row lattice becomes two
+// stacked rows). Keyed off the sanitizer's cap so the two stay in lockstep.
+const _PPX_GRID_CELL_CAP = 6;
+function _ppxSplitGridsInList(list) {
+  if (!Array.isArray(list)) return list;
+  const out = [];
+  for (const b of list) {
+    if (b && typeof b === "object" && Array.isArray(b.items)) {
+      for (const cell of b.items) {
+        if (cell && Array.isArray(cell.blocks)) cell.blocks = _ppxSplitGridsInList(cell.blocks);
+      }
+      if (b.type === "grid" && b.items.length > _PPX_GRID_CELL_CAP) {
+        for (let i = 0; i < b.items.length; i += _PPX_GRID_CELL_CAP) out.push({ ...b, items: b.items.slice(i, i + _PPX_GRID_CELL_CAP) });
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+function _ppxSplitOversizedGrids(slide) {
+  if (Array.isArray(slide.blocks)) slide.blocks = _ppxSplitGridsInList(slide.blocks);
+  for (const side of ["L", "R"]) if (Array.isArray(slide[side])) slide[side] = _ppxSplitGridsInList(slide[side]);
+}
+
+// Safety net for the hard invariant "nothing visible is lost": the reflow
+// clustering is heuristic and can occasionally drop a text shape (containment /
+// overlap edge cases). After a slide is assembled, diff every source text shape
+// against the text actually emitted; any run that appears nowhere is appended as
+// a plain fallback block so its content survives even when clustering mislays it.
+const _PPX_SALVAGE_SKIP_KEYS = new Set(["src", "bg", "color", "accent", "type", "size", "layout", "align", "direction", "icon", "gap", "cols", "duration", "status", "id", "style", "connectorStyle", "labelSize"]);
+function _ppxNormText(t) { return String(t).toLowerCase().replace(/[\s*_`]/g, ""); }
+function _ppxSalvageDroppedText(slide, shapes) {
+  let emitted = "";
+  const collect = (v, key) => {
+    if (typeof v === "string") { if (!(key && _PPX_SALVAGE_SKIP_KEYS.has(key)) && !/^data:/.test(v)) emitted += " " + v; }
+    else if (Array.isArray(v)) { for (const x of v) collect(x, key); }
+    else if (v && typeof v === "object") { for (const k in v) collect(v[k], k); }
+  };
+  collect(slide.blocks, null); collect(slide.L, null); collect(slide.R, null);
+  const emittedN = _ppxNormText(emitted);
+  const missing = [], seen = new Set();
+  for (const s of shapes) {
+    if (!s || s.kind !== "text") continue;
+    const t = _ppxShapeText(s, " ");
+    const n = _ppxNormText(t);
+    if (n.length < 2 || seen.has(n) || emittedN.includes(n)) continue;
+    seen.add(n);
+    missing.push(t);
+  }
+  if (!missing.length) return 0;
+  if (!Array.isArray(slide.blocks)) slide.blocks = [];
+  if (missing.length === 1) slide.blocks.push({ type: "text", text: missing[0], size: "sm" });
+  else slide.blocks.push({ type: "bullets", items: missing });
+  return missing.length;
+}
+
 function _ppxFixLegibility(slide, fixes) {
   const slideBg = slide.bg || "#0f172a";
   const fixBlock = (b, bgc) => {
@@ -1759,6 +1823,9 @@ async function pptxToVelaDeck(arrayBuffer) {
     const notesText = _ppxExtractNotes(zip, srels);
     if (notesText) { slide.notes = notesText; stats.notesSlides++; }
 
+    const salv = _ppxSalvageDroppedText(slide, shapes);
+    if (salv) { stats.salvaged = (stats.salvaged || 0) + salv; notes.add("salvaged " + salv + " dropped text run(s)"); }
+    _ppxSplitOversizedGrids(slide);
     _ppxFixLegibility(slide, fixes);
     slidesJson.push(slide);
   }
