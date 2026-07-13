@@ -10,13 +10,14 @@ inserted at the right index / stdout) AND the exact exit-code VALUE — not just
 `returncode != 0` the way the existing suite does.
 
 Focus (from coverage-analysis/01-reducer-cli-deck.md §2b):
-  Untested subcommands ........ deck extract, deck ship, deck zip, deck init,
+  Untested subcommands ........ deck extract, deck ship, deck init,
                                 deck assemble (CLI wrapper), slide insert,
                                 slide remove-block, slide append
   Exit-code VALUES ............ EXIT_OK=0, EXIT_FAIL=1, EXIT_USAGE=2,
                                 EXIT_NOT_FOUND=3, EXIT_VALIDATION=4,
                                 EXIT_CONFLICT=5 (deck init overwrite guard)
-  Security control ............ _safe_resolve path-traversal guard
+  Security control ............ _safe_resolve path-traversal guard;
+                                package-skill.py symlink-hardening (dev tool)
 
 Run:  python3 tests/test_cli.py
 Exit: 0 if all green, 1 otherwise. Prints "N passed, N failed" summary. No network.
@@ -39,6 +40,12 @@ VELA_PY = os.path.join(SCRIPTS, "vela.py")
 # Import the module purely to read the exit-code constants (no main() runs).
 sys.path.insert(0, SCRIPTS)
 import vela  # noqa: E402
+
+# The skill packager is a dev tool (never shipped); import it directly to
+# exercise its symlink-hardening in-process.
+sys.path.insert(0, os.path.join(REPO, "tools", "vela-dev", "scripts"))
+import importlib  # noqa: E402
+package_skill = importlib.import_module("package-skill")  # noqa: E402
 
 EXIT_OK = vela.EXIT_OK                # 0
 EXIT_FAIL = vela.EXIT_FAIL           # 1
@@ -130,6 +137,66 @@ def _slide_count(deck_path):
     return sum(len(item.get("slides", []))
                for lane in deck.get("lanes", [])
                for item in lane.get("items", []))
+
+
+# ── package-skill dev-tool checks (happy path + symlink hardening) ──────
+def _check_package_skill(tmpdir):
+    """Exercise tools/vela-dev/scripts/package-skill.py end to end.
+
+    Two things matter here: (1) it still produces a valid upload archive of
+    the real skill tree, and (2) it refuses symlinks so a link planted inside
+    a skill tree cannot pull outside-of-root bytes into the archive under an
+    in-root member name. build_zip() is called directly against synthetic
+    trees for the hardening cases so no production files are touched.
+    """
+    # (1) Happy path: package the real skill dir; valid zip, SKILL.md present,
+    #     no __pycache__ members.
+    zip_out = os.path.join(tmpdir, "skill.zip")
+    count, skipped = package_skill.build_zip(package_skill.SKILL_DIR, zip_out)
+    if os.path.exists(zip_out) and zipfile.is_zipfile(zip_out):
+        with zipfile.ZipFile(zip_out) as zf:
+            names = zf.namelist()
+        check(count > 0
+              and any(n.endswith("SKILL.md") for n in names)
+              and not any("__pycache__" in n for n in names),
+              "package-skill builds a valid archive with SKILL.md and no __pycache__")
+    else:
+        fail("package-skill produced a valid archive", "zip missing or corrupt")
+
+    # (2) Symlink hardening: build a synthetic skill tree with an outside
+    #     secret + a file symlink + a directory symlink pointing at it, plus a
+    #     legitimate in-root regular file.
+    sroot = os.path.join(tmpdir, "synthparent", "skill")
+    outside = os.path.join(tmpdir, "outside")
+    os.makedirs(sroot)
+    os.makedirs(outside)
+    with open(os.path.join(outside, "secret.txt"), "w") as f:
+        f.write("SYNTHETIC-ZIP-SECRET")
+    with open(os.path.join(sroot, "SKILL.md"), "w") as f:
+        f.write("legit in-root content")
+    link_ok = True
+    try:
+        os.symlink(os.path.join(outside, "secret.txt"),
+                   os.path.join(sroot, "leaked.txt"))          # outside file link
+        os.symlink(outside, os.path.join(sroot, "leakdir"))    # outside dir link
+    except (OSError, NotImplementedError):
+        link_ok = False  # platform without symlink support — skip link asserts
+
+    hardened_zip = os.path.join(tmpdir, "hardened.zip")
+    _, hskipped = package_skill.build_zip(sroot, hardened_zip)
+    with zipfile.ZipFile(hardened_zip) as zf:
+        hnames = zf.namelist()
+        leaked = any(zf.read(n) == b"SYNTHETIC-ZIP-SECRET" for n in hnames)
+
+    # In-root regular file is always packaged.
+    check(any(n.endswith("SKILL.md") for n in hnames),
+          "package-skill packages the legitimate in-root file")
+    if link_ok:
+        # Neither link name may appear as a member, and no member may carry
+        # the outside secret's bytes.
+        member_present = any(n.endswith("leaked.txt") for n in hnames)
+        check(not member_present and not leaked and hskipped >= 2,
+              "package-skill rejects file+dir symlinks (no outside-root bytes leak)")
 
 
 # ── Main ────────────────────────────────────────────────────────────────
@@ -229,22 +296,9 @@ def main():
         r = run_vela("deck", "validate")
         check_exit(r, EXIT_USAGE, "deck validate, no args")
 
-        # ══ deck zip ════════════════════════════════════════════════════
-        print("\n── deck zip ──")
-        zip_out = os.path.join(tmpdir, "skill.zip")
-        r = run_vela("deck", "zip", "--json", "--output", zip_out)
-        check_exit(r, EXIT_OK, "deck zip (happy)")
-        if os.path.exists(zip_out) and zipfile.is_zipfile(zip_out):
-            with zipfile.ZipFile(zip_out) as zf:
-                names = zf.namelist()
-            check(any(n.endswith("SKILL.md") for n in names)
-                  and not any("__pycache__" in n for n in names),
-                  "deck zip is a valid archive with SKILL.md and no __pycache__")
-        else:
-            fail("deck zip produced a valid archive", "zip missing or corrupt")
-        # failure: output into a nonexistent directory -> uncaught (exit 1)
-        r = run_vela("deck", "zip", "--output", os.path.join(tmpdir, "no", "such", "dir.zip"))
-        check_exit(r, EXIT_FAIL, "deck zip into missing dir (failure, uncaught->1)")
+        # ══ package-skill (dev tool, moved out of the shipped CLI) ═══════
+        print("\n── package-skill (dev packager) ──")
+        _check_package_skill(tmpdir)
 
         # ══ deck init ═══════════════════════════════════════════════════
         print("\n── deck init ──")

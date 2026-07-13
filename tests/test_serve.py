@@ -223,11 +223,14 @@ class TestDeckVersionTracker(unittest.TestCase):
         for th in threads:
             th.join(timeout=5)
 
+        # bump() guarantees each caller a unique, gap-free version; it does NOT
+        # guarantee the order threads later append into `versions` matches the
+        # order they were handed a version (the append is a separate critical
+        # section). So assert the real invariant — the multiset of returned
+        # versions is exactly the consecutive range — not the append order.
         self.assertEqual(len(versions), 20)
-        self.assertEqual(sorted(versions), versions,
-                         "Versions should be strictly increasing")
-        self.assertEqual(len(set(versions)), 20,
-                         "All versions should be unique")
+        self.assertEqual(sorted(versions), list(range(2, 22)),
+                         "Concurrent bumps must yield unique, gap-free versions")
 
 
 # ── 2. FileWatcher ────────────────────────────────────────────────────
