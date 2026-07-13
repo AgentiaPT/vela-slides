@@ -1541,8 +1541,24 @@ export default function App() {
   const loadDeckFile = useCallback((file) => {
     if (!file || file.size > MAX_IMPORT_SIZE) return;
     const ext = file.name.split(".").pop().toLowerCase();
-    if (ext !== "json" && ext !== "vela") return;
+    if (ext !== "json" && ext !== "vela" && ext !== "pptx") return;
     const reader = new FileReader();
+    if (ext === "pptx") {
+      reader.onload = async () => {
+        try {
+          const deckData = await pptxToVelaDeck(reader.result);
+          const deckName = sanitizeString(deckData?.deckTitle || file.name.replace(/\.pptx$/i, ""), 60);
+          const sanitized = validateAndSanitizeDeck(deckData);
+          sanitized.deckTitle = deckName;
+          dispatch({ type: "LOAD", payload: sanitized });
+          dispatch({ type: "DESELECT" });
+          selectFirstModule();
+          takeSnapshot(sanitized);
+        } catch (err) { dbg("Import error:", err); }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
     reader.onload = async () => {
       try {
         const raw = JSON.parse(reader.result);
@@ -1626,12 +1642,12 @@ export default function App() {
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
-      <input ref={fileInputRef} type="file" accept=".json,.vela" onChange={importDeck} style={{ display: "none" }} />
+      <input ref={fileInputRef} type="file" accept=".json,.vela,.pptx" onChange={importDeck} style={{ display: "none" }} />
       {fileDragOver && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
         <div style={{ background: T.bgPanel, border: `2px dashed ${T.accent}`, borderRadius: 16, padding: "40px 60px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
           <span style={{ fontSize: 40 }}>📂</span>
           <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Drop deck to load</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>
+          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json, .vela, or .pptx</span>
         </div>
       </div>}
 

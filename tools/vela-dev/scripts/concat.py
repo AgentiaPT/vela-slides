@@ -32,6 +32,7 @@ PART_ORDER = [
     "part-demo.jsx",
     "part-pdf.jsx",
     "part-pptx.jsx",
+    "part-pptximport.jsx",
     "part-app.jsx",
 ]
 
