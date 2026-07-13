@@ -38,7 +38,7 @@ exactly these as they emerged:
 - **Inline-style-only exfil primitives** — current published research (PortSwigger, *Inline Style Exfiltration*, 2026) shows CSS custom properties, `attr()`, and `if()`/`style()` conditionals can leak **same-element** data through a single `style=""` attribute with no selector and no external sheet — defeating "we only ban external stylesheets" reasoning. Defensive posture: keep the style-key allowlist (no custom `--*` properties, no `attr()`/`if()`/`style()`-bearing values, no string-source functions) verified empirically against the real `sanitizeStyle`/`scrubColorFields`, since on the host runtimes the sanitizer is the primary control.
 - **Font-driven character exfil** — `@font-face` / `unicode-range` / `local()`+`src:url()` combinations that fetch a glyph file per leaked character.
 - **Namespace-confusion / mutation XSS** — SVG↔HTML (and MathML) re-parse divergence where a node the sanitizer reads as inert text the browser re-parses as live markup (the `dangerouslySetInnerHTML` round-trip). Guarded by SVG-scope wrapping + CDATA/comment/PI stripping; must stay regression-tested.
-- **Script-context breakout at injection** — deck JSON is embedded inline in `<script type="text/babel">` by `assemble.py` / `serve.py`; `<`, `>`, `&`, U+2028/2029 are escaped so a deck string cannot close the script element or terminate the JS literal.
+- **Script-context breakout at injection** — deck JSON is embedded inline in `<script type="text/babel">` by `assemble.py` / `serve.py`, and by the in-app **Standalone-HTML export** (`buildStandaloneHtml`, which also inlines the transpiled app); `<`, `>`, `&`, U+2028/2029 are escaped so a deck string cannot close the script element or terminate the JS literal. The escape rule is independently duplicated per language/module and kept in sync by review.
 - **`serve.py` server surface** — path traversal / symlink escape on deck names, auth-token / session handling, cross-origin write (CSRF) and Host-header (DNS-rebinding) checks, and the script-context escaping above.
 - **Neutralino native-bridge reachability** — the desktop webview is granted `filesystem.*` + `os.getEnv`. A deck value that achieves script execution in this realm could call `Neutralino.filesystem.*`/`os.getEnv` directly. `fs-guard.js` caps file blast radius to the two allowed roots (traversal-segment reject + prefix containment); `nativeAllowList` withholds `os.spawnProcess`/`os.execCommand` (no RCE). The invariant to keep tested: **no deck-supplied value reaches an active script context** (only inert/static SVG sinks), and `fs-guard` containment holds against path-normalization tricks (`..`, symlink, UNC/`\\`, drive-relative, URL-encoded separators).
 - **Desktop CSP image/font egress asymmetry** — because the desktop `<meta>` CSP permits `img-src/font-src https:`, *any* deck-controlled value that survives sanitization into an `<img src>`, CSS `background-image`/`url()`, `image-set()`, or `@font-face src:url()` is a live render-time beacon on desktop even though the identical payload is CSP-blocked under `serve.py`. Test image/font/CSS-url sinks against the desktop CSP, not just the server CSP.
@@ -55,7 +55,7 @@ review alone.
 | Malicious JSON import | Block-type whitelisting, string sanitization, structure validation |
 | SVG injection (XSS) | Multi-layer sanitization: script, foreignObject, use, animate, event handler, javascript: URI, xlink:href, CSS expression stripping |
 | Oversized payloads | String length limits on all fields (200-50000 chars), block count limits (30/slide), row/column limits |
-| CDN compromise (html2canvas) | Loaded from cdnjs.cloudflare.com with integrity checks — standard risk for client-side apps |
+| CDN compromise (runtime libs) | `html2canvas` (PDF-export thumbnails only) loads best-effort from cdnjs.cloudflare.com and fails safe to layout-stats-only if it can't load; it is not SRI-pinned. The **Standalone-HTML export** pins React / ReactDOM / lucide-react from jsdelivr by SHA-384 `integrity` + `crossorigin` (byte-identical to the vendored Neutralino UMD copies). Standard client-side-app risk |
 | Credential leakage | No API keys, tokens, or secrets in the codebase. Anthropic API calls use Claude.ai's built-in proxy |
 
 ### SVG Sanitization (Defense-in-Depth)
@@ -101,9 +101,9 @@ Running `tools/vela-dev/scripts/serve.py <folder>` starts a local HTTP server fo
 | Control | Detail |
 |---------|--------|
 | Bind address | `127.0.0.1` by default (localhost only) |
-| Path traversal | Deck names validated: `/`, `\`, `..` rejected. Symlink escape checks via `os.path.realpath()` |
-| Payload limits | 5 MB for saves, 10 MB for uploads |
-| Upload sanitization | `os.path.basename()` strips directory components, dot-files rejected |
+| Path traversal | Deck names validated (`_validate_deck_name`): `/`, `\`, `..`, null bytes and quote/angle/backtick chars rejected — after NFKC-folding so fullwidth/Unicode separator & dot lookalikes and bidi/format controls (RTLO spoofing) can't slip past the check. Symlink escape closed by realpath containment (`_safe_deck_path`) |
+| Payload limits | Save requests capped at 5 MB (`413 Payload too large` above the limit) |
+| Deck extension | Only `.vela` files are listed, served, or accepted for save |
 | Authentication | Per-session token + `HttpOnly`, `SameSite=Strict` session cookie |
 | Cross-origin writes | Mutating requests must match the server's full origin (scheme/host/port); saves require `application/json` |
 | Host header check | DNS rebinding protection for localhost mode |
@@ -120,6 +120,8 @@ Node.js dependencies are managed with strict supply chain protections:
 | No native builds | `pnpm-workspace.yaml: onlyBuiltDependencies: []` | Blocks native binary compilation |
 | 7-day release cooldown | `pnpm-workspace.yaml: minimumReleaseAge: 10080` | New releases must age before install |
 | Lockfile integrity | `pnpm-lock.yaml` with SHA-512 hashes | Pins exact versions + verifies content |
+
+**Release-artifact packaging** — the shipped skill ZIP is built by `tools/vela-dev/scripts/package-skill.py` (dev toolchain, never shipped; also used by the release workflows). The archive builder skips file and directory symlinks and requires every member's canonical realpath to stay under the skill root, so a link planted in the tree cannot pull outside-of-root bytes into the ZIP under an in-root name. It also excludes `__pycache__` / `*.pyc` / `*.pyo` so no build-time bytecode is shipped. Regression-tested.
 
 ### CLI Tools (`vela.py`, `assemble.py`, etc.)
 
@@ -187,7 +189,7 @@ Automated-scanner output and AI-generated reports **without manual verification 
 ### Scope
 
 **In scope:**
-- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py)
+- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py)
 - The Vela JSX application (`src/parts/*.jsx`, built into `skills/vela-slides/app/vela.jsx`)
 - Deck JSON parsing, validation, and sanitization
 - Local development server endpoints and file handling
