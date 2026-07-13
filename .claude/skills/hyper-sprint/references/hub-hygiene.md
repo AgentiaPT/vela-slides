@@ -49,6 +49,11 @@ context — not its own.
 - **Send steering updates as files/links, not inline blobs.** A "here's the new
   feature" update to the user can reference a screenshot path; it doesn't require the
   image to be pasted into the orchestrator's own context to be shared.
+- **Batch dispatch, don't drip it.** Give a worker a whole cluster (every issue sharing its
+  file set) as one fat, self-contained objective rather than one dispatch round-trip per
+  issue — on a long sprint with a big issue list, dispatch granularity is what drives turn
+  count up, independent of how small each payload is. Fan out independent clusters in
+  parallel instead of dispatching them one at a time.
 
 ## Don't
 
