@@ -1075,10 +1075,10 @@ def test_slide_editor_ux_features():
         ok("F4: Ctrl+C copies all selected slides (uses selectedSlideIndices)")
     else:
         fail("F4: copy handler does not use multi-selection")
-    if "velaClipboardReadSlides" in slides and "arr.forEach" in slides:
-        ok("F4: Ctrl+V inserts pasted slides sequentially")
+    if "velaClipboardReadSlides" in slides and 'type: "INSERT_SLIDES"' in slides and "slides: arr" in slides:
+        ok("F4: Ctrl+V inserts pasted slides in one batch (single undo)")
     else:
-        fail("F4: paste handler does not insert multiple slides")
+        fail("F4: paste handler does not batch-insert pasted slides")
 
     # ── Feature 4: reducer multi-select state ───────────────────────
     if "selectedSlideIndices" in reducer and 'case "SET_SLIDE_SELECTION"' in reducer:

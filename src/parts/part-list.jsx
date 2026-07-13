@@ -221,11 +221,11 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   // Apply a slide-toolbox action to the right-clicked slide, or to the whole
   // multi-selection when the right-clicked row is part of it.
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
-  const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); idxs.forEach((i) => dispatch({ type: "REMOVE_SLIDE", id: item.id, index: i })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
+  const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
   const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
-  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); asc.forEach((orig, k) => dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: item.id, toId, index: orig - k })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
+  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
   const commitSlideTitle = (si) => {

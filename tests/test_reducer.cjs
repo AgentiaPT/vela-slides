@@ -565,5 +565,46 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("REDO appends a restore marker message", /restore/i.test(last.content) && last._system === true);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 12. Batch multi-slide ops undo as a SINGLE step (PowerPoint parity)
+//     A single user gesture (multi-delete / multi-paste / multi-move)
+//     must push exactly ONE history entry and be reversed by ONE UNDO.
+// ═══════════════════════════════════════════════════════════════════
+{
+  // ---- multi-delete: REMOVE_SLIDES ----
+  clearTrackers();
+  const it = item("m1", [slide(1), slide(2), slide(3), slide(4)]);
+  const before = present([lane("l1", [it])], "m1", 0);
+  const hist = H(before);
+  const out = reducer(hist, { type: "REMOVE_SLIDES", id: "m1", indices: [3, 1] });
+  assert("REMOVE_SLIDES removes exactly the given indices", marks(findItem(out.present, "m1").slides).join() === "1,3", marks(findItem(out.present, "m1").slides).join());
+  assert("REMOVE_SLIDES pushes exactly ONE history entry", out.past.length === 1, "past=" + out.past.length);
+  const undo = reducer(out, { type: "UNDO" });
+  assert("REMOVE_SLIDES reversed by ONE undo", marks(findItem(undo.present, "m1").slides).join() === "1,2,3,4", marks(findItem(undo.present, "m1").slides).join());
+
+  // ---- multi-paste: INSERT_SLIDES ----
+  clearTrackers();
+  const it2 = item("m2", [slide(1), slide(2)]);
+  const before2 = present([lane("l1", [it2])], "m2", 0);
+  const out2 = reducer(H(before2), { type: "INSERT_SLIDES", id: "m2", index: 1, slides: [slide(8), slide(9)] });
+  assert("INSERT_SLIDES inserts all slides at index, order preserved", marks(findItem(out2.present, "m2").slides).join() === "1,8,9,2", marks(findItem(out2.present, "m2").slides).join());
+  assert("INSERT_SLIDES pushes exactly ONE history entry", out2.past.length === 1, "past=" + out2.past.length);
+  const undo2 = reducer(out2, { type: "UNDO" });
+  assert("INSERT_SLIDES reversed by ONE undo", marks(findItem(undo2.present, "m2").slides).join() === "1,2", marks(findItem(undo2.present, "m2").slides).join());
+
+  // ---- multi-move: MOVE_SLIDES_TO_MODULE ----
+  clearTrackers();
+  const src = item("src", [slide(1), slide(2), slide(3), slide(4)]);
+  const dst = item("dst", [slide(9)]);
+  const before3 = present([lane("l1", [src, dst])], "src", 0);
+  const out3 = reducer(H(before3), { type: "MOVE_SLIDES_TO_MODULE", fromId: "src", toId: "dst", indices: [1, 3] });
+  assert("MOVE_SLIDES removes moved slides from source", marks(findItem(out3.present, "src").slides).join() === "1,3", marks(findItem(out3.present, "src").slides).join());
+  assert("MOVE_SLIDES appends moved slides to target in order", marks(findItem(out3.present, "dst").slides).join() === "9,2,4", marks(findItem(out3.present, "dst").slides).join());
+  assert("MOVE_SLIDES pushes exactly ONE history entry", out3.past.length === 1, "past=" + out3.past.length);
+  const undo3 = reducer(out3, { type: "UNDO" });
+  assert("MOVE_SLIDES reversed by ONE undo (source restored)", marks(findItem(undo3.present, "src").slides).join() === "1,2,3,4", marks(findItem(undo3.present, "src").slides).join());
+  assert("MOVE_SLIDES reversed by ONE undo (target restored)", marks(findItem(undo3.present, "dst").slides).join() === "9", marks(findItem(undo3.present, "dst").slides).join());
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

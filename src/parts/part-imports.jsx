@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.10";
+const VELA_VERSION = "13.11";
 const VELA_CHANGELOG = [
+  { v: "13.11", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
   { v: "13.10", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
   { v: "13.9", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },

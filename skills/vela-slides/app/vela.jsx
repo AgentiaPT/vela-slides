@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.10";
+const VELA_VERSION = "13.11";
 const VELA_CHANGELOG = [
+  { v: "13.11", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
   { v: "13.10", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
   { v: "13.9", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
@@ -3575,11 +3576,38 @@ function innerReducer(state, a) {
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
     case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
+    // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
+    // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
+    case "REMOVE_SLIDES": { _dirtyMods.add(a.id); const drop = new Set(a.indices || []); if (!drop.size) return state; return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => !drop.has(idx)) } : i); }
+    // Multi-slide insert (paste) as a SINGLE reduce — splices K sanitized slides in
+    // at `index`, order preserved. Single-slide paste can route through this too.
+    case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
     case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
+    // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
+    // slides at `indices` (ascending, order preserved) from fromId, drops them all,
+    // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
+    // gesture at once.
+    case "MOVE_SLIDES_TO_MODULE": {
+      const idxs = [...new Set(a.indices || [])].sort((x, y) => x - y);
+      if (!idxs.length) return state;
+      _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId);
+      const drop = new Set(idxs);
+      let movedSlides = [];
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
+        return i;
+      }).map((i) => {
+        if (i.id === a.toId && movedSlides.length) {
+          if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
+          return { ...i, slides: [...i.slides, ...movedSlides] };
+        }
+        return i;
+      }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
+    }
     case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
     case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
     // Multi-select of slide rows in the section list (shift/cmd-click). `indices`
@@ -6814,7 +6842,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (!arr || arr.length === 0) return;
           const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
           const insertAt = slides.length === 0 ? 0 : realIdx + 1;
-          arr.forEach((slide, k) => dispatch({ type: "INSERT_SLIDE", id: concept.id, index: insertAt + k, slide }));
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: arr });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
           showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
         });
@@ -7685,11 +7713,11 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   // Apply a slide-toolbox action to the right-clicked slide, or to the whole
   // multi-selection when the right-clicked row is part of it.
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
-  const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); idxs.forEach((i) => dispatch({ type: "REMOVE_SLIDE", id: item.id, index: i })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
+  const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
   const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
-  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); asc.forEach((orig, k) => dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: item.id, toId, index: orig - k })); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
+  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
   const commitSlideTitle = (si) => {

@@ -1810,7 +1810,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (!arr || arr.length === 0) return;
           const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
           const insertAt = slides.length === 0 ? 0 : realIdx + 1;
-          arr.forEach((slide, k) => dispatch({ type: "INSERT_SLIDE", id: concept.id, index: insertAt + k, slide }));
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: arr });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
           showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
         });
