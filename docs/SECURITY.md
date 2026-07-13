@@ -156,7 +156,7 @@ Vela Slides is a solo-maintained open-source project. We offer **symbolic bounti
 
 **Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
 
-**2026 remaining: $180 **
+**2026 remaining: $155 **
 
 This ceiling is non-negotiable. Reports submitted after the cap is hit are still triaged and credited — they simply do not receive cash that year. Final severity and reward are at maintainer discretion.
 
