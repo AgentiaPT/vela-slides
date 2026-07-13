@@ -48,6 +48,8 @@ Thin orchestrator (best model) + routed sub-agents; no bulk implementation in th
 **Burndown shape:** the blind gate *added* scope (1 content-loss defect at R1), so work-remaining
 bumped up before returning to zero — the honest agentic curve.
 
+![Agentic burndown](img/burndown.svg)
+
 ## Completeness evidence (the hard invariant)
 
 Measured on all 4 eval fixtures through the **real app path** (`validateAndSanitizeDeck(pptxToVelaDeck(buf))`):
@@ -103,14 +105,27 @@ independent blind best-model validator. Reusable capture harness: `capture-slide
    the fix, blind round 2 came back clean.)
 2. **Proof artifact** = this report. Full suite **362 passed**; importer suite **36 assertions**.
 
-## Cost
+## Cost (real — `sprint-cost.py --audit` over all transcripts)
 
-Thin-orchestrator model kept implementation out of the premium context. Approx. **~1.5M tokens**
-across **11 completed sub-agents** (2 recon, 3 implementation/test workers, 1 integration eval,
-3 vision QA, 2 blind validators) plus orchestration — grounded in each agent's reported usage
-(recon 235k · CR1 246k · CR3 208k · vision passes ~490k · blind gates 256k · other). No bulk
-source ever read into the hub; no fixture images pulled into the orchestrator context (per the
-hub-hygiene "no images in hub" rule and the user's "don't pull large content into main context").
+**Total $114.77** · 150.06M tokens (**94% cache-read**) · opus $98.55 / sonnet $16.23 · 17 agent transcripts.
+
+| Agent | Role | Model | Cost |
+|---|---|---|---|
+| orchestrator (main) | plan/delegate/integrate/gate | opus | $59.74 |
+| a5bb…2660 | CR1 importer core | opus | $13.82 |
+| a40a…d6a9 | blind gate R1 (found the bug) | opus | $7.50 |
+| a2a2…3f9ea | integration eval (died on session limit) | opus | $6.12 |
+| a668…f71b | blind gate R2 (clean) | opus | $4.62 |
+| ac7b…3b0c / a655…6f44 | recon (algorithm / integration) | opus | $3.44 / $3.30 |
+| aa41…7ed0 | CR3 tests | opus | $3.21 |
+| ae14…f1bd / a132…5703 / a549…28c6 / a4b1…5876 | vision QA passes | sonnet | $3.16 / $2.12 / $3.17 / $0.52 |
+| a85f…5740e | CR2 UI+version | sonnet | $0.77 |
+| (others) | | | ~$3.80 |
+
+**Orchestrator = 52% of spend, but 0 images pinned in the hub** (audit-confirmed) — the thin-orchestrator
+discipline held: no `.pptx` binaries, media, deck JSON, or screenshots ever entered the premium
+context; the hub read sub-agent verdicts, not payloads. The 94% cache-read share reflects a long
+multi-turn sprint (375 orchestrator turns), not payload bloat. Largest single pinned tool-result ~4.9k tok.
 
 ## What happened vs plan
 
