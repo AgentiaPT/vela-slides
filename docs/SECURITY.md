@@ -154,6 +154,8 @@ Vela Slides is a solo-maintained open-source project. We offer **symbolic bounti
 | **Low** | $10 + Hall of Fame | beacon/non sensitive information leakage, denial of service, header injection |
 | **Informational** | Hall of Fame | Best practice violations, defense-in-depth improvements |
 
+**Medium and above require crossing a security boundary.** A finding is eligible for Medium or higher *only if* it grants capability the attacker did not already hold — it must cross a trust boundary, not presuppose access that already grants equal-or-greater capability by a simpler path. If the precondition already yields as much, the finding is defense-in-depth and is capped at **Low or Informational**, regardless of how severe the isolated primitive sounds.
+
 **Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
 
 **2026 remaining: $155 **
