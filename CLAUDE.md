@@ -28,7 +28,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | Part | Purpose |
 |------|---------|
 | `part-imports.jsx` | Constants, sanitizers, helpers, storage API, startup patch system |
-| `part-icons.jsx` | 270+ Lucide icon resolver |
+| `part-icons.jsx` | 1000+ Lucide icon resolver |
 | `part-blocks.jsx` | 27 block renderers (heading, flow, grid, metric, timeline, etc.) |
 | `part-reducer.jsx` | useReducer state + dispatch actions |
 | `part-engine.jsx` | Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop |
@@ -36,8 +36,8 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-list.jsx` | Lane/module list, drag-and-drop |
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
-| `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 185 UI tests in 33 suites |
+| `part-demo.jsx` | Cinematic demo mode (19 scenes) |
+| `part-uitest.jsx` | 186 UI tests in 33 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |

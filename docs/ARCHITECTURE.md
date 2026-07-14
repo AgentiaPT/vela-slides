@@ -29,7 +29,7 @@ The dependency graph is fixed and acyclic. Concatenation is the simplest correct
 
 ```
 part-imports    → Constants, sanitizers, helpers, storage
-part-icons      → Icon resolution system (270+ icons)
+part-icons      → Icon resolution system (1000+ icons)
 part-blocks     → All 27 block renderers
 part-reducer    → State management, dispatch actions
 part-engine     → Vera AI engine, system prompts, API calls
@@ -37,8 +37,8 @@ part-slides     → Slide panel, fullscreen, branding overlay
 part-list       → Lane/module list, drag & drop
 part-chat       → Chat panel, tool trace cards
 part-test       → Battery tests
-part-uitest     → UI integration tests (185 tests in 33 suites)
-part-demo       → Cinematic demo mode (18 scenes)
+part-uitest     → UI integration tests (186 tests in 33 suites)
+part-demo       → Cinematic demo mode (19 scenes)
 part-pdf        → PDF export (raster + vector), markdown export
 part-pptx       → Native editable PowerPoint (.pptx) export
 part-app        → Top-level shell, modals, shortcuts
@@ -57,7 +57,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | Part | Lines | What it owns |
 |---|---|---|
 | `part-imports.jsx` | ~1,400 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
-| `part-icons.jsx` | ~290 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
+| `part-icons.jsx` | ~290 | `getIcon()` resolver mapping the full Lucide library (1000+ icons) dynamically, plus aliases, emoji fallback |
 | `part-blocks.jsx` | ~1,730 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon, icon-row, tag-group, progress, code, image, comparison, funnel, cycle, number-row, matrix, checklist, divider, spacer. Plus `EditableText` for WYSIWYG. |
 | `part-reducer.jsx` | ~300 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
 | `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
@@ -65,8 +65,8 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-list.jsx` | ~530 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
 | `part-chat.jsx` | ~440 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
 | `part-test.jsx` | ~330 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~1,860 | 185 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
-| `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
+| `part-uitest.jsx` | ~1,860 | 186 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
+| `part-demo.jsx` | ~860 | Cinematic demo mode with 19 scenes showcasing all Vela features |
 | `part-pdf.jsx` | ~3,950 | Canvas-based PDF renderer (raster + vector export path), watermark system, link annotations, markdown export |
 | `part-pptx.jsx` | ~1,180 | Native, editable PowerPoint (.pptx) exporter — a second emitter over the same primitive IR the vector-PDF path produces |
 | `part-app.jsx` | ~1,910 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
