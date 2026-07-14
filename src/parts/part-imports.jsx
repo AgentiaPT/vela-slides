@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.9";
+const VELA_VERSION = "13.10";
 const VELA_CHANGELOG = [
+  { v: "13.10", d: ["Security (defense-in-depth): PDF export now routes every hyperlink target through the single audited PDF-string encoder, closing a PDF literal-string injection where a crafted deck link could inject PDF action syntax. Both the raster and vector export paths share one encoder now.", "Regression tests added."] },
   { v: "13.9", d: ["Security (defense-in-depth): closed a URL-sanitizer scheme-allowlist bypass affecting exported hyperlink targets — deck links are now validated and emitted as a single canonical form, and malformed or non-http(s)/mailto references are rejected before they reach PowerPoint/PDF export.", "PowerPoint export re-validates hyperlink targets at the external-relationship boundary.", "Regression tests added."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },

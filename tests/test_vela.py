@@ -243,6 +243,24 @@ def test_security():
         fail("pptx hyperlink re-validation",
              "buildPptx must re-sanitizeUrl each link before emitting a TargetMode=External rel")
 
+    # 6f. Every PDF hyperlink target is written through the single audited PDF-string
+    #     encoder (pdfStringEncode), never interpolated raw into the "(...)" literal.
+    #     A raw "(${...})" URI write is a PDF literal-string injection sink (a deck
+    #     link could close the string early and inject PDF action syntax).
+    if '/URI (${link.url})' not in all_jsx \
+            and '/URI ${pdfStringEncode(link.url)}' in all_jsx \
+            and '/URI ${pdfStringEncode(link.href)}' in all_jsx:
+        ok("PDF URI actions encode targets via pdfStringEncode (both raster + vector)")
+    else:
+        fail("PDF URI literal-string encoding",
+             "raster and vector PDF URI writes must use pdfStringEncode(link.url/href), not raw (${...})")
+    # 6g. Raster PDF link collection re-validates the scheme at the sink boundary.
+    if 'const url = sanitizeUrl(el.getAttribute("data-pdf-link"));' in all_jsx:
+        ok("collectSlideLinks re-validates data-pdf-link scheme via sanitizeUrl")
+    else:
+        fail("raster PDF link scheme re-validation",
+             "collectSlideLinks must sanitizeUrl the data-pdf-link before it becomes a PDF action")
+
     # 7. sanitizeStudyNotes exists and routes diagram through sanitizeSvgMarkup
     if 'function sanitizeStudyNotes' in all_jsx:
         ok("sanitizeStudyNotes helper present")
