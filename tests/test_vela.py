@@ -1030,6 +1030,183 @@ def test_known_bugs():
         ok("Chat send button uses arrow wrapper, no event leak")
 
 
+# ━━━ Editor UX Bug Tests (CR1–CR3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_editor_ux_bugs():
+    print("\n── Editor UX Bug Tests (CR1–CR3) ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    blocks  = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+
+    # ── CR1: opening a deck must default to the first slide of the first
+    #        non-empty module in EDITOR mode too — not only presentation mode.
+    load_case = reducer[reducer.index('case "LOAD"'):reducer.index('case "ADD_LANE"')]
+    if "VELA_PRESENTATION_MODE && !loaded.selectedId" in load_case:
+        fail("CR1: LOAD auto-select is gated on VELA_PRESENTATION_MODE — editor opens blank")
+    else:
+        ok("CR1: LOAD auto-select not gated solely on presentation mode")
+    # Robust intent check (not a literal code string): the LOAD path must pick the
+    # first module that actually HAS slides and assign it as the selection — whether
+    # the trigger is "no selection" or a stale selectedId that resolves to an empty
+    # module (the deck-switch case). Match the semantic tokens, not one exact guard.
+    if re.search(r'i\.slides\.length\s*>\s*0', load_case) and re.search(r'selectedId\s*=\s*it\.id', load_case):
+        ok("CR1: LOAD defaults to first module WITH slides regardless of mode")
+    else:
+        fail("CR1: LOAD does not default-select first non-empty module in editor")
+
+    # ── CR2: a centered heading must stay centered in the editor path too.
+    #        The editor forces an icon-slot flex row (headingIconSlot) whose
+    #        text child is flex:1 — without an explicit textAlign the centered
+    #        text collapses to the left. Presenter (no icon slot) keeps it
+    #        centered via hs.textAlign. The fix carries textAlign onto the
+    #        flex-child so both modes align identically.
+    heading_case = blocks[blocks.index('case "heading"'):blocks.index('case "text":')]
+    if "textAlign: block.align" in heading_case:
+        ok("CR2: heading icon-slot path preserves textAlign (centered in editor + presenter)")
+    else:
+        fail("CR2: heading centering dropped in editor icon-slot path (flex:1 child, no textAlign)")
+
+    # ── CR3: editor slide viewport must be a fixed 16:9 box and the slide
+    #        toolbar must not shift per-slide. The old default rendered the
+    #        auto ratio with mode="fill" (container-shaped, elastic) and the
+    #        notes bar auto-expanded per slide, pushing the toolbar around.
+    if 'mode={isAuto ? "fill" : "fit-viewport"}' in slides:
+        fail("CR3: editor uses elastic container-shaped 'fill' viewport (not fixed 16:9)")
+    else:
+        ok("CR3: editor viewport pinned to fixed-aspect (letterboxed) render")
+    if '"slide-viewport"' in slides:
+        ok("CR3: editor slide viewport is tagged (fixed-aspect box)")
+    else:
+        fail("CR3: no slide-viewport marker on editor preview box")
+    if 'data-testid="slide-toolbar"' in slides:
+        ok("CR3: slide toolbar is tagged for stable-position verification")
+    else:
+        fail("CR3: slide toolbar has no test marker")
+    if "const notesOpen = showNotes || hasNotes" in slides:
+        fail("CR3: notes bar auto-expands per slide — toolbar position varies")
+    else:
+        ok("CR3: notes bar does not auto-expand per slide (stable toolbar)")
+
+
+def test_slide_editor_ux_features():
+    print("\n── Multi-select / Context-menu / Move-picker (Features 4–6) ──")
+
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # ── Feature 4: multi-slide clipboard ────────────────────────────
+    if "velaClipboardWriteSlides" in imports and "velaClipboardReadSlides" in imports:
+        ok("F4: multi-slide clipboard helpers exist (write/read Slides)")
+    else:
+        fail("F4: velaClipboardWriteSlides/ReadSlides missing")
+    read_fn = imports[imports.index("const velaClipboardReadSlides"):]
+    read_fn = read_fn[:read_fn.index("};") + 2]
+    if "_velaSlides" in read_fn and "_velaSlide" in read_fn:
+        ok("F4: read path accepts BOTH multi (_velaSlides) and legacy single (_velaSlide) envelopes")
+    else:
+        fail("F4: read path not back-compatible with legacy single envelope")
+    write_fn = imports[imports.index("const velaClipboardWriteSlides"):]
+    write_fn = write_fn[:write_fn.index("};") + 2]
+    if "_velaSlide:" in write_fn and "_velaSlides:" in write_fn:
+        ok("F4: single-slide copy still writes legacy envelope (older readers can paste)")
+    else:
+        fail("F4: single-slide copy does not preserve legacy envelope")
+    if "velaClipboardWriteSlides" in slides and "state.selectedSlideIndices" in slides:
+        ok("F4: Ctrl+C copies all selected slides (uses selectedSlideIndices)")
+    else:
+        fail("F4: copy handler does not use multi-selection")
+    if "velaClipboardReadSlides" in slides and 'type: "INSERT_SLIDES"' in slides and "slides: arr" in slides:
+        ok("F4: Ctrl+V inserts pasted slides in one batch (single undo)")
+    else:
+        fail("F4: paste handler does not batch-insert pasted slides")
+
+    # ── Feature 4: reducer multi-select state ───────────────────────
+    if "selectedSlideIndices" in reducer and 'case "SET_SLIDE_SELECTION"' in reducer:
+        ok("F4: reducer has selectedSlideIndices + SET_SLIDE_SELECTION action")
+    else:
+        fail("F4: reducer missing multi-select state/action")
+    if '"SET_SLIDE_SELECTION"' in reducer[reducer.index("NO_HISTORY"):reducer.index("MAX_HISTORY")]:
+        ok("F4: SET_SLIDE_SELECTION excluded from undo history")
+    else:
+        fail("F4: SET_SLIDE_SELECTION not in NO_HISTORY")
+    sel_case = reducer[reducer.index('case "SELECT"'):reducer.index('case "SET_FULLSCREEN"')]
+    if "selectedSlideIndices: []" in sel_case:
+        ok("F4: SELECT / SET_SLIDE_INDEX clear multi-selection")
+    else:
+        fail("F4: plain selection does not clear multi-selection")
+    if "handleSlideRowClick" in lst and "e.shiftKey" in lst and "e.metaKey || e.ctrlKey" in lst:
+        ok("F4: TOC slide rows support shift-range + cmd/ctrl-toggle select")
+    else:
+        fail("F4: TOC slide rows missing multi-select click logic")
+    if 'data-selected={isMultiSel ? "true" : undefined}' in lst:
+        ok("F4: selected rows carry data-selected marker + highlight")
+    else:
+        fail("F4: no data-selected marker on selected rows")
+
+    # ── Feature 5: right-click context menu ─────────────────────────
+    if "function ContextMenu(" in lst and 'testid="toc-context-menu"' in lst:
+        ok("F5: reusable ContextMenu component exists (toc-context-menu)")
+    else:
+        fail("F5: ContextMenu component / testid missing")
+    if "onContextMenu=" in lst:
+        ok("F5: TOC slide row wires onContextMenu")
+    else:
+        fail("F5: onContextMenu not attached to slide rows")
+    for tid in ["ctx-move", "ctx-duplicate", "ctx-delete", "ctx-hide"]:
+        if f'testid="{tid}"' in lst:
+            ok(f"F5: context menu has {tid} action")
+        else:
+            fail(f"F5: context menu missing {tid}")
+    for act in ["MOVE_SLIDE_TO_MODULE", "DUPLICATE_SLIDE", "REMOVE_SLIDE", "TOGGLE_SLIDE_HIDDEN"]:
+        if act in lst:
+            ok(f"F5: context menu dispatches {act}")
+        else:
+            fail(f"F5: context menu does not dispatch {act}")
+    # closes on outside-click / Escape
+    if 'addEventListener("mousedown"' in lst and 'e.key === "Escape"' in lst:
+        ok("F5: context menu closes on outside-click and Escape")
+    else:
+        fail("F5: context menu missing outside-click/Escape close")
+
+    # ── Feature 6: searchable move picker ───────────────────────────
+    if "function SectionPicker(" in slides and 'data-testid="section-search"' in slides:
+        ok("F6: SectionPicker has an autofocused search input (section-search)")
+    else:
+        fail("F6: SectionPicker search input missing")
+    picker = slides[slides.index("function SectionPicker("):slides.index("function SlidePanel(")]
+    if "toLowerCase().includes(ql)" in picker:
+        ok("F6: search filters sections case-insensitively")
+    else:
+        fail("F6: search does not filter sections")
+    if "vela-wide-scroll" in slides and "vela-wide-scroll::-webkit-scrollbar{width:10px}" in imports:
+        ok("F6: scoped wider scrollbar class (.vela-wide-scroll) applied to picker")
+    else:
+        fail("F6: wide-scrollbar scoped class missing")
+    if "::-webkit-scrollbar{width:5px}" in imports:
+        ok("F6: global scrollbar width unchanged (5px)")
+    else:
+        fail("F6: global scrollbar width was altered")
+    if "data-scroll-container" in picker and "onWheel={(e) => e.stopPropagation()}" in picker:
+        ok("F6: picker scroll list marked data-scroll-container + stops wheel (no slide change)")
+    else:
+        fail("F6: wheel over picker not isolated from slide-nav")
+    # move popover reuses SectionPicker
+    if "<SectionPicker" in slides and 'data-testid="move-picker"' in slides:
+        ok("F6: move-to-module popover renders SectionPicker")
+    else:
+        fail("F6: move popover does not reuse SectionPicker")
+
+    # help text mentions multi-select
+    if "Multi-select slides" in appjs:
+        ok("F4/F5: help dialog documents multi-select + right-click menu")
+    else:
+        fail("F4/F5: help dialog not updated")
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
@@ -3307,6 +3484,8 @@ if __name__ == "__main__":
         test_css_color_exfil()
         test_audit_2025_05_fixes()
         test_known_bugs()
+        test_editor_ux_bugs()
+        test_slide_editor_ux_features()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()

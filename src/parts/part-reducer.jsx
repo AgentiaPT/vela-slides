@@ -1,8 +1,8 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -14,12 +14,28 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
-      // Read-only viewer / standalone-HTML export (VELA_PRESENTATION_MODE): a freshly
-      // loaded deck has selectedId=null, which the presentation blank-gate treats as
-      // "not ready" and renders blank. Auto-select the first module so the shared deck
-      // opens straight into its first slide. Editor behavior is unchanged (flag off).
-      if (VELA_PRESENTATION_MODE && !loaded.selectedId) {
-        for (const l of (loaded.lanes || [])) { if (l.items && l.items.length) { loaded.selectedId = l.items[0].id; loaded.slideIndex = 0; break; } }
+      // CR1: a freshly loaded/switched deck must open straight into the first slide
+      // of the first non-empty module — in BOTH editor and presentation modes.
+      // Auto-select when there is no selection OR the incoming selectedId does not
+      // resolve to a module that still has slides. The latter guards the deck-switch
+      // path (the receive handler preserves a stale selectedId when lane/item counts
+      // coincide, and IDs get remapped positionally, so the selection can land on an
+      // empty module and render "No slides yet"). Prefer the first module that
+      // actually HAS slides so we never open blank.
+      let selHasSlides = false;
+      if (loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.id === loaded.selectedId);
+          if (it) { selHasSlides = !!(it.slides && it.slides.length > 0); break; }
+        }
+      }
+      if (!selHasSlides) {
+        loaded.selectedId = null;
+        loaded.slideIndex = 0;
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.slides && i.slides.length > 0);
+          if (it) { loaded.selectedId = it.id; loaded.slideIndex = 0; break; }
+        }
       }
       if (loaded.selectedId && loaded.slideIndex > 0) {
         let maxSlides = 0;
@@ -113,13 +129,45 @@ function innerReducer(state, a) {
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
     case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
+    // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
+    // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
+    case "REMOVE_SLIDES": { _dirtyMods.add(a.id); const drop = new Set(a.indices || []); if (!drop.size) return state; return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => !drop.has(idx)) } : i); }
+    // Multi-slide insert (paste) as a SINGLE reduce — splices K sanitized slides in
+    // at `index`, order preserved. Single-slide paste can route through this too.
+    case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
     case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
-    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0 };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index };
+    // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
+    // slides at `indices` (ascending, order preserved) from fromId, drops them all,
+    // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
+    // gesture at once.
+    case "MOVE_SLIDES_TO_MODULE": {
+      const idxs = [...new Set(a.indices || [])].sort((x, y) => x - y);
+      if (!idxs.length) return state;
+      _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId);
+      const drop = new Set(idxs);
+      let movedSlides = [];
+      return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
+        if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
+        return i;
+      }).map((i) => {
+        if (i.id === a.toId && movedSlides.length) {
+          if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
+          return { ...i, slides: [...i.slides, ...movedSlides] };
+        }
+        return i;
+      }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
+    }
+    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
+    // Multi-select of slide rows in the section list (shift/cmd-click). `indices`
+    // are raw slide indices within the currently selected module; `index` (the
+    // clicked row) becomes the active slideIndex. An empty `indices` means "just
+    // the active slide" — callers/readers treat [] as [slideIndex].
+    case "SET_SLIDE_SELECTION": return { ...state, slideIndex: a.index != null ? a.index : state.slideIndex, selectedSlideIndices: Array.isArray(a.indices) ? a.indices : [] };
     case "SET_FULLSCREEN": return { ...state, fullscreen: a.value, fontScale: a.value ? state.fontScale : 1 };
     case "SET_FONT_SCALE": return { ...state, fontScale: a.value };
     case "DESELECT": return { ...state, selectedId: null, slideIndex: 0, fullscreen: false, fontScale: 1 };

@@ -99,8 +99,51 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.10";
+// Copy N slides to the system clipboard. A single slide is written in the legacy
+// single envelope ({_velaSlide}) so older Vela builds can still paste it; two or
+// more slides use the multi envelope ({_velaSlides, data:[...]}). Order preserved.
+const velaClipboardWriteSlides = async (slides) => {
+  const arr = (Array.isArray(slides) ? slides : [slides]).filter(Boolean);
+  if (arr.length === 0) return false;
+  const clone = JSON.parse(JSON.stringify(arr));
+  const envelope = arr.length === 1
+    ? { _velaSlide: true, v: 1, data: clone[0] }
+    : { _velaSlides: true, v: 1, data: clone };
+  const text = JSON.stringify(envelope);
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch {}
+  try { velaClipboard(text); return true; } catch { return false; }
+};
+
+// Read N slides from the system clipboard (returns array of sanitized slides).
+// Accepts BOTH the new multi envelope ({_velaSlides}) and the legacy single
+// envelope ({_velaSlide}) so old single-slide clipboards still paste.
+const velaClipboardReadSlides = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return [];
+    const parsed = JSON.parse(text.trim());
+    if (parsed?._velaSlides && Array.isArray(parsed.data)) {
+      return parsed.data.map((s) => sanitizeSlide(s)).filter(Boolean);
+    }
+    if (parsed?._velaSlide && parsed.data && typeof parsed.data === "object") {
+      const s = sanitizeSlide(parsed.data);
+      return s ? [s] : [];
+    }
+  } catch {}
+  return [];
+};
+
+const VELA_VERSION = "13.17";
 const VELA_CHANGELOG = [
+  { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
+  { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
+  { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
+  { v: "13.14", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
+  { v: "13.13", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
+  { v: "13.12", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
+  { v: "13.11", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
   { v: "13.10", d: ["Security (defense-in-depth): PDF export now routes every hyperlink target through the single audited PDF-string encoder, closing a PDF literal-string injection where a crafted deck link could inject PDF action syntax. Both the raster and vector export paths share one encoder now.", "Regression tests added."] },
   { v: "13.9", d: ["Security (defense-in-depth): closed a URL-sanitizer scheme-allowlist bypass affecting exported hyperlink targets — deck links are now validated and emitted as a single canonical form, and malformed or non-http(s)/mailto references are rejected before they reach PowerPoint/PDF export.", "PowerPoint export re-validates hyperlink targets at the external-relationship boundary.", "Regression tests added."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
@@ -1279,6 +1322,7 @@ const getCss = () => `
 @keyframes pulse{0%,100%{opacity:0.4;transform:scale(1)}50%{opacity:1;transform:scale(1.15)}}
 @keyframes loading-bar{0%{transform:translateX(-100%)}50%{transform:translateX(60%)}100%{transform:translateX(-100%)}}
 ::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px}
+.vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
 .slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}

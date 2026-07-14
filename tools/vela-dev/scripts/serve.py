@@ -22,6 +22,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -752,6 +753,20 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 class ThreadedHTTPServer(http.server.HTTPServer):
     """HTTP server with a bounded thread pool to prevent DoS via thread exhaustion."""
     daemon_threads = True
+    # On Windows, SO_REUSEADDR (set by HTTPServer's allow_reuse_address) lets a
+    # second process silently bind an already-in-use port, so a busy port never
+    # raises EADDRINUSE and the fallback can't kick in. Disable reuse there and
+    # request exclusive use so busy ports are detected. On Unix keep reuse to
+    # avoid TIME_WAIT bind failures on quick restarts.
+    allow_reuse_address = (sys.platform != "win32")
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except (AttributeError, OSError):
+                pass
+        super().server_bind()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1073,7 +1088,9 @@ class VelaLocalServer:
         webbrowser.open(url)
 
     def _retry_after_stale_kill(self, handler_class):
-        """Kill the stale process on our port and retry binding."""
+        """Try to free the requested port by killing a stale process on it, then
+        rebind. Returns the bound server on success, or None if the port could
+        not be freed (the caller then falls back to another port)."""
         import subprocess
         print(f"  [port]   Port {self.port} in use — killing stale process...")
         # Try reading PID from .vela.env first (most reliable)
@@ -1121,15 +1138,43 @@ class VelaLocalServer:
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
         if not killed:
-            print(f"  [port]   ERROR: Could not free port {self.port}. Is another service using it?", file=sys.stderr)
-            sys.exit(1)
+            print(f"  [port]   Could not free port {self.port} (another service may be using it).")
+            return None
         import time
         time.sleep(0.5)
         try:
             return ThreadedHTTPServer((self.host, self.port), handler_class)
         except OSError:
-            print(f"  [port]   ERROR: Port {self.port} still in use after kill.", file=sys.stderr)
-            sys.exit(1)
+            print(f"  [port]   Port {self.port} still in use after kill.")
+            return None
+
+    def _bind_server(self, handler_class):
+        """Bind the HTTP server to self.port. If the port is busy, first try to
+        reclaim it from a stale/previous Vela server; if it is still busy (e.g.
+        held by an unrelated process), fall back to the next free port. Updates
+        self.port to the port actually bound, so the printed URL and runtime
+        file always match where the server is listening."""
+        requested = self.port
+        try:
+            return ThreadedHTTPServer((self.host, requested), handler_class)
+        except OSError as e:
+            if e.errno not in (98, 10048, 10013):  # not EADDRINUSE (98/10048) or EACCES (10013)
+                raise
+        # Requested port busy — try to reclaim it from a stale process.
+        httpd = self._retry_after_stale_kill(handler_class)
+        if httpd is not None:
+            return httpd
+        # Still busy — scan for the next available port.
+        for candidate in range(requested + 1, requested + 21):
+            try:
+                httpd = ThreadedHTTPServer((self.host, candidate), handler_class)
+                print(f"  [port]   Port {requested} unavailable — falling back to port {candidate}")
+                self.port = candidate
+                return httpd
+            except OSError:
+                continue
+        print(f"  [port]   ERROR: No free port in range {requested}-{requested + 20}.", file=sys.stderr)
+        sys.exit(1)
 
     # ── Run ──────────────────────────────────────────────────────────
 
@@ -1231,17 +1276,12 @@ class VelaLocalServer:
                 print(f"  [port]   PID {stale_pid} is Python but not on port {stale_port} — stale runtime, cleaning up")
                 self._remove_runtime_files()
                 return
-            # Confirmed: Python process holding our port
-            if self._force_kill:
-                print(f"  [port]   Killing previous Vela server (PID {stale_pid}, port {stale_port})...")
-                self._kill_pid(stale_pid)
-                time.sleep(0.5)
-                self._remove_runtime_files()
-            else:
-                print(f"\n  ⚠️  Vela server already running (PID {stale_pid}, port {stale_port})")
-                print(f"  To replace it:  vela server start . --port {stale_port} --replace")
-                print(f"  To use another: vela server start . --port {stale_port + 1}")
-                sys.exit(1)
+            # Confirmed: Python process holding our port — stop it first so we
+            # can reuse the same port cleanly ("stop any existing servers first").
+            print(f"  [port]   Stopping previous Vela server (PID {stale_pid}, port {stale_port})...")
+            self._kill_pid(stale_pid)
+            time.sleep(0.5)
+            self._remove_runtime_files()
 
     def _write_runtime_info(self):
         """Write .vela.env with auth token, port, pid.
@@ -1316,13 +1356,10 @@ class VelaLocalServer:
 
         VelaHTTPHandler.server_ref = self
 
-        try:
-            httpd = ThreadedHTTPServer((self.host, self.port), VelaHTTPHandler)
-        except OSError as e:
-            if e.errno in (98, 10048, 10013):  # EADDRINUSE (Linux 98, Windows 10048) or EACCES (Windows 10013)
-                httpd = self._retry_after_stale_kill(VelaHTTPHandler)
-            else:
-                raise
+        httpd = self._bind_server(VelaHTTPHandler)
+        # Binding may have fallen back to a different port — sync self.port to the
+        # actual bound port so the URL, banner, and runtime file all agree.
+        self.port = httpd.server_address[1]
 
         # Port bound successfully — write runtime info and register cleanup
         self._write_runtime_info()

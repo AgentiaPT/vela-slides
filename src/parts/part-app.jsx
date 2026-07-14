@@ -583,8 +583,10 @@ function ShortcutHelp({ onClose }) {
       ["⌘Z / Ctrl+Z", "Undo"],
       ["⌘⇧Z / Ctrl+Y", "Redo"],
       ["Click text", "Edit inline on slide"],
-      ["Ctrl+C", "Copy slide to clipboard"],
-      ["Ctrl+V", "Paste slide / image / JSON"],
+      ["⇧/⌘-click", "Multi-select slides in the list"],
+      ["Ctrl+C", "Copy selected slide(s) to clipboard"],
+      ["Ctrl+V", "Paste slide(s) / image / JSON"],
+      ["Right-click", "Slide menu (move / duplicate / delete / hide)"],
       ["Del", "Delete current slide"],
       ["R", "Toggle review / comments"],
     ]},
@@ -1173,7 +1175,16 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; };
+    // Test-only: replace the current slide's blocks (used by the Editor UX
+    // alignment test — CR2 — to place a known centered heading and assert it
+    // renders centered in the editor path). No-op in production (unused).
+    window.__velaTestInjectBlocks = (blocks, extra) => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return false;
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
+      return true;
+    };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)
@@ -1484,13 +1495,28 @@ export default function App() {
 
   // An empty deck should be immediately editable: seed a first section so the
   // user can add slides right away (no "create deck" / "add section" step).
-  // Gated by loaded.current so it never races initial hydration; skipped while
-  // an AI build is pending/streaming — Vera populates the deck itself then.
+  // Skipped while an AI build is pending/streaming — Vera populates the deck then.
+  //
+  // The seed must NOT fire during initial hydration, when state.lanes is
+  // transiently [] before the deck is applied — the deck can arrive either
+  // synchronously (STARTUP_PATCH) or asynchronously over the folder-sync
+  // channel, so a plain "lanes===0" check (or a next-tick recheck) races it and
+  // appends a spurious "New section" to the real deck on every load. Gate the
+  // seed behind an "armed" flag that flips true only once we have either seen
+  // loaded content (lanes>0) or waited out a short grace window for a genuinely
+  // empty deck. Using state (not a ref) so arming re-runs the seed effect.
+  const [seedArmed, setSeedArmed] = useState(false);
   useEffect(() => {
-    if (!loaded.current || state.lanes.length !== 0) return;
+    if (seedArmed) return;
+    if (state.lanes.length > 0) { setSeedArmed(true); return; }
+    const t = setTimeout(() => setSeedArmed(true), 1500);
+    return () => clearTimeout(t);
+  }, [state.lanes.length, seedArmed]);
+  useEffect(() => {
+    if (!loaded.current || !seedArmed || state.lanes.length !== 0) return;
     if (state._bootstrap || state.chatLoading) return;
     dispatch({ type: "INSERT_ITEM", title: "New section" });
-  }, [state.lanes.length, state._bootstrap, state.chatLoading]);
+  }, [seedArmed, state.lanes.length, state._bootstrap, state.chatLoading]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
   // In LOCAL_MODE the file on disk is the source of truth (synced via
@@ -1779,7 +1805,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}

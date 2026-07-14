@@ -186,7 +186,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         ? { position: "absolute", inset: 0, background: bg, overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }
         : { position: "absolute", inset: 0, background: bg, overflow: "hidden" }
       : { width: "100%", aspectRatio, position: "relative", overflow: "hidden", borderRadius: 6, border: `1px solid ${T.border}` }}>
-      <div ref={innerRef} style={{
+      <div ref={innerRef} data-testid={bordered ? "slide-viewport" : undefined} style={{
         width: vw, height: vh,
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
@@ -1287,6 +1287,44 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   );
 }
 
+// Reusable searchable section/module picker — renders a filter input + a
+// scrollable list of destination modules. Shared by the slide toolbar's
+// "Move to module" popover (Feature 6) and the section-list right-click context
+// menu (Feature 5). `mods` = [{ id, title, lane }]; onPick(id) fires on choice.
+// The scroll list is tagged data-scroll-container (+ stops wheel propagation) so
+// the SlidePanel wheel-nav listener does not change slides while scrolling it,
+// and carries .vela-wide-scroll for the wider scrollbar.
+function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other sections" }) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { if (autoFocus) { const t = setTimeout(() => inputRef.current?.focus(), 0); return () => clearTimeout(t); } }, []);
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? mods.filter((m) => (m.title || "").toLowerCase().includes(ql) || (m.lane || "").toLowerCase().includes(ql)) : mods;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minWidth: 200, maxWidth: "calc(100vw - 16px)" }}>
+      <div style={{ padding: "4px 8px 2px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>
+      <input ref={inputRef} data-testid="section-search" value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}
+        placeholder="Search sections…"
+        style={{ ...S.input({ padding: "4px 8px", fontSize: 12 }), margin: "0 4px 4px", width: "calc(100% - 8px)" }} />
+      <div data-scroll-container data-testid="section-picker-list" className="vela-wide-scroll"
+        onWheel={(e) => e.stopPropagation()}
+        style={{ maxHeight: 220, overflowY: "auto" }}>
+        {mods.length === 0
+          ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>{emptyLabel}</div>
+          : filtered.length === 0
+            ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No matches</div>
+            : filtered.map((m) => <button key={m.id} data-testid="section-picker-item" onClick={(e) => { e.stopPropagation(); onPick(m.id, e); }}
+                style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                {m.title}{m.lane ? <span style={{ color: T.textDim, fontSize: 10, marginLeft: 6 }}>{m.lane}</span> : null}
+              </button>)}
+      </div>
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
@@ -1753,23 +1791,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
-      // Ctrl+C → copy current slide to system clipboard
+      // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
+      // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
         const curSlides = slidesRef.current;
         const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
-        if (realIdx >= 0 && realIdx < curSlides.length) {
+        const multi = (state.selectedSlideIndices && state.selectedSlideIndices.length) ? [...state.selectedSlideIndices].sort((a, b) => a - b) : [realIdx];
+        const toCopy = multi.filter((i) => i >= 0 && i < curSlides.length).map((i) => curSlides[i]);
+        if (toCopy.length > 0) {
           e.preventDefault();
-          velaClipboardWriteSlide(curSlides[realIdx]).then((ok) => { if (ok) showNavToast("Slide copied"); });
+          velaClipboardWriteSlides(toCopy).then((ok) => { if (ok) showNavToast(toCopy.length > 1 ? `${toCopy.length} slides copied` : "Slide copied"); });
         }
       }
-      // Ctrl+V → paste slide from system clipboard
+      // Ctrl+V → paste slide(s) from system clipboard, inserted sequentially after
+      // the active slide (order preserved). Accepts old single-slide clipboards too.
       if ((e.ctrlKey || e.metaKey) && e.key === "v" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
-        velaClipboardReadSlide().then((slide) => {
-          if (!slide) return;
-          const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          dispatch({ type: "INSERT_SLIDE", id: concept.id, index: insertAt, slide });
-          dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
-          showNavToast("Slide pasted");
+        velaClipboardReadSlides().then((arr) => {
+          if (!arr || arr.length === 0) return;
+          const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
+          const insertAt = slides.length === 0 ? 0 : realIdx + 1;
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: arr });
+          dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
+          showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
         });
       }
       // Delete key → remove current slide (not in input/textarea)
@@ -1782,7 +1825,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -2221,7 +2264,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
                 return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isAuto ? "fill" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? undefined : vw} virtualH={isAuto ? undefined : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
+                      default "auto"/Fit ratio) so the editor viewport height is
+                      content-independent and the toolbar below stays put. Elastic
+                      container-shaped "fill" is reserved for fullscreen/present. */}
+                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -2367,7 +2414,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
           <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -2384,7 +2431,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {slides.length > 0 && (() => {
           const curSlide = slides[slideIndex];
           const hasNotes = curSlide?.notes?.trim();
-          const notesOpen = showNotes || hasNotes;
+          // CR3: do NOT auto-expand the notes textarea just because a slide has
+          // notes — that made the notes bar a per-slide height changer, shrinking
+          // the elastic preview and pushing the slide toolbar (AI Edit / Improve)
+          // out of view when switching slides. The NOTES header stays a constant
+          // height for every slide (accent-coloured when notes exist); the user
+          // clicks it to reveal/edit. Keeps the toolbar position stable.
+          const notesOpen = showNotes;
           return <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel }}>
             <div onClick={() => setShowNotes((v) => !v)} style={{ padding: "3px 12px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <span style={{ fontSize: 10 }}>📝</span>
@@ -2397,7 +2450,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>;
         })()}
         {/* Move-to-module popover */}
-        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(260, allMods.length * 32 + 40); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, minWidth: 200, maxWidth: "calc(100vw - 16px)", maxHeight: 260, overflowY: "auto", zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><div style={{ padding: "4px 8px", fontSize: 9, color: T.textDim, fontFamily: FONT.mono, textTransform: "uppercase" }}>Move to…</div>{allMods.length === 0 ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No other modules</div> : allMods.map((m) => <button key={m.id} onClick={() => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId: m.id, index: slideIndex }); setShowMoveToModule(false); }} style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }} onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>{m.title}</button>)}</div></>; })()}
+        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>

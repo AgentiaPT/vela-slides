@@ -1,0 +1,30 @@
+{
+  "git": {
+    "commits": [
+      {
+        "t": "2026-07-13T22:46:07+00:00",
+        "subject": "fix(editor): default to first slide, keep centered text centered, fix viewport/toolbar layout",
+        "is_fix": true,
+        "is_test": false
+      },
+      {
+        "t": "2026-07-13T23:11:30+00:00",
+        "subject": "feat(editor): multi-select slide copy, TOC right-click menu, searchable move picker",
+        "is_fix": false,
+        "is_test": false
+      },
+      {
+        "t": "2026-07-13T23:27:41+00:00",
+        "subject": "fix(editor): multi-slide delete/paste/move undo as a single step",
+        "is_fix": true,
+        "is_test": false
+      }
+    ],
+    "n_commits": 3,
+    "n_fix": 2,
+    "n_test": 0
+  },
+  "transcript": {
+    "available": false
+  }
+}

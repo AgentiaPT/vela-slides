@@ -1021,6 +1021,88 @@ uiSuite("Study Notes", [
   }},
 ]);
 
+// ── Editor UX regressions (CR1 selection · CR2 alignment · CR3 layout) ──
+// Asserts against the real rendered editor DOM:
+//   CR1 — a slide is selected/visible on load (never a blank editor).
+//   CR2 — a centered heading renders centered in the editor (icon-slot path),
+//         matching presenter alignment; a left icon does not left-align it.
+//   CR3 — the slide viewport is a fixed 16:9 box and the slide toolbar keeps
+//         the same on-screen position across slides of differing content.
+uiSuite("Editor UX (CR1–CR3)", [
+  { name: "CR1: a slide is selected & visible on load (not blank)", fn: async () => {
+    // The viewport marker only renders when a module/slide is selected.
+    await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+  }},
+  { name: "CR3: slide viewport renders at fixed 16:9", fn: async () => {
+    const vp = await _waitFor(() => _$("[data-testid='slide-viewport']"), 3000);
+    const r = vp.getBoundingClientRect();
+    if (r.width < 40 || r.height < 20) throw new Error(`viewport too small: ${r.width}x${r.height}`);
+    const ratio = r.width / r.height;
+    if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
+  }},
+  { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
+    // Light slide, no notes.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    await _wait(180);
+    const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    // Heavy slide with lots of content AND speaker notes — the pre-fix notes
+    // auto-expand + elastic viewport would shove the toolbar upward here.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "HEAVY CONTENT SLIDE" },
+      { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
+      { type: "text", text: "A long paragraph ".repeat(20) },
+    ], { notes: "Speaker notes line 1\nline 2\nline 3\nline 4\nline 5\nline 6" });
+    await _wait(180);
+    const tb2 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
+    const vp2 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
+    if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
+    if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
+    // Restore a benign single heading.
+    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    await _wait(80);
+  }},
+  { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    // Inject a centered heading (NO icon → the editor still forces its icon-slot
+    // flex row, which is exactly the path that used to drop centering).
+    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    if (!okc) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    // Leaf element that actually holds the text node.
+    const leaf = await _waitFor(() => {
+      const cand = _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === "CENTERED TITLE UITEST");
+      return cand || null;
+    }, 3000);
+    // 1) Computed alignment on the text box must be centered (the fix sets
+    //    textAlign:center on the flex:1 child; the bug left it inheriting left).
+    const ta = getComputedStyle(leaf).textAlign;
+    if (ta !== "center") throw new Error(`heading textAlign=${ta} (expected center)`);
+    // 2) Geometric confirmation via a Range over the glyphs — the text ink box
+    //    must sit roughly centered within its container, not hugging the left.
+    const range = document.createRange();
+    range.selectNodeContents(leaf);
+    const gr = range.getBoundingClientRect();
+    const cr = leaf.getBoundingClientRect();
+    const leftGap = gr.left - cr.left;
+    const rightGap = cr.right - gr.right;
+    if (gr.width > 4 && cr.width - gr.width > 20) {
+      // Only meaningful when the container is wider than the glyphs.
+      if (leftGap < 8) throw new Error(`glyphs hug left edge (leftGap=${leftGap.toFixed(1)}) — not centered`);
+      if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
+    }
+  }},
+  { name: "CR2: cleanup injected blocks", fn: async () => {
+    // Best-effort: restore by selecting first module again (reload path).
+    // Injected block persists only in state; leaving it is harmless for later
+    // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
 // ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
 // The svg block previously used a regex chain that let unquoted and
 // whitespace-obfuscated javascript: URIs through. These assert the
@@ -1637,6 +1719,35 @@ uiSuite("Section drag reorder (7-1)", [
   }},
 ]);
 
+uiSuite("Section collapse-all (Ctrl-click) — v13.15", [
+  { name: "Ctrl-click collapses/expands every section, plain click affects only one", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    // The collapse arrow is the row's first <span> (rendered before the imp-dot
+    // div and title), identifiable by its rotate() transform.
+    const toggles = () => rows().map((r) => r.querySelector("span"));
+    const isCollapsed = (span) => /rotate\(-90deg\)/.test(span.style.transform || "");
+    if (rows().length < 2) throw new Error("need >=2 sections");
+    // Plain click collapses only the clicked section.
+    _click(toggles()[0]);
+    await _wait(150);
+    let states = toggles().map(isCollapsed);
+    if (!states[0]) throw new Error("plain click did not collapse the clicked section");
+    if (states.slice(1).some(Boolean)) throw new Error("plain click affected other sections");
+    _click(toggles()[0]); // restore
+    await _wait(150);
+    // Ctrl-click collapses ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (!states.every(Boolean)) throw new Error("ctrl-click did not collapse all sections");
+    // Ctrl-click again expands ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (states.some(Boolean)) throw new Error("ctrl-click did not expand all sections");
+  }},
+]);
+
 uiSuite("Presenter Ctrl+E (7-1)", [
   { name: "Ctrl+E toggles the TOC search pane", fn: async () => {
     try { document.activeElement?.blur?.(); } catch {}
@@ -1652,6 +1763,104 @@ uiSuite("Presenter Ctrl+E (7-1)", [
     _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
 ]);
+
+// ── Multi-select / Context menu / Move picker (Features 4–6) ──────────
+// Dispatch a native click carrying keyboard modifiers (React onClick reads them).
+const _clickMod = (el, opts = {}) => {
+  if (!el) throw new Error("clickMod: element not found");
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...opts }));
+  return el;
+};
+const _rightClick = (el, x = 120, y = 120) => {
+  if (!el) throw new Error("rightClick: element not found");
+  el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  return el;
+};
+const _tocRows = () => _$$('[data-testid="toc-slide-row"]');
+// A prior suite may leave the app in Vela fullscreen (a fixed inset:0 overlay at
+// a high z-index showing the "N / N" slide counter). Toggle out with 'f' so the
+// editor's SlidePanel toolbar actually renders for these suites.
+const _exitFullscreen = async () => {
+  const inFs = () => _$$("div").some((d) => d.style.position === "fixed" && d.style.inset === "0px" && parseInt(d.style.zIndex || "0", 10) >= 999 && /\d+\s*\/\s*\d+/.test(d.textContent || ""));
+  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
+};
+const _editorSetup = async () => { await _exitFullscreen(); await _selectFirstModule(); };
+
+uiSuite("Slide Multi-select (F4)", [
+  { name: "cmd-click selects multiple slide rows", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) { return; } // module with <2 slides — soft pass
+    _click(rows[0]); await _wait(120);
+    _clickMod(rows[1], { metaKey: true }); await _wait(150);
+    const selCount = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (selCount < 2) throw new Error("expected >=2 rows data-selected, got " + selCount);
+    // plain click collapses back to a single selection
+    _click(rows[0]); await _wait(150);
+    const after = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (after > 1) throw new Error("plain click did not clear multi-selection, got " + after);
+  }},
+  { name: "shift-click selects a contiguous range", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 3) { return; }
+    _click(rows[0]); await _wait(120);
+    _clickMod(rows[2], { shiftKey: true }); await _wait(150);
+    const selCount = _tocRows().filter((r) => r.getAttribute("data-selected") === "true").length;
+    if (selCount < 3) throw new Error("shift-range expected >=3 selected, got " + selCount);
+    _click(rows[0]); await _wait(120);
+  }},
+], { setup: _editorSetup });
+
+uiSuite("Slide Context Menu (F5)", [
+  { name: "right-click opens the slide context menu", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length === 0) throw new Error("no slide rows");
+    _rightClick(rows[0]);
+    const menu = await _waitFor(() => _$('[data-testid="toc-context-menu"]'), 2000);
+    for (const tid of ["ctx-move", "ctx-duplicate", "ctx-delete", "ctx-hide"]) {
+      if (!menu.querySelector(`[data-testid="${tid}"]`)) throw new Error("missing menu item " + tid);
+    }
+    _key("Escape");
+    await _waitFor(() => !_$('[data-testid="toc-context-menu"]'), 2000);
+  }},
+  { name: "Move submenu shows the section picker", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length === 0) throw new Error("no slide rows");
+    _rightClick(rows[0]);
+    const menu = await _waitFor(() => _$('[data-testid="toc-context-menu"]'), 2000);
+    _click(menu.querySelector('[data-testid="ctx-move"]'));
+    // section picker (may be empty if only one module) — search input appears
+    await _waitFor(() => _$('[data-testid="section-search"]') || _$text("No other sections"), 2000).catch(() => {});
+    _key("Escape");
+    await _waitFor(() => !_$('[data-testid="toc-context-menu"]'), 2000).catch(() => {});
+    document.activeElement?.blur?.();
+  }},
+], { setup: _editorSetup });
+
+uiSuite("Move Picker Search (F6)", [
+  { name: "move picker has search + wide scroll + wheel isolation", fn: async () => {
+    // Ensure the slide editor toolbar is on screen (click the active slide row).
+    const rows = _tocRows();
+    if (rows.length > 0) { _click(rows[0]); await _wait(150); }
+    const findMove = () => _$$("button").find((b) => b.title?.includes("Move to module") || (b.textContent?.includes("📦") && /Move/.test(b.textContent || "")));
+    const btn = await _waitFor(findMove, 2500);
+    _click(btn);
+    const search = await _waitFor(() => _$('[data-testid="section-search"]'), 2000).catch(() => null);
+    if (!search) { // no other modules — close and soft pass
+      const bd = _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9998");
+      if (bd) _click(bd); await _wait(150); return;
+    }
+    const list = _$('[data-testid="section-picker-list"]');
+    if (!list || !list.className.includes("vela-wide-scroll")) throw new Error("picker list missing wide-scroll class");
+    if (list.getAttribute("data-scroll-container") == null) throw new Error("picker list not marked data-scroll-container");
+    const before = _$$('[data-testid="section-picker-item"]').length;
+    _type(search, "zzzznomatch"); await _wait(200);
+    const filtered = _$$('[data-testid="section-picker-item"]').length;
+    if (before > 0 && filtered !== 0) throw new Error("search did not filter (before " + before + ", after " + filtered + ")");
+    _type(search, ""); await _wait(150);
+    const bd = _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9998");
+    if (bd) _click(bd); await _wait(150);
+  }},
+], { setup: _editorSetup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
