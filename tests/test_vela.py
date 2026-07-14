@@ -221,6 +221,28 @@ def test_security():
         fail("PDF link scheme allowlist",
              "extractLinks must sanitize hrefs via sanitizeUrl (drop javascript:/data:/vbscript:)")
 
+    # 6d. sanitizeUrl validates-and-emits one canonical form: it must reject raw
+    #     backslashes and return the parser serialization for http(s) rather than
+    #     the raw input, so a schemeless authority ref that parses as http(s)
+    #     cannot survive verbatim into an export hyperlink target
+    #     (CodeQL js/incomplete-url-scheme-check — parse-vs-emit differential).
+    if 'if (trimmed.includes("\\\\")) return "";' in all_jsx \
+            and 'return parsed.href;' in all_jsx:
+        ok("sanitizeUrl rejects backslashes and emits canonical http(s) form")
+    else:
+        fail("sanitizeUrl parse-vs-emit hardening",
+             "must reject raw backslashes and return parsed.href for http(s), not the raw input")
+
+    # 6e. PowerPoint export re-validates each hyperlink target through sanitizeUrl
+    #     at the point it becomes an External relationship (defense-in-depth: an
+    #     External rel target is a higher-trust sink than a browser link).
+    if 'const safeHref = sanitizeUrl(l.href);' in all_jsx \
+            and 'target: safeHref' in all_jsx:
+        ok("pptx export re-validates hyperlink targets at the external-rel boundary")
+    else:
+        fail("pptx hyperlink re-validation",
+             "buildPptx must re-sanitizeUrl each link before emitting a TargetMode=External rel")
+
     # 7. sanitizeStudyNotes exists and routes diagram through sanitizeSvgMarkup
     if 'function sanitizeStudyNotes' in all_jsx:
         ok("sanitizeStudyNotes helper present")

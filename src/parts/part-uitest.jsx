@@ -1225,6 +1225,18 @@ uiSuite("SVG Sanitizer (XSS)", [
            sanitizeUrl("vbscript:msgbox(1)") === "" &&
            sanitizeUrl("https://example.com/x") === "https://example.com/x";
   }},
+  { name: "sanitizeUrl rejects UNC/backslash/protocol-relative refs (parse-vs-emit)", fn: async () => {
+    // A schemeless authority ref parses as http(s) (passing the allowlist) but
+    // must not survive raw into an export hyperlink target — it is rejected, not
+    // emitted verbatim. http(s) links come back in canonical form.
+    return sanitizeUrl("\\\\host\\share\\x") === "" &&
+           sanitizeUrl("//host.example/x") === "" &&
+           sanitizeUrl("/\\host/x") === "" &&
+           sanitizeUrl("http:\\\\host\\x") === "" &&
+           sanitizeUrl("https:/host.example") === "" &&
+           sanitizeUrl("https://host.example/a") === "https://host.example/a" &&
+           sanitizeUrl("data:image/png;base64,AAAA", ["data:"]) === "data:image/png;base64,AAAA";
+  }},
   { name: "item-level links sanitized by sanitizeBlock", fn: async () => {
     const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
     const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
