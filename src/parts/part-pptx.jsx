@@ -490,8 +490,15 @@ function pptxBuildSlide(page, idx) {
   for (const t of page.texts || []) if (t && t.text) shapes.push(pptxTextSp(++sid, t));
   for (const l of page.links || []) {
     if (!l || !l.href) continue;
+    // Defense-in-depth: an External relationship target is a higher-trust sink
+    // than a browser link (a UNC/file target here becomes a credential-leak
+    // vector on open). Re-assert the URL allowlist at this boundary instead of
+    // trusting the upstream extractor, and emit only the canonical, sanitized
+    // form. A value that no longer passes the allowlist yields no link shape.
+    const safeHref = sanitizeUrl(l.href);
+    if (!safeHref) continue;
     const rid = nextRid();
-    rels.push({ id: rid, type: PPTX_REL_HLINK, target: l.href, mode: "External" });
+    rels.push({ id: rid, type: PPTX_REL_HLINK, target: safeHref, mode: "External" });
     shapes.push(pptxLinkSp(++sid, rid, l));
   }
 
