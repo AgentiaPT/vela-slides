@@ -14,13 +14,24 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
-      // CR1: a freshly loaded deck (selectedId=null) must open straight into the
-      // first slide of the first non-empty module — in BOTH editor and presentation
-      // modes. Previously this was gated on VELA_PRESENTATION_MODE, so the editor
-      // opened blank (the app-level auto-select effect could also miss on ordinary
-      // deck switches). Prefer the first module that actually HAS slides so we never
-      // land on an empty module and still render blank.
-      if (!loaded.selectedId) {
+      // CR1: a freshly loaded/switched deck must open straight into the first slide
+      // of the first non-empty module — in BOTH editor and presentation modes.
+      // Auto-select when there is no selection OR the incoming selectedId does not
+      // resolve to a module that still has slides. The latter guards the deck-switch
+      // path (the receive handler preserves a stale selectedId when lane/item counts
+      // coincide, and IDs get remapped positionally, so the selection can land on an
+      // empty module and render "No slides yet"). Prefer the first module that
+      // actually HAS slides so we never open blank.
+      let selHasSlides = false;
+      if (loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.id === loaded.selectedId);
+          if (it) { selHasSlides = !!(it.slides && it.slides.length > 0); break; }
+        }
+      }
+      if (!selHasSlides) {
+        loaded.selectedId = null;
+        loaded.slideIndex = 0;
         for (const l of (loaded.lanes || [])) {
           const it = (l.items || []).find((i) => i.slides && i.slides.length > 0);
           if (it) { loaded.selectedId = it.id; loaded.slideIndex = 0; break; }

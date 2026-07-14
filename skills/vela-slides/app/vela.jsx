@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.11";
+const VELA_VERSION = "13.12";
 const VELA_CHANGELOG = [
+  { v: "13.12", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
   { v: "13.11", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
   { v: "13.10", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
   { v: "13.9", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
@@ -3472,13 +3473,24 @@ function innerReducer(state, a) {
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
       const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
-      // CR1: a freshly loaded deck (selectedId=null) must open straight into the
-      // first slide of the first non-empty module — in BOTH editor and presentation
-      // modes. Previously this was gated on VELA_PRESENTATION_MODE, so the editor
-      // opened blank (the app-level auto-select effect could also miss on ordinary
-      // deck switches). Prefer the first module that actually HAS slides so we never
-      // land on an empty module and still render blank.
-      if (!loaded.selectedId) {
+      // CR1: a freshly loaded/switched deck must open straight into the first slide
+      // of the first non-empty module — in BOTH editor and presentation modes.
+      // Auto-select when there is no selection OR the incoming selectedId does not
+      // resolve to a module that still has slides. The latter guards the deck-switch
+      // path (the receive handler preserves a stale selectedId when lane/item counts
+      // coincide, and IDs get remapped positionally, so the selection can land on an
+      // empty module and render "No slides yet"). Prefer the first module that
+      // actually HAS slides so we never open blank.
+      let selHasSlides = false;
+      if (loaded.selectedId) {
+        for (const l of (loaded.lanes || [])) {
+          const it = (l.items || []).find((i) => i.id === loaded.selectedId);
+          if (it) { selHasSlides = !!(it.slides && it.slides.length > 0); break; }
+        }
+      }
+      if (!selHasSlides) {
+        loaded.selectedId = null;
+        loaded.slideIndex = 0;
         for (const l of (loaded.lanes || [])) {
           const it = (l.items || []).find((i) => i.slides && i.slides.length > 0);
           if (it) { loaded.selectedId = it.id; loaded.slideIndex = 0; break; }

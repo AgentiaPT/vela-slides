@@ -225,7 +225,24 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
   const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
-  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
+  // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
+  // focus in the SOURCE section on the slide that slides up into the first vacated
+  // position (the "next" slide); if we moved the tail out, jump to the first slide of
+  // the following module instead. Plain click keeps the old behavior (follow the
+  // slide into the destination section).
+  const ctxMove = (si, toId, keepFocus) => {
+    const asc = ctxTargets(si).sort((a, b) => a - b);
+    dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc });
+    if (!keepFocus) { dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); return; }
+    const remaining = (item.slides?.length || 0) - asc.length;
+    const nextIdx = asc[0];
+    if (nextIdx < remaining) { dispatch({ type: "SELECT", id: item.id, slideIndex: nextIdx }); return; }
+    const flat = []; for (const l of (lanes || [])) for (const it of l.items) flat.push(it);
+    const pos = flat.findIndex((it) => it.id === item.id);
+    const nextMod = pos >= 0 ? flat[pos + 1] : null;
+    if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 });
+    else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
+  };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
   const commitSlideTitle = (si) => {
@@ -421,7 +438,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             <div style={{ height: 1, background: T.border + "80", margin: "3px 4px" }} />
             <CtxItem testid="ctx-delete" label={`Delete${suffix}`} icon="🗑" danger onClick={() => { ctxDelete(si); setCtxMenu(null); }} />
           </>}
-          {(move) => move.isOpen && <SectionPicker mods={destMods} emptyLabel="No other sections" onPick={(toId) => { ctxMove(si, toId); setCtxMenu(null); }} />}
+          {(move) => move.isOpen && <SectionPicker mods={destMods} emptyLabel="No other sections" onPick={(toId, e) => { ctxMove(si, toId, !!(e && (e.ctrlKey || e.metaKey))); setCtxMenu(null); }} />}
         </ContextMenu>;
       })()}
     </div>
