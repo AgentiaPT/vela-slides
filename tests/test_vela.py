@@ -1006,7 +1006,11 @@ def test_editor_ux_bugs():
         fail("CR1: LOAD auto-select is gated on VELA_PRESENTATION_MODE — editor opens blank")
     else:
         ok("CR1: LOAD auto-select not gated solely on presentation mode")
-    if re.search(r'if \(!loaded\.selectedId\)', load_case) and "slides" in load_case:
+    # Robust intent check (not a literal code string): the LOAD path must pick the
+    # first module that actually HAS slides and assign it as the selection — whether
+    # the trigger is "no selection" or a stale selectedId that resolves to an empty
+    # module (the deck-switch case). Match the semantic tokens, not one exact guard.
+    if re.search(r'i\.slides\.length\s*>\s*0', load_case) and re.search(r'selectedId\s*=\s*it\.id', load_case):
         ok("CR1: LOAD defaults to first module WITH slides regardless of mode")
     else:
         fail("CR1: LOAD does not default-select first non-empty module in editor")
