@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.8";
+const VELA_VERSION = "13.9";
 const VELA_CHANGELOG = [
+  { v: "13.9", d: ["Security (defense-in-depth): closed a URL-sanitizer scheme-allowlist bypass affecting exported hyperlink targets — deck links are now validated and emitted as a single canonical form, and malformed or non-http(s)/mailto references are rejected before they reach PowerPoint/PDF export.", "PowerPoint export re-validates hyperlink targets at the external-relationship boundary.", "Regression tests added."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
   { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
@@ -418,10 +419,27 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   if (typeof url !== "string") return "";
   const trimmed = url.trim();
   if (!trimmed) return "";
+  // SECURITY: validate and EMIT in one canonical form — never hand back the raw
+  // input after validating a *parsed* view of it. The WHATWG URL parser rewrites
+  // "\" → "/" and lets schemeless authority refs ("\\host\share", "//host") inherit
+  // the base scheme, so such a value can parse as http(s) (passing the allowlist)
+  // while its raw bytes survive verbatim into a sink that re-parses them (the DOM,
+  // and PowerPoint/PDF export hyperlink targets). Returning the parser's own
+  // serialization for http(s) — plus rejecting backslashes and requiring an
+  // explicit absolute scheme — collapses those differential forms to a plain,
+  // already-permitted http(s) link instead of a smuggled one.
+  if (trimmed.includes("\\")) return "";
   try {
     const parsed = new URL(trimmed, "https://placeholder.invalid");
-    if (allowedProtocols.includes(parsed.protocol)) return trimmed;
-    return "";
+    if (!allowedProtocols.includes(parsed.protocol)) return "";
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      // Require an explicit absolute http(s) ref (blocks protocol-relative and
+      // single-slash forms that would otherwise resolve against the base), then
+      // return the canonical serialization — the exact value that was validated.
+      if (!/^https?:\/\//i.test(trimmed)) return "";
+      return parsed.href;
+    }
+    return trimmed;
   } catch (_) { return ""; }
 }
 

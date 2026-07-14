@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.8";
+const VELA_VERSION = "13.9";
 const VELA_CHANGELOG = [
+  { v: "13.9", d: ["Security (defense-in-depth): closed a URL-sanitizer scheme-allowlist bypass affecting exported hyperlink targets — deck links are now validated and emitted as a single canonical form, and malformed or non-http(s)/mailto references are rejected before they reach PowerPoint/PDF export.", "PowerPoint export re-validates hyperlink targets at the external-relationship boundary.", "Regression tests added."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
   { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
@@ -418,10 +419,27 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   if (typeof url !== "string") return "";
   const trimmed = url.trim();
   if (!trimmed) return "";
+  // SECURITY: validate and EMIT in one canonical form — never hand back the raw
+  // input after validating a *parsed* view of it. The WHATWG URL parser rewrites
+  // "\" → "/" and lets schemeless authority refs ("\\host\share", "//host") inherit
+  // the base scheme, so such a value can parse as http(s) (passing the allowlist)
+  // while its raw bytes survive verbatim into a sink that re-parses them (the DOM,
+  // and PowerPoint/PDF export hyperlink targets). Returning the parser's own
+  // serialization for http(s) — plus rejecting backslashes and requiring an
+  // explicit absolute scheme — collapses those differential forms to a plain,
+  // already-permitted http(s) link instead of a smuggled one.
+  if (trimmed.includes("\\")) return "";
   try {
     const parsed = new URL(trimmed, "https://placeholder.invalid");
-    if (allowedProtocols.includes(parsed.protocol)) return trimmed;
-    return "";
+    if (!allowedProtocols.includes(parsed.protocol)) return "";
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      // Require an explicit absolute http(s) ref (blocks protocol-relative and
+      // single-slash forms that would otherwise resolve against the base), then
+      // return the canonical serialization — the exact value that was validated.
+      if (!/^https?:\/\//i.test(trimmed)) return "";
+      return parsed.href;
+    }
+    return trimmed;
   } catch (_) { return ""; }
 }
 
@@ -9803,6 +9821,18 @@ uiSuite("SVG Sanitizer (XSS)", [
            sanitizeUrl("vbscript:msgbox(1)") === "" &&
            sanitizeUrl("https://example.com/x") === "https://example.com/x";
   }},
+  { name: "sanitizeUrl rejects UNC/backslash/protocol-relative refs (parse-vs-emit)", fn: async () => {
+    // A schemeless authority ref parses as http(s) (passing the allowlist) but
+    // must not survive raw into an export hyperlink target — it is rejected, not
+    // emitted verbatim. http(s) links come back in canonical form.
+    return sanitizeUrl("\\\\host\\share\\x") === "" &&
+           sanitizeUrl("//host.example/x") === "" &&
+           sanitizeUrl("/\\host/x") === "" &&
+           sanitizeUrl("http:\\\\host\\x") === "" &&
+           sanitizeUrl("https:/host.example") === "" &&
+           sanitizeUrl("https://host.example/a") === "https://host.example/a" &&
+           sanitizeUrl("data:image/png;base64,AAAA", ["data:"]) === "data:image/png;base64,AAAA";
+  }},
   { name: "item-level links sanitized by sanitizeBlock", fn: async () => {
     const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] });
     const fl = sanitizeBlock({ type: "flow", items: [{ label: "n", link: "javascript:alert(1)" }] });
@@ -15826,8 +15856,15 @@ function pptxBuildSlide(page, idx) {
   for (const t of page.texts || []) if (t && t.text) shapes.push(pptxTextSp(++sid, t));
   for (const l of page.links || []) {
     if (!l || !l.href) continue;
+    // Defense-in-depth: an External relationship target is a higher-trust sink
+    // than a browser link (a UNC/file target here becomes a credential-leak
+    // vector on open). Re-assert the URL allowlist at this boundary instead of
+    // trusting the upstream extractor, and emit only the canonical, sanitized
+    // form. A value that no longer passes the allowlist yields no link shape.
+    const safeHref = sanitizeUrl(l.href);
+    if (!safeHref) continue;
     const rid = nextRid();
-    rels.push({ id: rid, type: PPTX_REL_HLINK, target: l.href, mode: "External" });
+    rels.push({ id: rid, type: PPTX_REL_HLINK, target: safeHref, mode: "External" });
     shapes.push(pptxLinkSp(++sid, rid, l));
   }
 
