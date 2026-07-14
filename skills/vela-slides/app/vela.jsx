@@ -422,23 +422,30 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   // SECURITY: validate and EMIT in one canonical form — never hand back the raw
   // input after validating a *parsed* view of it. The WHATWG URL parser rewrites
   // "\" → "/" and lets schemeless authority refs ("\\host\share", "//host") inherit
-  // the base scheme, so such a value can parse as http(s) (passing the allowlist)
-  // while its raw bytes survive verbatim into a sink that re-parses them (the DOM,
-  // and PowerPoint/PDF export hyperlink targets). Returning the parser's own
-  // serialization for http(s) — plus rejecting backslashes and requiring an
-  // explicit absolute scheme — collapses those differential forms to a plain,
-  // already-permitted http(s) link instead of a smuggled one.
+  // the base scheme, so such a value can parse as an authority-bearing URL (passing
+  // the allowlist) while its raw bytes survive verbatim into a sink that re-parses
+  // them (the DOM, and PowerPoint/PDF export hyperlink targets). Rejecting
+  // backslashes, requiring an explicit absolute scheme, and returning the parser's
+  // own serialization collapse those differential forms to a plain, already-
+  // permitted link instead of a smuggled one.
   if (trimmed.includes("\\")) return "";
   try {
+    // new URL()+try/catch; the modern URL.parse() (2024+, returns null instead of
+    // throwing) is the eventual simplification once the runtime floor allows it.
     const parsed = new URL(trimmed, "https://placeholder.invalid");
     if (!allowedProtocols.includes(parsed.protocol)) return "";
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      // Require an explicit absolute http(s) ref (blocks protocol-relative and
-      // single-slash forms that would otherwise resolve against the base), then
-      // return the canonical serialization — the exact value that was validated.
-      if (!/^https?:\/\//i.test(trimmed)) return "";
+    if (parsed.host) {
+      // Authority-bearing scheme (http/https, and any future allowlisted ftp/ws/…):
+      // the parser can synthesize a host from "//"/"\\" refs, so demand an explicit
+      // absolute "scheme://" and return the canonical serialization — the exact
+      // value validated here, not the raw input. Gating on parsed.host (not a
+      // hardcoded scheme pair) auto-covers any authority scheme the allowlist gains.
+      if (!/^[a-z][a-z0-9+.\-]*:\/\//i.test(trimmed)) return "";
       return parsed.href;
     }
+    // Authority-less scheme (mailto:/data:/tel:): no host to smuggle via "//"/"\\",
+    // and canonicalizing would corrupt legit values (mailto query encoding; the
+    // data: image path is validated raw downstream). Backslashes already rejected.
     return trimmed;
   } catch (_) { return ""; }
 }
