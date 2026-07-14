@@ -135,8 +135,10 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.12";
+const VELA_VERSION = "13.14";
 const VELA_CHANGELOG = [
+  { v: "13.14", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
+  { v: "13.13", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
   { v: "13.12", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
   { v: "13.11", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
   { v: "13.10", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
@@ -6359,7 +6361,7 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
           ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>{emptyLabel}</div>
           : filtered.length === 0
             ? <div style={{ padding: 8, fontSize: 13, color: T.textDim }}>No matches</div>
-            : filtered.map((m) => <button key={m.id} data-testid="section-picker-item" onClick={(e) => { e.stopPropagation(); onPick(m.id); }}
+            : filtered.map((m) => <button key={m.id} data-testid="section-picker-item" onClick={(e) => { e.stopPropagation(); onPick(m.id, e); }}
                 style={{ ...S.btn({ fontSize: 13, color: T.text, textAlign: "left" }), display: "block", width: "100%", padding: "6px 8px", borderRadius: 4, background: "transparent", border: "none", cursor: "pointer" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "20"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
                 {m.title}{m.lane ? <span style={{ color: T.textDim, fontSize: 10, marginLeft: 6 }}>{m.lane}</span> : null}
@@ -7494,7 +7496,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>;
         })()}
         {/* Move-to-module popover */}
-        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); setShowMoveToModule(false); }} /></div></>; })()}
+        {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
     </div>
@@ -7729,7 +7731,24 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
   const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
-  const ctxMove = (si, toId) => { const asc = ctxTargets(si).sort((a, b) => a - b); dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); };
+  // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
+  // focus in the SOURCE section on the slide that slides up into the first vacated
+  // position (the "next" slide); if we moved the tail out, jump to the first slide of
+  // the following module instead. Plain click keeps the old behavior (follow the
+  // slide into the destination section).
+  const ctxMove = (si, toId, keepFocus) => {
+    const asc = ctxTargets(si).sort((a, b) => a - b);
+    dispatch({ type: "MOVE_SLIDES_TO_MODULE", fromId: item.id, toId, indices: asc });
+    if (!keepFocus) { dispatch({ type: "SET_SLIDE_SELECTION", indices: [] }); return; }
+    const remaining = (item.slides?.length || 0) - asc.length;
+    const nextIdx = asc[0];
+    if (nextIdx < remaining) { dispatch({ type: "SELECT", id: item.id, slideIndex: nextIdx }); return; }
+    const flat = []; for (const l of (lanes || [])) for (const it of l.items) flat.push(it);
+    const pos = flat.findIndex((it) => it.id === item.id);
+    const nextMod = pos >= 0 ? flat[pos + 1] : null;
+    if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 });
+    else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
+  };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
   const commitSlideTitle = (si) => {
@@ -7925,7 +7944,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             <div style={{ height: 1, background: T.border + "80", margin: "3px 4px" }} />
             <CtxItem testid="ctx-delete" label={`Delete${suffix}`} icon="🗑" danger onClick={() => { ctxDelete(si); setCtxMenu(null); }} />
           </>}
-          {(move) => move.isOpen && <SectionPicker mods={destMods} emptyLabel="No other sections" onPick={(toId) => { ctxMove(si, toId); setCtxMenu(null); }} />}
+          {(move) => move.isOpen && <SectionPicker mods={destMods} emptyLabel="No other sections" onPick={(toId, e) => { ctxMove(si, toId, !!(e && (e.ctrlKey || e.metaKey))); setCtxMenu(null); }} />}
         </ContextMenu>;
       })()}
     </div>
@@ -18432,13 +18451,28 @@ export default function App() {
 
   // An empty deck should be immediately editable: seed a first section so the
   // user can add slides right away (no "create deck" / "add section" step).
-  // Gated by loaded.current so it never races initial hydration; skipped while
-  // an AI build is pending/streaming — Vera populates the deck itself then.
+  // Skipped while an AI build is pending/streaming — Vera populates the deck then.
+  //
+  // The seed must NOT fire during initial hydration, when state.lanes is
+  // transiently [] before the deck is applied — the deck can arrive either
+  // synchronously (STARTUP_PATCH) or asynchronously over the folder-sync
+  // channel, so a plain "lanes===0" check (or a next-tick recheck) races it and
+  // appends a spurious "New section" to the real deck on every load. Gate the
+  // seed behind an "armed" flag that flips true only once we have either seen
+  // loaded content (lanes>0) or waited out a short grace window for a genuinely
+  // empty deck. Using state (not a ref) so arming re-runs the seed effect.
+  const [seedArmed, setSeedArmed] = useState(false);
   useEffect(() => {
-    if (!loaded.current || state.lanes.length !== 0) return;
+    if (seedArmed) return;
+    if (state.lanes.length > 0) { setSeedArmed(true); return; }
+    const t = setTimeout(() => setSeedArmed(true), 1500);
+    return () => clearTimeout(t);
+  }, [state.lanes.length, seedArmed]);
+  useEffect(() => {
+    if (!loaded.current || !seedArmed || state.lanes.length !== 0) return;
     if (state._bootstrap || state.chatLoading) return;
     dispatch({ type: "INSERT_ITEM", title: "New section" });
-  }, [state.lanes.length, state._bootstrap, state.chatLoading]);
+  }, [seedArmed, state.lanes.length, state._bootstrap, state.chatLoading]);
 
   // ━━━ Storage: Save (single key — v3, debounced) ━━━━━━━━━━━━━━━━━━━
   // In LOCAL_MODE the file on disk is the source of truth (synced via
