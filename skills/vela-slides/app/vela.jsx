@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.14";
+const VELA_VERSION = "13.15";
 const VELA_CHANGELOG = [
+  { v: "13.15", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.14", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.13", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
   { v: "13.12", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
@@ -7952,13 +7953,12 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
   const [notesOpen, setNotesOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
-  const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const startRename = (e) => { e.stopPropagation(); setEditing(true); setTitle(item.title); };
   const commitRename = () => { if (title.trim() && title.trim() !== item.title) dispatch({ type: "RENAME_ITEM", id: item.id, title: title.trim() }); setEditing(false); };
@@ -8065,7 +8065,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
         }}>
         {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
-        <span onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }} style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
+        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
@@ -8121,8 +8121,23 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
 function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
+  // Collapse state lives here (not per-ConceptRow) so a Ctrl/Cmd-click on any
+  // section's toggle can collapse or expand every section at once.
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
+  const toggleCollapse = (id, all) => {
+    setCollapsedIds((prev) => {
+      if (all) {
+        // Apply the state this item is about to switch to (the opposite of
+        // its current state) to every section.
+        return prev.has(id) ? new Set() : new Set(allItems.map((i) => i.id));
+      }
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
   const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
@@ -8137,7 +8152,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispa
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedIds.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -10624,6 +10639,35 @@ uiSuite("Section drag reorder (7-1)", [
       fire2(s2, "dragstart"); fire2(d2, "dragover", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(d2, "drop", { clientX: b2.x + 5, clientY: b2.y + 2 }); fire2(s2, "dragend");
       await _wait(150);
     }
+  }},
+]);
+
+uiSuite("Section collapse-all (Ctrl-click) — v13.15", [
+  { name: "Ctrl-click collapses/expands every section, plain click affects only one", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    // The collapse arrow is the row's first <span> (rendered before the imp-dot
+    // div and title), identifiable by its rotate() transform.
+    const toggles = () => rows().map((r) => r.querySelector("span"));
+    const isCollapsed = (span) => /rotate\(-90deg\)/.test(span.style.transform || "");
+    if (rows().length < 2) throw new Error("need >=2 sections");
+    // Plain click collapses only the clicked section.
+    _click(toggles()[0]);
+    await _wait(150);
+    let states = toggles().map(isCollapsed);
+    if (!states[0]) throw new Error("plain click did not collapse the clicked section");
+    if (states.slice(1).some(Boolean)) throw new Error("plain click affected other sections");
+    _click(toggles()[0]); // restore
+    await _wait(150);
+    // Ctrl-click collapses ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (!states.every(Boolean)) throw new Error("ctrl-click did not collapse all sections");
+    // Ctrl-click again expands ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (states.some(Boolean)) throw new Error("ctrl-click did not expand all sections");
   }},
 ]);
 

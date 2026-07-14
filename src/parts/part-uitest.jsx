@@ -1707,6 +1707,35 @@ uiSuite("Section drag reorder (7-1)", [
   }},
 ]);
 
+uiSuite("Section collapse-all (Ctrl-click) — v13.15", [
+  { name: "Ctrl-click collapses/expands every section, plain click affects only one", fn: async () => {
+    const rows = () => _$$(".concept-row");
+    // The collapse arrow is the row's first <span> (rendered before the imp-dot
+    // div and title), identifiable by its rotate() transform.
+    const toggles = () => rows().map((r) => r.querySelector("span"));
+    const isCollapsed = (span) => /rotate\(-90deg\)/.test(span.style.transform || "");
+    if (rows().length < 2) throw new Error("need >=2 sections");
+    // Plain click collapses only the clicked section.
+    _click(toggles()[0]);
+    await _wait(150);
+    let states = toggles().map(isCollapsed);
+    if (!states[0]) throw new Error("plain click did not collapse the clicked section");
+    if (states.slice(1).some(Boolean)) throw new Error("plain click affected other sections");
+    _click(toggles()[0]); // restore
+    await _wait(150);
+    // Ctrl-click collapses ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (!states.every(Boolean)) throw new Error("ctrl-click did not collapse all sections");
+    // Ctrl-click again expands ALL sections.
+    _clickMod(toggles()[0], { ctrlKey: true });
+    await _wait(150);
+    states = toggles().map(isCollapsed);
+    if (states.some(Boolean)) throw new Error("ctrl-click did not expand all sections");
+  }},
+]);
+
 uiSuite("Presenter Ctrl+E (7-1)", [
   { name: "Ctrl+E toggles the TOC search pane", fn: async () => {
     try { document.activeElement?.blur?.(); } catch {}

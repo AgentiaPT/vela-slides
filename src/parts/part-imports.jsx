@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.14";
+const VELA_VERSION = "13.15";
 const VELA_CHANGELOG = [
+  { v: "13.15", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.14", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.13", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
   { v: "13.12", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
