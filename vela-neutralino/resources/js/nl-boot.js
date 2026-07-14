@@ -490,6 +490,11 @@ function installAgentsBridge() {
 
 function installFullscreenBridge() {
   let fsElement = null;
+  // Remember whether the OS window was maximized before we went fullscreen.
+  // exitFullScreen() can leave the window half-restored (drawn at maximized
+  // bounds but no longer flagged maximized, so the bottom is clipped), so we
+  // re-maximize on the way out to return to the exact prior geometry.
+  let wasMaximized = false;
 
   const fire = () => {
     document.dispatchEvent(new Event("fullscreenchange"));
@@ -498,6 +503,8 @@ function installFullscreenBridge() {
 
   async function enter(el) {
     try {
+      try { wasMaximized = await Neutralino.window.isMaximized(); }
+      catch (e) { wasMaximized = false; }
       await Neutralino.window.setFullScreen();
       fsElement = el || document.documentElement;
       fire();
@@ -509,6 +516,19 @@ function installFullscreenBridge() {
   async function exit() {
     try {
       await Neutralino.window.exitFullScreen();
+      if (wasMaximized) {
+        // exitFullScreen() can leave the window flagged maximized but drawn at
+        // the wrong geometry (bottom clipped). maximize() alone is then a no-op
+        // because the state flag never changed. Force a real state transition —
+        // unmaximize then maximize — so the OS relays out the window. A short
+        // settle delay lets the fullscreen-exit finish at the OS level first.
+        await new Promise((r) => setTimeout(r, 60));
+        try {
+          await Neutralino.window.unmaximize();
+          await new Promise((r) => setTimeout(r, 30));
+          await Neutralino.window.maximize();
+        } catch (e) { /* best-effort */ }
+      }
     } catch (e) {
       console.warn("[nl-boot] exitFullScreen failed:", e);
     } finally {
