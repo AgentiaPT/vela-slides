@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.9";
+const VELA_VERSION = "13.10";
 const VELA_CHANGELOG = [
+  { v: "13.10", d: "Security (CSS exfil): close a zero-click render-time beacon in the SVG <style> sanitizer where a string-source loader could be fed indirectly; sanitizer now rejects that shape. Regression tests added." },
   { v: "13.9", d: "Security (hardening): deck-import title now runs through the same input sanitizer/length clamp as every other import path, closing an inconsistency." },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
@@ -519,6 +520,17 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // The fnStr guard rejects a string literal placed DIRECTLY inside a function
+  // call, but a URL string can be parked in a custom property (--x:"…") and then
+  // threaded into a string-source image loader through var() — the quote is no
+  // longer adjacent to the function name, so both the url() and fnStr checks miss
+  // it, and the value still auto-fetches on render. Reject any custom property
+  // assigned a quoted string; combined with the direct-arg reject above, a URL
+  // string cannot reach an image loader by any path. Also mirror the `://` reject
+  // STYLE_VALUE_REJECT already carries (belt-and-suspenders for unquoted absolute
+  // URLs). Legit Vela paint CSS never needs either shape.
+  if (/--[\w-]+\s*:\s*['"]/.test(css)) return false;
+  if (css.indexOf("://") !== -1) return false;
   return true;
 }
 

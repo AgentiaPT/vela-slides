@@ -1099,6 +1099,18 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>a{background:-webkit-image-set("https://attacker.invalid/x" 1x)}b{x:cross-fade(url(#a),"https://attacker.invalid/y",50%)}c{x:src("https://attacker.invalid/z")}</style><rect/>');
     return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
   }},
+  // v13.10 — a URL string parked in a custom property and threaded into a
+  // string-source loader via var() detaches the quote from the function name,
+  // slipping past the direct-arg/url() checks; still auto-fetches on render.
+  { name: "SVG <style> var()-indirected image-set string source removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>body{--s:"https://attacker.invalid/b?d=x";background-image:image-set(var(--s) 1x)}</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> custom-property quoted string / absolute URL rejected", fn: async () => {
+    const a = sanitizeSvgMarkup('<style>:root{--u:"https://attacker.invalid/x"}rect{fill:var(--u)}</style><rect/>');
+    const b = sanitizeSvgMarkup('<style>rect{background:image(var(--n))}:root{--n:"https://attacker.invalid/y"}</style><rect/>');
+    return !/attacker\.invalid/i.test(a) && !/<style[\s>]/i.test(a) && !/attacker\.invalid/i.test(b) && !/<style[\s>]/i.test(b);
+  }},
   { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
     return !/attacker\.invalid/i.test(out);
