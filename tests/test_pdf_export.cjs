@@ -34,6 +34,12 @@ const fs = require('fs');
 const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
+// SECURITY fixture: a deck link whose value carries PDF literal-string
+// metacharacters. It passes the URL allowlist (starts https://, no backslash),
+// so it reaches the export sinks unchanged — where it MUST be escaped by
+// pdfStringEncode. If any sink interpolated it raw, the leading ")" would close
+// the (...) URI string and "/S /JavaScript /JS (...)" would inject a PDF action.
+const PDF_INJECTION_LINK = "https://a.example/)/S/JavaScript/JS(app.alert)/Dummy(";
 // Small dedicated fixture (3 slides) instead of the 28-slide demo deck: the PDF
 // export machinery is proven identically with 3 pages, while the per-slide
 // render/finalize loop (~350-450ms/slide × 2 paths) shrinks ~9×. Keeps a heading
@@ -43,7 +49,7 @@ const DECK = (() => {
   const deck = {
     deckTitle: "PDF Export Smoke",
     lanes: [{ title: "Deck", items: [{ title: "Module", slides: [
-      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "heading", text: "Vela Slides" }] },
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "heading", text: "Vela Slides", link: PDF_INJECTION_LINK }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "A slide with body text for the vector text layer." }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#10b981", blocks: [{ type: "metric", value: "42", label: "Answer" }] },
     ] }] }],
@@ -244,6 +250,17 @@ function assertPdf(label, buf, expectedPages, { vector }) {
   // xref/trailer wiring present.
   check(`[${label}] has an xref table and /Root reference`,
     /\bxref\b/.test(text) && /\/Root\s+\d+\s+0\s+R/.test(text));
+
+  // SECURITY: the deck link with PDF metacharacters must be escaped, not break out.
+  // Breakout = a ")" NOT preceded by a backslash, immediately followed by the
+  // injected "/S/JavaScript". Escaped output has "\)" instead, which this rejects.
+  const brokeOut = /[^\\]\)\/S\/JavaScript/.test(text);
+  check(`[${label}] malicious deck link did not break out of the PDF URI string`,
+    !brokeOut, 'unescaped ")/S/JavaScript" action-injection breakout present');
+  // Positive proof the link actually rendered AND was routed through the encoder:
+  // its ")" survives as the escaped "\)" sequence.
+  check(`[${label}] malicious link present in pdfStringEncode-escaped form`,
+    text.includes('\\)/S/JavaScript'), 'escaped "\\)/S/JavaScript" not found — link may not have rendered');
 
   if (vector) {
     // Vector path draws real text: a slide word must appear inside a "(…) Tj"
