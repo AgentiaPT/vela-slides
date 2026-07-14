@@ -134,8 +134,10 @@ images) are extracted directly from the DOM (`extractBoxes` et al.) into a
 per-slide primitive IR and emitted as native, crisp, small-file PDF vector
 objects instead of a bitmap — no `html2canvas` in this path.
 
-Both paths share: link annotations extracted from `data-pdf-link` attributes,
-a vector watermark overlay, and final assembly into a downloadable PDF blob.
+Both paths share: link annotations extracted from `data-pdf-link` attributes
+(re-validated via `sanitizeUrl` and written through the shared `pdfStringEncode`
+helper), a vector watermark overlay, and final assembly into a downloadable
+PDF blob.
 
 ### PowerPoint Export
 
@@ -144,7 +146,9 @@ vector-PDF path produces (reusing its extractors), writing native OOXML+ZIP
 `.pptx` output via `buildPptx(pages, opts)`. Text is grouped per element
 (`pptxExtractTextBoxes`) so wrapped paragraphs become one editable, reflowable
 PowerPoint text box rather than one box per line. The 960×540px virtual canvas
-maps 1:1 to a 16:9 PPT slide (1 canvas px = 12700 EMU = 1 point).
+maps 1:1 to a 16:9 PPT slide (1 canvas px = 12700 EMU = 1 point). Hyperlink
+targets are re-validated via `sanitizeUrl` at the point they become an
+External relationship.
 
 ## Storage
 

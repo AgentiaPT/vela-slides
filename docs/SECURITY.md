@@ -57,6 +57,7 @@ review alone.
 | Oversized payloads | String length limits on all fields (200-50000 chars), block count limits (30/slide), row/column limits |
 | CDN compromise (runtime libs) | `html2canvas` (PDF-export thumbnails only) loads best-effort from cdnjs.cloudflare.com and fails safe to layout-stats-only if it can't load; it is not SRI-pinned. The **Standalone-HTML export** pins React / ReactDOM / lucide-react from jsdelivr by SHA-384 `integrity` + `crossorigin` (byte-identical to the vendored Neutralino UMD copies). Standard client-side-app risk |
 | Credential leakage | No API keys, tokens, or secrets in the codebase. Anthropic API calls use Claude.ai's built-in proxy |
+| Hyperlink/URL injection (export sinks) | `sanitizeUrl` canonicalizes deck-supplied link targets to a validated absolute form at authoring time; PDF and PowerPoint export re-validate at the sink and route every PDF literal-string value through one shared, audited encoder before it becomes a link target |
 
 ### SVG Sanitization (Defense-in-Depth)
 
@@ -75,6 +76,28 @@ Both layers strip:
 - `javascript:` URIs in `href`
 - `xlink:href` pointing to external resources
 - CSS `url(javascript:...)` and `expression()` in style attributes
+
+### URL / Hyperlink Sanitization (Defense-in-Depth)
+
+Deck-supplied link targets (block/slide hyperlinks) are validated at multiple
+points before they can reach an export sink:
+
+1. **Authoring time** (`part-imports.jsx`, `sanitizeUrl`) — restricts the
+   scheme to an explicit allowlist, rejects malformed input, and returns the
+   canonical parsed form for authority-bearing schemes rather than echoing the
+   raw string back.
+2. **Export sink** (`part-pptx.jsx`, `part-pdf.jsx`) — each exporter
+   re-validates the target through `sanitizeUrl` immediately before it becomes
+   a PowerPoint relationship or a PDF link annotation, independent of the
+   authoring-time check.
+3. **PDF literal-string encoding** — every value written into a PDF `(...)`
+   string context, across both the raster and vector export paths, is routed
+   through a single shared, audited encoder, so no export sink can drift out
+   of sync with the escaping rules.
+
+Regression tests cover this both structurally (every URI-writing call site
+uses the shared helpers) and behaviorally (export driven with edge-case link
+values must not corrupt the surrounding OOXML/PDF syntax).
 
 ### Import Validation
 
