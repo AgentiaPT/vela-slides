@@ -1548,7 +1548,7 @@ export default function App() {
         const raw = JSON.parse(reader.result);
         let deckData, deckName;
         if (raw._vela && raw.data) { deckData = raw.data; deckName = sanitizeString(raw.name || "Imported", 60); }
-        else if (raw.lanes) { deckData = raw; deckName = raw.deckTitle || "Imported"; }
+        else if (raw.lanes) { deckData = raw; deckName = sanitizeString(raw.deckTitle || "Imported", 60); }
         else throw new Error("Unrecognized format");
         const sanitized = validateAndSanitizeDeck(deckData);
         sanitized.deckTitle = deckName;

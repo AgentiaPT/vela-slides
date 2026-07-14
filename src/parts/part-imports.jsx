@@ -99,8 +99,9 @@ const velaClipboardReadSlide = async () => {
   return null;
 };
 
-const VELA_VERSION = "13.8";
+const VELA_VERSION = "13.9";
 const VELA_CHANGELOG = [
+  { v: "13.9", d: "Security (hardening): deck-import title now runs through the same input sanitizer/length clamp as every other import path, closing an inconsistency." },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
   { v: "13.6", d: "UI test battery ~37% faster again — fixed settle-sleeps replaced with condition polling that returns as soon as the UI is ready; no test coverage removed." },
