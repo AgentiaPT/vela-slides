@@ -212,7 +212,7 @@ vela-slides/
 │       ├── app/
 │       │   └── vela.jsx       ← Assembled monolith (auto-generated, ship template)
 │       ├── scripts/
-│       │   ├── vela.py        ← CLI: deck/slide operations + ship + zip
+│       │   ├── vela.py        ← CLI: deck/slide operations + ship
 │       │   ├── assemble.py    ← Inject deck JSON → final .jsx
 │       │   └── validate.py    ← Deck JSON quality checks
 │       ├── references/        ← Block schema, design patterns, themes, formats
@@ -228,7 +228,8 @@ vela-slides/
 │   │   ├── render-offline.js  ← Offline in-container render harness
 │   │   ├── vela-drive.js      ← Headless screenshot/UI-battery/video driver
 │   │   ├── lint.py            ← Code linting checks
-│   │   └── sync-skill-docs.py ← Sync CLI reference into SKILL.md
+│   │   ├── sync-skill-docs.py ← Sync CLI reference into SKILL.md
+│   │   └── package-skill.py   ← Build the shipped skill ZIP (symlink/pycache-safe)
 │   ├── channel/               ← Node/pnpm MCP bridge
 │   ├── references/            ← app-editing.md (dev doc)
 │   └── evals/                 ← Skill quality test cases

@@ -241,7 +241,7 @@ APIs used by the Vela app at runtime in the browser:
 |------|---------|---------|
 | `python3` | All workflows | Run tests, build scripts |
 | `git` | `ci.yml` | Diff detection for version-bump check |
-| `zip` | `release.yml` | Create skill ZIP for GitHub Release |
+| `zip` | `_build-desktop.yml` | Create desktop build ZIPs (skill ZIP now built by `package-skill.py`, not raw `zip`) |
 | `gh` (GitHub CLI) | `release.yml` | Create/check GitHub Releases |
 | `diff` | `ci.yml` | Verify template sync |
 
@@ -260,6 +260,7 @@ All build scripts use **only Python stdlib**. No external packages.
 | `serve.py` | `tools/vela-dev/scripts/serve.py` | `hashlib`, `hmac`, `http.server`, `http.cookies`, `secrets`, `threading`, `concurrent.futures`, `urllib.parse`, `webbrowser`, `os`, `sys`, `json`, `re`, `time` | `webbrowser.open()` or `cmd.exe` (Windows) |
 | `sync-skill-docs.py` | `tools/vela-dev/scripts/sync-skill-docs.py` | `subprocess`, `os`, `re` | `git` |
 | `lint.py` | `tools/vela-dev/scripts/lint.py` | `sys`, `os`, `re` | — |
+| `package-skill.py` | `tools/vela-dev/scripts/package-skill.py` | `os`, `sys`, `zipfile` | — |
 
 ---
 

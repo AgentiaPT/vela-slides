@@ -55,6 +55,7 @@ review alone.
 | Malicious JSON import | Block-type whitelisting, string sanitization, structure validation |
 | SVG injection (XSS) | Multi-layer sanitization: script, foreignObject, use, animate, event handler, javascript: URI, xlink:href, CSS expression stripping |
 | Oversized payloads | String length limits on all fields (200-50000 chars), block count limits (30/slide), row/column limits |
+| Link/URL scheme bypass in exported hyperlinks | `sanitizeUrl` requires an explicit absolute http(s) scheme (or mailto:/data:), rejects raw backslashes, and — for authority-bearing schemes — returns its own canonical serialization rather than the raw input, so what was validated is what gets emitted. PowerPoint export re-validates each hyperlink target again at the External-relationship sink (defense-in-depth) |
 | CDN compromise (runtime libs) | `html2canvas` (PDF-export thumbnails only) loads best-effort from cdnjs.cloudflare.com and fails safe to layout-stats-only if it can't load; it is not SRI-pinned. The **Standalone-HTML export** pins React / ReactDOM / lucide-react from jsdelivr by SHA-384 `integrity` + `crossorigin` (byte-identical to the vendored Neutralino UMD copies). Standard client-side-app risk |
 | Credential leakage | No API keys, tokens, or secrets in the codebase. Anthropic API calls use Claude.ai's built-in proxy |
 
