@@ -135,15 +135,16 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.16";
+const VELA_VERSION = "13.17";
 const VELA_CHANGELOG = [
-  { v: "13.16", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
-  { v: "13.15", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
-  { v: "13.14", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
-  { v: "13.13", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
-  { v: "13.12", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
-  { v: "13.11", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
-  { v: "13.10", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
+  { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
+  { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
+  { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
+  { v: "13.14", d: "Opening/switching a deck now always lands on the first slide of the first non-empty module — a deck switch that preserved a stale selection (e.g. an empty leading section) no longer leaves the editor showing \u201CNo slides yet.\u201D" },
+  { v: "13.13", d: "Multi-slide delete / paste / move now undo in a single step (one gesture = one Ctrl+Z)." },
+  { v: "13.12", d: ["Multi-select slides in the section list (shift/⌘-click) and copy them all with Ctrl/⌘+C — paste (Ctrl/⌘+V) into the same deck or another Vela deck, order preserved; old single-slide clipboards still paste.", "Right-click a slide in the list for a context menu: Move → section, Duplicate, Delete, Hide/Show.", "Move-slide section picker now has a search box, a wider scrollbar, and the mouse wheel scrolls the list instead of changing the slide."] },
+  { v: "13.11", d: ["Editor now opens straight into the first slide of the first non-empty module — no more blank editor on load.", "Centered headings render centered in the editor too (a left icon no longer left-aligns centered text), matching Present mode.", "Editor slide viewport is a fixed 16:9 box and the slide toolbar (AI Edit / Improve / …) stays put across slides of differing content."] },
+  { v: "13.10", d: ["Security (defense-in-depth): PDF export now routes every hyperlink target through the single audited PDF-string encoder, closing a PDF literal-string injection where a crafted deck link could inject PDF action syntax. Both the raster and vector export paths share one encoder now.", "Regression tests added."] },
   { v: "13.9", d: ["Security (defense-in-depth): closed a URL-sanitizer scheme-allowlist bypass affecting exported hyperlink targets — deck links are now validated and emitted as a single canonical form, and malformed or non-http(s)/mailto references are rejected before they reach PowerPoint/PDF export.", "PowerPoint export re-validates hyperlink targets at the external-relationship boundary.", "Regression tests added."] },
   { v: "13.8", d: ["Skill packaging moved to the dev toolchain — the shipped CLI now does deck author→ship only, not skill self-packaging.", "Hardened the skill-archive builder to skip symlinks and keep every archive member's source within the skill root; regression tests added."] },
   { v: "13.7", d: ["Badge blocks: fixed icon/text spacing that collapsed because the size math produced an invalid value.", "CLI: `deck init` no longer silently overwrites an existing deck — it stops with a conflict error unless you pass --force."] },
@@ -12197,9 +12198,13 @@ function buildPdfFromImages(jpegDataArrays, pageW, pageH, perPageLinks) {
       const uriObjId = base + 3 + li * 2;
       const annotObjId = base + 4 + li * 2;
 
-      // URI action
+      // URI action. SECURITY: the URL is untrusted deck data written into a PDF
+      // literal-string context, so it MUST go through pdfStringEncode (the single
+      // audited encoder that escapes "(" ")" "\" and drops control chars) — never
+      // interpolated raw, or a deck value could close the "(...)" string early and
+      // inject arbitrary PDF action syntax (e.g. a /JavaScript action).
       startObj(uriObjId);
-      write(`<< /Type /Action /S /URI /URI (${link.url}) >>\n`);
+      write(`<< /Type /Action /S /URI /URI ${pdfStringEncode(link.url)} >>\n`);
       endObj();
 
       // Link annotation
@@ -12325,7 +12330,10 @@ function collectSlideLinks(container) {
   const cRect = container.getBoundingClientRect();
   const els = container.querySelectorAll("[data-pdf-link]");
   els.forEach(el => {
-    const url = el.getAttribute("data-pdf-link");
+    // Re-validate the scheme at the sink boundary (defense-in-depth): the raster
+    // PDF writer is a structured-syntax sink, so only allowlisted URLs become
+    // link actions. Output is additionally escaped via pdfStringEncode.
+    const url = sanitizeUrl(el.getAttribute("data-pdf-link"));
     if (!url) return;
     const r = el.getBoundingClientRect();
     links.push({
@@ -14562,9 +14570,11 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
       const y1 = Math.round(pageH - link.y - link.h);
       const x2 = Math.round(link.x + link.w);
       const y2 = Math.round(pageH - link.y);
-      const uri = link.href.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+      // SECURITY: encode the untrusted URL through the single audited PDF-string
+      // encoder (same as the raster path and text runs) rather than an ad-hoc
+      // inline escape — one implementation, so no sink can drift out of sync.
       startObj(start + j);
-      write(`<< /Type /Annot /Subtype /Link /Rect [${x1} ${y1} ${x2} ${y2}] /Border [0 0 0] /A << /Type /Action /S /URI /URI (${uri}) >> >>\n`);
+      write(`<< /Type /Annot /Subtype /Link /Rect [${x1} ${y1} ${x2} ${y2}] /Border [0 0 0] /A << /Type /Action /S /URI /URI ${pdfStringEncode(link.href)} >> >>\n`);
       endObj();
     });
   }
