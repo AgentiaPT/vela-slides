@@ -267,5 +267,30 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
         self.assertIn("useAIAvailable", imports_jsx)
 
 
+class FsGuardHardeningInvariants(unittest.TestCase):
+    """Source locks for the filesystem-guard hardening. The behavioral suite
+    (tests/test_fs_guard.cjs) executes the real module; these assert the guard
+    is wired the hardened way so the desktop file-access caps cannot regress by
+    editing the source out."""
+
+    def setUp(self):
+        self.js = read("vela-neutralino", "resources", "js", "fs-guard.js")
+
+    def test_capability_is_frozen(self):
+        # The exported guard must be frozen so same-realm script cannot swap out
+        # allow()/install() to neutralize the guard.
+        self.assertIn("Object.freeze(fsGuard)", self.js)
+
+    def test_allow_refuses_volume_and_shallow_roots(self):
+        # allow() must reject both a whole-volume root and a shallow single-
+        # segment POSIX root before pushing to the allowlist.
+        self.assertIn("isVolumeRoot(n) || isShallowRoot(n)", self.js)
+        self.assertIn("function isShallowRoot", self.js)
+
+    def test_traversal_segment_still_rejected(self):
+        # Defense-in-depth traversal guard must remain in underRoot().
+        self.assertIn('n.split("/").includes("..")', self.js)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

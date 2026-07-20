@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.18";
+const VELA_VERSION = "13.19";
 const VELA_CHANGELOG = [
+  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume and shallow system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
   { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
@@ -609,6 +610,25 @@ function isSvgStyleSafe(css) {
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
   try {
+    // Output-side mutation-XSS backstop (nested so the whole sanitizer stays
+    // self-contained). The sanitized string is about to be handed to
+    // dangerouslySetInnerHTML, which re-parses it in HTML mode. Re-parse it here
+    // the SAME way and reject the whole payload if the HTML interpretation
+    // exposes a <script> or any event-handler attribute — i.e. the SVG→HTML
+    // crossing turned inert markup live. This INDEPENDENT net fails closed even
+    // if a node-level filter below is bypassed by a future edit or an unknown
+    // parser quirk, so no single missed element reaches the sink live. (v13.19)
+    const outputIsClean = (str) => {
+      if (!str) return true;
+      const d = new DOMParser().parseFromString(`<div>${str}</div>`, "text/html");
+      for (const el of d.querySelectorAll("*")) {
+        if ((el.localName || "").toLowerCase() === "script") return false;
+        for (const a of el.attributes) {
+          if (a.name.toLowerCase().startsWith("on")) return false;
+        }
+      }
+      return true;
+    };
     const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
     const err = doc.querySelector("parsererror");
     if (err) return "";
@@ -625,13 +645,27 @@ function sanitizeSvgMarkup(raw) {
           // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
           // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
           if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v13.19): namespace-validity invariant — defense in depth
+          // against mutation-XSS by namespace confusion. We parse as
+          // image/svg+xml, so every legitimately-allowed element lives in the SVG
+          // namespace. An element bearing an allowlisted *name* but a non-SVG
+          // namespaceURI (an HTML/MathML node smuggled through an integration
+          // point, or a parser quirk) is exactly the construct that re-parses
+          // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
+          // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
+          if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
           if (tag === "style") {
             if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
-            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
-            // strips any CDATA/comment/PI children. CDATA serializes literally and
-            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
-            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
+            // attribute pass. <style> is a common SVG/HTML element, so on the
+            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
+            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
+            // keep (type/media are inert and optional), so drop them all
+            // uniformly rather than trusting an element-specific shortcut. (v13.19)
+            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
+            // Still descend so the nodeType filter above strips any CDATA/comment/PI
+            // children. CDATA serializes literally and a smuggled `</style>` inside
+            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
             walk(child);
             continue;
           }
@@ -694,10 +728,12 @@ function sanitizeSvgMarkup(raw) {
     // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
     if (!root.innerHTML.trim()) return "";
     const top = Array.from(root.children);
-    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
-      return top[0].outerHTML;
-    }
-    return root.outerHTML;
+    const out = (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg")
+      ? top[0].outerHTML
+      : root.outerHTML;
+    // Defense in depth: reject the whole payload if an HTML re-parse would expose
+    // script/handlers the SVG parse hid (mutation-XSS backstop). (v13.19)
+    return outputIsClean(out) ? out : "";
   } catch (_) { return ""; }
 }
 
