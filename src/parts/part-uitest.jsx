@@ -1137,6 +1137,26 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
     return !/\bon\w+\s*=/i.test(out);
   }},
+  { name: "Event handler on <style> stripped (bare)", fn: async () => {
+    // <style> is a common SVG/HTML element: a surviving on* handler goes live on
+    // the HTML re-parse. Must be stripped like any other element's handler.
+    const out = sanitizeSvgMarkup('<style onload="alert(1)">.a{fill:#000}</style><rect/>');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "Event handler on <style> nested in <desc>/<title> stripped (mXSS)", fn: async () => {
+    // desc/title are HTML integration points — the classic namespace-confusion
+    // mutation-XSS setup. Neither the nested handler nor a top-level one survives.
+    const a = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><rect/>');
+    const b = sanitizeSvgMarkup('<title><style onload="alert(1)">x</style></title><rect/>');
+    return !/\bon\w+\s*=/i.test(a) && !/\bon\w+\s*=/i.test(b);
+  }},
+  { name: "SVG output has no handler after HTML re-parse (mXSS backstop)", fn: async () => {
+    // Independent output-side check: whatever survives must be inert when the
+    // sink re-parses it as HTML — no element carries an on* handler.
+    const out = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><g onclick="alert(2)"><rect/></g>');
+    const html = new DOMParser().parseFromString(`<div>${out}</div>`, "text/html");
+    return ![...html.querySelectorAll("*")].some((el) => [...el.attributes].some((at) => /^on/i.test(at.name)));
+  }},
   { name: "script element stripped", fn: async () => {
     const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
     return !/<script/i.test(out);
