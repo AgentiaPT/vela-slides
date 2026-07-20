@@ -46,11 +46,17 @@ function throws(fn) { try { fn(); return false; } catch (_) { return true; } }
   fsGuard.allow("/home");        // shallow single-segment
   fsGuard.allow("C:");           // bare Windows drive
   fsGuard.allow("//server");     // UNC host, no share
+  fsGuard.allow("/etc/cron.d");  // nested system dir (depth 2)
+  fsGuard.allow("/var/www");     // nested system dir
+  fsGuard.allow("/usr/local/bin"); // deeper system dir
+  fsGuard.allow("C:/Windows/System32"); // nested Windows system dir
   const afterUnsafe = fsGuard.roots();
-  check("volume/shallow roots refused (allowlist stays empty)", afterUnsafe.length === 0);
+  check("volume/shallow/system roots refused (allowlist stays empty)", afterUnsafe.length === 0);
 
   fsGuard.allow("/home/user/.vela");   // legitimate nested root
-  check("nested root accepted", fsGuard.roots().includes("/home/user/.vela"));
+  check("nested home root accepted", fsGuard.roots().includes("/home/user/.vela"));
+  fsGuard.allow("/Users/alice/Documents/Decks"); // legitimate macOS decks folder
+  check("nested macOS decks root accepted", fsGuard.roots().includes("/Users/alice/Documents/Decks"));
 
   // 3. install() wraps Neutralino.filesystem.* and enforces the allowlist.
   const calls = [];

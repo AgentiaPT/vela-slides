@@ -281,11 +281,16 @@ class FsGuardHardeningInvariants(unittest.TestCase):
         # allow()/install() to neutralize the guard.
         self.assertIn("Object.freeze(fsGuard)", self.js)
 
-    def test_allow_refuses_volume_and_shallow_roots(self):
-        # allow() must reject both a whole-volume root and a shallow single-
-        # segment POSIX root before pushing to the allowlist.
-        self.assertIn("isVolumeRoot(n) || isShallowRoot(n)", self.js)
+    def test_allow_refuses_volume_shallow_and_system_roots(self):
+        # allow() must reject a whole-volume root, a shallow single-segment POSIX
+        # root, AND a nested OS-critical system subtree before pushing to the
+        # allowlist.
+        self.assertIn("isVolumeRoot(n) || isShallowRoot(n) || isSystemRoot(n)", self.js)
         self.assertIn("function isShallowRoot", self.js)
+        self.assertIn("function isSystemRoot", self.js)
+        # Home roots must NOT be denylisted (a legitimate ~/.vela lives there).
+        for home in ("/home", "/Users", "/root"):
+            self.assertNotIn(f'"{home}"', self.js.split("SYSTEM_ROOTS")[1].split("]")[0])
 
     def test_traversal_segment_still_rejected(self):
         # Defense-in-depth traversal guard must remain in underRoot().
