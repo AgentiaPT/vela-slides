@@ -135,8 +135,10 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.17";
+const VELA_VERSION = "13.19";
 const VELA_CHANGELOG = [
+  { v: "13.19", d: "Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more." },
+  { v: "13.18", d: "Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present." },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -2089,6 +2091,47 @@ function addItemAt(block, onChange, newItem) {
   onChange?.({ items: [...(block.items || []), newItem] });
 }
 
+// Swap block.items[idx] with its neighbour ("up" = earlier, "down" = later) and
+// call onChange. No-op at the list boundary. Mirrors the reducer's REORDER swap.
+function moveItemAt(block, onChange, idx, dir) {
+  const items = [...(block.items || [])];
+  const t = dir === "up" ? idx - 1 : idx + 1;
+  if (t < 0 || t >= items.length) return;
+  [items[idx], items[t]] = [items[t], items[idx]];
+  onChange?.({ items });
+}
+
+// Build the pin-aware control ItemChrome renders as ▲▼ arrows:
+//   { onUp, onDown, pinned, anyPinned, clearPin }
+// `move(dir)` performs the swap; `keyOf(i)` maps a slot index to its pin key;
+// `pin` = { key, set } is shared per-block state (from RenderBlock).
+//
+// After a move we pin the DESTINATION slot (keyOf(idx±1)) so its cluster stays
+// visible on the item that just landed there — instead of the neighbour that
+// slid under the cursor stealing focus. The pin is positional (survives the swap
+// without item ids) and is cleared on the next mouse move (see ItemChrome).
+// `anyPinned` lets every other item suppress its own hover cluster while pinned.
+const _noPin = { key: null, set: () => {} };
+const reorderCtl = (n, idx, move, keyOf, pin) => {
+  const p = pin || _noPin;
+  return {
+    onUp: idx > 0 ? () => { move("up"); p.set(keyOf(idx - 1)); } : undefined,
+    onDown: idx < n - 1 ? () => { move("down"); p.set(keyOf(idx + 1)); } : undefined,
+    pinned: p.key === keyOf(idx),
+    anyPinned: p.key != null,
+    clearPin: () => p.set(null),
+  };
+};
+
+// Reorder control for a plain block.items list — undefined when not editable or
+// when there is nothing to reorder (0–1 items).
+function itemReorder(block, onChange, idx, pin) {
+  if (!onChange) return undefined;
+  const n = (block.items || []).length;
+  if (n <= 1) return undefined;
+  return reorderCtl(n, idx, (d) => moveItemAt(block, onChange, idx, d), String, pin);
+}
+
 // Placeholder item factory for the "+ add" affordance on multi-item blocks.
 // Returns a blank item with neutral placeholder text/icon matching each block
 // type's item shape — so a fresh item is editable inline without resorting to AI.
@@ -2233,10 +2276,13 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
 const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
+// Reorder arrow — a full-size round button (same footprint as the link/delete
+// chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
+const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge }) {
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -2249,19 +2295,27 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   const ba = badgeAnchor || { top: 2, right: 2 };
   const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
   const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
+  // While a reorder pin is active anywhere in the block, the pinned slot keeps its
+  // cluster and every other item suppresses hover — so the item that just moved
+  // stays focused instead of the neighbour now under the cursor. The pin clears on
+  // the next mouse move, handing control back to plain hover.
+  const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
+      onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
-      {/* Idle link badge — edit mode, not hovered */}
-      {link && showLinkUI && !hovered && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {/* Idle link badge — edit mode, cluster not shown */}
+      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
-      {/* Hover cluster — edit mode */}
-      {hovered && editMode && (showLinkUI || deletable) && <div style={{ position: "absolute", ...a, display: "flex", gap: 3, zIndex: 11 }}>
+      {/* Hover cluster — edit mode (or pinned after a reorder move) */}
+      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
         {deletable && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ ...itemChromeBtn(T.red, T.red, "#fff"), fontWeight: 700 }} title="Delete item">✕</button>}
       </div>}
@@ -2276,7 +2330,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
 }
 
 // ━━━ Icon Row Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false, pin }) {
   const link = item.link;
   const editMode = editable && !presenting;
   return (
@@ -2284,6 +2338,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
       link={link} linkLabel={item.title}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
@@ -2298,7 +2353,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
 }
 
 // ━━━ Bullet Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━
-function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false }) {
+function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false, pin }) {
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
   const link = itemLinkOf(item);
@@ -2315,6 +2370,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
       link={link} linkLabel={text}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       {icon
@@ -2493,6 +2549,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
   // icon slot) must also never leak into Present mode — gate it the same way.
   const textEditable = editable && !presenting;
+  // Per-block reorder pin (see reorderCtl/ItemChrome): keeps the just-moved item's
+  // ▲▼ cluster focused at its destination slot. `_pin` is handed to itemReorder;
+  // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
+  const [pinKey, setPinKey] = useState(null);
+  const _pin = { key: pinKey, set: setPinKey };
   switch (block.type) {
 
     case "heading": {
@@ -2514,7 +2575,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "bullets":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 8, ...block.style }}>{(block.items || []).map((item, i) =>
-        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} />
+        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} pin={_pin} />
       )}
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
@@ -2543,6 +2604,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         return <ItemChrome key={ci} editable={editable} presenting={presenting}
           wrapStyle={{ ...cellStyle, ...safeStyle }}
           link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
+          reorder={itemReorder(block, onChange, ci, _pin)}
           onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
           anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
@@ -2633,7 +2695,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         ? { display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: block.gap || 14, ...block.style }
         : { display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style };
       return <div className={cls} style={containerStyle}>{(block.items || []).map((item, i) => (
-        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} />
+        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} pin={_pin} />
       ))}
       {canEdit && <AddItem label="Add item" accent={st.accent} style={cols > 1 ? { gridColumn: "1 / -1" } : undefined} onAdd={() => addItemAt(block, onChange, newItemFor(block,"icon-row"))} />}
       </div>;
@@ -2665,6 +2727,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2764,6 +2827,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={hasItems ? itemReorder(block, onChange, i, _pin) : undefined}
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -2795,6 +2859,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
             link={itemLinkOf(item)} linkLabel={item.title}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
@@ -2825,6 +2890,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
             link={itemLinkOf(item)} linkLabel={item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2849,6 +2915,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
@@ -2874,6 +2941,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
@@ -2908,6 +2976,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         cols[side] = { ...cols[side], items: [...prev, clonePoint(prev[prev.length - 1])] };
         onChange?.({ items: cols });
       };
+      const movePoint = (side, pi, dir) => onChange?.({ items: items.map((col, k) => {
+        if (k !== side) return col;
+        const pts = [...(col.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return col;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...col, items: pts };
+      }) });
+      const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
         <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -2921,6 +2999,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(0, left.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
@@ -2945,6 +3024,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(1, right.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
@@ -3053,6 +3133,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
               link={itemLinkOf(item)} linkLabel={item.label}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               {showIcons && <EditableIcon editable={editable && !presenting} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -3095,6 +3176,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         const prev = qq.items || [];
         return { ...qq, items: [...prev, clonePoint(prev[prev.length - 1])] };
       }) });
+      const moveQPoint = (qi, pi, dir) => onChange?.({ [qKey]: quadrants.map((qq, k) => {
+        if (k !== qi) return qq;
+        const pts = [...(qq.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return qq;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...qq, items: pts };
+      }) });
+      const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
       const renderRow = (indices, radii, yLabel) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
@@ -3115,6 +3206,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
                     wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
                     link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
                     <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
@@ -3153,6 +3245,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
             link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
@@ -5194,7 +5287,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -5264,7 +5357,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
       </div>
     </div>
   );
@@ -6535,6 +6628,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showPresenterView, setShowPresenterView] = useState(false);
   const showPresenterViewRef = useRef(false);
   const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  // ── Present Edit — restore inline click-to-edit while presenting. OFF by
+  // default so an audience never sees edit chrome (CR-03); the presenter flips
+  // it on via the ✎ toggle or Shift+E to edit text/icons live. Always resets
+  // to off when leaving Present so the next presentation opens clean.
+  const [presentEdit, setPresentEdit] = useState(false);
+  useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
@@ -6861,6 +6960,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
+      }
+      // Shift+E → toggle inline edit while presenting (Present mode only). Kept
+      // distinct from plain 'e' (AI quick-edit dialog). Toasts the new state
+      // since the key, unlike the ✎ button, has no persistent visual cue.
+      if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
@@ -7249,7 +7354,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -7267,9 +7372,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
+            presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
+            CR-03 "no edit chrome" test still passes when edit mode is off.
+            Hidden in student mode, where editing is disabled by design. */}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -9212,6 +9322,19 @@ uiSuite("Presenter", [
     const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
     if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
   }},
+  { name: "Present Edit toggle flips inline editing (Shift+E)", fn: async () => {
+    // The ✎ toggle restores click-to-edit while presenting. It must start OFF
+    // (audience-clean, per CR-03) and flip deterministically via Shift+E. The
+    // title reflects presentEdit regardless of deck content, so it's a stable
+    // signal. Reset to OFF afterwards so the audience-clean invariant holds.
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
+    if (!btn) throw new Error("present-edit-toggle not found in Present view");
+    if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _waitFor(() => _$("header"));
@@ -10059,6 +10182,46 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Block-item reorder (▲▼ arrows) — v13.19 ──────────────────────────
+// Hovering an item of a multi-item block in edit mode reveals a stacked
+// ▲▼ control (next to the ✕ delete) that swaps the item with its neighbour.
+// Asserts the swap moves the item and that the arrow is disabled at a boundary.
+uiSuite("Block item reorder (▲▼) — v13.19", [
+  { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    const ok = window.__velaTestInjectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    const order = () => _$$("[data-testid='slide-viewport'] *")
+      .filter((d) => d.children.length === 0 && /^(ALPHAUT|BRAVOUT|CHARLIEUT)$/.test((d.textContent || "").trim()))
+      .map((d) => d.textContent.trim());
+    await _waitFor(() => order().length === 3, 2000);
+    if (JSON.stringify(order()) !== JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"])) throw new Error("initial order wrong: " + order());
+    // Walk up from the item's text leaf to the ItemChrome wrapper (position:relative).
+    const leafOf = (t) => _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === t);
+    const wrapperOf = (t) => { let el = leafOf(t); while (el && el !== document.body) { if (getComputedStyle(el).position === "relative") return el; el = el.parentElement; } return null; };
+    const hover = (el) => el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    // Move BRAVOUT up → [BRAVOUT, ALPHAUT, CHARLIEUT].
+    const w = wrapperOf("BRAVOUT");
+    if (!w) throw new Error("no wrapper for BRAVOUT");
+    hover(w);
+    const up = await _waitFor(() => _$$("button", w).find((b) => b.title === "Move up" && !b.disabled), 1500);
+    _click(up);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["BRAVOUT", "ALPHAUT", "CHARLIEUT"]), 2000);
+    // BRAVOUT is now first → its Move up must be disabled.
+    const w2 = wrapperOf("BRAVOUT");
+    hover(w2);
+    const up2 = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move up"), 1500);
+    if (!up2.disabled) throw new Error("first item Move up not disabled");
+    // Move it back down to restore original order.
+    const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
+    _click(down);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
     try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},

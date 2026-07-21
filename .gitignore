@@ -94,3 +94,6 @@ security-audit/
 # playwright-cli interactive session output (snapshots, console logs)
 .playwright-cli/
 pptx-repro/
+
+# vela trust files
+trust.json

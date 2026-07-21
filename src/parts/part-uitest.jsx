@@ -251,6 +251,19 @@ uiSuite("Presenter", [
     const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
     if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
   }},
+  { name: "Present Edit toggle flips inline editing (Shift+E)", fn: async () => {
+    // The ✎ toggle restores click-to-edit while presenting. It must start OFF
+    // (audience-clean, per CR-03) and flip deterministically via Shift+E. The
+    // title reflects presentEdit regardless of deck content, so it's a stable
+    // signal. Reset to OFF afterwards so the audience-clean invariant holds.
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
+    if (!btn) throw new Error("present-edit-toggle not found in Present view");
+    if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _waitFor(() => _$("header"));
@@ -1098,6 +1111,46 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Block-item reorder (▲▼ arrows) — v13.19 ──────────────────────────
+// Hovering an item of a multi-item block in edit mode reveals a stacked
+// ▲▼ control (next to the ✕ delete) that swaps the item with its neighbour.
+// Asserts the swap moves the item and that the arrow is disabled at a boundary.
+uiSuite("Block item reorder (▲▼) — v13.19", [
+  { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    const ok = window.__velaTestInjectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    const order = () => _$$("[data-testid='slide-viewport'] *")
+      .filter((d) => d.children.length === 0 && /^(ALPHAUT|BRAVOUT|CHARLIEUT)$/.test((d.textContent || "").trim()))
+      .map((d) => d.textContent.trim());
+    await _waitFor(() => order().length === 3, 2000);
+    if (JSON.stringify(order()) !== JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"])) throw new Error("initial order wrong: " + order());
+    // Walk up from the item's text leaf to the ItemChrome wrapper (position:relative).
+    const leafOf = (t) => _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === t);
+    const wrapperOf = (t) => { let el = leafOf(t); while (el && el !== document.body) { if (getComputedStyle(el).position === "relative") return el; el = el.parentElement; } return null; };
+    const hover = (el) => el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    // Move BRAVOUT up → [BRAVOUT, ALPHAUT, CHARLIEUT].
+    const w = wrapperOf("BRAVOUT");
+    if (!w) throw new Error("no wrapper for BRAVOUT");
+    hover(w);
+    const up = await _waitFor(() => _$$("button", w).find((b) => b.title === "Move up" && !b.disabled), 1500);
+    _click(up);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["BRAVOUT", "ALPHAUT", "CHARLIEUT"]), 2000);
+    // BRAVOUT is now first → its Move up must be disabled.
+    const w2 = wrapperOf("BRAVOUT");
+    hover(w2);
+    const up2 = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move up"), 1500);
+    if (!up2.disabled) throw new Error("first item Move up not disabled");
+    // Move it back down to restore original order.
+    const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
+    _click(down);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
     try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
