@@ -6,49 +6,27 @@
 //   • recentFolders        — MRU list of deck-folder paths.
 //
 // Per-deck trust lives in <deck-folder>/.vela/trust.json (see trust.js).
-// Keeping that split means switching folders doesn't forget your agent pick,
-// and folder-local trust doesn't grow a global index.
+//
+// The page has NO filesystem authority. This module keeps the forward-compatible
+// merge / version / cache logic in JS but persists through the filesystem broker
+// (fs-bridge.js → extensions/fs), which owns the ~/.vela path (derived by the
+// broker from $HOME — never from the page) and writes it atomically in Go.
 //
 // Exposed as window.__velaConfig after boot (see nl-boot.js).
 
-import { fsGuard } from "./fs-guard.js";
+import { fsBridge } from "./fs-bridge.js";
 
 const CONFIG_VERSION = 1;
 const EMPTY = { _v: CONFIG_VERSION, agent: null, firstLaunchSeen: false, recentFolders: [] };
 
-async function homeDir() {
-  // HOME on linux/mac, USERPROFILE on windows. Neutralino passes through
-  // whatever the OS exposes; we accept either.
-  const home =
-    (await Neutralino.os.getEnv("HOME")) ||
-    (await Neutralino.os.getEnv("USERPROFILE"));
-  if (!home) throw new Error("cannot locate user home directory");
-  const h = home.replace(/[\\/]+$/, "");
-  // Vela's global config lives in ~/.vela — register it as an allowed FS root.
-  fsGuard.allow(`${h}/.vela`);
-  return h;
-}
-
-async function configPath() {
-  return `${await homeDir()}/.vela/config.json`;
-}
-
-async function ensureDir(path) {
-  try {
-    await Neutralino.filesystem.getStats(path);
-  } catch {
-    try { await Neutralino.filesystem.createDirectory(path); } catch {}
-  }
-}
-
 async function readConfig() {
   try {
-    const p = await configPath();
-    const txt = await Neutralino.filesystem.readFile(p);
+    const txt = await fsBridge.readConfig();
+    if (!txt) return { ...EMPTY };
     const parsed = JSON.parse(txt);
-    // Forward-compatible merge — unknown keys pass through, missing keys
-    // get defaults. Corrupt file → treat as empty (fail-open; the user can
-    // re-grant trust, not silently lock them out).
+    // Forward-compatible merge — unknown keys pass through, missing keys get
+    // defaults. Corrupt file → treat as empty (fail-open; the user can re-grant
+    // trust, not silently lock them out).
     return Object.assign({}, EMPTY, parsed, { _v: CONFIG_VERSION });
   } catch {
     return { ...EMPTY };
@@ -56,25 +34,8 @@ async function readConfig() {
 }
 
 async function writeConfig(obj) {
-  const home = await homeDir();
-  await ensureDir(`${home}/.vela`);
-  const p = `${home}/.vela/config.json`;
-  const tmp = `${p}.tmp`;
   const json = JSON.stringify({ ...obj, _v: CONFIG_VERSION }, null, 2);
-  // Atomic swap: write tmp, rename over target. A crash mid-write leaves
-  // either the old config intact or the new one fully committed — never
-  // truncated JSON.
-  await Neutralino.filesystem.writeFile(tmp, json);
-  try {
-    await Neutralino.filesystem.move(tmp, p);
-  } catch {
-    // Fallback: some filesystems reject rename-over-existing. Retry as a
-    // two-step remove-then-write. Small window of truncation on crash, but
-    // better than losing the new value.
-    try { await Neutralino.filesystem.remove(p); } catch {}
-    await Neutralino.filesystem.writeFile(p, json);
-    try { await Neutralino.filesystem.remove(tmp); } catch {}
-  }
+  await fsBridge.writeConfig(json);
 }
 
 let cache = null;
@@ -103,5 +64,5 @@ export const configStore = {
     const list = [folder, ...(cur.recentFolders || []).filter((f) => f !== folder)].slice(0, 10);
     await patch({ recentFolders: list });
   },
-  async path() { return configPath(); },
+  path() { return "~/.vela/config.json"; },
 };

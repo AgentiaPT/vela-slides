@@ -22,8 +22,10 @@ import { agents } from "./agents-bridge.js";
 import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
-import { fsGuard } from "./fs-guard.js";
+import { fsBridge } from "./fs-bridge.js";
 import { showDeckWarning } from "./deck-warning.js";
+
+const baseName = (p) => String(p == null ? "" : p).replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop();
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -75,10 +77,10 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
-  // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
-  // root (the decks folder + ~/.vela, registered by deck-io/config-store).
-  // Installed before any module touches the filesystem.
-  fsGuard.install();
+  // Subscribe to the filesystem broker's readiness announcement (velaFsReady)
+  // BEFORE any module makes a broker call. The page has no filesystem authority;
+  // every file op routes through the broker over loopback HTTP (fs-bridge.js).
+  fsBridge.install();
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
@@ -111,24 +113,20 @@ async function boot() {
       }
     }
     if (cliFile) {
-      // Register the file's containing folder as an allowed FS root BEFORE the
-      // guarded getStats below. fsGuard.install() ran with an empty root list,
-      // so without this the existence check throws and the file is silently
-      // dropped (the whole feature is dead). The user explicitly opened this
-      // file, so its folder is the trust root — same model as a folder-dialog
-      // pick; underRoot() still blocks "..". We only allow + probe here;
-      // initWithFile() commits state/persistence once existence is confirmed,
-      // so a missing file leaves the remembered folder untouched.
-      fsGuard.allow(cliFile.replace(/\/[^/]+$/, ""));
-      try { await Neutralino.filesystem.getStats(cliFile); }
-      catch { cliFile = null; } // missing / unreadable — fall through to picker
+      // The user explicitly opened this file, so its containing folder is the
+      // trust root — same model as a folder-dialog pick. initWithFile() adopts
+      // that folder via the broker (which rejects any unsafe root and scopes
+      // every later op to a basename inside it), then we probe the file's
+      // existence through the broker.
+      setMsg("Opening file…");
+      try {
+        await deckIO.initWithFile(cliFile);
+        if (!(await fsBridge.deckExists(baseName(cliFile)))) cliFile = null;
+      } catch { cliFile = null; } // unsafe folder / broker down — fall through
     }
   } catch { /* NL_ARGS unavailable — ignore */ }
 
-  if (cliFile) {
-    setMsg("Opening file…");
-    await deckIO.initWithFile(cliFile);
-  } else {
+  if (!cliFile) {
     setMsg("Choosing decks folder…");
     try {
       await deckIO.init();
@@ -140,7 +138,7 @@ async function boot() {
   setMsg("Locating a deck…");
   let deckPath = cliFile || await deckIO.lastDeckPath();
   if (deckPath) {
-    try { await Neutralino.filesystem.getStats(deckPath); }
+    try { if (!(await fsBridge.deckExists(baseName(deckPath)))) deckPath = null; }
     catch { deckPath = null; }
   }
 

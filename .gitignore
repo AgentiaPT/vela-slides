@@ -94,3 +94,5 @@ security-audit/
 # playwright-cli interactive session output (snapshots, console logs)
 .playwright-cli/
 pptx-repro/
+vela-neutralino/extensions/fs/vela-fs
+vela-neutralino/extensions/fs/vela-fs.exe

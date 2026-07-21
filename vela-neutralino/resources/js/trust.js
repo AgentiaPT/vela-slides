@@ -16,6 +16,7 @@
 // own trust model (artifact sandbox, local-host serve auth).
 
 import { configStore } from "./config-store.js";
+import { fsBridge } from "./fs-bridge.js";
 
 const TRUST_VERSION = 1;
 
@@ -41,18 +42,17 @@ function relPath(folder, abs) {
 
 function isoNow() { return new Date().toISOString(); }
 
-async function ensureDir(path) {
-  try { await Neutralino.filesystem.getStats(path); }
-  catch { try { await Neutralino.filesystem.createDirectory(path); } catch {} }
-}
-
+// Trust is stored at <deck-folder>/.vela/trust.json. The page has no filesystem
+// authority, so the read/write go through the broker, which owns the current
+// folder root and writes atomically in Go. `folder` here is always the currently
+// open decks folder (the broker's single trust root); it keys the in-memory
+// cache but the broker resolves the fixed trust.json under its own root.
 async function loadTrust(folder) {
   if (folderCache.has(folder)) return folderCache.get(folder);
-  const p = `${folder.replace(/[\\/]+$/, "")}/.vela/trust.json`;
   let data;
   try {
-    const txt = await Neutralino.filesystem.readFile(p);
-    const parsed = JSON.parse(txt);
+    const txt = await fsBridge.readTrust();
+    const parsed = txt ? JSON.parse(txt) : null;
     data = { decks: parsed?.decks || {} };
   } catch {
     data = { decks: {} };
@@ -62,19 +62,8 @@ async function loadTrust(folder) {
 }
 
 async function writeTrust(folder, data) {
-  const base = folder.replace(/[\\/]+$/, "");
-  await ensureDir(`${base}/.vela`);
-  const p = `${base}/.vela/trust.json`;
-  const tmp = `${p}.tmp`;
   const json = JSON.stringify({ _v: TRUST_VERSION, decks: data.decks || {} }, null, 2);
-  await Neutralino.filesystem.writeFile(tmp, json);
-  try {
-    await Neutralino.filesystem.move(tmp, p);
-  } catch {
-    try { await Neutralino.filesystem.remove(p); } catch {}
-    await Neutralino.filesystem.writeFile(p, json);
-    try { await Neutralino.filesystem.remove(tmp); } catch {}
-  }
+  await fsBridge.writeTrust(json);
   folderCache.set(folder, data);
 }
 

@@ -42,6 +42,34 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         self.assertIs(self.cfg.get("enableExtensions"), True)
         ids = [e.get("id") for e in self.cfg.get("extensions", [])]
         self.assertIn("ai.vela.agent", ids)
+        # The filesystem broker is the ONLY process with file access; it must be
+        # declared as an extension.
+        self.assertIn("ai.vela.fs", ids)
+
+    def test_no_filesystem_authority_in_allowlist(self):
+        # The webview page must hold NO ambient filesystem authority: every
+        # filesystem.* method is removed from the allowlist. File access now goes
+        # only through the broker extension over loopback HTTP. A single
+        # filesystem.* entry re-opens the mXSS->arbitrary-read/write capability
+        # this change exists to remove.
+        allow = self.cfg["nativeAllowList"]
+        for entry in allow:
+            self.assertFalse(
+                entry.startswith("filesystem."),
+                f"{entry} must not be in nativeAllowList — the page holds no FS authority",
+            )
+        self.assertNotIn("filesystem.*", allow)
+        # The capabilities the shell still legitimately needs must remain.
+        for keep in ("os.showFolderDialog", "os.getEnv", "storage.*", "events.*",
+                     "extensions.getStats", "window.*", "app.*", "debug.log"):
+            self.assertIn(keep, allow)
+
+    def test_broker_extension_is_node_free(self):
+        ext = next(e for e in self.cfg["extensions"] if e["id"] == "ai.vela.fs")
+        cmds = [ext.get("commandLinux", ""), ext.get("commandDarwin", ""), ext.get("commandWindows", "")]
+        for c in cmds:
+            self.assertIn("extensions/fs/vela-fs", c)
+            self.assertNotIn("node", c, "broker must be a compiled binary, not node")
 
     def test_extensions_messaging_not_granted(self):
         # The client init needs read-only extensions.getStats; the webview must
@@ -67,6 +95,28 @@ class WebviewNeverSpawns(unittest.TestCase):
             src = read("vela-neutralino", *rel.split("/"))
             self.assertNotIn("spawnProcess(", src, f"{rel} must not call spawnProcess")
             self.assertNotIn("updateSpawnedProcess(", src, f"{rel} must not call updateSpawnedProcess")
+
+
+class PageHoldsNoFilesystemAuthority(unittest.TestCase):
+    """The page holds no ambient filesystem authority — no resources/js file may
+    call Neutralino.filesystem.*. All file access routes through the broker
+    (fs-bridge.js → extensions/fs). A single call here would bypass the broker's
+    folder-scoping and re-open the arbitrary read/write capability."""
+
+    def test_no_neutralino_filesystem_calls_in_page(self):
+        js_dir = os.path.join(NEU, "resources", "js")
+        offenders = []
+        for name in os.listdir(js_dir):
+            if not name.endswith(".js"):
+                continue
+            with open(os.path.join(js_dir, name), encoding="utf-8") as f:
+                if re.search(r"Neutralino\.filesystem\.", f.read()):
+                    offenders.append(name)
+        self.assertEqual(
+            offenders, [],
+            f"page files still reference Neutralino.filesystem.*: {offenders} — "
+            "the page must hold no filesystem authority",
+        )
 
 
 class GatekeeperInvariants(unittest.TestCase):
@@ -211,11 +261,12 @@ class AgentsBridgeInvariants(unittest.TestCase):
     def setUp(self):
         self.js = read("vela-neutralino", "resources", "js", "agents-bridge.js")
 
-    def test_handshake_prefers_window_nlport_suffix(self):
-        # Must prefer the NL_PORT-keyed handshake file over the legacy
-        # unsuffixed name, matching the gatekeeper's own keying (main.go).
-        self.assertIn("window.NL_PORT", self.js)
-        self.assertIn("suffixes.push", self.js)
+    def test_handshake_relayed_through_broker_not_filesystem(self):
+        # The page can no longer read the agent handshake files itself (no FS
+        # authority) — it must obtain {port, token} through the filesystem
+        # broker's relay. Guard against a regression back to direct file reads.
+        self.assertIn("fsBridge.agentHandshake", self.js)
+        self.assertNotIn("Neutralino.filesystem", self.js)
 
     def test_401_resets_cached_handshake(self):
         # A stale/rotated token must not be cached forever — 401 must clear it
@@ -267,34 +318,77 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
         self.assertIn("useAIAvailable", imports_jsx)
 
 
-class FsGuardHardeningInvariants(unittest.TestCase):
-    """Source locks for the filesystem-guard hardening. The behavioral suite
-    (tests/test_fs_guard.cjs) executes the real module; these assert the guard
-    is wired the hardened way so the desktop file-access caps cannot regress by
-    editing the source out."""
+class FsBrokerInvariants(unittest.TestCase):
+    """Source locks for the filesystem broker (extensions/fs). The Go unit tests
+    (extensions/fs/*_test.go) execute the real logic; these assert the security
+    wiring is present so the desktop file-access caps cannot regress by editing
+    the source out. The broker is the ONLY process with filesystem access."""
 
     def setUp(self):
-        self.js = read("vela-neutralino", "resources", "js", "fs-guard.js")
+        self.scope = read("vela-neutralino", "extensions", "fs", "scope.go")
+        self.store = read("vela-neutralino", "extensions", "fs", "store.go")
+        self.main = read("vela-neutralino", "extensions", "fs", "main.go")
 
-    def test_capability_is_frozen(self):
-        # The exported guard must be frozen so same-realm script cannot swap out
-        # allow()/install() to neutralize the guard.
-        self.assertIn("Object.freeze(fsGuard)", self.js)
-
-    def test_allow_refuses_volume_shallow_and_system_roots(self):
-        # allow() must reject a whole-volume root, a shallow single-segment POSIX
-        # root, AND a nested OS-critical system subtree before pushing to the
-        # allowlist.
-        self.assertIn("isVolumeRoot(n) || isShallowRoot(n) || isSystemRoot(n)", self.js)
-        self.assertIn("function isShallowRoot", self.js)
-        self.assertIn("function isSystemRoot", self.js)
+    def test_root_predicates_ported_from_fs_guard(self):
+        # The volume / shallow / system-root refusals (previously in fs-guard.js)
+        # must live in the broker now.
+        for fn in ("func isVolumeRoot", "func isShallowRoot", "func isSystemRoot", "func validRoot"):
+            self.assertIn(fn, self.scope)
         # Home roots must NOT be denylisted (a legitimate ~/.vela lives there).
-        for home in ("/home", "/Users", "/root"):
-            self.assertNotIn(f'"{home}"', self.js.split("SYSTEM_ROOTS")[1].split("]")[0])
+        sysblock = self.scope.split("systemRoots")[1].split("}")[0]
+        for home in ('"/home"', '"/Users"', '"/root"'):
+            self.assertNotIn(home, sysblock)
 
-    def test_traversal_segment_still_rejected(self):
-        # Defense-in-depth traversal guard must remain in underRoot().
-        self.assertIn('n.split("/").includes("..")', self.js)
+    def test_within_root_scoping_and_traversal_reject(self):
+        # Every deck op resolves a safe basename inside a validated trust root,
+        # with a defense-in-depth ".." reject.
+        self.assertIn("func safeBasename", self.scope)
+        self.assertIn("func underRoot", self.scope)
+        self.assertIn('seg == ".."', self.scope)
+        self.assertIn("resolveInFolder", self.store)
+
+    def test_save_extension_allowlist_enforced_in_broker(self):
+        # Saves must end in .vela/.json — enforced in native code, not page JS.
+        self.assertIn("func allowedSaveExt", self.scope)
+        self.assertIn(".vela", self.scope)
+        self.assertIn(".json", self.scope)
+        self.assertIn("allowedSaveExt(name)", self.store)
+
+    def test_token_auth_and_loopback_bind(self):
+        self.assertIn("x-vela-token", self.main)
+        self.assertIn("subtle.ConstantTimeCompare", self.main)
+        self.assertIn('"127.0.0.1:0"', self.main)
+
+    def test_cors_origin_pinned_not_wildcard(self):
+        self.assertIn("allowedOrigin(", self.main)
+        self.assertNotIn('"Access-Control-Allow-Origin", "*"', self.main)
+
+    def test_self_terminates_on_parent_exit(self):
+        # Neutralino never kills extension processes (upstream #1299) — the broker
+        # must self-terminate or it orphans (stdin EOF primary + port watch).
+        self.assertIn("<-stdinClosed", self.main)
+        self.assertIn("portOpen(", self.main)
+        self.assertIn("watchParentExit(dir)", self.main)
+
+
+class FsBrokerBootstrapInvariants(unittest.TestCase):
+    """The broker hands the page its {port, token} WITHOUT the page touching the
+    filesystem, via a Neutralino extension→app event. The event name must match
+    on both ends or the page never learns the broker's coordinates."""
+
+    def test_fs_ready_event_name_matches(self):
+        main = read("vela-neutralino", "extensions", "fs", "main.go")
+        bridge = read("vela-neutralino", "resources", "js", "fs-bridge.js")
+        self.assertIn('"velaFsReady"', main)
+        self.assertIn('"velaFsReady"', bridge)
+        # The broker delivers it via app.broadcast (extension->app), NOT via any
+        # app->extension messaging capability (which stays out of the allowlist).
+        self.assertIn("app.broadcast", read("vela-neutralino", "extensions", "fs", "nlclient.go"))
+
+    def test_bridge_bootstrap_is_filesystem_free(self):
+        bridge = read("vela-neutralino", "resources", "js", "fs-bridge.js")
+        self.assertNotIn("Neutralino.filesystem", bridge)
+        self.assertIn("Neutralino.events.on", bridge)
 
 
 if __name__ == "__main__":

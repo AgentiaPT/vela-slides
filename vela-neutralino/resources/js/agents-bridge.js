@@ -10,14 +10,16 @@
 // session-confirm UI (trust.js).
 //
 // Handshake: the gatekeeper writes ~/.vela/agent-ext.{port,token} on launch.
-// We read them (the webview already has filesystem read on ~/.vela via
-// fsGuard) and authenticate every request with the token. Loopback HTTP +
-// token mirrors the serve.py channel branch the monolith already speaks
-// (part-engine.jsx), so the existing __velaAgentSend contract is reused:
+// The page no longer has filesystem authority, so it can't read those files
+// directly — the filesystem broker (fs-bridge.js → extensions/fs) reads the two
+// fixed agent handshake files and relays {port, token} to us. We authenticate
+// every request with the token. Loopback HTTP + token mirrors the serve.py
+// channel branch the monolith already speaks (part-engine.jsx), so the existing
+// __velaAgentSend contract is reused:
 //   send({ system, messages, temperature, max_tokens, _callType })
 //     -> Promise<{ text, request_id, stats? }>
 
-import { fsGuard } from "./fs-guard.js";
+import { fsBridge } from "./fs-bridge.js";
 import { configStore } from "./config-store.js";
 
 const DESCRIPTORS = {
@@ -32,34 +34,18 @@ let detected = null;    // { id: { id, label, available, version } }
 let activeId = null;    // selected provider id
 let lastModel = null;   // populated after the first successful send()
 
-async function velaDir() {
-  const home = (await Neutralino.os.getEnv("HOME")) || (await Neutralino.os.getEnv("USERPROFILE"));
-  if (!home) throw new Error("cannot locate user home directory");
-  const dir = `${home.replace(/[\\/]+$/, "")}/.vela`;
-  fsGuard.allow(dir); // the gatekeeper handshake files live here
-  return dir;
-}
-
-// Read the gatekeeper's loopback port + auth token. The extension is launched
-// by Neutralino in parallel with the webview, so the files may not exist for a
-// beat — poll briefly before giving up (AI then renders as unavailable).
+// Read the gatekeeper's loopback port + auth token via the filesystem broker's
+// relay (the page cannot read the handshake files itself). Both extensions are
+// launched by Neutralino in parallel with the webview, so the agent files may
+// not exist for a beat — poll briefly before giving up (AI then renders as
+// unavailable). The broker keys the files by NL_PORT exactly as the gatekeeper
+// writes them.
 async function readHandshake() {
-  let dir;
-  try { dir = await velaDir(); } catch { return null; }
-  // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
-  // multiple windows never share one channel. Prefer the keyed file; fall back
-  // to the unkeyed name (older gatekeeper / standalone run).
-  const suffixes = [];
-  if (typeof window !== "undefined" && window.NL_PORT != null) suffixes.push(`-${window.NL_PORT}`);
-  suffixes.push("");
   for (let i = 0; i < 20; i++) {
-    for (const sfx of suffixes) {
-      try {
-        const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
-        const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
-        if (port && token) return { port, token };
-      } catch { /* not written yet */ }
-    }
+    try {
+      const hs = await fsBridge.agentHandshake();
+      if (hs && hs.port && hs.token) return hs;
+    } catch { /* broker not up yet / agent files not written */ }
     await sleep(150);
   }
   return null;

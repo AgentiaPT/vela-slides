@@ -17,6 +17,12 @@
       "commandLinux": "${NL_PATH}/extensions/agent/vela-agent",
       "commandDarwin": "${NL_PATH}/extensions/agent/vela-agent",
       "commandWindows": "${NL_PATH}/extensions/agent/vela-agent.exe"
+    },
+    {
+      "id": "ai.vela.fs",
+      "commandLinux": "${NL_PATH}/extensions/fs/vela-fs",
+      "commandDarwin": "${NL_PATH}/extensions/fs/vela-fs",
+      "commandWindows": "${NL_PATH}/extensions/fs/vela-fs.exe"
     }
   ],
   "tokenSecurity": "one-time",
@@ -30,15 +36,6 @@
     "debug.log",
     "os.showFolderDialog",
     "os.getEnv",
-    "filesystem.readFile",
-    "filesystem.writeFile",
-    "filesystem.readDirectory",
-    "filesystem.createDirectory",
-    "filesystem.getStats",
-    "filesystem.createWatcher",
-    "filesystem.removeWatcher",
-    "filesystem.remove",
-    "filesystem.move",
     "storage.*",
     "events.*",
     "extensions.getStats"
