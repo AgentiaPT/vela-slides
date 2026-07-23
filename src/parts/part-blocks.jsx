@@ -760,12 +760,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      // _gridCell: this image is a cell in a multi-image grid — fill the cell and
+      // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : block._gridCell
+          ? { width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
 
     case "code":
@@ -1649,6 +1653,66 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return [block, ...comments];
   };
 
+  // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
+  // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
+  // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
+  // the image block's _gridCell flag). An incomplete last row is centered by giving
+  // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
+  const renderImageGrid = (idxs, region) => {
+    const runLen = idxs.length;
+    const cols = slide.imageCols ? Math.max(1, slide.imageCols | 0) : gridColsFor(runLen, region);
+    const rows = Math.ceil(runLen / cols);
+    const lastRowCount = runLen - (rows - 1) * cols;
+    const incomplete = lastRowCount < cols;
+    const gap = slide.gap || 12;
+    return (
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "1fr", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        {idxs.map((bi, k) => {
+          const firstOfLastRow = k === (rows - 1) * cols;
+          const gridColumn = (incomplete && firstOfLastRow)
+            ? `${cols - lastRowCount + 1} / span 2`
+            : "span 2";
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const [blockEl, ...rest] = rendered;
+          // Make the block wrapper fill its cell height so the image (height:100%)
+          // and objectFit:contain letterbox uniformly across mixed aspect ratios.
+          const filled = React.cloneElement(blockEl, {
+            style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
+          });
+          return (
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+              {filled}{rest}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
+  // blocks with a balanced image grid (full region). Single images render as before.
+  const renderStackWithImageGrids = () => {
+    const out = [];
+    let i = 0;
+    while (i < blocks.length) {
+      if (blocks[i].type === "image") {
+        let j = i;
+        while (j < blocks.length && blocks[j].type === "image") j++;
+        if (j - i >= 2) {
+          const idxs = [];
+          for (let k = i; k < j; k++) idxs.push(k);
+          out.push(renderImageGrid(idxs, "full"));
+          i = j;
+          continue;
+        }
+      }
+      out.push(...renderBlockWithComments(blocks[i], i));
+      i++;
+    }
+    return out;
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isCols) {
@@ -1693,11 +1757,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+      // >=2 images beside content → grid them (half region) so they fill the column
+      // balanced instead of stacking vertically. Single image keeps the height-capped
+      // column so a lone side image conforms to the content column's height.
+      const imageCol = imageIdxs.length >= 2
+        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
+        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
-    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+    return renderStackWithImageGrids();
   };
 
   return (

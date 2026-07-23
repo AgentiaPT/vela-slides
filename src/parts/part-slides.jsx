@@ -1663,24 +1663,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // Empty module → brand-new full-bleed solo-image slide.
           if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
           const cur = slides[slideIndex] || {};
+          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
+          // image-only slide inserted after this one rather than over-packing the grid.
+          if (curImgs >= 5) {
+            const newSlides = [...slides];
+            const insertAt = slideIndex + 1;
+            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
+            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            return;
+          }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title slides and wide images stacked, and
-          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          // author layout, keeps mostly-title/image-only slides and wide images stacked
+          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
+          // images to a full-width header + full-width image grid, and otherwise returns
+          // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect);
+          const layout = pasteImageLayout(cur, aspect, n);
           if (layout !== "stack" && layout !== cur.layout) {
             patch.layout = layout;
-            // A square/portrait side image is tall; at the default 1:1 split it
-            // squeezes the body text into a half-width column where it wraps past
-            // the slide height and gets auto-scaled smaller. Give the content
-            // column the larger share so the text keeps its size and just uses
-            // more vertical space. Only when the author hasn't pinned a ratio;
-            // wider images (aspect > 1.2) read fine at 1:1.
-            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
-              patch.contentFlex = 1.4;
-              patch.imageFlex = 1;
+            // Balance the split. A single square/portrait side image is tall; at the
+            // default 1:1 split it squeezes the body text into a half-width column
+            // where it wraps past the slide height and gets auto-scaled smaller — give
+            // the content column the larger share. Two or more images grid inside their
+            // half, so an even 1:1 split gives that grid the room it needs. Only when
+            // the author hasn't pinned a ratio.
+            if (cur.contentFlex == null && cur.imageFlex == null) {
+              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
+              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
             }
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
