@@ -665,6 +665,80 @@ uiSuite("Slide Ops", [
   }},
 ]);
 
+// ── TOC Collapse / Keyboard-Tree Suite (CR2) ─────────────────────────
+// Verifies the roving ARIA tree, the disclosure keys (Right=expand /
+// Left=collapse on a focused section header), and the CORE fix: a collapsed
+// section that holds the active slide keeps a live k/N marker + accent border
+// so the user never loses "you are here" — WITHOUT auto-expanding.
+const _tocHeaders = () => _$$('[data-testid="toc-section-header"]');
+// NOTE: _tocRows() is defined once later in this file (shared helper) — reuse it.
+const _tocToggle = (header) => Array.from(header.querySelectorAll("span")).find((s) => (s.textContent || "").trim() === "▼");
+const _tocCollapsed = (header) => header.getAttribute("aria-expanded") === "false";
+const _tocEnsureExpanded = async (header) => { if (_tocCollapsed(header)) { _click(_tocToggle(header)); await _waitFor(() => !_tocCollapsed(header), 1500).catch(() => {}); } };
+const _tocEnsureCollapsed = async (header) => { if (!_tocCollapsed(header)) { _click(_tocToggle(header)); await _waitFor(() => _tocCollapsed(header), 1500).catch(() => {}); } };
+
+uiSuite("TOC Collapse Nav", [
+  { name: "Collapse hides slide rows + shows k/N marker with accent border", fn: async () => {
+    const header = _tocHeaders()[0];
+    if (!header) throw new Error("no section header");
+    _click(header); await _wait(120); // select this section (active slide = its slide 0)
+    await _tocEnsureExpanded(header);
+    const before = _tocRows().length;
+    _click(_tocToggle(header));
+    await _waitFor(() => _tocRows().length < before, 1500);
+    const marker = header.querySelector('[data-testid="toc-collapsed-marker"]');
+    if (!marker) throw new Error("collapsed header missing k/N marker");
+    if (!/^\d+ \/ \d+$/.test((marker.textContent || "").trim())) throw new Error("marker not k/N: " + marker.textContent);
+    if (!/2px solid/.test(header.style.borderLeft) || /transparent/.test(header.style.borderLeft)) throw new Error("no accent left-border on collapsed active header");
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "Marker updates live as the active slide advances (stays folded)", fn: async () => {
+    const header = _tocHeaders()[0];
+    _click(header); await _wait(120);
+    // need a section with >= 2 slides for a live delta
+    await _tocEnsureExpanded(header);
+    const n = _tocRows().length;
+    await _tocEnsureCollapsed(header);
+    const readK = () => { const m = header.querySelector('[data-testid="toc-collapsed-marker"]'); return m ? parseInt((m.textContent || "").trim(), 10) : null; };
+    const k0 = readK();
+    if (k0 == null) throw new Error("no marker while collapsed");
+    if (n >= 2) {
+      document.activeElement?.blur(); await _wait(60);
+      _key("ArrowRight"); // global slide-advance (focus off the rail)
+      await _waitFor(() => readK() === k0 + 1, 1500);
+      if (_tocCollapsed(header) !== true) throw new Error("section auto-expanded — must stay folded");
+    }
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ArrowRight on a focused collapsed header expands it", fn: async () => {
+    const header = _tocHeaders()[0];
+    _click(header); await _wait(80);
+    await _tocEnsureCollapsed(header);
+    header.focus(); await _wait(60);
+    if (document.activeElement !== header) throw new Error("header did not take focus");
+    _key("ArrowRight");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "true", 1500);
+    if (_tocRows().length === 0) throw new Error("rows did not reappear after expand");
+  }},
+  { name: "ArrowLeft on a focused expanded header collapses it", fn: async () => {
+    const header = _tocHeaders()[0];
+    _click(header); await _wait(80);
+    await _tocEnsureExpanded(header);
+    header.focus(); await _wait(60);
+    _key("ArrowLeft");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "false", 1500);
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ARIA tree roles + roving tabindex present", fn: async () => {
+    if (!_$('[role="tree"]')) throw new Error("no role=tree container");
+    const header = _tocHeaders()[0];
+    if (header.getAttribute("role") !== "treeitem") throw new Error("header not role=treeitem");
+    if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
+    header.focus(); await _wait(40);
+    if (header.getAttribute("tabindex") !== "0") throw new Error("focused header tabindex not 0");
+  }},
+], { setup: _selectFirstModule });
+
 // ── Slide Content Suite ──────────────────────────────────────────────
 uiSuite("Content", [
   { name: "Slide has visible headings", fn: async () => {

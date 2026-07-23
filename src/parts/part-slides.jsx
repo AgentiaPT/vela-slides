@@ -735,13 +735,19 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     const result = [];
     for (const lane of lanes) {
       for (const item of lane.items) {
+        // CR1: section title cards (🎬 presentCard) render in the gallery/overview
+        // exactly as they lead the module in presentation. Virtual, non-draggable,
+        // excluded from the module's real-slide count; clicking selects the module.
+        if (item.presentCard) {
+          result.push({ slide: buildTitleCardSlide(item, lane, branding), itemId: item.id, slideIdx: 0, moduleTitle: item.title, laneTitle: lane.title, isCurrent: false, isTitleCard: true });
+        }
         for (let si = 0; si < (item.slides || []).length; si++) {
           result.push({ slide: item.slides[si], itemId: item.id, slideIdx: si, moduleTitle: item.title, laneTitle: lane.title, isCurrent: item.id === currentConceptId && si === slideIndex });
         }
       }
     }
     return result;
-  }, [lanes, currentConceptId, slideIndex]);
+  }, [lanes, currentConceptId, slideIndex, branding]);
 
   useEffect(() => { setTimeout(() => { activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, 100); }, []);
 
@@ -836,12 +842,13 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
   // Tag first slide of each module + compute slide counts
   const taggedSlides = useMemo(() => {
     const counts = {};
-    for (const s of allSlides) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
+    // Count only real slides — virtual title cards don't inflate the module count.
+    for (const s of allSlides) if (!s.isTitleCard) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
     let lastItemId = null;
     return allSlides.map((s) => {
       const isFirst = s.itemId !== lastItemId;
       lastItemId = s.itemId;
-      return { ...s, isFirst, moduleCount: counts[s.itemId] };
+      return { ...s, isFirst, moduleCount: counts[s.itemId] || 0 };
     });
   }, [allSlides]);
 
@@ -850,7 +857,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗂</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.length} slides</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -864,10 +871,12 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
             const isDragSrc = dragSrc && dragSrc.itemId === s.itemId && dragSrc.slideIdx === s.slideIdx;
             const isDropHere = dropTarget && dropTarget.itemId === s.itemId && dropTarget.slideIdx === s.slideIdx;
             const dropSide = isDropHere ? dropTarget.side : null;
-            const cardKey = s.itemId + "|" + s.slideIdx;
+            // Title cards get a distinct key so they never collide with real slide 0,
+            // and they are excluded from drag hit-testing / reorder (virtual, not real).
+            const cardKey = s.isTitleCard ? s.itemId + "|tc" : s.itemId + "|" + s.slideIdx;
             return (
-              <div key={"s-" + cardKey} ref={(el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
-                onMouseDown={(e) => handleMouseDown(e, s)}
+              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
+                onMouseDown={s.isTitleCard ? undefined : (e) => handleMouseDown(e, s)}
                 onClick={() => { if (!dragActive) jump(s.itemId, s.slideIdx); }}
                 style={{ width: thumbWidth, cursor: dragActive ? "grabbing" : "pointer", transition: dragActive ? "none" : "all 0.15s", opacity: isDragSrc ? 0.3 : 1, position: "relative" }}>
                 {/* Drop indicator — left */}
@@ -890,11 +899,11 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
                   <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
+                    <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
+                    {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
               </div>
@@ -1700,6 +1709,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
+      // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
+      // keys (expand/collapse/move-focus/select) — never global slide-advance. The
+      // treeitem's onKeyDown already stopPropagation's real bubbling events; this guard
+      // is belt-and-suspenders and also covers synthetic document-level keydowns.
+      if ((e.key === " " || (typeof e.key === "string" && e.key.startsWith("Arrow"))) && typeof document !== "undefined" && document.activeElement && document.activeElement.closest && document.activeElement.closest("[role=tree]")) return;
 
       // Alternatives grid: 1-4 apply variant live, 0 back to original, Enter done, ESC close.
       // Applying keeps the grid open so each variant can be viewed full-size before settling.
