@@ -1133,6 +1133,17 @@ export default function App() {
   const _localSyncState = useRef(null);
   _localSyncState.current = state; // always up-to-date
 
+  // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // deck-io reports every save transition through window.__velaOnSaveStatus so
+  // a failed/stalled file write is NEVER silent (the reported Windows bug). Null
+  // outside the desktop shell (artifact / serve.py never emit) → pill hidden.
+  const [saveStatus, setSaveStatus] = useState(() => {
+    try { return (typeof window !== "undefined" && window.__velaSaveState) || null; } catch { return null; }
+  });
+  const [saveFailToast, setSaveFailToast] = useState(false);
+  const saveFailToastTimer = useRef(null);
+  const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
     if (!VELA_LOCAL_MODE) return;
@@ -1252,6 +1263,33 @@ export default function App() {
     };
     return () => { window.__velaReceiveDeckUpdate = null; };
   }, []);
+
+  // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
+  // Wired unconditionally so the desktop shell's emits land AND the UI battery
+  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
+    if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
+    return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
+  }, []);
+
+  // One-shot toast on the FIRST transition into a failed save, so a user not
+  // watching the header still notices. The header pill is the persistent signal;
+  // the toast auto-dismisses. Re-arms only after a subsequent successful save.
+  useEffect(() => {
+    const cur = saveStatus && saveStatus.state;
+    const prev = prevSaveStateRef.current;
+    if (cur === "failed" && prev !== "failed") {
+      setSaveFailToast(true);
+      clearTimeout(saveFailToastTimer.current);
+      saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
+    } else if (cur === "saved") {
+      setSaveFailToast(false);
+    }
+    prevSaveStateRef.current = cur;
+  }, [saveStatus]);
+  useEffect(() => () => clearTimeout(saveFailToastTimer.current), []);
 
   // ━━━ Change tracking (since last load/export) ━━━━━━━━━━━━━━━━━━━
   const snapshotRef = useRef(new Map()); // moduleId → JSON string of slides
@@ -1661,11 +1699,36 @@ export default function App() {
         </div>
       </div>}
 
+      {/* One-shot save-failure toast (desktop). The header pill is the persistent signal; this just catches the eye once. */}
+      {saveFailToast && <div data-testid="save-failed-toast" style={{ position: "fixed", left: 16, bottom: 16, zIndex: 100000, maxWidth: 340, background: T.bgPanel, border: `1px solid ${T.red}`, borderLeft: `3px solid ${T.red}`, borderRadius: 8, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, fontFamily: FONT.body }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: T.red, fontSize: 14, fontWeight: 700 }}>Save failed</span>
+          <div style={{ flex: 1 }} />
+          <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
+        </div>
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+          <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+        </div>
+      </div>}
+
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
       {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
+        {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
+        {!isMobile && saveStatus && (() => {
+          const st = saveStatus.state;
+          const at = saveStatus.at;
+          const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
+          const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
+          // failed
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+        })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}

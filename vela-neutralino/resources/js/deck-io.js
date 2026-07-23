@@ -20,7 +20,16 @@ import { fsGuard } from "./fs-guard.js";
 const FOLDER_KEY = "nl-deck-folder";
 const LAST_DECK_KEY = "nl-last-deck";
 const SAVE_DEBOUNCE_MS = 200;
-const WATCHER_IGNORE_MS = 400;
+// Raised from 400ms: a large deck + Defender/OneDrive/AV can push the watcher
+// echo of our own write well past the old window, so the echo escaped and was
+// mistaken for an external edit (which suppresses in-app autosave). The
+// definitive guard is now the content-signature compare in onWatchEvent; this
+// window is only a cheap fast-path for the common case.
+const WATCHER_IGNORE_MS = 1500;
+// Backoff between write attempts. A Windows write can transiently reject under
+// AV real-time scanning, a synced folder (OneDrive/Dropbox), or a briefly-held
+// file handle. 3 attempts total: the initial write + these two delays.
+const SAVE_RETRY_DELAYS = [400, 1500];
 
 const state = {
   folder: null,
@@ -32,7 +41,57 @@ const state = {
   pendingPath: null,  // path captured at saveCurrent time, not flush time
   switching: false,   // true while openDeck/reselectFolder is in flight
   onDeckLoaded: null, // set by nl-boot
+  onStatus: null,     // set by nl-boot — receives {state,path,at,error}
+  saveStatus: null,   // latest emitted status (mirrored to window.__velaSaveState)
+  lastWrittenSig: null, // signature of the exact bytes last written (echo guard)
 };
+
+// Cheap deterministic signature of a string, used for timing-independent
+// self-echo suppression in onWatchEvent: if the file on disk matches the exact
+// bytes we last wrote, the watcher event is our own save echoing back — never
+// treat it as an external edit (that path suppresses autosave and can starve it).
+function sigOf(str) {
+  const s = String(str == null ? "" : str);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return `${byteLen(s)}:${(h >>> 0).toString(36)}`;
+}
+
+// UTF-8 byte length — must match what Neutralino.filesystem.getStats reports as
+// the file size so verify-after-write can compare them.
+function byteLen(str) {
+  const s = String(str == null ? "" : str);
+  try { if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(s).length; } catch {}
+  try { if (typeof Buffer !== "undefined") return Buffer.byteLength(s, "utf8"); } catch {}
+  return s.length;
+}
+
+// A connection/token-shaped error means the native WebSocket dropped (most
+// often after the machine slept / idled for a long time) — recover via a
+// liveness probe + retry and report "reconnecting", rather than a generic fail.
+function isConnError(e) {
+  const m = String((e && (e.message || e.code)) || e || "").toLowerCase();
+  return /token|nl_token|connection|socket|websocket|econn|not connected|disconnect|closed/.test(m);
+}
+
+function emitStatus(s) {
+  state.saveStatus = s;
+  if (typeof state.onStatus === "function") { try { state.onStatus(s); } catch {} }
+}
+
+// Cheap post-write verification: confirm the on-disk size matches the bytes we
+// wrote. If getStats can't report a size we do NOT fail the save (some
+// platforms omit it); a genuine mismatch, however, is treated as a failed write
+// so the retry loop re-attempts and the status surfaces.
+async function verifyWrite(path, expectedBytes) {
+  try {
+    const st = await Neutralino.filesystem.getStats(path);
+    if (st && typeof st.size === "number") return st.size === expectedBytes;
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 async function getStoredFolder() {
   try {
@@ -116,15 +175,60 @@ async function flushSave() {
   const deck = state.pendingDeck;
   const path = state.pendingPath;
   if (!deck || !path) return;
-  state.pendingDeck = null;
-  state.pendingPath = null;
-  try {
-    state.lastWriteAt = Date.now();
-    const json = JSON.stringify(deck, null, 2);
-    await Neutralino.filesystem.writeFile(path, json);
-  } catch (e) {
-    console.error("[deck-io] save failed:", e);
+  // Do NOT clear pendingDeck/pendingPath up front — keep the payload so a failed
+  // write is never lost. It is cleared only after a CONFIRMED successful write,
+  // and only if a newer edit hasn't superseded it in the meantime. This is the
+  // core "keep-pending-on-failure" guarantee behind the Retry affordance.
+  const json = JSON.stringify(deck, null, 2);
+  const bytes = byteLen(json);
+  const sig = sigOf(json);
+  emitStatus({ state: "saving", path, at: Date.now() });
+
+  const attempts = SAVE_RETRY_DELAYS.length + 1;
+  let lastErr = null, conn = false;
+  for (let i = 0; i < attempts; i++) {
+    // A deck switch (openDeck/newDeck) moved the target — a fresher flush owns
+    // the new path; abandon this stale write rather than clobbering it.
+    if (state.pendingPath && state.pendingPath !== path) return;
+    try {
+      state.lastWriteAt = Date.now();
+      await Neutralino.filesystem.writeFile(path, json);
+      // Stamp again AFTER the write resolves so the watcher-echo window is
+      // measured from completion, not from when we started.
+      state.lastWriteAt = Date.now();
+      if (!(await verifyWrite(path, bytes))) throw new Error("verify-after-write size mismatch");
+      // Success. Record the signature so our own watcher echo is suppressed
+      // (timing-independent), then clear pending only if unchanged.
+      state.lastWrittenSig = sig;
+      state.lastWriteAt = Date.now();
+      if (state.pendingDeck === deck) { state.pendingDeck = null; state.pendingPath = null; }
+      emitStatus({ state: "saved", path, at: Date.now() });
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (isConnError(e)) {
+        conn = true;
+        // Liveness probe: if the folder still stats OK the socket is alive and
+        // this was a one-off; otherwise stay in a "reconnecting" posture.
+        emitStatus({ state: "reconnecting", path, at: Date.now(), error: String((e && e.message) || e) });
+        try { await Neutralino.filesystem.getStats(state.folder); conn = false; } catch {}
+      }
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
+    }
   }
+  // Final failure — KEEP pendingDeck/pendingPath so the next autosave or a
+  // manual __velaForceSave re-attempts the newest content. Never swallow: the
+  // status is emitted so the UI can show it, in addition to the console log.
+  console.error("[deck-io] save failed:", lastErr);
+  emitStatus({ state: conn ? "reconnecting" : "failed", path, at: Date.now(), error: String((lastErr && lastErr.message) || lastErr) });
+}
+
+// Bypass the debounce and immediately re-attempt the pending write. Wired to
+// window.__velaForceSave for the save-status pill's "Retry" affordance. If the
+// last save failed, pendingDeck still holds the newest deck, so this flushes it.
+async function flushNow() {
+  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+  return flushSave();
 }
 
 async function startWatcher() {
@@ -157,10 +261,20 @@ function onWatchEvent(evt) {
   const changed = `${payload.dir}/${payload.filename}`.replace(/\\/g, "/");
   const cur = state.currentPath.replace(/\\/g, "/");
   if (changed !== cur) return;
-  if (Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS) return;
   if (payload.action !== "modified" && payload.action !== "add" && payload.action !== "moved") return;
-  readDeck(state.currentPath)
-    .then((deck) => { if (state.onDeckLoaded) state.onDeckLoaded(deck, state.currentPath, { external: true }); })
+  const withinWindow = Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS;
+  // Read the raw bytes and compare against the signature of what we last wrote.
+  // If they match, this event is our own save echoing back — drop it. This is
+  // DEFINITIVE and timing-independent: on a slow Windows write the 400ms window
+  // used to lapse before the echo arrived, so the echo was mistaken for an
+  // external edit, which flipped _localSyncIncoming and starved autosave.
+  Neutralino.filesystem.readFile(state.currentPath)
+    .then((text) => {
+      if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig) return; // our own echo
+      if (withinWindow) return; // fast-path fallback (atomic-rename echoes arriving before the sig lands)
+      const deck = JSON.parse(text);
+      if (state.onDeckLoaded) state.onDeckLoaded(deck, state.currentPath, { external: true });
+    })
     .catch((e) => console.warn("[deck-io] external reload failed:", e));
 }
 
@@ -246,5 +360,11 @@ export const deckIO = {
   },
   currentPath() { return state.currentPath; },
   onDeckLoaded(cb) { state.onDeckLoaded = cb; },
+  // Subscribe to save-status transitions {state:"saving"|"saved"|"failed"|
+  // "reconnecting", path, at, error}. Consumed by nl-boot → the app's pill.
+  onSaveStatus(cb) { state.onStatus = cb; },
+  saveStatus() { return state.saveStatus; },
+  // Bypass the debounce and immediately re-attempt the pending write (Retry).
+  flushNow,
   folder() { return state.folder; },
 };

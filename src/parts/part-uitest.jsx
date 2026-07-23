@@ -1909,6 +1909,57 @@ uiSuite("Move Picker Search (F6)", [
   }},
 ], { setup: _editorSetup });
 
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
