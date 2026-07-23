@@ -211,6 +211,36 @@ const PATH = "/decks/a.vela";
     assert(externalReloads === 1, "external edit was not surfaced (expected 1 reload, got " + externalReloads + ")");
   });
 
+  // 7b. D5: after an external edit is loaded, a later external REVERT to a
+  //     byte-exact previously-Vela-written state must still reload (not be
+  //     suppressed as "our own echo"). The load path must refresh the echo
+  //     baseline; otherwise lastWrittenSig stays stuck on our old write.
+  await test("echo-guard: external revert to a prior Vela-written state still reloads", async () => {
+    const N = makeNeu({});
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const loaded = [];
+    m.deckIO.onDeckLoaded((deck, p, meta) => { if (meta && meta.external) loaded.push(deck); });
+    // Vela writes state X (records lastWrittenSig = sig(X)).
+    m.saveCurrent(DECK());
+    await m.flushNow();
+    const X = N.files[PATH];
+    // External write Y (different bytes) → surfaced + adopted as new baseline.
+    const Y = JSON.stringify({ deckTitle: "EXTERNAL_Y", lanes: [{ items: [] }] }, null, 2);
+    N.files[PATH] = Y;
+    m.state.lastWriteAt = 0;
+    m.onWatchEvent({ detail: { dir: "/decks", filename: "a.vela", action: "modified" } });
+    await tick(30);
+    assert(loaded.length === 1, "external Y not surfaced (got " + loaded.length + ")");
+    // External revert back to the byte-exact X (a previously-Vela-written state).
+    N.files[PATH] = X;
+    m.state.lastWriteAt = 0;
+    m.onWatchEvent({ detail: { dir: "/decks", filename: "a.vela", action: "modified" } });
+    await tick(30);
+    assert(loaded.length === 2, "external revert to prior Vela state was wrongly suppressed as own echo (got " + loaded.length + ")");
+    assert(loaded[1] && loaded[1].deckTitle === "A", "reverted reload did not carry X's content: " + JSON.stringify(loaded[1]));
+  });
+
   // 8. Reconnecting: a connection/token-shaped error with a dead liveness probe
   //    reports 'reconnecting' (targets the long-idle dropped-socket hypothesis).
   await test("reconnect: connection-shaped error + dead probe → 'reconnecting'", async () => {

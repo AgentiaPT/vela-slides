@@ -852,6 +852,11 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     });
   }, [allSlides]);
 
+  // CR1/D8: the per-thumbnail page badge denominator must exclude virtual title cards
+  // so the gallery reads "/ 28" (real slides) — matching presentation's globalSlideTotal —
+  // not "/ 29" (which would count the virtual card).
+  const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
+
   return (
     <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
@@ -897,7 +902,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
@@ -1406,14 +1411,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
   // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
   // so it relies on this effect for the settle.
+  // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
+  // aiWorkingHere goes false merely because the view navigated to another slide.
+  // Guard on the slide index being unchanged across the transition so navigating
+  // away mid-op never magic-reveals the destination slide.
   const prevAiWorkingHere = useRef(false);
+  const prevRevealSlideIndex = useRef(slideIndex);
   useEffect(() => {
-    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey) {
+    const sameSlide = prevRevealSlideIndex.current === slideIndex;
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
       setRevealKey(`aiw-${Date.now()}`);
       setTimeout(() => setRevealKey(null), 1200);
     }
     prevAiWorkingHere.current = aiWorkingHere;
-  }, [aiWorkingHere]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
+    prevRevealSlideIndex.current = slideIndex;
+  }, [aiWorkingHere, slideIndex]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.

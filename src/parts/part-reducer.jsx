@@ -169,8 +169,10 @@ function innerReducer(state, a) {
         return i;
       }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
     }
-    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
+    // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
+    // after the user navigates away from an in-flight (or aborted) AI op.
+    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
     // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
     // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
     // currently collapsed → expand everything, else collapse every section (caller
@@ -323,7 +325,9 @@ function reducer(hist, a) {
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
-    const cleaned = { ...prev, chatLoading: false, aiWork: null };
+    // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
+    // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -350,7 +354,8 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false, aiWork: null };
+    // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;

@@ -821,11 +821,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "image":
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : block._gridCell
-          ? { width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+          // Absolutely fill the grid cell so the row height is driven ONLY by the
+          // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
+          // portrait/tall image therefore letterboxes (objectFit:contain) into the
+          // uniform cell instead of ballooning the row off-canvas — and, critically,
+          // it contributes 0 to the auto-height fit measurement, so a tall image no
+          // longer forces an over-aggressive slide fit-scale.
+          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
@@ -1758,7 +1764,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const gap = slide.gap || 12;
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "1fr", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)

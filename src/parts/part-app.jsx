@@ -1143,6 +1143,10 @@ export default function App() {
   const [saveFailToast, setSaveFailToast] = useState(false);
   const saveFailToastTimer = useRef(null);
   const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+  // CR3/D6: armed = a failure toast is allowed to fire. It disarms once shown and
+  // only re-arms after a genuine `saved` transition — so reconnecting→failed (with
+  // no successful save in between) never re-raises a dismissed toast.
+  const saveFailToastArmed = useRef(true);
 
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
@@ -1292,12 +1296,14 @@ export default function App() {
   useEffect(() => {
     const cur = saveStatus && saveStatus.state;
     const prev = prevSaveStateRef.current;
-    if (cur === "failed" && prev !== "failed") {
+    if (cur === "failed" && prev !== "failed" && saveFailToastArmed.current) {
       setSaveFailToast(true);
+      saveFailToastArmed.current = false; // stay disarmed until a real successful save
       clearTimeout(saveFailToastTimer.current);
       saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
     } else if (cur === "saved") {
       setSaveFailToast(false);
+      saveFailToastArmed.current = true; // genuine success re-arms the one-shot toast
     }
     prevSaveStateRef.current = cur;
   }, [saveStatus]);

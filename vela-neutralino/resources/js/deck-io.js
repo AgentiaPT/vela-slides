@@ -273,6 +273,11 @@ function onWatchEvent(evt) {
       if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig) return; // our own echo
       if (withinWindow) return; // fast-path fallback (atomic-rename echoes arriving before the sig lands)
       const deck = JSON.parse(text);
+      // D5/CR3: adopt the just-loaded external content as the new echo baseline.
+      // Without this, lastWrittenSig only ever tracks OUR writes, so a later external
+      // revert to a byte-exact previously-Vela-written state would match the stale sig
+      // and be wrongly dropped as "our own echo" (app/disk divergence).
+      state.lastWrittenSig = sigOf(text);
       if (state.onDeckLoaded) state.onDeckLoaded(deck, state.currentPath, { external: true });
     })
     .catch((e) => console.warn("[deck-io] external reload failed:", e));

@@ -2661,11 +2661,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "image":
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : block._gridCell
-          ? { width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+          // Absolutely fill the grid cell so the row height is driven ONLY by the
+          // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
+          // portrait/tall image therefore letterboxes (objectFit:contain) into the
+          // uniform cell instead of ballooning the row off-canvas — and, critically,
+          // it contributes 0 to the auto-height fit measurement, so a tall image no
+          // longer forces an over-aggressive slide fit-scale.
+          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
@@ -3598,7 +3604,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const gap = slide.gap || 12;
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "1fr", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)
@@ -3897,8 +3903,10 @@ function innerReducer(state, a) {
         return i;
       }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
     }
-    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
+    // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
+    // after the user navigates away from an in-flight (or aborted) AI op.
+    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
     // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
     // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
     // currently collapsed → expand everything, else collapse every section (caller
@@ -4051,7 +4059,9 @@ function reducer(hist, a) {
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
-    const cleaned = { ...prev, chatLoading: false, aiWork: null };
+    // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
+    // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -4078,7 +4088,8 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false, aiWork: null };
+    // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -6197,6 +6208,11 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     });
   }, [allSlides]);
 
+  // CR1/D8: the per-thumbnail page badge denominator must exclude virtual title cards
+  // so the gallery reads "/ 28" (real slides) — matching presentation's globalSlideTotal —
+  // not "/ 29" (which would count the virtual card).
+  const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
+
   return (
     <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
@@ -6242,7 +6258,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
@@ -6751,14 +6767,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
   // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
   // so it relies on this effect for the settle.
+  // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
+  // aiWorkingHere goes false merely because the view navigated to another slide.
+  // Guard on the slide index being unchanged across the transition so navigating
+  // away mid-op never magic-reveals the destination slide.
   const prevAiWorkingHere = useRef(false);
+  const prevRevealSlideIndex = useRef(slideIndex);
   useEffect(() => {
-    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey) {
+    const sameSlide = prevRevealSlideIndex.current === slideIndex;
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
       setRevealKey(`aiw-${Date.now()}`);
       setTimeout(() => setRevealKey(null), 1200);
     }
     prevAiWorkingHere.current = aiWorkingHere;
-  }, [aiWorkingHere]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
+    prevRevealSlideIndex.current = slideIndex;
+  }, [aiWorkingHere, slideIndex]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -10115,32 +10138,53 @@ const _tocHeaders = () => _$$('[data-testid="toc-section-header"]');
 // NOTE: _tocRows() is defined once later in this file (shared helper) — reuse it.
 const _tocToggle = (header) => Array.from(header.querySelectorAll("span")).find((s) => (s.textContent || "").trim() === "▼");
 const _tocCollapsed = (header) => header.getAttribute("aria-expanded") === "false";
-const _tocEnsureExpanded = async (header) => { if (_tocCollapsed(header)) { _click(_tocToggle(header)); await _waitFor(() => !_tocCollapsed(header), 1500).catch(() => {}); } };
-const _tocEnsureCollapsed = async (header) => { if (!_tocCollapsed(header)) { _click(_tocToggle(header)); await _waitFor(() => _tocCollapsed(header), 1500).catch(() => {}); } };
+// D3: deterministic act-and-settle for the disclosure toggle. The on-load auto-run
+// can start a beat before the roving-tree state is fully wired, so a single toggle
+// click may be dropped. Re-issue the click ONLY after giving the previous one time
+// to land (spaced re-clicks never oscillate — once the aria state matches we stop),
+// and CONFIRM the settled aria-expanded state before returning (no swallowed wait).
+const _tocDriveState = async (header, wantCollapsed) => {
+  let lastClick = 0;
+  await _waitFor(() => {
+    if (_tocCollapsed(header) === wantCollapsed) return true;
+    if (Date.now() - lastClick > 400) { const t = _tocToggle(header); if (t) { _click(t); lastClick = Date.now(); } }
+    return false;
+  }, 3000);
+};
+const _tocEnsureExpanded = (header) => _tocDriveState(header, false);
+const _tocEnsureCollapsed = (header) => _tocDriveState(header, true);
+// D3: focus a treeitem and RETRY until focus actually sticks — a collapse/expand
+// re-render (which flips the roving tabindex from -1 to 0) can drop a focus set a
+// beat too early, which is what made the key-nav tests race in the auto-run.
+const _focusTocHeader = (header) => _waitFor(() => { header.focus(); return document.activeElement === header; }, 1500);
+// Select a section header and wait for the selection (and thus its active-slide
+// marker eligibility) to actually settle before driving collapse state.
+const _selectTocHeader = async (header) => { _click(header); await _waitFor(() => header.getAttribute("aria-selected") === "true", 1500); };
 
 uiSuite("TOC Collapse Nav", [
   { name: "Collapse hides slide rows + shows k/N marker with accent border", fn: async () => {
-    const header = _tocHeaders()[0];
-    if (!header) throw new Error("no section header");
-    _click(header); await _wait(120); // select this section (active slide = its slide 0)
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header); // select this section (active slide = its slide 0)
     await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500); // rows mounted before we measure
     const before = _tocRows().length;
     _click(_tocToggle(header));
-    await _waitFor(() => _tocRows().length < before, 1500);
-    const marker = header.querySelector('[data-testid="toc-collapsed-marker"]');
-    if (!marker) throw new Error("collapsed header missing k/N marker");
+    await _waitFor(() => _tocCollapsed(header) && _tocRows().length < before, 2000);
+    const marker = await _waitFor(() => header.querySelector('[data-testid="toc-collapsed-marker"]'), 1500);
     if (!/^\d+ \/ \d+$/.test((marker.textContent || "").trim())) throw new Error("marker not k/N: " + marker.textContent);
     if (!/2px solid/.test(header.style.borderLeft) || /transparent/.test(header.style.borderLeft)) throw new Error("no accent left-border on collapsed active header");
     await _tocEnsureExpanded(header); // restore
   }},
   { name: "Marker updates live as the active slide advances (stays folded)", fn: async () => {
-    const header = _tocHeaders()[0];
-    _click(header); await _wait(120);
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
     // need a section with >= 2 slides for a live delta
     await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500);
     const n = _tocRows().length;
     await _tocEnsureCollapsed(header);
     const readK = () => { const m = header.querySelector('[data-testid="toc-collapsed-marker"]'); return m ? parseInt((m.textContent || "").trim(), 10) : null; };
+    await _waitFor(() => readK() != null, 1500); // collapsed active marker present before we read it
     const k0 = readK();
     if (k0 == null) throw new Error("no marker while collapsed");
     if (n >= 2) {
@@ -10152,31 +10196,30 @@ uiSuite("TOC Collapse Nav", [
     await _tocEnsureExpanded(header); // restore
   }},
   { name: "ArrowRight on a focused collapsed header expands it", fn: async () => {
-    const header = _tocHeaders()[0];
-    _click(header); await _wait(80);
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
     await _tocEnsureCollapsed(header);
-    header.focus(); await _wait(60);
-    if (document.activeElement !== header) throw new Error("header did not take focus");
+    await _focusTocHeader(header); // retries until focus sticks (post-collapse re-render)
     _key("ArrowRight");
     await _waitFor(() => header.getAttribute("aria-expanded") === "true", 1500);
     if (_tocRows().length === 0) throw new Error("rows did not reappear after expand");
   }},
   { name: "ArrowLeft on a focused expanded header collapses it", fn: async () => {
-    const header = _tocHeaders()[0];
-    _click(header); await _wait(80);
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
     await _tocEnsureExpanded(header);
-    header.focus(); await _wait(60);
+    await _focusTocHeader(header);
     _key("ArrowLeft");
     await _waitFor(() => header.getAttribute("aria-expanded") === "false", 1500);
     await _tocEnsureExpanded(header); // restore
   }},
   { name: "ARIA tree roles + roving tabindex present", fn: async () => {
     if (!_$('[role="tree"]')) throw new Error("no role=tree container");
-    const header = _tocHeaders()[0];
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
     if (header.getAttribute("role") !== "treeitem") throw new Error("header not role=treeitem");
     if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
-    header.focus(); await _wait(40);
-    if (header.getAttribute("tabindex") !== "0") throw new Error("focused header tabindex not 0");
+    await _focusTocHeader(header);
+    await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
   }},
 ], { setup: _selectFirstModule });
 
@@ -10622,6 +10665,62 @@ uiSuite("Editor UX (CR1–CR3)", [
       if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
     }
   }},
+  { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
+    // A TALL/portrait image is the exact case that used to balloon a grid row
+    // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
+    const land = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E";
+    const tall = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='100'%20height='400'%3E%3Crect%20width='100'%20height='400'%20fill='%23ef4444'/%3E%3C/svg%3E";
+    const gridBottomOverflow = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const vp = _$("[data-testid='slide-viewport']");
+      const gb = grid.getBoundingClientRect();
+      const vb = vp.getBoundingClientRect();
+      return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
+    };
+    // Case A: N=4 (a 2-row landscape grid) — bottom row must stay on-canvas.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "GRID N4" },
+      { type: "image", src: land }, { type: "image", src: land },
+      { type: "image", src: land }, { type: "image", src: land },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    let o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for N=4");
+    if (o > 2) throw new Error(`N=4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "HEAVY + FOUR IMAGES" },
+      { type: "text", text: "A long paragraph ".repeat(16) },
+      { type: "image", src: land }, { type: "image", src: land },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for heavy-text+4");
+    if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    // Case C: a portrait image among the run must not balloon its row off-canvas.
+    // Also assert cells are uniform height (letterboxed, not sized to the tall image).
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "PORTRAIT MIX" },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for portrait mix");
+    if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    const cells = _$$("[data-testid='image-grid-cell']");
+    if (cells.length >= 2) {
+      const hs = cells.map((c) => c.getBoundingClientRect().height);
+      const maxH = Math.max(...hs), minH = Math.min(...hs);
+      if (maxH - minH > 2) throw new Error(`grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)} (tall image ballooned its row)`);
+    }
+  }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
@@ -11065,6 +11164,36 @@ uiSuite("Gallery From Editor", [
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+  { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
+    document.activeElement?.blur();
+    for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
+    const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
+    if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
+    const wasOn = /ON/i.test(tc.title || "");
+    if (!wasOn) { _click(tc); await _waitFor(() => _$$("span").some((s) => /Title card ON/i.test(s.title || "")), 1500); }
+    // Open the gallery from the editor.
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    await _wait(150);
+    // The virtual title card must actually be present (else the total can't be inflated).
+    if (_$$("[data-testid='gallery-title-card']", root).length === 0) throw new Error("no virtual title card rendered — cannot exercise the badge total");
+    const realCards = _$$("[data-testid='gallery-slide']", root);
+    const realCount = realCards.length;
+    // A real thumbnail's page-number badge (NN / NN): its denominator must be the
+    // REAL slide count, NOT inflated by the virtual title card(s) → matches presentation.
+    const badgeTotalOf = (card) => { const el = _$$("*", card).find((e) => e.children.length === 0 && /^\d+\s*\/\s*\d+$/.test((e.textContent || "").trim())); return el ? parseInt((el.textContent || "").trim().split("/")[1], 10) : null; };
+    let total = null;
+    for (const c of realCards) { total = badgeTotalOf(c); if (total != null) break; }
+    if (total == null) throw new Error("no page-number badge found on gallery thumbnails");
+    if (total !== realCount) throw new Error(`gallery badge total ${total} != real slide count ${realCount} (virtual title cards leaked into the total)`);
+    // Cleanup: close gallery + restore the title-card toggle to its prior state.
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+    if (!wasOn) { const t2 = _$$("span").find((s) => /Title card ON/i.test(s.title || "")); if (t2) { _click(t2); await _wait(120); } }
   }},
 ]);
 
@@ -11516,6 +11645,35 @@ uiSuite("Desktop save-status pill (CR3)", [
       window.__velaForceSave = orig;
     }
   }},
+  { name: "D6: dismissed toast does NOT re-arm on reconnecting→failed (only a real save re-arms)", fn: async () => {
+    const toast = () => _$('[data-testid="save-failed-toast"]');
+    const dismiss = () => { const x = _$('[data-testid="save-failed-toast"] [title="Dismiss"]'); if (x) _click(x); };
+    // Start armed from a clean saved state.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    // 1) First failure raises the one-shot toast → dismiss it.
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock" });
+    await _waitFor(() => toast(), 2000);
+    dismiss();
+    await _waitFor(() => !toast(), 1500);
+    // 2) reconnecting → failed AGAIN with NO successful save in between: must stay dismissed.
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock2" });
+    await _wait(300);
+    if (toast()) throw new Error("dismissed toast wrongly re-armed on reconnecting→failed (no save between)");
+    // 3) A genuine successful save re-arms; a subsequent failure MAY show again.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock3" });
+    await _waitFor(() => toast(), 2000);
+    // Cleanup.
+    dismiss();
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(40);
+    window.__velaOnSaveStatus(null);
+    await _wait(40);
+  }},
   { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
     window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
     const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
@@ -11612,6 +11770,26 @@ uiSuite("AI-working animation (CR5)", [
     await _wait(250);
     const w = _fxWrap();
     if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    // Mark THIS slide as the AI target and confirm the working scan is up.
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Navigate to another slide mid-op (either direction is a slideIndex change).
+    const p0 = _slidePos();
+    document.activeElement?.blur?.();
+    _key("ArrowRight"); await _wait(140);
+    if (_slidePos() === p0) { _key("ArrowLeft"); await _wait(140); }
+    if (_slidePos() === p0) { await _settleFx(); return; } // single-slide deck: nothing to navigate
+    // The destination slide must NOT play the completion settle — the op did not
+    // finish here, the view merely moved. Give the effect ample time to (wrongly) fire.
+    await _wait(400);
+    const w = _fxWrap();
+    if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
     await _settleFx();
   }},
   { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
@@ -19009,6 +19187,10 @@ export default function App() {
   const [saveFailToast, setSaveFailToast] = useState(false);
   const saveFailToastTimer = useRef(null);
   const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+  // CR3/D6: armed = a failure toast is allowed to fire. It disarms once shown and
+  // only re-arms after a genuine `saved` transition — so reconnecting→failed (with
+  // no successful save in between) never re-raises a dismissed toast.
+  const saveFailToastArmed = useRef(true);
 
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
@@ -19158,12 +19340,14 @@ export default function App() {
   useEffect(() => {
     const cur = saveStatus && saveStatus.state;
     const prev = prevSaveStateRef.current;
-    if (cur === "failed" && prev !== "failed") {
+    if (cur === "failed" && prev !== "failed" && saveFailToastArmed.current) {
       setSaveFailToast(true);
+      saveFailToastArmed.current = false; // stay disarmed until a real successful save
       clearTimeout(saveFailToastTimer.current);
       saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
     } else if (cur === "saved") {
       setSaveFailToast(false);
+      saveFailToastArmed.current = true; // genuine success re-arms the one-shot toast
     }
     prevSaveStateRef.current = cur;
   }, [saveStatus]);
