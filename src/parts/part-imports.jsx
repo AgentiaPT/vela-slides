@@ -1211,13 +1211,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
