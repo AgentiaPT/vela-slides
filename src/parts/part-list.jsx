@@ -178,7 +178,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
@@ -242,6 +242,26 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     const nextMod = pos >= 0 ? flat[pos + 1] : null;
     if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 });
     else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
+  };
+
+  // CR2 — slide-row (leaf treeitem) disclosure keys, scoped to row focus.
+  const nav = treeNav || {};
+  const onSlideRowKeyDown = (e, si) => {
+    if (editingSi === si) return; // rename input active
+    const k = e.key;
+    if (k === "ArrowLeft") {
+      // Standard tree "parent" — move focus to the section header (does not collapse).
+      e.preventDefault(); e.stopPropagation(); nav.focusRow && nav.focusRow(item.id);
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, -1);
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, +1);
+    } else if (k === "Enter" || k === " ") {
+      e.preventDefault(); e.stopPropagation();
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
+      dispatch({ type: "SET_SLIDE_INDEX", index: si });
+    }
+    // ArrowRight: leaf → no children → no-op.
   };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
@@ -334,7 +354,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   // add affordance and lights up when a slide is dragged over it.
   if (isEmpty) {
     return (
-      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
+      <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
         onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; if (_velaDrag.fromItemId !== item.id && !containerOver) setContainerOver(true); } }}
         onDrop={(e) => { setContainerOver(false); handleContainerDrop(e); }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setContainerOver(false); }}
@@ -354,7 +374,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     );
   }
   return (
-    <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
+    <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
       onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
@@ -370,11 +390,19 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
+        const slideRowId = item.id + ":" + si;
+        const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
           <div
-            ref={isActive ? activeSlideRef : null}
+            ref={(el) => { if (isActive) activeSlideRef.current = el; if (nav.setRef) nav.setRef(slideRowId, el); }}
             data-testid="toc-slide-row"
             data-selected={isMultiSel ? "true" : undefined}
+            role="treeitem"
+            aria-level={2}
+            aria-selected={isActive}
+            tabIndex={isRowFocused ? 0 : -1}
+            onKeyDown={(e) => onSlideRowKeyDown(e, si)}
+            onFocus={() => nav.onFocusRow && nav.onFocusRow(slideRowId)}
             draggable={editingSi !== si}
             onDragStart={(e) => handleSlideDragStart(e, si)}
             onDragEnd={handleSlideDragEnd}
@@ -384,6 +412,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             onClick={(e) => handleSlideRowClick(e, si)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); if (!multiSel.includes(si)) setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); setCtxMenu({ x: e.clientX, y: e.clientY, si }); }}
             style={{
+              ...(isRowFocused ? { outline: `2px solid ${T.accent}`, outlineOffset: "-2px" } : {}),
               padding: "3px 8px 3px 12px", fontSize: 14, fontFamily: FONT.body, cursor: editingSi === si ? "text" : "grab",
               color: isActive ? T.accent : T.textMuted, fontWeight: isActive ? 600 : 400,
               borderLeft: `2px solid ${isMultiSel ? T.accent : "transparent"}`,
@@ -446,7 +475,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -529,6 +558,41 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const hiddenCount = item.slides.length - visibleCount;
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
+  // CR2 — TOC roving-tree focus + disclosure keys, scoped to header focus only.
+  const nav = treeNav || {};
+  const rowId = item.id;
+  const isFocused = nav.focusedRowId === rowId;
+  // Core fix: when a COLLAPSED section holds the active slide, mark position with a
+  // live k/N badge + accent left-border so the user never loses "you are here" — the
+  // section stays folded (no auto-expand).
+  const showMarker = collapsed && selected && hasSlides;
+  const markerK = showMarker ? Math.min(slideIndex + 1, item.slides.length) : 0;
+  // Header disclosure keys. stopPropagation overrides the global slide-advance ONLY
+  // while this treeitem is focused; early-return during rename so arrows edit the text.
+  const onHeaderKeyDown = (e) => {
+    if (editing) return;
+    const k = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+    if (k === "ArrowRight") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: false, ids: nav.allIds }); return; }
+      if (collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: false });
+      else if (hasSlides && nav.focusRow) nav.focusRow(item.id + ":0"); // enter first child
+    } else if (k === "ArrowLeft") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: nav.allIds }); return; }
+      if (!collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: true });
+      // already collapsed: no-op (top-level node has no parent)
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, +1);
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, -1);
+    } else if (k === "Enter" || k === " ") {
+      // Activate the section (Space must NOT also page the slide → stopPropagation).
+      e.preventDefault(); e.stopPropagation(); dispatch({ type: "SELECT", id: item.id });
+    }
+  };
+
   return (
     <div
       onDragOver={handleWrapperDragOver}
@@ -542,7 +606,16 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       }}
     >
       <div className={`concept-row ${selected ? "selected" : ""}`}
-        ref={headerRef}
+        ref={(el) => { headerRef.current = el; if (nav.setRef) nav.setRef(rowId, el); }}
+        data-testid="toc-section-header"
+        role="treeitem"
+        aria-level={1}
+        aria-expanded={hasSlides ? !collapsed : undefined}
+        aria-selected={selected}
+        aria-label={item.title}
+        tabIndex={isFocused ? 0 : -1}
+        onKeyDown={onHeaderKeyDown}
+        onFocus={() => nav.onFocusRow && nav.onFocusRow(rowId)}
         onClick={() => dispatch({ type: "SELECT", id: item.id })}
         draggable
         onDragStart={(e) => {
@@ -553,15 +626,21 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         onDragOver={handleRowDragOver}
         onDragLeave={() => { if (dropPos === "slide") setDropPos(null); }}
         onDrop={handleRowDrop}
-        style={{ padding: "7px 12px 7px 10px", borderLeft: "2px solid transparent", display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
+        style={{ padding: "7px 12px 7px 10px",
+          // Accent left-border marks the collapsed section that holds the active slide.
+          borderLeft: `2px solid ${showMarker ? T.accent : "transparent"}`,
+          display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
           background: dropPos === "slide" ? T.accent + "15" : undefined,
-          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
+          // Visible keyboard focus ring (WCAG 2.4.7), distinct from the selected tint.
+          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : (isFocused ? `2px solid ${T.accent}` : "none"),
+          outlineOffset: isFocused ? "-2px" : undefined,
         }}>
         {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
-        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
+        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+        {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
@@ -605,32 +684,40 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
-  // Collapse state lives here (not per-ConceptRow) so a Ctrl/Cmd-click on any
-  // section's toggle can collapse or expand every section at once.
-  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const toggleCollapse = (id, all) => {
-    setCollapsedIds((prev) => {
-      if (all) {
-        // Apply the state this item is about to switch to (the opposite of
-        // its current state) to every section.
-        return prev.has(id) ? new Set() : new Set(allItems.map((i) => i.id));
-      }
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
+  // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
+  const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
+  const allIds = allItems.map((i) => i.id);
+  const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+
+  // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
+  // A single tab stop for the whole rail; arrow keys move DOM focus between the
+  // focused treeitem's neighbors. Row ids: section = item.id, slide = `${item.id}:${si}`.
+  const [focusedRowId, setFocusedRowId] = useState(null);
+  const rowRefs = useRef({}); // rowId -> DOM element (for programmatic .focus())
+  const buildVisibleRows = () => {
+    const rows = [];
+    for (const item of allItems) {
+      rows.push(item.id);
+      if (!collapsedSet.has(item.id)) for (let si = 0; si < (item.slides?.length || 0); si++) rows.push(item.id + ":" + si);
+    }
+    return rows;
   };
+  const focusRow = (rowId) => { setFocusedRowId(rowId); requestAnimationFrame(() => rowRefs.current[rowId]?.focus()); };
+  const moveFocus = (fromId, dir) => { const rows = buildVisibleRows(); const idx = rows.indexOf(fromId); if (idx < 0) return; const t = idx + dir; if (t < 0 || t >= rows.length) return; focusRow(rows[t]); };
+  const treeNav = { focusedRowId, setRef: (id, el) => { if (el) rowRefs.current[id] = el; else delete rowRefs.current[id]; }, focusRow, moveFocus, onFocusRow: (id) => setFocusedRowId(id), allIds };
+
   const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
@@ -638,14 +725,14 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispa
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedIds.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />

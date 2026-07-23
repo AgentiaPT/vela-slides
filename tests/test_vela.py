@@ -1208,6 +1208,108 @@ def test_slide_editor_ux_features():
         fail("F4/F5: help dialog not updated")
 
 
+# ━━━ CR: TOC keyboard tree + collapsed marker + gallery title cards ━━━
+
+def test_toc_nav_and_gallery_titlecards():
+    print("\n── TOC keyboard tree / collapsed marker / gallery title cards ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # ── CR2 A: collapse state lifted into the reducer ──
+    if "collapsedSections: []" in reducer:
+        ok("CR2: reducer init has collapsedSections view-state")
+    else:
+        fail("CR2: reducer init missing collapsedSections")
+    if 'case "TOGGLE_SECTION_COLLAPSE"' in reducer and 'case "SET_SECTION_COLLAPSED"' in reducer:
+        ok("CR2: reducer has TOGGLE_SECTION_COLLAPSE + SET_SECTION_COLLAPSED actions")
+    else:
+        fail("CR2: reducer missing collapse actions")
+    no_hist = reducer[reducer.index("NO_HISTORY"):reducer.index("MAX_HISTORY")]
+    if '"TOGGLE_SECTION_COLLAPSE"' in no_hist and '"SET_SECTION_COLLAPSED"' in no_hist:
+        ok("CR2: collapse actions excluded from undo history")
+    else:
+        fail("CR2: collapse actions not in NO_HISTORY")
+    # local useState collapse must be gone from ModuleList (single source of truth)
+    if "useState(() => new Set())" not in lst and "collapsedSections" in lst:
+        ok("CR2: ModuleList reads collapsedSections prop (no local collapse useState)")
+    else:
+        fail("CR2: ModuleList still owns local collapse state")
+    if "collapsedSections={state.collapsedSections}" in appjs:
+        ok("CR2: ModuleList wired to state.collapsedSections in part-app")
+    else:
+        fail("CR2: part-app does not thread collapsedSections")
+
+    # ── CR2 B: roving ARIA tree ──
+    if 'role="tree"' in lst and 'role="group"' in lst and 'role="treeitem"' in lst:
+        ok("CR2: ARIA tree/group/treeitem roles present in TOC")
+    else:
+        fail("CR2: TOC ARIA tree roles missing")
+    if "aria-expanded" in lst and "aria-selected" in lst and "tabIndex={isFocused" in lst:
+        ok("CR2: section header exposes aria-expanded/selected + roving tabIndex")
+    else:
+        fail("CR2: header missing aria-expanded/roving tabIndex")
+    if 'data-testid="toc-section-header"' in lst:
+        ok("CR2: section header has stable toc-section-header test-id")
+    else:
+        fail("CR2: toc-section-header test-id missing")
+
+    # ── CR2 C: disclosure keys ──
+    if "onHeaderKeyDown" in lst and 'k === "ArrowRight"' in lst and 'k === "ArrowLeft"' in lst:
+        ok("CR2: header onKeyDown implements Right/Left disclosure")
+    else:
+        fail("CR2: header disclosure keys missing")
+    if "e.stopPropagation()" in lst and "onSlideRowKeyDown" in lst:
+        ok("CR2: slide-row onKeyDown + stopPropagation override global slide-advance")
+    else:
+        fail("CR2: slide-row disclosure keys missing")
+    # Ctrl/Cmd collapse-all mirror
+    if "all: true" in lst and "ids: nav.allIds" in lst:
+        ok("CR2: Ctrl/Cmd+Left/Right mirror collapse/expand all")
+    else:
+        fail("CR2: Ctrl/Cmd collapse-all keyboard mirror missing")
+    # belt-and-suspenders guard in the global handler
+    if 'closest("[role=tree]")' in slides:
+        ok("CR2: global slide-nav handler bails when a treeitem holds focus")
+    else:
+        fail("CR2: global handler missing tree-focus guard")
+
+    # ── CR2 D: collapsed current-slide marker (the core fix) ──
+    if "showMarker" in lst and 'data-testid="toc-collapsed-marker"' in lst:
+        ok("CR2 core: collapsed header renders k/N current-slide marker (toc-collapsed-marker)")
+    else:
+        fail("CR2 core: collapsed-header marker missing")
+    if "collapsed && selected && hasSlides" in lst:
+        ok("CR2 core: marker only shows on the collapsed section holding the active slide")
+    else:
+        fail("CR2 core: marker gating condition missing")
+    if "borderLeft: `2px solid ${showMarker ? T.accent" in lst:
+        ok("CR2 core: accent left-border marks the collapsed active section")
+    else:
+        fail("CR2 core: accent marker border missing")
+
+    # ── CR1: gallery renders section title cards ──
+    gv = slides[slides.index("function GalleryView("):slides.index("function TeacherMessage(")]
+    if "item.presentCard" in gv and "buildTitleCardSlide(item, lane, branding)" in gv:
+        ok("CR1: gallery allSlides prepends buildTitleCardSlide for presentCard sections")
+    else:
+        fail("CR1: gallery does not include section title cards")
+    if "isTitleCard: true" in gv and 'data-testid={s.isTitleCard ? "gallery-title-card"' in gv:
+        ok("CR1: title-card thumbnails tagged + carry gallery-title-card test-id")
+    else:
+        fail("CR1: title-card thumbnails not tagged/test-id'd")
+    if "if (!s.isTitleCard) counts[s.itemId]" in gv:
+        ok("CR1: virtual title cards excluded from the module slide count")
+    else:
+        fail("CR1: title cards inflate module count")
+    if 's.isTitleCard ? null :' in gv and "s.isTitleCard ? undefined :" in gv:
+        ok("CR1: title cards are non-draggable (excluded from drag hit-testing)")
+    else:
+        fail("CR1: title cards not excluded from drag")
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
@@ -3487,6 +3589,7 @@ if __name__ == "__main__":
         test_known_bugs()
         test_editor_ux_bugs()
         test_slide_editor_ux_features()
+        test_toc_nav_and_gallery_titlecards()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()
