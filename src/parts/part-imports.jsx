@@ -135,10 +135,11 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.19";
+const VELA_VERSION = "13.20";
 const VELA_CHANGELOG = [
-  { v: "13.19", d: "Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more." },
-  { v: "13.18", d: "Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present." },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
+  { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -574,9 +575,24 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
-  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
-  const urls = css.match(/url\s*\([^)]*\)/gi);
-  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  // Reject any at-rule outright: @import pulls an external sheet and @font-face
+  // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
+  // CSS never needs one. (Supersedes the prior @import-only reject.)
+  if (css.indexOf("@") !== -1) return false;
+  // Reject any absolute or scheme-relative URL authority. Mirrors STYLE_VALUE_REJECT's
+  // `://` guard (which this filter previously lacked) and also catches scheme-relative
+  // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
+  if (css.indexOf("//") !== -1) return false;
+  // Every url() must be a same-document #fragment paint reference (url(#grad)).
+  // Match the OPENING url( token and require its first meaningful char (past an
+  // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
+  // closing ')': per CSS Syntax L3 §4.3.6 the tokenizer consumes an unterminated
+  // `url(https://host` to end-of-input and still emits a valid, fetchable
+  // <url-token>, so the prior paren-balanced /url\(...\)/ match missed BOTH the
+  // bare and the quoted unterminated forms. An empty url()/url( ) fetches nothing
+  // and stays allowed.
+  if (/url\s*\(['"\s]*[^#'"\s]/i.test(css)) return false;
   // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
   // image()/cross-fade()/src() (and any future image-ish function) take a bare
   // "https://…" string with NO url() token, so the url() check above misses them
@@ -595,6 +611,25 @@ function isSvgStyleSafe(css) {
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
   try {
+    // Output-side mutation-XSS backstop (nested so the whole sanitizer stays
+    // self-contained). The sanitized string is about to be handed to
+    // dangerouslySetInnerHTML, which re-parses it in HTML mode. Re-parse it here
+    // the SAME way and reject the whole payload if the HTML interpretation
+    // exposes a <script> or any event-handler attribute — i.e. the SVG→HTML
+    // crossing turned inert markup live. This INDEPENDENT net fails closed even
+    // if a node-level filter below is bypassed by a future edit or an unknown
+    // parser quirk, so no single missed element reaches the sink live. (v13.19)
+    const outputIsClean = (str) => {
+      if (!str) return true;
+      const d = new DOMParser().parseFromString(`<div>${str}</div>`, "text/html");
+      for (const el of d.querySelectorAll("*")) {
+        if ((el.localName || "").toLowerCase() === "script") return false;
+        for (const a of el.attributes) {
+          if (a.name.toLowerCase().startsWith("on")) return false;
+        }
+      }
+      return true;
+    };
     const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
     const err = doc.querySelector("parsererror");
     if (err) return "";
@@ -611,13 +646,27 @@ function sanitizeSvgMarkup(raw) {
           // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
           // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
           if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v13.19): namespace-validity invariant — defense in depth
+          // against mutation-XSS by namespace confusion. We parse as
+          // image/svg+xml, so every legitimately-allowed element lives in the SVG
+          // namespace. An element bearing an allowlisted *name* but a non-SVG
+          // namespaceURI (an HTML/MathML node smuggled through an integration
+          // point, or a parser quirk) is exactly the construct that re-parses
+          // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
+          // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
+          if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
           if (tag === "style") {
             if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
-            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
-            // strips any CDATA/comment/PI children. CDATA serializes literally and
-            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
-            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
+            // attribute pass. <style> is a common SVG/HTML element, so on the
+            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
+            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
+            // keep (type/media are inert and optional), so drop them all
+            // uniformly rather than trusting an element-specific shortcut. (v13.19)
+            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
+            // Still descend so the nodeType filter above strips any CDATA/comment/PI
+            // children. CDATA serializes literally and a smuggled `</style>` inside
+            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
             walk(child);
             continue;
           }
@@ -680,10 +729,12 @@ function sanitizeSvgMarkup(raw) {
     // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
     if (!root.innerHTML.trim()) return "";
     const top = Array.from(root.children);
-    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
-      return top[0].outerHTML;
-    }
-    return root.outerHTML;
+    const out = (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg")
+      ? top[0].outerHTML
+      : root.outerHTML;
+    // Defense in depth: reject the whole payload if an HTML re-parse would expose
+    // script/handlers the SVG parse hid (mutation-XSS backstop). (v13.19)
+    return outputIsClean(out) ? out : "";
   } catch (_) { return ""; }
 }
 
@@ -1159,13 +1210,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1358,9 +1426,19 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}

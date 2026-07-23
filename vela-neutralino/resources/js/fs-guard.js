@@ -33,6 +33,39 @@ function isVolumeRoot(n) {
   return n === "" || /^[a-zA-Z]:$/.test(n) || /^\/\/[^/]+$/.test(n);
 }
 
+// Beyond a bare volume root, refuse a *shallow* absolute POSIX root — a single
+// top-level segment such as /etc, /usr, /home, /var, /tmp, /root. Every real
+// trust root (~/.vela, a user-chosen decks folder) is nested at least two
+// segments deep, so refusing single-segment roots costs nothing and shrinks the
+// blast radius of the allow() widening primitive: even code that reaches allow()
+// cannot register a whole system directory as a trust root. Defense in depth —
+// NOT a complete boundary (same-realm JS is never fully contained; see header).
+function isShallowRoot(n) {
+  if (n.startsWith("/") && !n.startsWith("//")) {
+    return n.split("/").filter(Boolean).length < 2;
+  }
+  return false;
+}
+
+// OS-critical directory subtrees that a user's decks folder or ~/.vela can never
+// legitimately live in, but that an attacker reaching allow() would target for
+// credential theft / persistence (ssh keys, cron, shell profiles, service units).
+// Refusing these — and anything nested under them — costs the app nothing and
+// caps the blast radius at depth ≥ 2 that isShallowRoot leaves open (e.g.
+// /etc/cron.d). Deliberately EXCLUDES home roots (/home, /Users, /root) so a
+// legitimate ~/.vela is never refused. On a non-root user the OS already denies
+// these paths; this layer additionally protects a run-as-root install. Defense
+// in depth — NOT a complete boundary (same-realm JS is never fully contained).
+const SYSTEM_ROOTS = [
+  "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/boot",
+  "/dev", "/proc", "/sys", "/run", "/var", "/srv", "/opt",
+  "c:/windows", "c:/program files", "c:/program files (x86)", "c:/programdata",
+];
+function isSystemRoot(n) {
+  const l = n.toLowerCase();
+  return SYSTEM_ROOTS.some((r) => l === r || l.startsWith(r + "/"));
+}
+
 function underRoot(p) {
   const n = norm(p);
   if (!n) return false;
@@ -64,8 +97,8 @@ export const fsGuard = {
   // blocked) rather than fanning out across the volume.
   allow(root) {
     const n = norm(root);
-    if (isVolumeRoot(n)) {
-      if (n) console.warn(`[fs-guard] refusing whole-volume root: ${n}`);
+    if (isVolumeRoot(n) || isShallowRoot(n) || isSystemRoot(n)) {
+      if (n) console.warn(`[fs-guard] refusing unsafe root: ${n}`);
       return;
     }
     if (!roots.includes(n)) roots.push(n);
@@ -90,3 +123,9 @@ export const fsGuard = {
     }
   },
 };
+
+// SECURITY (v13.19): freeze the exported capability so same-realm script cannot
+// neutralize the guard by reassigning its methods (e.g. `fsGuard.allow = …` or
+// swapping `install`). The allowlist, the `installed` flag and the guard helpers
+// live in module-private closure state that the frozen surface never exposes.
+Object.freeze(fsGuard);

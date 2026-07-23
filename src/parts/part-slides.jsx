@@ -735,13 +735,19 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     const result = [];
     for (const lane of lanes) {
       for (const item of lane.items) {
+        // CR1: section title cards (🎬 presentCard) render in the gallery/overview
+        // exactly as they lead the module in presentation. Virtual, non-draggable,
+        // excluded from the module's real-slide count; clicking selects the module.
+        if (item.presentCard) {
+          result.push({ slide: buildTitleCardSlide(item, lane, branding), itemId: item.id, slideIdx: 0, moduleTitle: item.title, laneTitle: lane.title, isCurrent: false, isTitleCard: true });
+        }
         for (let si = 0; si < (item.slides || []).length; si++) {
           result.push({ slide: item.slides[si], itemId: item.id, slideIdx: si, moduleTitle: item.title, laneTitle: lane.title, isCurrent: item.id === currentConceptId && si === slideIndex });
         }
       }
     }
     return result;
-  }, [lanes, currentConceptId, slideIndex]);
+  }, [lanes, currentConceptId, slideIndex, branding]);
 
   useEffect(() => { setTimeout(() => { activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, 100); }, []);
 
@@ -836,21 +842,27 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
   // Tag first slide of each module + compute slide counts
   const taggedSlides = useMemo(() => {
     const counts = {};
-    for (const s of allSlides) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
+    // Count only real slides — virtual title cards don't inflate the module count.
+    for (const s of allSlides) if (!s.isTitleCard) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
     let lastItemId = null;
     return allSlides.map((s) => {
       const isFirst = s.itemId !== lastItemId;
       lastItemId = s.itemId;
-      return { ...s, isFirst, moduleCount: counts[s.itemId] };
+      return { ...s, isFirst, moduleCount: counts[s.itemId] || 0 };
     });
   }, [allSlides]);
+
+  // CR1/D8: the per-thumbnail page badge denominator must exclude virtual title cards
+  // so the gallery reads "/ 28" (real slides) — matching presentation's globalSlideTotal —
+  // not "/ 29" (which would count the virtual card).
+  const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
 
   return (
     <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗂</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.length} slides</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -864,10 +876,12 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
             const isDragSrc = dragSrc && dragSrc.itemId === s.itemId && dragSrc.slideIdx === s.slideIdx;
             const isDropHere = dropTarget && dropTarget.itemId === s.itemId && dropTarget.slideIdx === s.slideIdx;
             const dropSide = isDropHere ? dropTarget.side : null;
-            const cardKey = s.itemId + "|" + s.slideIdx;
+            // Title cards get a distinct key so they never collide with real slide 0,
+            // and they are excluded from drag hit-testing / reorder (virtual, not real).
+            const cardKey = s.isTitleCard ? s.itemId + "|tc" : s.itemId + "|" + s.slideIdx;
             return (
-              <div key={"s-" + cardKey} ref={(el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
-                onMouseDown={(e) => handleMouseDown(e, s)}
+              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
+                onMouseDown={s.isTitleCard ? undefined : (e) => handleMouseDown(e, s)}
                 onClick={() => { if (!dragActive) jump(s.itemId, s.slideIdx); }}
                 style={{ width: thumbWidth, cursor: dragActive ? "grabbing" : "pointer", transition: dragActive ? "none" : "all 0.15s", opacity: isDragSrc ? 0.3 : 1, position: "relative" }}>
                 {/* Drop indicator — left */}
@@ -888,13 +902,13 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
+                    <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
+                    {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
               </div>
@@ -1383,6 +1397,40 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
   const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
   const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // CR5: the single "Vera is working on THIS on-screen slide" signal, read from
+  // the reducer's aiWork flag (fed by BOTH the chat/Vera engine tool path and the
+  // toolbar AI ops). "*" is the deck-wide/batch sentinel — a batch op only ever
+  // animates whichever of its targets is currently on screen, never off-screen.
+  const aiWorkingHere = !!(state.aiWork &&
+    (state.aiWork.itemId === concept.id || state.aiWork.itemId === "*") &&
+    (state.aiWork.slideIdx === slideIndex || state.aiWork.slideIdx === "*"));
+  // When the working flag clears off this slide (op completed / cancelled / error),
+  // play the existing magic-reveal settle once — the unified completion for every
+  // AI op (chat + toolbar). This is what makes chat/Vera edits settle like the
+  // toolbar ops instead of silently popping to new content.
+  // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
+  // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
+  // so it relies on this effect for the settle.
+  // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
+  // aiWorkingHere goes false merely because the view navigated to another slide.
+  // Guard on BOTH the itemId (module) AND the slide index being unchanged across
+  // the transition — the panel is not keyed by concept.id, so its refs persist
+  // across module switches; without the itemId dimension, switching to a DIFFERENT
+  // module whose slide sits at the same index (0===0) would wrongly settle the
+  // untouched destination slide. Same actual slide = same module + same index.
+  const prevAiWorkingHere = useRef(false);
+  const prevRevealSlideIndex = useRef(slideIndex);
+  const prevRevealItemId = useRef(concept.id);
+  useEffect(() => {
+    const sameSlide = prevRevealSlideIndex.current === slideIndex && prevRevealItemId.current === concept.id;
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
+      setRevealKey(`aiw-${Date.now()}`);
+      setTimeout(() => setRevealKey(null), 1200);
+    }
+    prevAiWorkingHere.current = aiWorkingHere;
+    prevRevealSlideIndex.current = slideIndex;
+    prevRevealItemId.current = concept.id;
+  }, [aiWorkingHere, slideIndex, concept.id]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -1398,8 +1446,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
-  }, [improving]);
+  }, [improving, dispatch]);
   useEffect(() => { setBeforeSlides(null); setShowBefore(false); setShowMoveToModule(false); setEditingDuration(false); }, [concept.id]);
 
   // Shift slideIndex when entering/exiting fullscreen with presentCard
@@ -1669,24 +1718,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // Empty module → brand-new full-bleed solo-image slide.
           if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
           const cur = slides[slideIndex] || {};
+          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
+          // image-only slide inserted after this one rather than over-packing the grid.
+          if (curImgs >= 5) {
+            const newSlides = [...slides];
+            const insertAt = slideIndex + 1;
+            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
+            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            return;
+          }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title slides and wide images stacked, and
-          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          // author layout, keeps mostly-title/image-only slides and wide images stacked
+          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
+          // images to a full-width header + full-width image grid, and otherwise returns
+          // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect);
+          const layout = pasteImageLayout(cur, aspect, n);
           if (layout !== "stack" && layout !== cur.layout) {
             patch.layout = layout;
-            // A square/portrait side image is tall; at the default 1:1 split it
-            // squeezes the body text into a half-width column where it wraps past
-            // the slide height and gets auto-scaled smaller. Give the content
-            // column the larger share so the text keeps its size and just uses
-            // more vertical space. Only when the author hasn't pinned a ratio;
-            // wider images (aspect > 1.2) read fine at 1:1.
-            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
-              patch.contentFlex = 1.4;
-              patch.imageFlex = 1;
+            // Balance the split. A single square/portrait side image is tall; at the
+            // default 1:1 split it squeezes the body text into a half-width column
+            // where it wraps past the slide height and gets auto-scaled smaller — give
+            // the content column the larger share. Two or more images grid inside their
+            // half, so an even 1:1 split gives that grid the room it needs. Only when
+            // the author hasn't pinned a ratio.
+            if (cur.contentFlex == null && cur.imageFlex == null) {
+              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
+              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
             }
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
@@ -1700,6 +1763,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
+      // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
+      // keys (expand/collapse/move-focus/select) — never global slide-advance. The
+      // treeitem's onKeyDown already stopPropagation's real bubbling events; this guard
+      // is belt-and-suspenders and also covers synthetic document-level keydowns.
+      if ((e.key === " " || (typeof e.key === "string" && e.key.startsWith("Arrow"))) && typeof document !== "undefined" && document.activeElement && document.activeElement.closest && document.activeElement.closest("[role=tree]")) return;
 
       // Alternatives grid: 1-4 apply variant live, 0 back to original, Enter done, ESC close.
       // Applying keeps the grid open so each variant can be viewed full-size before settling.
@@ -1935,6 +2004,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
@@ -1954,6 +2024,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Quick edit failed:", e);
     } finally {
       setQuickEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -1962,6 +2033,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
     setBlockEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
         slides[slideIndex], blockIndex, prompt,
@@ -1980,6 +2052,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Block edit failed:", e);
     } finally {
       setBlockEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -1988,6 +2061,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
       if (result) {
@@ -2006,6 +2080,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Generate slide failed:", e);
     } finally {
       setNewSlideGenerating(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -2052,6 +2127,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
+        // CR5: mark the active job's slide as the one Vera is working on — the scan
+        // shows only when THIS job's slide is the one currently on screen (batch
+        // never mass-animates off-screen slides).
+        dispatch({ type: "SET_AI_WORK", value: { itemId: job.itemId, slideIdx: job.slideIdx } });
         setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
         // Measure layout in a hidden offscreen host — Improve no longer navigates
@@ -2092,6 +2171,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
       setMeasureSlide(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
@@ -2103,6 +2183,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
     }
   };
   runImproveRef.current = runImprove;
@@ -2280,7 +2361,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const { vw, vh, isAuto } = computeVirtualDims(previewRatio);
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
-                return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
+                // CR5: one working scan for EVERY AI op on this on-screen slide.
+                // aiWorkingHere is the unified reducer signal (chat/Vera engine +
+                // toolbar); the local flags keep the scan up for toolbar ops even
+                // before their dispatch lands. --vera-accent tints the sweep to the
+                // slide's accent (see part-imports.jsx). data-testid drives verify.
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
