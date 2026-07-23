@@ -40,10 +40,10 @@ python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.j
 ### 4. Test
 
 ```bash
-# Run the full test suite (161 tests)
+# Run the full test suite (421 tests)
 python3 tests/test_vela.py
 
-# Run server tests (91 tests)
+# Run server tests (121 tests)
 python3 -m unittest tests.test_serve
 
 # Validate a deck

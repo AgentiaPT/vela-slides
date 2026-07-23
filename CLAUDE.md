@@ -2,7 +2,7 @@
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.3MB, 18,421 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.4MB, 20,119 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 185 UI tests in 33 suites |
+| `part-uitest.jsx` | 229 UI tests in 42 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
@@ -95,7 +95,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (361 tests)
+# 1. Run full test suite (421 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts
@@ -275,7 +275,7 @@ Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/ch
 (newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;
 `npm i jsdom` once for the two Node security suites; `ERR_INVALID_URL`/`ERR_CONNECTION_CLOSED`
 console errors are harmless font fetches. In-app UI battery is invokable headless via
-`window.__velaRunUITests()`. Never inline the 1.3MB monolith as `text/babel` (its XSS-test
+`window.__velaRunUITests()`. Never inline the 1.4MB monolith as `text/babel` (its XSS-test
 strings contain `</script>` and truncate the block) — the harness loads an external `app.js`.
 
 ## Ad-hoc testing & exploration: use the Playwright CLI, not throwaway code files

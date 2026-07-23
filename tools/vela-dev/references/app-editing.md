@@ -9,20 +9,20 @@ The skill has two layers: a **modular app** (14 part-files) and a **deck injecti
 
 ```
 src/parts/                   # Modular source (edit these for app changes)
-├── part-imports.jsx    # ~1400L — constants, sanitizers, helpers, storage
+├── part-imports.jsx    # ~1550L — constants, sanitizers, helpers, storage
 ├── part-icons.jsx      #  ~290L — icon resolution system
-├── part-blocks.jsx     # ~1730L — all 27 block renderers, EditableText
-├── part-reducer.jsx    #  ~300L — state management, dispatch actions
+├── part-blocks.jsx     # ~1890L — all 27 block renderers, EditableText
+├── part-reducer.jsx    #  ~390L — state management, dispatch actions
 ├── part-engine.jsx     # ~1240L — AI tools, system prompts, slide ops
-├── part-slides.jsx     # ~2410L — SlidePanel, Fullscreen, Branding
-├── part-list.jsx       #  ~530L — Lane, ConceptRow, AI adder
-├── part-chat.jsx       #  ~440L — ChatPanel, tool trace cards
-├── part-test.jsx       #  ~330L — VelaBatteryTest
-├── part-uitest.jsx     # ~1860L — 185 UI tests in 33 suites
+├── part-slides.jsx     # ~2560L — SlidePanel, Fullscreen, Branding
+├── part-list.jsx       #  ~750L — Lane, ConceptRow, AI adder
+├── part-chat.jsx       #  ~450L — ChatPanel, tool trace cards
+├── part-test.jsx       #  ~360L — VelaBatteryTest
+├── part-uitest.jsx     # ~2630L — 229 UI tests in 42 suites
 ├── part-demo.jsx       #  ~860L — Cinematic demo mode (18 scenes)
-├── part-pdf.jsx        # ~3950L — PDF export (raster + vector), markdown export
-├── part-pptx.jsx       # ~1180L — native editable PowerPoint (.pptx) export
-└── part-app.jsx        # ~1910L — main VelaApp component
+├── part-pdf.jsx        # ~3960L — PDF export (raster + vector), markdown export
+├── part-pptx.jsx       # ~1190L — native editable PowerPoint (.pptx) export
+└── part-app.jsx        # ~2010L — main VelaApp component
 
 skills/vela-slides/
 ├── app/vela.jsx             # Auto-generated monolith (concat of all parts)
@@ -62,15 +62,15 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 
 ### Why Modular Parts?
 
-The Vela app is ~18,421 lines / ~1.3MB. Editing a monolith that large carries real risks:
+The Vela app is ~20,119 lines / ~1.4MB. Editing a monolith that large carries real risks:
 
 | Concern | Monolith | Modular Parts |
 |---|---|---|
-| str_replace collision risk | High — many similar patterns across 18,421L | Low — part files are ~290–3950L |
-| Context needed to edit | Must read entire 1.3MB file | Read only relevant part |
+| str_replace collision risk | High — many similar patterns across 20,119L | Low — part files are ~290–3960L |
+| Context needed to edit | Must read entire 1.4MB file | Read only relevant part |
 | Accidental side effects | Easy to break distant code | Edits are scoped to one module |
 | Rewriting a subsystem | Dangerous at monolith scale | Replace a single part file safely |
-| Finding what to edit | Grep through 18,421 lines | File name tells you where to look |
+| Finding what to edit | Grep through 20,119 lines | File name tells you where to look |
 
 ### Why Not Split + Bundler (Vite/Parcel)?
 
@@ -134,7 +134,7 @@ Run `concat.py` first to rebuild the monolith from your edited parts, then
 ### Step 5: Run tests
 
 ```bash
-python3 tests/test_vela.py          # 361 tests
+python3 tests/test_vela.py          # 421 tests
 python3 -m unittest tests.test_serve # 121 server tests
 ```
 
