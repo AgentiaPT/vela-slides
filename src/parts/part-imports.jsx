@@ -138,7 +138,9 @@ const velaClipboardReadSlides = async () => {
 const VELA_VERSION = "13.19";
 const VELA_CHANGELOG = [
   { v: "13.19", d: "Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more." },
+  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
   { v: "13.18", d: "Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present." },
+  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -574,9 +576,24 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
-  if (/@import|expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
-  const urls = css.match(/url\s*\([^)]*\)/gi);
-  if (urls && urls.some((u) => !/^url\s*\(\s*['"]?\s*#/i.test(u))) return false;
+  if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
+  // Reject any at-rule outright: @import pulls an external sheet and @font-face
+  // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
+  // CSS never needs one. (Supersedes the prior @import-only reject.)
+  if (css.indexOf("@") !== -1) return false;
+  // Reject any absolute or scheme-relative URL authority. Mirrors STYLE_VALUE_REJECT's
+  // `://` guard (which this filter previously lacked) and also catches scheme-relative
+  // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
+  if (css.indexOf("//") !== -1) return false;
+  // Every url() must be a same-document #fragment paint reference (url(#grad)).
+  // Match the OPENING url( token and require its first meaningful char (past an
+  // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
+  // closing ')': per CSS Syntax L3 §4.3.6 the tokenizer consumes an unterminated
+  // `url(https://host` to end-of-input and still emits a valid, fetchable
+  // <url-token>, so the prior paren-balanced /url\(...\)/ match missed BOTH the
+  // bare and the quoted unterminated forms. An empty url()/url( ) fetches nothing
+  // and stays allowed.
+  if (/url\s*\(['"\s]*[^#'"\s]/i.test(css)) return false;
   // v12.59: reject any non-url() CSS function fed a string literal. image-set()/
   // image()/cross-fade()/src() (and any future image-ish function) take a bare
   // "https://…" string with NO url() token, so the url() check above misses them
@@ -595,6 +612,25 @@ function isSvgStyleSafe(css) {
 function sanitizeSvgMarkup(raw) {
   if (typeof raw !== "string") return "";
   try {
+    // Output-side mutation-XSS backstop (nested so the whole sanitizer stays
+    // self-contained). The sanitized string is about to be handed to
+    // dangerouslySetInnerHTML, which re-parses it in HTML mode. Re-parse it here
+    // the SAME way and reject the whole payload if the HTML interpretation
+    // exposes a <script> or any event-handler attribute — i.e. the SVG→HTML
+    // crossing turned inert markup live. This INDEPENDENT net fails closed even
+    // if a node-level filter below is bypassed by a future edit or an unknown
+    // parser quirk, so no single missed element reaches the sink live. (v13.19)
+    const outputIsClean = (str) => {
+      if (!str) return true;
+      const d = new DOMParser().parseFromString(`<div>${str}</div>`, "text/html");
+      for (const el of d.querySelectorAll("*")) {
+        if ((el.localName || "").toLowerCase() === "script") return false;
+        for (const a of el.attributes) {
+          if (a.name.toLowerCase().startsWith("on")) return false;
+        }
+      }
+      return true;
+    };
     const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`, "image/svg+xml");
     const err = doc.querySelector("parsererror");
     if (err) return "";
@@ -611,13 +647,27 @@ function sanitizeSvgMarkup(raw) {
           // SECURITY (v12.54): allowlist — anything not explicitly known-safe is removed.
           // Replaces the previous SVG_BLOCKED_TAGS blocklist (inherently incomplete).
           if (!SVG_ALLOWED_TAGS.has(tag)) { child.remove(); continue; }
+          // SECURITY (v13.19): namespace-validity invariant — defense in depth
+          // against mutation-XSS by namespace confusion. We parse as
+          // image/svg+xml, so every legitimately-allowed element lives in the SVG
+          // namespace. An element bearing an allowlisted *name* but a non-SVG
+          // namespaceURI (an HTML/MathML node smuggled through an integration
+          // point, or a parser quirk) is exactly the construct that re-parses
+          // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
+          // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
+          if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
           if (tag === "style") {
             if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // CSS text is safe — skip attribute walk (no on*/href/etc. on <style>).
-            // SECURITY (v12.52): we MUST still descend so the nodeType filter above
-            // strips any CDATA/comment/PI children. CDATA serializes literally and
-            // a smuggled `</style>` inside it escapes rawtext when re-parsed as HTML
-            // by dangerouslySetInnerHTML, yielding a live <img onerror=...>.
+            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
+            // attribute pass. <style> is a common SVG/HTML element, so on the
+            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
+            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
+            // keep (type/media are inert and optional), so drop them all
+            // uniformly rather than trusting an element-specific shortcut. (v13.19)
+            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
+            // Still descend so the nodeType filter above strips any CDATA/comment/PI
+            // children. CDATA serializes literally and a smuggled `</style>` inside
+            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
             walk(child);
             continue;
           }
@@ -680,10 +730,12 @@ function sanitizeSvgMarkup(raw) {
     // scope, neutralizing HTML-aliasing for the whole tag class. (v12.62)
     if (!root.innerHTML.trim()) return "";
     const top = Array.from(root.children);
-    if (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg") {
-      return top[0].outerHTML;
-    }
-    return root.outerHTML;
+    const out = (top.length === 1 && (top[0].localName || "").toLowerCase() === "svg")
+      ? top[0].outerHTML
+      : root.outerHTML;
+    // Defense in depth: reject the whole payload if an HTML re-parse would expose
+    // script/handlers the SVG parse hid (mutation-XSS backstop). (v13.19)
+    return outputIsClean(out) ? out : "";
   } catch (_) { return ""; }
 }
 
