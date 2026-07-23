@@ -68,4 +68,11 @@ Discovery. Parallel PO/PM/UX explorers (CR2, CR4, CR5) + root-cause investigator
 
 ## What happened vs plan
 
-_(appended at close)_
+Executed as planned. Discovery ran for the three ambiguous CRs (2, 4, 5) and root-cause investigation for
+CR3; UX specs were written before implementation. Delivery used 4 parallel worktree workers (CR1+CR2, CR4,
+CR5, CR3) → integrator merge (which also brought the branch up to date with main's security work) → changelog
+dedup. The blind gate took **three rounds**: round 1 (7 validators) confirmed all 5 features present and found
+8 in-scope defects (fixed in `cb02fa5`); round 2 (6 validators) found 2 regressions (fixed in `8076c3f`);
+round 3 (3 validators) was clean (0 in-scope defects). Final: v13.19 → v13.20, `test_vela.py` 421 passed, UI
+battery 220/0/9-skip deterministic across 3 reloads, concat in sync. 10 agent-found defects, all fixed.
+Cost ~$161.49 (hub 25%), 27 sub-agents, ~130 min. Proof artifact: [`README.md`](./README.md).

@@ -1,0 +1,41 @@
+{
+  "slug": "2026-07-23-clarity",
+  "codename": "clarity",
+  "title": "UX-clarification hyper-sprint",
+  "started": "2026-07-23",
+  "completed": "2026-07-23",
+  "branch": "claude/sprint-ux-clarification-m7ot9d",
+  "base": "main",
+  "base_commit": "f79518f",
+  "final_head": "8076c3f",
+  "skill": "vela-slides",
+  "version": { "from": "13.19", "to": "13.20" },
+  "tests": { "from": 421, "to": 421 },
+  "ui_battery": { "total": 229, "pass": 220, "fail": 0, "ai_skip": 9, "deterministic_reloads": 3 },
+  "change_requests": [
+    { "id": "CR1", "area": "gallery/overview", "clarity": "clear", "summary": "Section title-card slides render in gallery/overview as presented — distinct styling, non-draggable, excluded from all slide counts incl. thumbnail page-badge total." },
+    { "id": "CR2", "area": "toc/edit-mode", "clarity": "ambiguous-discovery", "summary": "Edit-mode TOC as ARIA tree: Right expand / Left collapse on focused section header; canvas Left/Right still advance slides; collapsed section holding current slide shows live k/N marker + accent border; collapse survives undo/redo." },
+    { "id": "CR3", "area": "desktop/neutralino", "clarity": "root-cause-investigation", "summary": "Robust desktop save (retry/verify, keep-unsaved-on-failure, content-hash watcher echo-guard, reconnect probe) + save-status pill (Saved/Saving/Couldn't save-Retry/Reconnecting) + one-shot failure toast. Windows-only triggers documented for manual confirm." },
+    { "id": "CR4", "area": "image-paste", "clarity": "ambiguous-discovery", "summary": "Count-driven balanced grid: 1 solo, 2 side-by-side, 3 thirds, 4 = 2x2, 5 = 3+2 centered; balances with text; caps at 5, 6th spills to new slide; grids stay on-canvas and letterbox tall images." },
+    { "id": "CR5", "area": "ai/vera", "clarity": "ambiguous-discovery", "summary": "One aiWork flag animates every AI op (incl. chat/Vera edits, which animated nothing before) with vera-thinking scan + magic-reveal settle, accent-tinted, reduced-motion honored." }
+  ],
+  "process_improvement": "Ambiguous CRs (2,4,5) got a mixed PO/PM/UX discovery agent (explore live app + code, propose final UX per modern practice); CR3 got a source-level root-cause investigation. UX specs written before implementation.",
+  "delivery": "4 parallel worktree workers (CR1+CR2, CR4, CR5, CR3) -> integrator merge (also brought branch up to date with main's security work) -> changelog dedup.",
+  "blind_rounds": [
+    { "round": 1, "validators": 7, "features_confirmed": 5, "defects_found": 8 },
+    { "round": 2, "validators": 6, "defects_found": 2, "kind": "regressions" },
+    { "round": 3, "validators": 3, "defects_found": 0, "clean": true }
+  ],
+  "defects_found_and_fixed": 10,
+  "defects_by_round": { "round1": 8, "round2": 2, "round3": 0 },
+  "fix_commits": { "round1": "cb02fa5", "round2": "8076c3f" },
+  "cr_bugs_remaining": 0,
+  "cost_usd_approx": 161.49,
+  "cost_breakdown": { "orchestrator_hub_usd": 40.30, "orchestrator_hub_pct": 25, "sonnet_usd": 0.66, "sub_agents": 27, "wall_clock_min": 130, "images_pinned_in_hub": 0 },
+  "final_verify": { "test_vela_passed": 421, "ui_battery_pass": 220, "ui_battery_fail": 0, "concat_in_sync": true },
+  "artifacts": {
+    "report": "README.md",
+    "plan": "plan-2026-07-23-clarity.md",
+    "images": "img/"
+  }
+}
