@@ -135,10 +135,11 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.19";
+const VELA_VERSION = "13.20";
 const VELA_CHANGELOG = [
-  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
-  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
+  { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -1209,13 +1210,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1408,9 +1426,19 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
@@ -2141,6 +2169,47 @@ function addItemAt(block, onChange, newItem) {
   onChange?.({ items: [...(block.items || []), newItem] });
 }
 
+// Swap block.items[idx] with its neighbour ("up" = earlier, "down" = later) and
+// call onChange. No-op at the list boundary. Mirrors the reducer's REORDER swap.
+function moveItemAt(block, onChange, idx, dir) {
+  const items = [...(block.items || [])];
+  const t = dir === "up" ? idx - 1 : idx + 1;
+  if (t < 0 || t >= items.length) return;
+  [items[idx], items[t]] = [items[t], items[idx]];
+  onChange?.({ items });
+}
+
+// Build the pin-aware control ItemChrome renders as ▲▼ arrows:
+//   { onUp, onDown, pinned, anyPinned, clearPin }
+// `move(dir)` performs the swap; `keyOf(i)` maps a slot index to its pin key;
+// `pin` = { key, set } is shared per-block state (from RenderBlock).
+//
+// After a move we pin the DESTINATION slot (keyOf(idx±1)) so its cluster stays
+// visible on the item that just landed there — instead of the neighbour that
+// slid under the cursor stealing focus. The pin is positional (survives the swap
+// without item ids) and is cleared on the next mouse move (see ItemChrome).
+// `anyPinned` lets every other item suppress its own hover cluster while pinned.
+const _noPin = { key: null, set: () => {} };
+const reorderCtl = (n, idx, move, keyOf, pin) => {
+  const p = pin || _noPin;
+  return {
+    onUp: idx > 0 ? () => { move("up"); p.set(keyOf(idx - 1)); } : undefined,
+    onDown: idx < n - 1 ? () => { move("down"); p.set(keyOf(idx + 1)); } : undefined,
+    pinned: p.key === keyOf(idx),
+    anyPinned: p.key != null,
+    clearPin: () => p.set(null),
+  };
+};
+
+// Reorder control for a plain block.items list — undefined when not editable or
+// when there is nothing to reorder (0–1 items).
+function itemReorder(block, onChange, idx, pin) {
+  if (!onChange) return undefined;
+  const n = (block.items || []).length;
+  if (n <= 1) return undefined;
+  return reorderCtl(n, idx, (d) => moveItemAt(block, onChange, idx, d), String, pin);
+}
+
 // Placeholder item factory for the "+ add" affordance on multi-item blocks.
 // Returns a blank item with neutral placeholder text/icon matching each block
 // type's item shape — so a fresh item is editable inline without resorting to AI.
@@ -2285,10 +2354,13 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
 const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
+// Reorder arrow — a full-size round button (same footprint as the link/delete
+// chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
+const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge }) {
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -2301,19 +2373,27 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   const ba = badgeAnchor || { top: 2, right: 2 };
   const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
   const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
+  // While a reorder pin is active anywhere in the block, the pinned slot keeps its
+  // cluster and every other item suppresses hover — so the item that just moved
+  // stays focused instead of the neighbour now under the cursor. The pin clears on
+  // the next mouse move, handing control back to plain hover.
+  const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
+      onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
-      {/* Idle link badge — edit mode, not hovered */}
-      {link && showLinkUI && !hovered && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {/* Idle link badge — edit mode, cluster not shown */}
+      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
-      {/* Hover cluster — edit mode */}
-      {hovered && editMode && (showLinkUI || deletable) && <div style={{ position: "absolute", ...a, display: "flex", gap: 3, zIndex: 11 }}>
+      {/* Hover cluster — edit mode (or pinned after a reorder move) */}
+      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
         {deletable && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ ...itemChromeBtn(T.red, T.red, "#fff"), fontWeight: 700 }} title="Delete item">✕</button>}
       </div>}
@@ -2328,7 +2408,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
 }
 
 // ━━━ Icon Row Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false, pin }) {
   const link = item.link;
   const editMode = editable && !presenting;
   return (
@@ -2336,6 +2416,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
       link={link} linkLabel={item.title}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
@@ -2350,7 +2431,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
 }
 
 // ━━━ Bullet Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━
-function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false }) {
+function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false, pin }) {
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
   const link = itemLinkOf(item);
@@ -2367,6 +2448,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
       link={link} linkLabel={text}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       {icon
@@ -2419,7 +2501,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled, link }) {
+function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -2461,7 +2543,7 @@ function ZoomWrap({ children, enabled, link }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -2545,6 +2627,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
   // icon slot) must also never leak into Present mode — gate it the same way.
   const textEditable = editable && !presenting;
+  // Per-block reorder pin (see reorderCtl/ItemChrome): keeps the just-moved item's
+  // ▲▼ cluster focused at its destination slot. `_pin` is handed to itemReorder;
+  // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
+  const [pinKey, setPinKey] = useState(null);
+  const _pin = { key: pinKey, set: setPinKey };
   switch (block.type) {
 
     case "heading": {
@@ -2566,18 +2653,28 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "bullets":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 8, ...block.style }}>{(block.items || []).map((item, i) =>
-        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} />
+        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} pin={_pin} />
       )}
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      // _gridCell: this image is a cell in a multi-image grid — fill the cell and
+      // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : block._gridCell
+          // Absolutely fill the grid cell so the row height is driven ONLY by the
+          // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
+          // portrait/tall image therefore letterboxes (objectFit:contain) into the
+          // uniform cell instead of ballooning the row off-canvas — and, critically,
+          // it contributes 0 to the auto-height fit measurement, so a tall image no
+          // longer forces an over-aggressive slide fit-scale.
+          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
 
     case "code":
@@ -2595,6 +2692,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         return <ItemChrome key={ci} editable={editable} presenting={presenting}
           wrapStyle={{ ...cellStyle, ...safeStyle }}
           link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
+          reorder={itemReorder(block, onChange, ci, _pin)}
           onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
           anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
@@ -2685,7 +2783,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         ? { display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: block.gap || 14, ...block.style }
         : { display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style };
       return <div className={cls} style={containerStyle}>{(block.items || []).map((item, i) => (
-        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} />
+        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} pin={_pin} />
       ))}
       {canEdit && <AddItem label="Add item" accent={st.accent} style={cols > 1 ? { gridColumn: "1 / -1" } : undefined} onAdd={() => addItemAt(block, onChange, newItemFor(block,"icon-row"))} />}
       </div>;
@@ -2717,6 +2815,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2816,6 +2915,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={hasItems ? itemReorder(block, onChange, i, _pin) : undefined}
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -2847,6 +2947,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
             link={itemLinkOf(item)} linkLabel={item.title}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
@@ -2877,6 +2978,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
             link={itemLinkOf(item)} linkLabel={item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2901,6 +3003,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
@@ -2926,6 +3029,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
@@ -2960,6 +3064,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         cols[side] = { ...cols[side], items: [...prev, clonePoint(prev[prev.length - 1])] };
         onChange?.({ items: cols });
       };
+      const movePoint = (side, pi, dir) => onChange?.({ items: items.map((col, k) => {
+        if (k !== side) return col;
+        const pts = [...(col.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return col;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...col, items: pts };
+      }) });
+      const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
         <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -2973,6 +3087,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(0, left.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
@@ -2997,6 +3112,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(1, right.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
@@ -3105,6 +3221,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
               link={itemLinkOf(item)} linkLabel={item.label}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               {showIcons && <EditableIcon editable={editable && !presenting} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -3147,6 +3264,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         const prev = qq.items || [];
         return { ...qq, items: [...prev, clonePoint(prev[prev.length - 1])] };
       }) });
+      const moveQPoint = (qi, pi, dir) => onChange?.({ [qKey]: quadrants.map((qq, k) => {
+        if (k !== qi) return qq;
+        const pts = [...(qq.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return qq;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...qq, items: pts };
+      }) });
+      const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
       const renderRow = (indices, radii, yLabel) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
@@ -3167,6 +3294,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
                     wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
                     link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
                     <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
@@ -3205,6 +3333,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
             link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
@@ -3461,6 +3590,66 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return [block, ...comments];
   };
 
+  // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
+  // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
+  // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
+  // the image block's _gridCell flag). An incomplete last row is centered by giving
+  // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
+  const renderImageGrid = (idxs, region) => {
+    const runLen = idxs.length;
+    const cols = slide.imageCols ? Math.max(1, slide.imageCols | 0) : gridColsFor(runLen, region);
+    const rows = Math.ceil(runLen / cols);
+    const lastRowCount = runLen - (rows - 1) * cols;
+    const incomplete = lastRowCount < cols;
+    const gap = slide.gap || 12;
+    return (
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        {idxs.map((bi, k) => {
+          const firstOfLastRow = k === (rows - 1) * cols;
+          const gridColumn = (incomplete && firstOfLastRow)
+            ? `${cols - lastRowCount + 1} / span 2`
+            : "span 2";
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const [blockEl, ...rest] = rendered;
+          // Make the block wrapper fill its cell height so the image (height:100%)
+          // and objectFit:contain letterbox uniformly across mixed aspect ratios.
+          const filled = React.cloneElement(blockEl, {
+            style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
+          });
+          return (
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+              {filled}{rest}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
+  // blocks with a balanced image grid (full region). Single images render as before.
+  const renderStackWithImageGrids = () => {
+    const out = [];
+    let i = 0;
+    while (i < blocks.length) {
+      if (blocks[i].type === "image") {
+        let j = i;
+        while (j < blocks.length && blocks[j].type === "image") j++;
+        if (j - i >= 2) {
+          const idxs = [];
+          for (let k = i; k < j; k++) idxs.push(k);
+          out.push(renderImageGrid(idxs, "full"));
+          i = j;
+          continue;
+        }
+      }
+      out.push(...renderBlockWithComments(blocks[i], i));
+      i++;
+    }
+    return out;
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isCols) {
@@ -3505,11 +3694,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+      // >=2 images beside content → grid them (half region) so they fill the column
+      // balanced instead of stacking vertically. Single image keeps the height-capped
+      // column so a lone side image conforms to the content column's height.
+      const imageCol = imageIdxs.length >= 2
+        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
+        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
-    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+    return renderStackWithImageGrids();
   };
 
   return (
@@ -3540,9 +3734,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+// collapsedSections: array of item ids whose TOC section is folded. View state only —
+// never persisted into the deck (see LOAD reset / _fullRewrite handling). Lifted out of
+// ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
+// current-slide marker can read/act on it.
+// aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
+// CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
+// editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
+// are view-only too.
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -3701,8 +3903,27 @@ function innerReducer(state, a) {
         return i;
       }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
     }
-    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
+    // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
+    // after the user navigates away from an in-flight (or aborted) AI op.
+    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
+    // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
+    // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
+    // currently collapsed → expand everything, else collapse every section (caller
+    // passes the full id list in `ids`). Otherwise toggle just `id`.
+    case "TOGGLE_SECTION_COLLAPSE": {
+      const cur = Array.isArray(state.collapsedSections) ? state.collapsedSections : [];
+      if (a.all) { const isCollapsed = cur.includes(a.id); return { ...state, collapsedSections: isCollapsed ? [] : [...(a.ids || [])] }; }
+      return { ...state, collapsedSections: cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id] };
+    }
+    // Deterministic expand/collapse for the disclosure keys (Right=expand, Left=collapse).
+    // `all` (Ctrl/Cmd+Left/Right) forces every section collapsed/expanded at once.
+    case "SET_SECTION_COLLAPSED": {
+      const cur = Array.isArray(state.collapsedSections) ? state.collapsedSections : [];
+      if (a.all) return { ...state, collapsedSections: a.collapsed ? [...(a.ids || [])] : [] };
+      if (a.collapsed) return cur.includes(a.id) ? state : { ...state, collapsedSections: [...cur, a.id] };
+      return cur.includes(a.id) ? { ...state, collapsedSections: cur.filter((x) => x !== a.id) } : state;
+    }
     // Multi-select of slide rows in the section list (shift/cmd-click). `indices`
     // are raw slide indices within the currently selected module; `index` (the
     // clicked row) becomes the active slideIndex. An empty `indices` means "just
@@ -3793,9 +4014,15 @@ function innerReducer(state, a) {
       const last = msgs.length - 1;
       if (last < 0 || !msgs[last]._streaming) return state;
       msgs[last] = { ...msgs[last], content: typeof a.content === "string" ? a.content : String(a.content || ""), jumps: a.jumps, _streaming: false, _thinking: false };
-      return { ...state, chatMessages: msgs };
+      // CR5 fail-safe: the Vera turn is over — never leave a slide stuck shimmering.
+      return { ...state, chatMessages: msgs, aiWork: null };
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
+    // CR5: single source of truth for "Vera is working on this slide". Value is
+    // { itemId, slideIdx } (an "*" sentinel = deck-wide/batch) or null to clear.
+    // Both the chat/Vera engine tool path and the toolbar AI ops feed this; the
+    // SlidePanel reads it to drive the vera-thinking scan + magic-reveal settle.
+    case "SET_AI_WORK": return { ...state, aiWork: a.value || null };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
     case "LOAD_LANES": {
       // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
@@ -3831,7 +4058,10 @@ function reducer(hist, a) {
     if (hist.past.length === 0) return hist;
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
-    const cleaned = { ...prev, chatLoading: false };
+    // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
+    // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
+    // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -3858,7 +4088,8 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false };
+    // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -5246,7 +5477,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -5316,7 +5547,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
       </div>
     </div>
   );
@@ -5860,13 +6091,19 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     const result = [];
     for (const lane of lanes) {
       for (const item of lane.items) {
+        // CR1: section title cards (🎬 presentCard) render in the gallery/overview
+        // exactly as they lead the module in presentation. Virtual, non-draggable,
+        // excluded from the module's real-slide count; clicking selects the module.
+        if (item.presentCard) {
+          result.push({ slide: buildTitleCardSlide(item, lane, branding), itemId: item.id, slideIdx: 0, moduleTitle: item.title, laneTitle: lane.title, isCurrent: false, isTitleCard: true });
+        }
         for (let si = 0; si < (item.slides || []).length; si++) {
           result.push({ slide: item.slides[si], itemId: item.id, slideIdx: si, moduleTitle: item.title, laneTitle: lane.title, isCurrent: item.id === currentConceptId && si === slideIndex });
         }
       }
     }
     return result;
-  }, [lanes, currentConceptId, slideIndex]);
+  }, [lanes, currentConceptId, slideIndex, branding]);
 
   useEffect(() => { setTimeout(() => { activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, 100); }, []);
 
@@ -5961,21 +6198,27 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
   // Tag first slide of each module + compute slide counts
   const taggedSlides = useMemo(() => {
     const counts = {};
-    for (const s of allSlides) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
+    // Count only real slides — virtual title cards don't inflate the module count.
+    for (const s of allSlides) if (!s.isTitleCard) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
     let lastItemId = null;
     return allSlides.map((s) => {
       const isFirst = s.itemId !== lastItemId;
       lastItemId = s.itemId;
-      return { ...s, isFirst, moduleCount: counts[s.itemId] };
+      return { ...s, isFirst, moduleCount: counts[s.itemId] || 0 };
     });
   }, [allSlides]);
+
+  // CR1/D8: the per-thumbnail page badge denominator must exclude virtual title cards
+  // so the gallery reads "/ 28" (real slides) — matching presentation's globalSlideTotal —
+  // not "/ 29" (which would count the virtual card).
+  const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
 
   return (
     <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗂</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.length} slides</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -5989,10 +6232,12 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
             const isDragSrc = dragSrc && dragSrc.itemId === s.itemId && dragSrc.slideIdx === s.slideIdx;
             const isDropHere = dropTarget && dropTarget.itemId === s.itemId && dropTarget.slideIdx === s.slideIdx;
             const dropSide = isDropHere ? dropTarget.side : null;
-            const cardKey = s.itemId + "|" + s.slideIdx;
+            // Title cards get a distinct key so they never collide with real slide 0,
+            // and they are excluded from drag hit-testing / reorder (virtual, not real).
+            const cardKey = s.isTitleCard ? s.itemId + "|tc" : s.itemId + "|" + s.slideIdx;
             return (
-              <div key={"s-" + cardKey} ref={(el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
-                onMouseDown={(e) => handleMouseDown(e, s)}
+              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
+                onMouseDown={s.isTitleCard ? undefined : (e) => handleMouseDown(e, s)}
                 onClick={() => { if (!dragActive) jump(s.itemId, s.slideIdx); }}
                 style={{ width: thumbWidth, cursor: dragActive ? "grabbing" : "pointer", transition: dragActive ? "none" : "all 0.15s", opacity: isDragSrc ? 0.3 : 1, position: "relative" }}>
                 {/* Drop indicator — left */}
@@ -6013,13 +6258,13 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
+                    <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
+                    {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
               </div>
@@ -6508,6 +6753,40 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
   const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
   const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // CR5: the single "Vera is working on THIS on-screen slide" signal, read from
+  // the reducer's aiWork flag (fed by BOTH the chat/Vera engine tool path and the
+  // toolbar AI ops). "*" is the deck-wide/batch sentinel — a batch op only ever
+  // animates whichever of its targets is currently on screen, never off-screen.
+  const aiWorkingHere = !!(state.aiWork &&
+    (state.aiWork.itemId === concept.id || state.aiWork.itemId === "*") &&
+    (state.aiWork.slideIdx === slideIndex || state.aiWork.slideIdx === "*"));
+  // When the working flag clears off this slide (op completed / cancelled / error),
+  // play the existing magic-reveal settle once — the unified completion for every
+  // AI op (chat + toolbar). This is what makes chat/Vera edits settle like the
+  // toolbar ops instead of silently popping to new content.
+  // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
+  // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
+  // so it relies on this effect for the settle.
+  // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
+  // aiWorkingHere goes false merely because the view navigated to another slide.
+  // Guard on BOTH the itemId (module) AND the slide index being unchanged across
+  // the transition — the panel is not keyed by concept.id, so its refs persist
+  // across module switches; without the itemId dimension, switching to a DIFFERENT
+  // module whose slide sits at the same index (0===0) would wrongly settle the
+  // untouched destination slide. Same actual slide = same module + same index.
+  const prevAiWorkingHere = useRef(false);
+  const prevRevealSlideIndex = useRef(slideIndex);
+  const prevRevealItemId = useRef(concept.id);
+  useEffect(() => {
+    const sameSlide = prevRevealSlideIndex.current === slideIndex && prevRevealItemId.current === concept.id;
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
+      setRevealKey(`aiw-${Date.now()}`);
+      setTimeout(() => setRevealKey(null), 1200);
+    }
+    prevAiWorkingHere.current = aiWorkingHere;
+    prevRevealSlideIndex.current = slideIndex;
+    prevRevealItemId.current = concept.id;
+  }, [aiWorkingHere, slideIndex, concept.id]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -6523,8 +6802,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
-  }, [improving]);
+  }, [improving, dispatch]);
   useEffect(() => { setBeforeSlides(null); setShowBefore(false); setShowMoveToModule(false); setEditingDuration(false); }, [concept.id]);
 
   // Shift slideIndex when entering/exiting fullscreen with presentCard
@@ -6587,6 +6867,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showPresenterView, setShowPresenterView] = useState(false);
   const showPresenterViewRef = useRef(false);
   const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  // ── Present Edit — restore inline click-to-edit while presenting. OFF by
+  // default so an audience never sees edit chrome (CR-03); the presenter flips
+  // it on via the ✎ toggle or Shift+E to edit text/icons live. Always resets
+  // to off when leaving Present so the next presentation opens clean.
+  const [presentEdit, setPresentEdit] = useState(false);
+  useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
@@ -6788,24 +7074,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // Empty module → brand-new full-bleed solo-image slide.
           if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
           const cur = slides[slideIndex] || {};
+          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
+          // image-only slide inserted after this one rather than over-packing the grid.
+          if (curImgs >= 5) {
+            const newSlides = [...slides];
+            const insertAt = slideIndex + 1;
+            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
+            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            return;
+          }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title slides and wide images stacked, and
-          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          // author layout, keeps mostly-title/image-only slides and wide images stacked
+          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
+          // images to a full-width header + full-width image grid, and otherwise returns
+          // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect);
+          const layout = pasteImageLayout(cur, aspect, n);
           if (layout !== "stack" && layout !== cur.layout) {
             patch.layout = layout;
-            // A square/portrait side image is tall; at the default 1:1 split it
-            // squeezes the body text into a half-width column where it wraps past
-            // the slide height and gets auto-scaled smaller. Give the content
-            // column the larger share so the text keeps its size and just uses
-            // more vertical space. Only when the author hasn't pinned a ratio;
-            // wider images (aspect > 1.2) read fine at 1:1.
-            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
-              patch.contentFlex = 1.4;
-              patch.imageFlex = 1;
+            // Balance the split. A single square/portrait side image is tall; at the
+            // default 1:1 split it squeezes the body text into a half-width column
+            // where it wraps past the slide height and gets auto-scaled smaller — give
+            // the content column the larger share. Two or more images grid inside their
+            // half, so an even 1:1 split gives that grid the room it needs. Only when
+            // the author hasn't pinned a ratio.
+            if (cur.contentFlex == null && cur.imageFlex == null) {
+              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
+              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
             }
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
@@ -6819,6 +7119,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
+      // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
+      // keys (expand/collapse/move-focus/select) — never global slide-advance. The
+      // treeitem's onKeyDown already stopPropagation's real bubbling events; this guard
+      // is belt-and-suspenders and also covers synthetic document-level keydowns.
+      if ((e.key === " " || (typeof e.key === "string" && e.key.startsWith("Arrow"))) && typeof document !== "undefined" && document.activeElement && document.activeElement.closest && document.activeElement.closest("[role=tree]")) return;
 
       // Alternatives grid: 1-4 apply variant live, 0 back to original, Enter done, ESC close.
       // Applying keeps the grid open so each variant can be viewed full-size before settling.
@@ -6913,6 +7219,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
+      }
+      // Shift+E → toggle inline edit while presenting (Present mode only). Kept
+      // distinct from plain 'e' (AI quick-edit dialog). Toasts the new state
+      // since the key, unlike the ✎ button, has no persistent visual cue.
+      if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
@@ -7048,6 +7360,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
@@ -7067,6 +7380,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Quick edit failed:", e);
     } finally {
       setQuickEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7075,6 +7389,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
     setBlockEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
         slides[slideIndex], blockIndex, prompt,
@@ -7093,6 +7408,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Block edit failed:", e);
     } finally {
       setBlockEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7101,6 +7417,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
       if (result) {
@@ -7119,6 +7436,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Generate slide failed:", e);
     } finally {
       setNewSlideGenerating(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7165,6 +7483,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
+        // CR5: mark the active job's slide as the one Vera is working on — the scan
+        // shows only when THIS job's slide is the one currently on screen (batch
+        // never mass-animates off-screen slides).
+        dispatch({ type: "SET_AI_WORK", value: { itemId: job.itemId, slideIdx: job.slideIdx } });
         setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
         // Measure layout in a hidden offscreen host — Improve no longer navigates
@@ -7205,6 +7527,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
       setMeasureSlide(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
@@ -7216,6 +7539,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
     }
   };
   runImproveRef.current = runImprove;
@@ -7301,7 +7625,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -7319,9 +7643,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
+            presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
+            CR-03 "no edit chrome" test still passes when edit mode is off.
+            Hidden in student mode, where editing is disabled by design. */}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -7388,7 +7717,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const { vw, vh, isAuto } = computeVirtualDims(previewRatio);
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
-                return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
+                // CR5: one working scan for EVERY AI op on this on-screen slide.
+                // aiWorkingHere is the unified reducer signal (chat/Vera engine +
+                // toolbar); the local flags keep the scan up for toolbar ops even
+                // before their dispatch lands. --vera-accent tints the sweep to the
+                // slide's accent (see part-imports.jsx). data-testid drives verify.
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
@@ -7763,7 +8097,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
@@ -7827,6 +8161,26 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     const nextMod = pos >= 0 ? flat[pos + 1] : null;
     if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 });
     else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
+  };
+
+  // CR2 — slide-row (leaf treeitem) disclosure keys, scoped to row focus.
+  const nav = treeNav || {};
+  const onSlideRowKeyDown = (e, si) => {
+    if (editingSi === si) return; // rename input active
+    const k = e.key;
+    if (k === "ArrowLeft") {
+      // Standard tree "parent" — move focus to the section header (does not collapse).
+      e.preventDefault(); e.stopPropagation(); nav.focusRow && nav.focusRow(item.id);
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, -1);
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, +1);
+    } else if (k === "Enter" || k === " ") {
+      e.preventDefault(); e.stopPropagation();
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
+      dispatch({ type: "SET_SLIDE_INDEX", index: si });
+    }
+    // ArrowRight: leaf → no children → no-op.
   };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
@@ -7919,7 +8273,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   // add affordance and lights up when a slide is dragged over it.
   if (isEmpty) {
     return (
-      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
+      <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
         onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; if (_velaDrag.fromItemId !== item.id && !containerOver) setContainerOver(true); } }}
         onDrop={(e) => { setContainerOver(false); handleContainerDrop(e); }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setContainerOver(false); }}
@@ -7939,7 +8293,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     );
   }
   return (
-    <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
+    <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
       onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
@@ -7955,11 +8309,19 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
+        const slideRowId = item.id + ":" + si;
+        const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
           <div
-            ref={isActive ? activeSlideRef : null}
+            ref={(el) => { if (isActive) activeSlideRef.current = el; if (nav.setRef) nav.setRef(slideRowId, el); }}
             data-testid="toc-slide-row"
             data-selected={isMultiSel ? "true" : undefined}
+            role="treeitem"
+            aria-level={2}
+            aria-selected={isActive}
+            tabIndex={isRowFocused ? 0 : -1}
+            onKeyDown={(e) => onSlideRowKeyDown(e, si)}
+            onFocus={() => nav.onFocusRow && nav.onFocusRow(slideRowId)}
             draggable={editingSi !== si}
             onDragStart={(e) => handleSlideDragStart(e, si)}
             onDragEnd={handleSlideDragEnd}
@@ -7969,6 +8331,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             onClick={(e) => handleSlideRowClick(e, si)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); if (!multiSel.includes(si)) setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); setCtxMenu({ x: e.clientX, y: e.clientY, si }); }}
             style={{
+              ...(isRowFocused ? { outline: `2px solid ${T.accent}`, outlineOffset: "-2px" } : {}),
               padding: "3px 8px 3px 12px", fontSize: 14, fontFamily: FONT.body, cursor: editingSi === si ? "text" : "grab",
               color: isActive ? T.accent : T.textMuted, fontWeight: isActive ? 600 : 400,
               borderLeft: `2px solid ${isMultiSel ? T.accent : "transparent"}`,
@@ -8031,7 +8394,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -8114,6 +8477,41 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const hiddenCount = item.slides.length - visibleCount;
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
+  // CR2 — TOC roving-tree focus + disclosure keys, scoped to header focus only.
+  const nav = treeNav || {};
+  const rowId = item.id;
+  const isFocused = nav.focusedRowId === rowId;
+  // Core fix: when a COLLAPSED section holds the active slide, mark position with a
+  // live k/N badge + accent left-border so the user never loses "you are here" — the
+  // section stays folded (no auto-expand).
+  const showMarker = collapsed && selected && hasSlides;
+  const markerK = showMarker ? Math.min(slideIndex + 1, item.slides.length) : 0;
+  // Header disclosure keys. stopPropagation overrides the global slide-advance ONLY
+  // while this treeitem is focused; early-return during rename so arrows edit the text.
+  const onHeaderKeyDown = (e) => {
+    if (editing) return;
+    const k = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+    if (k === "ArrowRight") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: false, ids: nav.allIds }); return; }
+      if (collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: false });
+      else if (hasSlides && nav.focusRow) nav.focusRow(item.id + ":0"); // enter first child
+    } else if (k === "ArrowLeft") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: nav.allIds }); return; }
+      if (!collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: true });
+      // already collapsed: no-op (top-level node has no parent)
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, +1);
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, -1);
+    } else if (k === "Enter" || k === " ") {
+      // Activate the section (Space must NOT also page the slide → stopPropagation).
+      e.preventDefault(); e.stopPropagation(); dispatch({ type: "SELECT", id: item.id });
+    }
+  };
+
   return (
     <div
       onDragOver={handleWrapperDragOver}
@@ -8127,7 +8525,16 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       }}
     >
       <div className={`concept-row ${selected ? "selected" : ""}`}
-        ref={headerRef}
+        ref={(el) => { headerRef.current = el; if (nav.setRef) nav.setRef(rowId, el); }}
+        data-testid="toc-section-header"
+        role="treeitem"
+        aria-level={1}
+        aria-expanded={hasSlides ? !collapsed : undefined}
+        aria-selected={selected}
+        aria-label={item.title}
+        tabIndex={isFocused ? 0 : -1}
+        onKeyDown={onHeaderKeyDown}
+        onFocus={() => nav.onFocusRow && nav.onFocusRow(rowId)}
         onClick={() => dispatch({ type: "SELECT", id: item.id })}
         draggable
         onDragStart={(e) => {
@@ -8138,15 +8545,21 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         onDragOver={handleRowDragOver}
         onDragLeave={() => { if (dropPos === "slide") setDropPos(null); }}
         onDrop={handleRowDrop}
-        style={{ padding: "7px 12px 7px 10px", borderLeft: "2px solid transparent", display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
+        style={{ padding: "7px 12px 7px 10px",
+          // Accent left-border marks the collapsed section that holds the active slide.
+          borderLeft: `2px solid ${showMarker ? T.accent : "transparent"}`,
+          display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
           background: dropPos === "slide" ? T.accent + "15" : undefined,
-          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
+          // Visible keyboard focus ring (WCAG 2.4.7), distinct from the selected tint.
+          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : (isFocused ? `2px solid ${T.accent}` : "none"),
+          outlineOffset: isFocused ? "-2px" : undefined,
         }}>
         {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
-        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
+        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+        {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
@@ -8190,32 +8603,40 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
-  // Collapse state lives here (not per-ConceptRow) so a Ctrl/Cmd-click on any
-  // section's toggle can collapse or expand every section at once.
-  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const toggleCollapse = (id, all) => {
-    setCollapsedIds((prev) => {
-      if (all) {
-        // Apply the state this item is about to switch to (the opposite of
-        // its current state) to every section.
-        return prev.has(id) ? new Set() : new Set(allItems.map((i) => i.id));
-      }
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
+  // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
+  const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
+  const allIds = allItems.map((i) => i.id);
+  const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+
+  // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
+  // A single tab stop for the whole rail; arrow keys move DOM focus between the
+  // focused treeitem's neighbors. Row ids: section = item.id, slide = `${item.id}:${si}`.
+  const [focusedRowId, setFocusedRowId] = useState(null);
+  const rowRefs = useRef({}); // rowId -> DOM element (for programmatic .focus())
+  const buildVisibleRows = () => {
+    const rows = [];
+    for (const item of allItems) {
+      rows.push(item.id);
+      if (!collapsedSet.has(item.id)) for (let si = 0; si < (item.slides?.length || 0); si++) rows.push(item.id + ":" + si);
+    }
+    return rows;
   };
+  const focusRow = (rowId) => { setFocusedRowId(rowId); requestAnimationFrame(() => rowRefs.current[rowId]?.focus()); };
+  const moveFocus = (fromId, dir) => { const rows = buildVisibleRows(); const idx = rows.indexOf(fromId); if (idx < 0) return; const t = idx + dir; if (t < 0 || t >= rows.length) return; focusRow(rows[t]); };
+  const treeNav = { focusedRowId, setRef: (id, el) => { if (el) rowRefs.current[id] = el; else delete rowRefs.current[id]; }, focusRow, moveFocus, onFocusRow: (id) => setFocusedRowId(id), allIds };
+
   const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
@@ -8223,14 +8644,14 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispa
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedIds.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -8382,11 +8803,20 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const onToolCall = (evt) => {
       dispatch({ type: "STREAM_TOOL", event: evt });
+      // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
+      // (chat/engine edits previously animated nothing). On `calling`, scan the
+      // slide currently in view; when a tool completes with a jump, follow it and
+      // move the scan to the edited slide. FINALIZE_STREAM clears aiWork → the
+      // SlidePanel plays magic-reveal on the on-screen edited slide.
+      if (evt.type === "calling" && state.selectedId) {
+        dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+      }
       // Auto-navigate when a tool completes with a jump
       if (evt.type === "done" && evt.jump?.length > 0) {
         const j = evt.jump[0];
         dispatch({ type: "SELECT", id: j.itemId });
         dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
+        dispatch({ type: "SET_AI_WORK", value: { itemId: j.itemId, slideIdx: j.slideIdx ?? 0 } });
       }
     };
     const layoutStats = getLayoutStats?.() || null;
@@ -8403,6 +8833,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
+    dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
     // Register late-reply handler for SSE recovery (channel timeout fallback)
     if (result._lateReplyPending) {
       window.__velaLateReply = (msg, jumps) => {
@@ -8437,7 +8868,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
       const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); } };
+      // CR5: same canvas "working" mirror as the main send() path (see there).
+      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
@@ -8445,6 +8877,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
         dispatch({ type: "SET_DEBUG", text: result.debug || "" });
         dispatch({ type: "SET_LOADING", value: false });
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
   }, [state._bootstrap]);
@@ -8710,6 +9143,29 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit image-left preserved", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1) === "image-left" },
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
+
+  // ── Multi-image grid placement (image-run grid, gridColsFor) ──
+  { name: "gridColsFor is function", fn: () => typeof gridColsFor === "function" },
+  { name: "gridColsFor full: N=1 → 1 (solo)", fn: () => gridColsFor(1, "full") === 1 },
+  { name: "gridColsFor full: N=2 → 2 (1x2 side-by-side)", fn: () => gridColsFor(2, "full") === 2 },
+  { name: "gridColsFor full: N=3 → 3 (thirds)", fn: () => gridColsFor(3, "full") === 3 },
+  { name: "gridColsFor full: N=4 → 2 (2x2 quad)", fn: () => gridColsFor(4, "full") === 2 },
+  { name: "gridColsFor full: N=5 → 3 (3+2)", fn: () => gridColsFor(5, "full") === 3 },
+  { name: "gridColsFor half: N=1 → 1", fn: () => gridColsFor(1, "half") === 1 },
+  { name: "gridColsFor half: N>=2 → 2", fn: () => gridColsFor(2, "half") === 2 && gridColsFor(3, "half") === 2 && gridColsFor(5, "half") === 2 },
+  { name: "gridColsFor: floors/guards bad n to 1", fn: () => gridColsFor(0, "full") === 1 && gridColsFor(-3, "full") === 1 },
+  // Full-region row math matches the spec table (rows = ceil(n/cols)).
+  { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
+  { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
+  { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+
+  // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
+  { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
+  { name: "pasteImageLayout: content + 2 images → image-right (split grid)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 2) === "image-right" },
+  { name: "pasteImageLayout: content + 3 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 3) === "stack" },
+  { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
+  { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
+  { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
@@ -9264,6 +9720,19 @@ uiSuite("Presenter", [
     const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
     if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
   }},
+  { name: "Present Edit toggle flips inline editing (Shift+E)", fn: async () => {
+    // The ✎ toggle restores click-to-edit while presenting. It must start OFF
+    // (audience-clean, per CR-03) and flip deterministically via Shift+E. The
+    // title reflects presentEdit regardless of deck content, so it's a stable
+    // signal. Reset to OFF afterwards so the audience-clean invariant holds.
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
+    if (!btn) throw new Error("present-edit-toggle not found in Present view");
+    if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+  }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
     await _waitFor(() => _$("header"));
@@ -9664,6 +10133,100 @@ uiSuite("Slide Ops", [
     // Soft pass if no timer visible
   }},
 ]);
+
+// ── TOC Collapse / Keyboard-Tree Suite (CR2) ─────────────────────────
+// Verifies the roving ARIA tree, the disclosure keys (Right=expand /
+// Left=collapse on a focused section header), and the CORE fix: a collapsed
+// section that holds the active slide keeps a live k/N marker + accent border
+// so the user never loses "you are here" — WITHOUT auto-expanding.
+const _tocHeaders = () => _$$('[data-testid="toc-section-header"]');
+// NOTE: _tocRows() is defined once later in this file (shared helper) — reuse it.
+const _tocToggle = (header) => Array.from(header.querySelectorAll("span")).find((s) => (s.textContent || "").trim() === "▼");
+const _tocCollapsed = (header) => header.getAttribute("aria-expanded") === "false";
+// D3: deterministic act-and-settle for the disclosure toggle. The on-load auto-run
+// can start a beat before the roving-tree state is fully wired, so a single toggle
+// click may be dropped. Re-issue the click ONLY after giving the previous one time
+// to land (spaced re-clicks never oscillate — once the aria state matches we stop),
+// and CONFIRM the settled aria-expanded state before returning (no swallowed wait).
+const _tocDriveState = async (header, wantCollapsed) => {
+  let lastClick = 0;
+  await _waitFor(() => {
+    if (_tocCollapsed(header) === wantCollapsed) return true;
+    if (Date.now() - lastClick > 400) { const t = _tocToggle(header); if (t) { _click(t); lastClick = Date.now(); } }
+    return false;
+  }, 3000);
+};
+const _tocEnsureExpanded = (header) => _tocDriveState(header, false);
+const _tocEnsureCollapsed = (header) => _tocDriveState(header, true);
+// D3: focus a treeitem and RETRY until focus actually sticks — a collapse/expand
+// re-render (which flips the roving tabindex from -1 to 0) can drop a focus set a
+// beat too early, which is what made the key-nav tests race in the auto-run.
+const _focusTocHeader = (header) => _waitFor(() => { header.focus(); return document.activeElement === header; }, 1500);
+// Select a section header and wait for the selection (and thus its active-slide
+// marker eligibility) to actually settle before driving collapse state.
+const _selectTocHeader = async (header) => { _click(header); await _waitFor(() => header.getAttribute("aria-selected") === "true", 1500); };
+
+uiSuite("TOC Collapse Nav", [
+  { name: "Collapse hides slide rows + shows k/N marker with accent border", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header); // select this section (active slide = its slide 0)
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500); // rows mounted before we measure
+    const before = _tocRows().length;
+    _click(_tocToggle(header));
+    await _waitFor(() => _tocCollapsed(header) && _tocRows().length < before, 2000);
+    const marker = await _waitFor(() => header.querySelector('[data-testid="toc-collapsed-marker"]'), 1500);
+    if (!/^\d+ \/ \d+$/.test((marker.textContent || "").trim())) throw new Error("marker not k/N: " + marker.textContent);
+    if (!/2px solid/.test(header.style.borderLeft) || /transparent/.test(header.style.borderLeft)) throw new Error("no accent left-border on collapsed active header");
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "Marker updates live as the active slide advances (stays folded)", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    // need a section with >= 2 slides for a live delta
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500);
+    const n = _tocRows().length;
+    await _tocEnsureCollapsed(header);
+    const readK = () => { const m = header.querySelector('[data-testid="toc-collapsed-marker"]'); return m ? parseInt((m.textContent || "").trim(), 10) : null; };
+    await _waitFor(() => readK() != null, 1500); // collapsed active marker present before we read it
+    const k0 = readK();
+    if (k0 == null) throw new Error("no marker while collapsed");
+    if (n >= 2) {
+      document.activeElement?.blur(); await _wait(60);
+      _key("ArrowRight"); // global slide-advance (focus off the rail)
+      await _waitFor(() => readK() === k0 + 1, 1500);
+      if (_tocCollapsed(header) !== true) throw new Error("section auto-expanded — must stay folded");
+    }
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ArrowRight on a focused collapsed header expands it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureCollapsed(header);
+    await _focusTocHeader(header); // retries until focus sticks (post-collapse re-render)
+    _key("ArrowRight");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "true", 1500);
+    if (_tocRows().length === 0) throw new Error("rows did not reappear after expand");
+  }},
+  { name: "ArrowLeft on a focused expanded header collapses it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureExpanded(header);
+    await _focusTocHeader(header);
+    _key("ArrowLeft");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "false", 1500);
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ARIA tree roles + roving tabindex present", fn: async () => {
+    if (!_$('[role="tree"]')) throw new Error("no role=tree container");
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    if (header.getAttribute("role") !== "treeitem") throw new Error("header not role=treeitem");
+    if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
+    await _focusTocHeader(header);
+    await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
+  }},
+], { setup: _selectFirstModule });
 
 // ── Slide Content Suite ──────────────────────────────────────────────
 uiSuite("Content", [
@@ -10107,10 +10670,124 @@ uiSuite("Editor UX (CR1–CR3)", [
       if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
     }
   }},
+  { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
+    // A TALL/portrait image is the exact case that used to balloon a grid row
+    // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
+    const land = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E";
+    const tall = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='100'%20height='400'%3E%3Crect%20width='100'%20height='400'%20fill='%23ef4444'/%3E%3C/svg%3E";
+    const gridBottomOverflow = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const vp = _$("[data-testid='slide-viewport']");
+      const gb = grid.getBoundingClientRect();
+      const vb = vp.getBoundingClientRect();
+      return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
+    };
+    // CR4/D2b: every grid-cell <img> must be VISIBLE (rendered height > 0). The
+    // absolute-fill img resolves height:100% through the nested ZoomWrap wrapper;
+    // if that intermediate div carries no height the img collapses to 0 (invisible).
+    const zeroHeightImgs = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const imgs = Array.from(grid.querySelectorAll("img"));
+      if (!imgs.length) return -1; // no imgs found at all
+      return imgs.filter((im) => im.getBoundingClientRect().height <= 0).length;
+    };
+    const assertVisibleAndUniform = (label) => {
+      const z = zeroHeightImgs();
+      if (z == null) throw new Error(`${label}: image grid not rendered`);
+      if (z === -1) throw new Error(`${label}: no <img> found in grid`);
+      if (z > 0) throw new Error(`${label}: ${z} grid-cell <img> rendered at height 0 (invisible)`);
+      const cells = _$$("[data-testid='image-grid-cell']");
+      if (cells.length >= 2) {
+        const hs = cells.map((c) => c.getBoundingClientRect().height);
+        const maxH = Math.max(...hs), minH = Math.min(...hs);
+        if (maxH - minH > 2) throw new Error(`${label}: grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)}`);
+      }
+    };
+    // Cases: N=2..5 landscape runs — each must be contained AND visible.
+    for (const N of [2, 3, 4, 5]) {
+      const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
+      window.__velaTestInjectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+      await _wait(160);
+      const o = gridBottomOverflow();
+      if (o == null) throw new Error(`image grid not rendered for N=${N}`);
+      if (o > 2) throw new Error(`N=${N} grid overflows canvas bottom by ${o.toFixed(1)}px`);
+      assertVisibleAndUniform(`N=${N}`);
+    }
+    // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "HEAVY + FOUR IMAGES" },
+      { type: "text", text: "A long paragraph ".repeat(16) },
+      { type: "image", src: land }, { type: "image", src: land },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    let o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for heavy-text+4");
+    if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("heavy-text+4");
+    // Case C: a portrait image among the run must not balloon its row off-canvas —
+    // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
+    window.__velaTestInjectBlocks([
+      { type: "heading", text: "PORTRAIT MIX" },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for portrait mix");
+    if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("portrait-mix");
+  }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
+    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Block-item reorder (▲▼ arrows) — v13.19 ──────────────────────────
+// Hovering an item of a multi-item block in edit mode reveals a stacked
+// ▲▼ control (next to the ✕ delete) that swaps the item with its neighbour.
+// Asserts the swap moves the item and that the arrow is disabled at a boundary.
+uiSuite("Block item reorder (▲▼) — v13.19", [
+  { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
+    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    const ok = window.__velaTestInjectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    const order = () => _$$("[data-testid='slide-viewport'] *")
+      .filter((d) => d.children.length === 0 && /^(ALPHAUT|BRAVOUT|CHARLIEUT)$/.test((d.textContent || "").trim()))
+      .map((d) => d.textContent.trim());
+    await _waitFor(() => order().length === 3, 2000);
+    if (JSON.stringify(order()) !== JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"])) throw new Error("initial order wrong: " + order());
+    // Walk up from the item's text leaf to the ItemChrome wrapper (position:relative).
+    const leafOf = (t) => _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === t);
+    const wrapperOf = (t) => { let el = leafOf(t); while (el && el !== document.body) { if (getComputedStyle(el).position === "relative") return el; el = el.parentElement; } return null; };
+    const hover = (el) => el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    // Move BRAVOUT up → [BRAVOUT, ALPHAUT, CHARLIEUT].
+    const w = wrapperOf("BRAVOUT");
+    if (!w) throw new Error("no wrapper for BRAVOUT");
+    hover(w);
+    const up = await _waitFor(() => _$$("button", w).find((b) => b.title === "Move up" && !b.disabled), 1500);
+    _click(up);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["BRAVOUT", "ALPHAUT", "CHARLIEUT"]), 2000);
+    // BRAVOUT is now first → its Move up must be disabled.
+    const w2 = wrapperOf("BRAVOUT");
+    hover(w2);
+    const up2 = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move up"), 1500);
+    if (!up2.disabled) throw new Error("first item Move up not disabled");
+    // Move it back down to restore original order.
+    const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
+    _click(down);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
     try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
@@ -10510,6 +11187,36 @@ uiSuite("Gallery From Editor", [
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+  { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
+    document.activeElement?.blur();
+    for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
+    const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
+    if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
+    const wasOn = /ON/i.test(tc.title || "");
+    if (!wasOn) { _click(tc); await _waitFor(() => _$$("span").some((s) => /Title card ON/i.test(s.title || "")), 1500); }
+    // Open the gallery from the editor.
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    await _wait(150);
+    // The virtual title card must actually be present (else the total can't be inflated).
+    if (_$$("[data-testid='gallery-title-card']", root).length === 0) throw new Error("no virtual title card rendered — cannot exercise the badge total");
+    const realCards = _$$("[data-testid='gallery-slide']", root);
+    const realCount = realCards.length;
+    // A real thumbnail's page-number badge (NN / NN): its denominator must be the
+    // REAL slide count, NOT inflated by the virtual title card(s) → matches presentation.
+    const badgeTotalOf = (card) => { const el = _$$("*", card).find((e) => e.children.length === 0 && /^\d+\s*\/\s*\d+$/.test((e.textContent || "").trim())); return el ? parseInt((el.textContent || "").trim().split("/")[1], 10) : null; };
+    let total = null;
+    for (const c of realCards) { total = badgeTotalOf(c); if (total != null) break; }
+    if (total == null) throw new Error("no page-number badge found on gallery thumbnails");
+    if (total !== realCount) throw new Error(`gallery badge total ${total} != real slide count ${realCount} (virtual title cards leaked into the total)`);
+    // Cleanup: close gallery + restore the title-card toggle to its prior state.
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+    if (!wasOn) { const t2 = _$$("span").find((s) => /Title card ON/i.test(s.title || "")); if (t2) { _click(t2); await _wait(120); } }
   }},
 ]);
 
@@ -10921,6 +11628,252 @@ uiSuite("Move Picker Search (F6)", [
     if (bd) _click(bd); await _wait(150);
   }},
 ], { setup: _editorSetup });
+
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "D6: dismissed toast does NOT re-arm on reconnecting→failed (only a real save re-arms)", fn: async () => {
+    const toast = () => _$('[data-testid="save-failed-toast"]');
+    const dismiss = () => { const x = _$('[data-testid="save-failed-toast"] [title="Dismiss"]'); if (x) _click(x); };
+    // Start armed from a clean saved state.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    // 1) First failure raises the one-shot toast → dismiss it.
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock" });
+    await _waitFor(() => toast(), 2000);
+    dismiss();
+    await _waitFor(() => !toast(), 1500);
+    // 2) reconnecting → failed AGAIN with NO successful save in between: must stay dismissed.
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock2" });
+    await _wait(300);
+    if (toast()) throw new Error("dismissed toast wrongly re-armed on reconnecting→failed (no save between)");
+    // 3) A genuine successful save re-arms; a subsequent failure MAY show again.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock3" });
+    await _waitFor(() => toast(), 2000);
+    // Cleanup.
+    dismiss();
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(40);
+    window.__velaOnSaveStatus(null);
+    await _wait(40);
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
+
+// ── CR5: Consistent AI-working animation ─────────────────────────────
+// Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
+// magic-reveal contract. No live AI backend needed: we drive the reducer flag
+// directly via the app's test hook (window.__velaTestSetAIWork) and assert the
+// on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
+// isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
+const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Return the fx-wrapper to a static state (clear the flag, wait out any settle).
+const _settleFx = async () => {
+  if (typeof window.__velaTestSetAIWork === "function") window.__velaTestSetAIWork(null);
+  await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
+};
+// Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
+// a prior suite may leave it in fullscreen / gallery / a modal / a collapsed rail.
+const _cr5Setup = async () => {
+  await _exitFullscreen();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 3; i++) { _key("Escape"); await _wait(90); }
+  // Prefer a TOC slide row — clicking it selects a module that actually HAS a
+  // slide (the first .concept-row can be an empty section → "No slides yet",
+  // which renders no fx-wrapper). Fall back to scanning module rows for one with
+  // slides on screen.
+  const toc = _tocRows()[0];
+  if (toc) { _click(toc); await _wait(200); }
+  if (!_$("[data-testid='slide-viewport']")) {
+    for (const r of _$$(".concept-row")) { _click(r); await _wait(150); if (_$("[data-testid='slide-viewport']")) break; }
+  }
+  await _waitFor(_fxWrap, 3000).catch(() => {});
+};
+// Collect all readable CSS text (same-origin inline <style>; skip cross-origin).
+const _allCssText = () => {
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules; try { rules = sheet.cssRules; } catch { continue; }
+    if (!rules) continue;
+    for (const r of Array.from(rules)) css += r.cssText + "\n";
+  }
+  return css;
+};
+uiSuite("AI-working animation (CR5)", [
+  { name: "test hooks + fx-wrapper present", fn: async () => {
+    if (typeof window.__velaTestSetAIWork !== "function") throw new Error("__velaTestSetAIWork not exposed");
+    if (typeof window.__velaTestGetSelection !== "function") throw new Error("__velaTestGetSelection not exposed");
+    await _cr5Setup();
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: window.__velaTestGetSelection() }));
+  }},
+  { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
+    if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
+    // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
+    // slide carries an accent it must equal it (the sweep matches the slide).
+    const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
+    if (!acc) throw new Error("--vera-accent empty while working");
+    if (sel.accent) {
+      const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
+      if (norm(acc) !== norm(sel.accent)) throw new Error(`--vera-accent=${acc} != slide accent ${sel.accent}`);
+    }
+    await _settleFx();
+  }},
+  { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    // The completion effect swaps the scan for the one-shot magic-reveal.
+    await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
+    // …and the reveal is one-shot — it settles back to static.
+    await _waitFor(() => !_fxWrap()?.classList.contains("magic-reveal"), 3000).catch(() => {});
+  }},
+  { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    // A target that is not the on-screen slide (bogus itemId) must leave it static.
+    window.__velaTestSetAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    await _wait(250);
+    const w = _fxWrap();
+    if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    // Mark THIS slide as the AI target and confirm the working scan is up.
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Navigate to another slide mid-op (either direction is a slideIndex change).
+    const p0 = _slidePos();
+    document.activeElement?.blur?.();
+    _key("ArrowRight"); await _wait(140);
+    if (_slidePos() === p0) { _key("ArrowLeft"); await _wait(140); }
+    if (_slidePos() === p0) { await _settleFx(); return; } // single-slide deck: nothing to navigate
+    // The destination slide must NOT play the completion settle — the op did not
+    // finish here, the view merely moved. Give the effect ample time to (wrongly) fire.
+    await _wait(400);
+    const w = _fxWrap();
+    if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
+    await _settleFx();
+  }},
+  { name: "D7b: cross-module switch at same index does NOT magic-reveal destination (but genuine same-slide DOES)", fn: async () => {
+    await _settleFx();
+    // Map each TOC slide row to its {itemId, slideIdx} by selecting it.
+    const n = _tocRows().length;
+    if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
+    const meta = [];
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(window.__velaTestGetSelection()); }
+    // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
+    let ai = -1, bi = -1;
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i] && meta[i].slideIdx === 0) {
+        if (ai < 0) ai = i;
+        else if (meta[i].itemId !== meta[ai].itemId) { bi = i; break; }
+      }
+    }
+    if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
+    // Select module A slide 0 and start its working scan.
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Single-step switch to module B slide 0 (same index, different module) while
+    // aiWork is still set on A. The untouched destination must NOT settle.
+    _click(_tocRows()[bi]); await _wait(180);
+    const sB = window.__velaTestGetSelection();
+    if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
+    await _wait(420); // give the completion effect ample time to (wrongly) fire
+    const wB = _fxWrap();
+    if (wB && wB.classList.contains("magic-reveal")) throw new Error("cross-module switch wrongly magic-revealed the untouched destination slide (0===0 index collision)");
+    await _settleFx();
+    // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA2 = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
+    await _settleFx();
+  }},
+  { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
+    const css = _allCssText();
+    if (!/\.vera-thinking/.test(css)) throw new Error(".vera-thinking rule missing");
+    if (!/\.magic-reveal/.test(css)) throw new Error(".magic-reveal rule missing");
+    if (!/--vera-accent/.test(css)) throw new Error(".vera-thinking sweep not parameterized by --vera-accent");
+  }},
+  { name: "CSS: prefers-reduced-motion zeroes the working scan", fn: async () => {
+    let found = false;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules; try { rules = sheet.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        // CSSMediaRule (type 4) — r.cssText carries the full nested block.
+        const txt = r.cssText || "";
+        if (r.type === 4 && /prefers-reduced-motion/i.test(txt) && /\.vera-thinking/.test(txt) && /animation[^;]*none/i.test(txt)) found = true;
+      }
+    }
+    if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
+  }},
+], { setup: _cr5Setup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -18286,6 +19239,21 @@ export default function App() {
   const _localSyncState = useRef(null);
   _localSyncState.current = state; // always up-to-date
 
+  // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // deck-io reports every save transition through window.__velaOnSaveStatus so
+  // a failed/stalled file write is NEVER silent (the reported Windows bug). Null
+  // outside the desktop shell (artifact / serve.py never emit) → pill hidden.
+  const [saveStatus, setSaveStatus] = useState(() => {
+    try { return (typeof window !== "undefined" && window.__velaSaveState) || null; } catch { return null; }
+  });
+  const [saveFailToast, setSaveFailToast] = useState(false);
+  const saveFailToastTimer = useRef(null);
+  const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+  // CR3/D6: armed = a failure toast is allowed to fire. It disarms once shown and
+  // only re-arms after a genuine `saved` transition — so reconnecting→failed (with
+  // no successful save in between) never re-raises a dismissed toast.
+  const saveFailToastArmed = useRef(true);
+
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
     if (!VELA_LOCAL_MODE) return;
@@ -18337,7 +19305,19 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
+    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
+    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
+    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
+    // assert the vera-thinking / magic-reveal contract on the matching slide.
+    window.__velaTestGetSelection = () => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return null;
+      let accent = null;
+      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+    };
+    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)
@@ -18405,6 +19385,35 @@ export default function App() {
     };
     return () => { window.__velaReceiveDeckUpdate = null; };
   }, []);
+
+  // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
+  // Wired unconditionally so the desktop shell's emits land AND the UI battery
+  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
+    if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
+    return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
+  }, []);
+
+  // One-shot toast on the FIRST transition into a failed save, so a user not
+  // watching the header still notices. The header pill is the persistent signal;
+  // the toast auto-dismisses. Re-arms only after a subsequent successful save.
+  useEffect(() => {
+    const cur = saveStatus && saveStatus.state;
+    const prev = prevSaveStateRef.current;
+    if (cur === "failed" && prev !== "failed" && saveFailToastArmed.current) {
+      setSaveFailToast(true);
+      saveFailToastArmed.current = false; // stay disarmed until a real successful save
+      clearTimeout(saveFailToastTimer.current);
+      saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
+    } else if (cur === "saved") {
+      setSaveFailToast(false);
+      saveFailToastArmed.current = true; // genuine success re-arms the one-shot toast
+    }
+    prevSaveStateRef.current = cur;
+  }, [saveStatus]);
+  useEffect(() => () => clearTimeout(saveFailToastTimer.current), []);
 
   // ━━━ Change tracking (since last load/export) ━━━━━━━━━━━━━━━━━━━
   const snapshotRef = useRef(new Map()); // moduleId → JSON string of slides
@@ -18814,11 +19823,36 @@ export default function App() {
         </div>
       </div>}
 
+      {/* One-shot save-failure toast (desktop). The header pill is the persistent signal; this just catches the eye once. */}
+      {saveFailToast && <div data-testid="save-failed-toast" style={{ position: "fixed", left: 16, bottom: 16, zIndex: 100000, maxWidth: 340, background: T.bgPanel, border: `1px solid ${T.red}`, borderLeft: `3px solid ${T.red}`, borderRadius: 8, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, fontFamily: FONT.body }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: T.red, fontSize: 14, fontWeight: 700 }}>Save failed</span>
+          <div style={{ flex: 1 }} />
+          <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
+        </div>
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+          <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+        </div>
+      </div>}
+
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
       {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
+        {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
+        {!isMobile && saveStatus && (() => {
+          const st = saveStatus.state;
+          const at = saveStatus.at;
+          const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
+          const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
+          // failed
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+        })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}
@@ -18958,7 +19992,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}

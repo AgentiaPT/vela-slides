@@ -135,10 +135,11 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.19";
+const VELA_VERSION = "13.20";
 const VELA_CHANGELOG = [
-  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
-  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
+  { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -1209,13 +1210,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1408,9 +1426,19 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
