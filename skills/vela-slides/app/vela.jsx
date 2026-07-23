@@ -1211,13 +1211,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2643,12 +2660,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      // _gridCell: this image is a cell in a multi-image grid — fill the cell and
+      // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : block._gridCell
+          ? { width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
 
     case "code":
@@ -3564,6 +3585,66 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return [block, ...comments];
   };
 
+  // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
+  // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
+  // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
+  // the image block's _gridCell flag). An incomplete last row is centered by giving
+  // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
+  const renderImageGrid = (idxs, region) => {
+    const runLen = idxs.length;
+    const cols = slide.imageCols ? Math.max(1, slide.imageCols | 0) : gridColsFor(runLen, region);
+    const rows = Math.ceil(runLen / cols);
+    const lastRowCount = runLen - (rows - 1) * cols;
+    const incomplete = lastRowCount < cols;
+    const gap = slide.gap || 12;
+    return (
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "1fr", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        {idxs.map((bi, k) => {
+          const firstOfLastRow = k === (rows - 1) * cols;
+          const gridColumn = (incomplete && firstOfLastRow)
+            ? `${cols - lastRowCount + 1} / span 2`
+            : "span 2";
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const [blockEl, ...rest] = rendered;
+          // Make the block wrapper fill its cell height so the image (height:100%)
+          // and objectFit:contain letterbox uniformly across mixed aspect ratios.
+          const filled = React.cloneElement(blockEl, {
+            style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
+          });
+          return (
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+              {filled}{rest}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
+  // blocks with a balanced image grid (full region). Single images render as before.
+  const renderStackWithImageGrids = () => {
+    const out = [];
+    let i = 0;
+    while (i < blocks.length) {
+      if (blocks[i].type === "image") {
+        let j = i;
+        while (j < blocks.length && blocks[j].type === "image") j++;
+        if (j - i >= 2) {
+          const idxs = [];
+          for (let k = i; k < j; k++) idxs.push(k);
+          out.push(renderImageGrid(idxs, "full"));
+          i = j;
+          continue;
+        }
+      }
+      out.push(...renderBlockWithComments(blocks[i], i));
+      i++;
+    }
+    return out;
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isCols) {
@@ -3608,11 +3689,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+      // >=2 images beside content → grid them (half region) so they fill the column
+      // balanced instead of stacking vertically. Single image keeps the height-capped
+      // column so a lone side image conforms to the content column's height.
+      const imageCol = imageIdxs.length >= 2
+        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
+        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
-    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+    return renderStackWithImageGrids();
   };
 
   return (
@@ -6961,24 +7047,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // Empty module → brand-new full-bleed solo-image slide.
           if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
           const cur = slides[slideIndex] || {};
+          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
+          // image-only slide inserted after this one rather than over-packing the grid.
+          if (curImgs >= 5) {
+            const newSlides = [...slides];
+            const insertAt = slideIndex + 1;
+            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
+            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            return;
+          }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title slides and wide images stacked, and
-          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          // author layout, keeps mostly-title/image-only slides and wide images stacked
+          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
+          // images to a full-width header + full-width image grid, and otherwise returns
+          // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect);
+          const layout = pasteImageLayout(cur, aspect, n);
           if (layout !== "stack" && layout !== cur.layout) {
             patch.layout = layout;
-            // A square/portrait side image is tall; at the default 1:1 split it
-            // squeezes the body text into a half-width column where it wraps past
-            // the slide height and gets auto-scaled smaller. Give the content
-            // column the larger share so the text keeps its size and just uses
-            // more vertical space. Only when the author hasn't pinned a ratio;
-            // wider images (aspect > 1.2) read fine at 1:1.
-            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
-              patch.contentFlex = 1.4;
-              patch.imageFlex = 1;
+            // Balance the split. A single square/portrait side image is tall; at the
+            // default 1:1 split it squeezes the body text into a half-width column
+            // where it wraps past the slide height and gets auto-scaled smaller — give
+            // the content column the larger share. Two or more images grid inside their
+            // half, so an even 1:1 split gives that grid the room it needs. Only when
+            // the author hasn't pinned a ratio.
+            if (cur.contentFlex == null && cur.imageFlex == null) {
+              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
+              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
             }
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
@@ -9016,6 +9116,29 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit image-left preserved", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1) === "image-left" },
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
+
+  // ── Multi-image grid placement (image-run grid, gridColsFor) ──
+  { name: "gridColsFor is function", fn: () => typeof gridColsFor === "function" },
+  { name: "gridColsFor full: N=1 → 1 (solo)", fn: () => gridColsFor(1, "full") === 1 },
+  { name: "gridColsFor full: N=2 → 2 (1x2 side-by-side)", fn: () => gridColsFor(2, "full") === 2 },
+  { name: "gridColsFor full: N=3 → 3 (thirds)", fn: () => gridColsFor(3, "full") === 3 },
+  { name: "gridColsFor full: N=4 → 2 (2x2 quad)", fn: () => gridColsFor(4, "full") === 2 },
+  { name: "gridColsFor full: N=5 → 3 (3+2)", fn: () => gridColsFor(5, "full") === 3 },
+  { name: "gridColsFor half: N=1 → 1", fn: () => gridColsFor(1, "half") === 1 },
+  { name: "gridColsFor half: N>=2 → 2", fn: () => gridColsFor(2, "half") === 2 && gridColsFor(3, "half") === 2 && gridColsFor(5, "half") === 2 },
+  { name: "gridColsFor: floors/guards bad n to 1", fn: () => gridColsFor(0, "full") === 1 && gridColsFor(-3, "full") === 1 },
+  // Full-region row math matches the spec table (rows = ceil(n/cols)).
+  { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
+  { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
+  { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+
+  // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
+  { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
+  { name: "pasteImageLayout: content + 2 images → image-right (split grid)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 2) === "image-right" },
+  { name: "pasteImageLayout: content + 3 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 3) === "stack" },
+  { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
+  { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
+  { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
