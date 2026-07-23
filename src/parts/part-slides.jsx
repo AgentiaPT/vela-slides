@@ -1413,19 +1413,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // so it relies on this effect for the settle.
   // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
   // aiWorkingHere goes false merely because the view navigated to another slide.
-  // Guard on the slide index being unchanged across the transition so navigating
-  // away mid-op never magic-reveals the destination slide.
+  // Guard on BOTH the itemId (module) AND the slide index being unchanged across
+  // the transition — the panel is not keyed by concept.id, so its refs persist
+  // across module switches; without the itemId dimension, switching to a DIFFERENT
+  // module whose slide sits at the same index (0===0) would wrongly settle the
+  // untouched destination slide. Same actual slide = same module + same index.
   const prevAiWorkingHere = useRef(false);
   const prevRevealSlideIndex = useRef(slideIndex);
+  const prevRevealItemId = useRef(concept.id);
   useEffect(() => {
-    const sameSlide = prevRevealSlideIndex.current === slideIndex;
+    const sameSlide = prevRevealSlideIndex.current === slideIndex && prevRevealItemId.current === concept.id;
     if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
       setRevealKey(`aiw-${Date.now()}`);
       setTimeout(() => setRevealKey(null), 1200);
     }
     prevAiWorkingHere.current = aiWorkingHere;
     prevRevealSlideIndex.current = slideIndex;
-  }, [aiWorkingHere, slideIndex]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
+    prevRevealItemId.current = concept.id;
+  }, [aiWorkingHere, slideIndex, concept.id]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.

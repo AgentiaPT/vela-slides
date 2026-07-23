@@ -1216,17 +1216,39 @@ uiSuite("Editor UX (CR1–CR3)", [
       const vb = vp.getBoundingClientRect();
       return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
     };
-    // Case A: N=4 (a 2-row landscape grid) — bottom row must stay on-canvas.
-    window.__velaTestInjectBlocks([
-      { type: "heading", text: "GRID N4" },
-      { type: "image", src: land }, { type: "image", src: land },
-      { type: "image", src: land }, { type: "image", src: land },
-    ]);
-    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
-    await _wait(160);
-    let o = gridBottomOverflow();
-    if (o == null) throw new Error("image grid not rendered for N=4");
-    if (o > 2) throw new Error(`N=4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    // CR4/D2b: every grid-cell <img> must be VISIBLE (rendered height > 0). The
+    // absolute-fill img resolves height:100% through the nested ZoomWrap wrapper;
+    // if that intermediate div carries no height the img collapses to 0 (invisible).
+    const zeroHeightImgs = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const imgs = Array.from(grid.querySelectorAll("img"));
+      if (!imgs.length) return -1; // no imgs found at all
+      return imgs.filter((im) => im.getBoundingClientRect().height <= 0).length;
+    };
+    const assertVisibleAndUniform = (label) => {
+      const z = zeroHeightImgs();
+      if (z == null) throw new Error(`${label}: image grid not rendered`);
+      if (z === -1) throw new Error(`${label}: no <img> found in grid`);
+      if (z > 0) throw new Error(`${label}: ${z} grid-cell <img> rendered at height 0 (invisible)`);
+      const cells = _$$("[data-testid='image-grid-cell']");
+      if (cells.length >= 2) {
+        const hs = cells.map((c) => c.getBoundingClientRect().height);
+        const maxH = Math.max(...hs), minH = Math.min(...hs);
+        if (maxH - minH > 2) throw new Error(`${label}: grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)}`);
+      }
+    };
+    // Cases: N=2..5 landscape runs — each must be contained AND visible.
+    for (const N of [2, 3, 4, 5]) {
+      const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
+      window.__velaTestInjectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+      await _wait(160);
+      const o = gridBottomOverflow();
+      if (o == null) throw new Error(`image grid not rendered for N=${N}`);
+      if (o > 2) throw new Error(`N=${N} grid overflows canvas bottom by ${o.toFixed(1)}px`);
+      assertVisibleAndUniform(`N=${N}`);
+    }
     // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
     window.__velaTestInjectBlocks([
       { type: "heading", text: "HEAVY + FOUR IMAGES" },
@@ -1236,11 +1258,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     ]);
     await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
     await _wait(160);
-    o = gridBottomOverflow();
+    let o = gridBottomOverflow();
     if (o == null) throw new Error("image grid not rendered for heavy-text+4");
     if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
-    // Case C: a portrait image among the run must not balloon its row off-canvas.
-    // Also assert cells are uniform height (letterboxed, not sized to the tall image).
+    assertVisibleAndUniform("heavy-text+4");
+    // Case C: a portrait image among the run must not balloon its row off-canvas —
+    // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
     window.__velaTestInjectBlocks([
       { type: "heading", text: "PORTRAIT MIX" },
       { type: "image", src: land }, { type: "image", src: tall },
@@ -1250,12 +1273,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     o = gridBottomOverflow();
     if (o == null) throw new Error("image grid not rendered for portrait mix");
     if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
-    const cells = _$$("[data-testid='image-grid-cell']");
-    if (cells.length >= 2) {
-      const hs = cells.map((c) => c.getBoundingClientRect().height);
-      const maxH = Math.max(...hs), minH = Math.min(...hs);
-      if (maxH - minH > 2) throw new Error(`grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)} (tall image ballooned its row)`);
-    }
+    assertVisibleAndUniform("portrait-mix");
   }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
@@ -2326,6 +2344,45 @@ uiSuite("AI-working animation (CR5)", [
     await _wait(400);
     const w = _fxWrap();
     if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
+    await _settleFx();
+  }},
+  { name: "D7b: cross-module switch at same index does NOT magic-reveal destination (but genuine same-slide DOES)", fn: async () => {
+    await _settleFx();
+    // Map each TOC slide row to its {itemId, slideIdx} by selecting it.
+    const n = _tocRows().length;
+    if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
+    const meta = [];
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(window.__velaTestGetSelection()); }
+    // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
+    let ai = -1, bi = -1;
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i] && meta[i].slideIdx === 0) {
+        if (ai < 0) ai = i;
+        else if (meta[i].itemId !== meta[ai].itemId) { bi = i; break; }
+      }
+    }
+    if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
+    // Select module A slide 0 and start its working scan.
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Single-step switch to module B slide 0 (same index, different module) while
+    // aiWork is still set on A. The untouched destination must NOT settle.
+    _click(_tocRows()[bi]); await _wait(180);
+    const sB = window.__velaTestGetSelection();
+    if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
+    await _wait(420); // give the completion effect ample time to (wrongly) fire
+    const wB = _fxWrap();
+    if (wB && wB.classList.contains("magic-reveal")) throw new Error("cross-module switch wrongly magic-revealed the untouched destination slide (0===0 index collision)");
+    await _settleFx();
+    // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA2 = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
     await _settleFx();
   }},
   { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {

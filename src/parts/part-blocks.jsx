@@ -661,7 +661,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled, link }) {
+function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -703,7 +703,7 @@ function ZoomWrap({ children, enabled, link }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -821,7 +821,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "image":
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : block._gridCell

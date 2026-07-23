@@ -137,7 +137,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.20";
 const VELA_CHANGELOG = [
-  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide.", "Consistent “AI working” animation across all AI edits, including chat.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
   { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
   { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
@@ -2501,7 +2501,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled, link }) {
+function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -2543,7 +2543,7 @@ function ZoomWrap({ children, enabled, link }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -2661,7 +2661,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "image":
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : block._gridCell
@@ -6769,19 +6769,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // so it relies on this effect for the settle.
   // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
   // aiWorkingHere goes false merely because the view navigated to another slide.
-  // Guard on the slide index being unchanged across the transition so navigating
-  // away mid-op never magic-reveals the destination slide.
+  // Guard on BOTH the itemId (module) AND the slide index being unchanged across
+  // the transition — the panel is not keyed by concept.id, so its refs persist
+  // across module switches; without the itemId dimension, switching to a DIFFERENT
+  // module whose slide sits at the same index (0===0) would wrongly settle the
+  // untouched destination slide. Same actual slide = same module + same index.
   const prevAiWorkingHere = useRef(false);
   const prevRevealSlideIndex = useRef(slideIndex);
+  const prevRevealItemId = useRef(concept.id);
   useEffect(() => {
-    const sameSlide = prevRevealSlideIndex.current === slideIndex;
+    const sameSlide = prevRevealSlideIndex.current === slideIndex && prevRevealItemId.current === concept.id;
     if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
       setRevealKey(`aiw-${Date.now()}`);
       setTimeout(() => setRevealKey(null), 1200);
     }
     prevAiWorkingHere.current = aiWorkingHere;
     prevRevealSlideIndex.current = slideIndex;
-  }, [aiWorkingHere, slideIndex]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
+    prevRevealItemId.current = concept.id;
+  }, [aiWorkingHere, slideIndex, concept.id]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -10680,17 +10685,39 @@ uiSuite("Editor UX (CR1–CR3)", [
       const vb = vp.getBoundingClientRect();
       return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
     };
-    // Case A: N=4 (a 2-row landscape grid) — bottom row must stay on-canvas.
-    window.__velaTestInjectBlocks([
-      { type: "heading", text: "GRID N4" },
-      { type: "image", src: land }, { type: "image", src: land },
-      { type: "image", src: land }, { type: "image", src: land },
-    ]);
-    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
-    await _wait(160);
-    let o = gridBottomOverflow();
-    if (o == null) throw new Error("image grid not rendered for N=4");
-    if (o > 2) throw new Error(`N=4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    // CR4/D2b: every grid-cell <img> must be VISIBLE (rendered height > 0). The
+    // absolute-fill img resolves height:100% through the nested ZoomWrap wrapper;
+    // if that intermediate div carries no height the img collapses to 0 (invisible).
+    const zeroHeightImgs = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const imgs = Array.from(grid.querySelectorAll("img"));
+      if (!imgs.length) return -1; // no imgs found at all
+      return imgs.filter((im) => im.getBoundingClientRect().height <= 0).length;
+    };
+    const assertVisibleAndUniform = (label) => {
+      const z = zeroHeightImgs();
+      if (z == null) throw new Error(`${label}: image grid not rendered`);
+      if (z === -1) throw new Error(`${label}: no <img> found in grid`);
+      if (z > 0) throw new Error(`${label}: ${z} grid-cell <img> rendered at height 0 (invisible)`);
+      const cells = _$$("[data-testid='image-grid-cell']");
+      if (cells.length >= 2) {
+        const hs = cells.map((c) => c.getBoundingClientRect().height);
+        const maxH = Math.max(...hs), minH = Math.min(...hs);
+        if (maxH - minH > 2) throw new Error(`${label}: grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)}`);
+      }
+    };
+    // Cases: N=2..5 landscape runs — each must be contained AND visible.
+    for (const N of [2, 3, 4, 5]) {
+      const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
+      window.__velaTestInjectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+      await _wait(160);
+      const o = gridBottomOverflow();
+      if (o == null) throw new Error(`image grid not rendered for N=${N}`);
+      if (o > 2) throw new Error(`N=${N} grid overflows canvas bottom by ${o.toFixed(1)}px`);
+      assertVisibleAndUniform(`N=${N}`);
+    }
     // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
     window.__velaTestInjectBlocks([
       { type: "heading", text: "HEAVY + FOUR IMAGES" },
@@ -10700,11 +10727,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     ]);
     await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
     await _wait(160);
-    o = gridBottomOverflow();
+    let o = gridBottomOverflow();
     if (o == null) throw new Error("image grid not rendered for heavy-text+4");
     if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
-    // Case C: a portrait image among the run must not balloon its row off-canvas.
-    // Also assert cells are uniform height (letterboxed, not sized to the tall image).
+    assertVisibleAndUniform("heavy-text+4");
+    // Case C: a portrait image among the run must not balloon its row off-canvas —
+    // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
     window.__velaTestInjectBlocks([
       { type: "heading", text: "PORTRAIT MIX" },
       { type: "image", src: land }, { type: "image", src: tall },
@@ -10714,12 +10742,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     o = gridBottomOverflow();
     if (o == null) throw new Error("image grid not rendered for portrait mix");
     if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
-    const cells = _$$("[data-testid='image-grid-cell']");
-    if (cells.length >= 2) {
-      const hs = cells.map((c) => c.getBoundingClientRect().height);
-      const maxH = Math.max(...hs), minH = Math.min(...hs);
-      if (maxH - minH > 2) throw new Error(`grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)} (tall image ballooned its row)`);
-    }
+    assertVisibleAndUniform("portrait-mix");
   }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
@@ -11790,6 +11813,45 @@ uiSuite("AI-working animation (CR5)", [
     await _wait(400);
     const w = _fxWrap();
     if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
+    await _settleFx();
+  }},
+  { name: "D7b: cross-module switch at same index does NOT magic-reveal destination (but genuine same-slide DOES)", fn: async () => {
+    await _settleFx();
+    // Map each TOC slide row to its {itemId, slideIdx} by selecting it.
+    const n = _tocRows().length;
+    if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
+    const meta = [];
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(window.__velaTestGetSelection()); }
+    // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
+    let ai = -1, bi = -1;
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i] && meta[i].slideIdx === 0) {
+        if (ai < 0) ai = i;
+        else if (meta[i].itemId !== meta[ai].itemId) { bi = i; break; }
+      }
+    }
+    if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
+    // Select module A slide 0 and start its working scan.
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Single-step switch to module B slide 0 (same index, different module) while
+    // aiWork is still set on A. The untouched destination must NOT settle.
+    _click(_tocRows()[bi]); await _wait(180);
+    const sB = window.__velaTestGetSelection();
+    if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
+    await _wait(420); // give the completion effect ample time to (wrongly) fire
+    const wB = _fxWrap();
+    if (wB && wB.classList.contains("magic-reveal")) throw new Error("cross-module switch wrongly magic-revealed the untouched destination slide (0===0 index collision)");
+    await _settleFx();
+    // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA2 = window.__velaTestGetSelection();
+    window.__velaTestSetAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
     await _settleFx();
   }},
   { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
