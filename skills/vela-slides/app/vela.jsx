@@ -1410,9 +1410,19 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
@@ -3637,9 +3647,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // never persisted into the deck (see LOAD reset / _fullRewrite handling). Lifted out of
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+// aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED"]);
+// CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
+// editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
+// are view-only too.
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -3907,9 +3921,15 @@ function innerReducer(state, a) {
       const last = msgs.length - 1;
       if (last < 0 || !msgs[last]._streaming) return state;
       msgs[last] = { ...msgs[last], content: typeof a.content === "string" ? a.content : String(a.content || ""), jumps: a.jumps, _streaming: false, _thinking: false };
-      return { ...state, chatMessages: msgs };
+      // CR5 fail-safe: the Vera turn is over — never leave a slide stuck shimmering.
+      return { ...state, chatMessages: msgs, aiWork: null };
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
+    // CR5: single source of truth for "Vera is working on this slide". Value is
+    // { itemId, slideIdx } (an "*" sentinel = deck-wide/batch) or null to clear.
+    // Both the chat/Vera engine tool path and the toolbar AI ops feed this; the
+    // SlidePanel reads it to drive the vera-thinking scan + magic-reveal settle.
+    case "SET_AI_WORK": return { ...state, aiWork: a.value || null };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
     case "LOAD_LANES": {
       // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
@@ -3945,7 +3965,8 @@ function reducer(hist, a) {
     if (hist.past.length === 0) return hist;
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
-    const cleaned = { ...prev, chatLoading: false };
+    // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
+    const cleaned = { ...prev, chatLoading: false, aiWork: null };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -3972,7 +3993,7 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false };
+    const cleaned = { ...next, chatLoading: false, aiWork: null };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -6631,6 +6652,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
   const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
   const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // CR5: the single "Vera is working on THIS on-screen slide" signal, read from
+  // the reducer's aiWork flag (fed by BOTH the chat/Vera engine tool path and the
+  // toolbar AI ops). "*" is the deck-wide/batch sentinel — a batch op only ever
+  // animates whichever of its targets is currently on screen, never off-screen.
+  const aiWorkingHere = !!(state.aiWork &&
+    (state.aiWork.itemId === concept.id || state.aiWork.itemId === "*") &&
+    (state.aiWork.slideIdx === slideIndex || state.aiWork.slideIdx === "*"));
+  // When the working flag clears off this slide (op completed / cancelled / error),
+  // play the existing magic-reveal settle once — the unified completion for every
+  // AI op (chat + toolbar). This is what makes chat/Vera edits settle like the
+  // toolbar ops instead of silently popping to new content.
+  // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
+  // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
+  // so it relies on this effect for the settle.
+  const prevAiWorkingHere = useRef(false);
+  useEffect(() => {
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey) {
+      setRevealKey(`aiw-${Date.now()}`);
+      setTimeout(() => setRevealKey(null), 1200);
+    }
+    prevAiWorkingHere.current = aiWorkingHere;
+  }, [aiWorkingHere]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -6646,8 +6689,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
-  }, [improving]);
+  }, [improving, dispatch]);
   useEffect(() => { setBeforeSlides(null); setShowBefore(false); setShowMoveToModule(false); setEditingDuration(false); }, [concept.id]);
 
   // Shift slideIndex when entering/exiting fullscreen with presentCard
@@ -7189,6 +7233,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
@@ -7208,6 +7253,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Quick edit failed:", e);
     } finally {
       setQuickEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7216,6 +7262,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
     setBlockEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
         slides[slideIndex], blockIndex, prompt,
@@ -7234,6 +7281,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Block edit failed:", e);
     } finally {
       setBlockEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7242,6 +7290,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
       if (result) {
@@ -7260,6 +7309,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Generate slide failed:", e);
     } finally {
       setNewSlideGenerating(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7306,6 +7356,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
+        // CR5: mark the active job's slide as the one Vera is working on — the scan
+        // shows only when THIS job's slide is the one currently on screen (batch
+        // never mass-animates off-screen slides).
+        dispatch({ type: "SET_AI_WORK", value: { itemId: job.itemId, slideIdx: job.slideIdx } });
         setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
         // Measure layout in a hidden offscreen host — Improve no longer navigates
@@ -7346,6 +7400,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
       setMeasureSlide(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
@@ -7357,6 +7412,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
     }
   };
   runImproveRef.current = runImprove;
@@ -7534,7 +7590,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const { vw, vh, isAuto } = computeVirtualDims(previewRatio);
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
-                return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
+                // CR5: one working scan for EVERY AI op on this on-screen slide.
+                // aiWorkingHere is the unified reducer signal (chat/Vera engine +
+                // toolbar); the local flags keep the scan up for toolbar ops even
+                // before their dispatch lands. --vera-accent tints the sweep to the
+                // slide's accent (see part-imports.jsx). data-testid drives verify.
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
@@ -8615,11 +8676,20 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const onToolCall = (evt) => {
       dispatch({ type: "STREAM_TOOL", event: evt });
+      // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
+      // (chat/engine edits previously animated nothing). On `calling`, scan the
+      // slide currently in view; when a tool completes with a jump, follow it and
+      // move the scan to the edited slide. FINALIZE_STREAM clears aiWork → the
+      // SlidePanel plays magic-reveal on the on-screen edited slide.
+      if (evt.type === "calling" && state.selectedId) {
+        dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+      }
       // Auto-navigate when a tool completes with a jump
       if (evt.type === "done" && evt.jump?.length > 0) {
         const j = evt.jump[0];
         dispatch({ type: "SELECT", id: j.itemId });
         dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
+        dispatch({ type: "SET_AI_WORK", value: { itemId: j.itemId, slideIdx: j.slideIdx ?? 0 } });
       }
     };
     const layoutStats = getLayoutStats?.() || null;
@@ -8636,6 +8706,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
+    dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
     // Register late-reply handler for SSE recovery (channel timeout fallback)
     if (result._lateReplyPending) {
       window.__velaLateReply = (msg, jumps) => {
@@ -8670,7 +8741,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
       const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); } };
+      // CR5: same canvas "working" mirror as the main send() path (see there).
+      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
@@ -8678,6 +8750,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
         dispatch({ type: "SET_DEBUG", text: result.debug || "" });
         dispatch({ type: "SET_LOADING", value: false });
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
   }, [state._bootstrap]);
@@ -11332,6 +11405,113 @@ uiSuite("Desktop save-status pill (CR3)", [
     await _waitFor(() => _savePill() == null, 1500).catch(() => {});
   }},
 ]);
+
+// ── CR5: Consistent AI-working animation ─────────────────────────────
+// Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
+// magic-reveal contract. No live AI backend needed: we drive the reducer flag
+// directly via the app's test hook (window.__velaTestSetAIWork) and assert the
+// on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
+// isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
+const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Return the fx-wrapper to a static state (clear the flag, wait out any settle).
+const _settleFx = async () => {
+  if (typeof window.__velaTestSetAIWork === "function") window.__velaTestSetAIWork(null);
+  await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
+};
+// Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
+// a prior suite may leave it in fullscreen / gallery / a modal / a collapsed rail.
+const _cr5Setup = async () => {
+  await _exitFullscreen();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 3; i++) { _key("Escape"); await _wait(90); }
+  // Prefer a TOC slide row — clicking it selects a module that actually HAS a
+  // slide (the first .concept-row can be an empty section → "No slides yet",
+  // which renders no fx-wrapper). Fall back to scanning module rows for one with
+  // slides on screen.
+  const toc = _tocRows()[0];
+  if (toc) { _click(toc); await _wait(200); }
+  if (!_$("[data-testid='slide-viewport']")) {
+    for (const r of _$$(".concept-row")) { _click(r); await _wait(150); if (_$("[data-testid='slide-viewport']")) break; }
+  }
+  await _waitFor(_fxWrap, 3000).catch(() => {});
+};
+// Collect all readable CSS text (same-origin inline <style>; skip cross-origin).
+const _allCssText = () => {
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules; try { rules = sheet.cssRules; } catch { continue; }
+    if (!rules) continue;
+    for (const r of Array.from(rules)) css += r.cssText + "\n";
+  }
+  return css;
+};
+uiSuite("AI-working animation (CR5)", [
+  { name: "test hooks + fx-wrapper present", fn: async () => {
+    if (typeof window.__velaTestSetAIWork !== "function") throw new Error("__velaTestSetAIWork not exposed");
+    if (typeof window.__velaTestGetSelection !== "function") throw new Error("__velaTestGetSelection not exposed");
+    await _cr5Setup();
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: window.__velaTestGetSelection() }));
+  }},
+  { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
+    if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
+    // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
+    // slide carries an accent it must equal it (the sweep matches the slide).
+    const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
+    if (!acc) throw new Error("--vera-accent empty while working");
+    if (sel.accent) {
+      const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
+      if (norm(acc) !== norm(sel.accent)) throw new Error(`--vera-accent=${acc} != slide accent ${sel.accent}`);
+    }
+    await _settleFx();
+  }},
+  { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    // The completion effect swaps the scan for the one-shot magic-reveal.
+    await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
+    // …and the reveal is one-shot — it settles back to static.
+    await _waitFor(() => !_fxWrap()?.classList.contains("magic-reveal"), 3000).catch(() => {});
+  }},
+  { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    // A target that is not the on-screen slide (bogus itemId) must leave it static.
+    window.__velaTestSetAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    await _wait(250);
+    const w = _fxWrap();
+    if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
+    const css = _allCssText();
+    if (!/\.vera-thinking/.test(css)) throw new Error(".vera-thinking rule missing");
+    if (!/\.magic-reveal/.test(css)) throw new Error(".magic-reveal rule missing");
+    if (!/--vera-accent/.test(css)) throw new Error(".vera-thinking sweep not parameterized by --vera-accent");
+  }},
+  { name: "CSS: prefers-reduced-motion zeroes the working scan", fn: async () => {
+    let found = false;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules; try { rules = sheet.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        // CSSMediaRule (type 4) — r.cssText carries the full nested block.
+        const txt = r.cssText || "";
+        if (r.type === 4 && /prefers-reduced-motion/i.test(txt) && /\.vera-thinking/.test(txt) && /animation[^;]*none/i.test(txt)) found = true;
+      }
+    }
+    if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
+  }},
+], { setup: _cr5Setup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -18759,7 +18939,19 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
+    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
+    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
+    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
+    // assert the vera-thinking / magic-reveal contract on the matching slide.
+    window.__velaTestGetSelection = () => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return null;
+      let accent = null;
+      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+    };
+    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)

@@ -1195,7 +1195,19 @@ export default function App() {
       dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
       return true;
     };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
+    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
+    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
+    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
+    // assert the vera-thinking / magic-reveal contract on the matching slide.
+    window.__velaTestGetSelection = () => {
+      const s = _localSyncState.current;
+      if (!s || !s.selectedId) return null;
+      let accent = null;
+      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+    };
+    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
+    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
   }, [dispatch]);
 
   // Send deck changes to local server (browser → file)

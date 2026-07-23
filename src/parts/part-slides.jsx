@@ -1392,6 +1392,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
   const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
   const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // CR5: the single "Vera is working on THIS on-screen slide" signal, read from
+  // the reducer's aiWork flag (fed by BOTH the chat/Vera engine tool path and the
+  // toolbar AI ops). "*" is the deck-wide/batch sentinel — a batch op only ever
+  // animates whichever of its targets is currently on screen, never off-screen.
+  const aiWorkingHere = !!(state.aiWork &&
+    (state.aiWork.itemId === concept.id || state.aiWork.itemId === "*") &&
+    (state.aiWork.slideIdx === slideIndex || state.aiWork.slideIdx === "*"));
+  // When the working flag clears off this slide (op completed / cancelled / error),
+  // play the existing magic-reveal settle once — the unified completion for every
+  // AI op (chat + toolbar). This is what makes chat/Vera edits settle like the
+  // toolbar ops instead of silently popping to new content.
+  // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
+  // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
+  // so it relies on this effect for the settle.
+  const prevAiWorkingHere = useRef(false);
+  useEffect(() => {
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey) {
+      setRevealKey(`aiw-${Date.now()}`);
+      setTimeout(() => setRevealKey(null), 1200);
+    }
+    prevAiWorkingHere.current = aiWorkingHere;
+  }, [aiWorkingHere]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -1407,8 +1429,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
-  }, [improving]);
+  }, [improving, dispatch]);
   useEffect(() => { setBeforeSlides(null); setShowBefore(false); setShowMoveToModule(false); setEditingDuration(false); }, [concept.id]);
 
   // Shift slideIndex when entering/exiting fullscreen with presentCard
@@ -1950,6 +1973,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
@@ -1969,6 +1993,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Quick edit failed:", e);
     } finally {
       setQuickEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -1977,6 +2002,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
     setBlockEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
         slides[slideIndex], blockIndex, prompt,
@@ -1995,6 +2021,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Block edit failed:", e);
     } finally {
       setBlockEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -2003,6 +2030,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
       if (result) {
@@ -2021,6 +2049,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Generate slide failed:", e);
     } finally {
       setNewSlideGenerating(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -2067,6 +2096,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
+        // CR5: mark the active job's slide as the one Vera is working on — the scan
+        // shows only when THIS job's slide is the one currently on screen (batch
+        // never mass-animates off-screen slides).
+        dispatch({ type: "SET_AI_WORK", value: { itemId: job.itemId, slideIdx: job.slideIdx } });
         setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
         // Measure layout in a hidden offscreen host — Improve no longer navigates
@@ -2107,6 +2140,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
       setMeasureSlide(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
@@ -2118,6 +2152,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
     }
   };
   runImproveRef.current = runImprove;
@@ -2295,7 +2330,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const { vw, vh, isAuto } = computeVirtualDims(previewRatio);
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
-                return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
+                // CR5: one working scan for EVERY AI op on this on-screen slide.
+                // aiWorkingHere is the unified reducer signal (chat/Vera engine +
+                // toolbar); the local flags keep the scan up for toolbar ops even
+                // before their dispatch lands. --vera-accent tints the sweep to the
+                // slide's accent (see part-imports.jsx). data-testid drives verify.
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
