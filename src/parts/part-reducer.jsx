@@ -1,8 +1,10 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
+// CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
+// editing) — never part of undo/redo history.
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -253,9 +255,15 @@ function innerReducer(state, a) {
       const last = msgs.length - 1;
       if (last < 0 || !msgs[last]._streaming) return state;
       msgs[last] = { ...msgs[last], content: typeof a.content === "string" ? a.content : String(a.content || ""), jumps: a.jumps, _streaming: false, _thinking: false };
-      return { ...state, chatMessages: msgs };
+      // CR5 fail-safe: the Vera turn is over — never leave a slide stuck shimmering.
+      return { ...state, chatMessages: msgs, aiWork: null };
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
+    // CR5: single source of truth for "Vera is working on this slide". Value is
+    // { itemId, slideIdx } (an "*" sentinel = deck-wide/batch) or null to clear.
+    // Both the chat/Vera engine tool path and the toolbar AI ops feed this; the
+    // SlidePanel reads it to drive the vera-thinking scan + magic-reveal settle.
+    case "SET_AI_WORK": return { ...state, aiWork: a.value || null };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
     case "LOAD_LANES": {
       // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
@@ -291,7 +299,8 @@ function reducer(hist, a) {
     if (hist.past.length === 0) return hist;
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
-    const cleaned = { ...prev, chatLoading: false };
+    // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
+    const cleaned = { ...prev, chatLoading: false, aiWork: null };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -318,7 +327,7 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false };
+    const cleaned = { ...next, chatLoading: false, aiWork: null };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;

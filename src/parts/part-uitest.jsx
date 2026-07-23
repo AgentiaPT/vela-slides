@@ -1909,6 +1909,113 @@ uiSuite("Move Picker Search (F6)", [
   }},
 ], { setup: _editorSetup });
 
+// ── CR5: Consistent AI-working animation ─────────────────────────────
+// Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
+// magic-reveal contract. No live AI backend needed: we drive the reducer flag
+// directly via the app's test hook (window.__velaTestSetAIWork) and assert the
+// on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
+// isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
+const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Return the fx-wrapper to a static state (clear the flag, wait out any settle).
+const _settleFx = async () => {
+  if (typeof window.__velaTestSetAIWork === "function") window.__velaTestSetAIWork(null);
+  await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
+};
+// Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
+// a prior suite may leave it in fullscreen / gallery / a modal / a collapsed rail.
+const _cr5Setup = async () => {
+  await _exitFullscreen();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 3; i++) { _key("Escape"); await _wait(90); }
+  // Prefer a TOC slide row — clicking it selects a module that actually HAS a
+  // slide (the first .concept-row can be an empty section → "No slides yet",
+  // which renders no fx-wrapper). Fall back to scanning module rows for one with
+  // slides on screen.
+  const toc = _tocRows()[0];
+  if (toc) { _click(toc); await _wait(200); }
+  if (!_$("[data-testid='slide-viewport']")) {
+    for (const r of _$$(".concept-row")) { _click(r); await _wait(150); if (_$("[data-testid='slide-viewport']")) break; }
+  }
+  await _waitFor(_fxWrap, 3000).catch(() => {});
+};
+// Collect all readable CSS text (same-origin inline <style>; skip cross-origin).
+const _allCssText = () => {
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules; try { rules = sheet.cssRules; } catch { continue; }
+    if (!rules) continue;
+    for (const r of Array.from(rules)) css += r.cssText + "\n";
+  }
+  return css;
+};
+uiSuite("AI-working animation (CR5)", [
+  { name: "test hooks + fx-wrapper present", fn: async () => {
+    if (typeof window.__velaTestSetAIWork !== "function") throw new Error("__velaTestSetAIWork not exposed");
+    if (typeof window.__velaTestGetSelection !== "function") throw new Error("__velaTestGetSelection not exposed");
+    await _cr5Setup();
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: window.__velaTestGetSelection() }));
+  }},
+  { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
+    if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
+    // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
+    // slide carries an accent it must equal it (the sweep matches the slide).
+    const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
+    if (!acc) throw new Error("--vera-accent empty while working");
+    if (sel.accent) {
+      const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
+      if (norm(acc) !== norm(sel.accent)) throw new Error(`--vera-accent=${acc} != slide accent ${sel.accent}`);
+    }
+    await _settleFx();
+  }},
+  { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    window.__velaTestSetAIWork(null);
+    // The completion effect swaps the scan for the one-shot magic-reveal.
+    await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
+    // …and the reveal is one-shot — it settles back to static.
+    await _waitFor(() => !_fxWrap()?.classList.contains("magic-reveal"), 3000).catch(() => {});
+  }},
+  { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
+    await _settleFx();
+    const sel = window.__velaTestGetSelection();
+    if (!sel) throw new Error("no slide selected");
+    // A target that is not the on-screen slide (bogus itemId) must leave it static.
+    window.__velaTestSetAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    await _wait(250);
+    const w = _fxWrap();
+    if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
+    const css = _allCssText();
+    if (!/\.vera-thinking/.test(css)) throw new Error(".vera-thinking rule missing");
+    if (!/\.magic-reveal/.test(css)) throw new Error(".magic-reveal rule missing");
+    if (!/--vera-accent/.test(css)) throw new Error(".vera-thinking sweep not parameterized by --vera-accent");
+  }},
+  { name: "CSS: prefers-reduced-motion zeroes the working scan", fn: async () => {
+    let found = false;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules; try { rules = sheet.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        // CSSMediaRule (type 4) — r.cssText carries the full nested block.
+        const txt = r.cssText || "";
+        if (r.type === 4 && /prefers-reduced-motion/i.test(txt) && /\.vera-thinking/.test(txt) && /animation[^;]*none/i.test(txt)) found = true;
+      }
+    }
+    if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
+  }},
+], { setup: _cr5Setup });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
