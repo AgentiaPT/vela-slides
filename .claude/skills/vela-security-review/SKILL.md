@@ -64,23 +64,44 @@ Look for these before anything else — a missing guard is the rare case.
    encoder; the inline-style vs SVG-style value filter. Compare them and look for what
    one rejects and the other does not.
 
-## Prove it, or do not report it
+## Prove it, or do not report it — in ONE batched call
 
 Reading source is not proof. A payload is proven only when it goes through the real code
 and is observed to fire.
 
-- Real sanitizers, any checkout:
-  `VELA_REPO=<tree> node .claude/skills/vela-browser-test/scripts/sanitizer-harness.cjs`
-  — `require()` it for `sanitizeSvgMarkup` / `validateAndSanitizeDeck` / `sanitizeUrl` /
-  `sanitizeStyle`. Its leak matchers are deliberately over-eager: a hit means *go
-  confirm*, not *confirmed*.
-- Real browser: `node .claude/skills/vela-browser-test/scripts/browser-probe.cjs <page.html>`
-  — renders in real Chromium with a local collector; `__COLLECTOR__` becomes its origin.
-  A collector hit is the proof. Run `--self-test` first if unsure the probe is live.
+**Prove every payload in a single call**, at the end, not one at a time as you think of
+them. Write them all to a file and run the batch prover once:
 
-Always carry a **negative control**: a variant that *should* be blocked. If it survives
-too, the sanitizer is simply off and you have not found a bypass. Report a finding whose
-payload you could not make fire as Informational, and say it is unproven.
+```bash
+node .claude/skills/vela-security-review/scripts/prove.cjs payloads.json --tree . --json
+```
+
+`payloads.json` is `[{"id","kind":"svg|css|deck|url","input"}]`. Put the literal token
+`__COLLECTOR__` where an attacker origin belongs. It runs the real sanitizers over every
+payload, then renders every survivor in **one page with one browser launch**, and returns
+a per-payload verdict: `CONFIRMED`, `inert (proven not to fire)`, `survives layer 1 —
+layer 2 not established`, or `blocked`.
+
+Proving payloads individually is the single largest waste in a review: each browser probe
+pays a fresh Chromium launch and a settle wait, and each costs a turn. Batched, a dozen
+payloads cost about five seconds. `inert` is a *useful* result — it is what stops an
+unproven finding being reported as real.
+
+Always include a **negative control** in the batch: a variant that *should* be blocked. If
+it comes back CONFIRMED too, the sanitizer is simply off and you have not found a bypass.
+Report anything you could not make fire as `unproven`, at Informational.
+
+## Budget
+
+Aim to finish in **under five minutes**. Concretely: do not re-read a file you have
+already read, do not open the built monolith (it duplicates the part-files), grep for the
+guard and read only its function, and batch the proving. If the Agent tool is available,
+dispatch stage-1 candidate generation across the attack-surface areas in parallel —
+independent hunters over separate areas, then one batched proof pass over everything they
+return.
+
+Breadth in stage 1 is free and is what you are scored on; depth belongs in the single
+proof pass at the end.
 
 ## Severity — the boundary rule decides, not how bad the primitive sounds
 
