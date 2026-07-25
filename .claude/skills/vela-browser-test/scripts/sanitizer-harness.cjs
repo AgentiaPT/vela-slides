@@ -25,28 +25,51 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
+// Layouts, newest first: the part-files moved from skills/vela-slides/app/parts/ to
+// src/parts/ in July 2026, so pointing this at an older tree needs the fallback.
+const PARTS_LAYOUTS = ["src/parts", "skills/vela-slides/app/parts"];
+
+function partsDir(root) {
+  for (const rel of PARTS_LAYOUTS) {
+    if (fs.existsSync(path.join(root, rel, "part-imports.jsx"))) return rel;
+  }
+  return null;
+}
 function findRepoRoot(start) {
   let d = start;
   for (let i = 0; i < 8; i++) {
-    if (fs.existsSync(path.join(d, "src/parts/part-imports.jsx"))) return d;
+    if (partsDir(d)) return d;
     const up = path.dirname(d); if (up === d) break; d = up;
   }
   return process.cwd();
 }
-const REPO = findRepoRoot(__dirname);
+// VELA_REPO points the harness at an arbitrary checkout instead of the one containing
+// this script — needed to run the real sanitizers of a tree exported at some other commit.
+const REPO = process.env.VELA_REPO
+  ? path.resolve(process.env.VELA_REPO)
+  : findRepoRoot(__dirname);
 
+// An exported/other tree has no node_modules of its own, so fall back to the checkout
+// this script lives in before the bare specifier.
+const HOME_REPO = findRepoRoot(__dirname);
 let jsdom;
-for (const p of [path.join(REPO, "node_modules/jsdom"), "jsdom"]) {
+for (const p of [path.join(REPO, "node_modules/jsdom"),
+                 path.join(HOME_REPO, "node_modules/jsdom"), "jsdom"]) {
   try { jsdom = require(p); break; } catch (_) {}
 }
 if (!jsdom) {
   console.error("jsdom not installed (node_modules is gitignored/ephemeral). Restore with:");
-  console.error("  (cd " + REPO + " && npm install --no-audit --no-fund --ignore-scripts jsdom)");
+  console.error("  (cd " + HOME_REPO + " && npm install --no-audit --no-fund --ignore-scripts jsdom)");
   process.exit(2);
 }
 const { JSDOM } = jsdom;
 
-const SRC = path.join(REPO, "src/parts/part-imports.jsx");
+const PARTS = partsDir(REPO);
+if (!PARTS) {
+  console.error("No part-imports.jsx under " + REPO + " (tried " + PARTS_LAYOUTS.join(", ") + ")");
+  process.exit(2);
+}
+const SRC = path.join(REPO, PARTS, "part-imports.jsx");
 const lines = fs.readFileSync(SRC, "utf8").split("\n");
 const uidLine = lines.find((l) => l.startsWith("const uid ="));
 const startIdx = lines.findIndex((l) => l.startsWith("const now ="));
