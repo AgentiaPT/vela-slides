@@ -56,6 +56,7 @@ review alone.
 | SVG injection (XSS) | Multi-layer sanitization: script, foreignObject, use, animate, event handler, javascript: URI, xlink:href, CSS expression stripping |
 | Oversized payloads | String length limits on all fields (200-50000 chars), block count limits (30/slide), row/column limits |
 | CDN compromise (runtime libs) | `html2canvas` (PDF-export thumbnails only) loads best-effort from cdnjs.cloudflare.com and fails safe to layout-stats-only if it can't load; it is not SRI-pinned. The **Standalone-HTML export** pins React / ReactDOM / lucide-react from jsdelivr by SHA-384 `integrity` + `crossorigin` (byte-identical to the vendored Neutralino UMD copies). Standard client-side-app risk |
+| PDF hyperlink injection | Every PDF literal-string value (link/URI targets in both the raster and vector export paths) is escaped through a single audited encoder, so no export sink can drift out of sync |
 | Credential leakage | No API keys, tokens, or secrets in the codebase. Anthropic API calls use Claude.ai's built-in proxy |
 
 ### SVG Sanitization (Defense-in-Depth)

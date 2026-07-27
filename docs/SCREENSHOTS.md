@@ -2,6 +2,22 @@
 
 How to take screenshots of Vela slides for visual testing and comparison.
 
+> **In this remote container, the CDN-based flow below is blocked.** esm.sh
+> (React/lucide) and the Playwright browser-download CDN are unreachable here,
+> so `serve.py`'s default importmap HTML never boots and `npx playwright
+> install` cannot run. Use the offline render harness instead:
+> - **Ad-hoc / interactive** work (poke a state, one-off screenshot, reproduce
+>   a bug) → the **`playwright-cli-setup`** skill (persistent CLI browser,
+>   pinned Chromium at `/opt/pw-browsers/...`).
+> - **Repeatable, committed** automation (CI, recorded demo, benchmark) → the
+>   **`vela-live-render`** skill and `tools/vela-dev/scripts/vela-drive.js`
+>   (`shot`, `uitests`, `video` modes) driving `render-offline.js`'s
+>   vendored-UMD Node-transpiled build.
+>
+> The recipes below (raw `import { chromium } from 'playwright'` + `serve.py`)
+> still apply outside this container, where the CDNs aren't blocked — e.g. a
+> contributor's own machine with `npx playwright install` already run.
+
 ## Prerequisites
 
 - **Node.js 22+** with Playwright installed via pnpm
@@ -219,6 +235,7 @@ console.log(`dots at x=${positions.join(', ')}${allSame ? ' ✅ ALIGNED' : ' ❌
 | Issue | Solution |
 |-------|----------|
 | `ModuleNotFoundError: playwright` | Playwright is Node-only. Use `node`, not `python3` |
+| esm.sh / Playwright CDN unreachable (this container) | Use the offline harness — `playwright-cli-setup` skill (ad-hoc) or `vela-live-render` skill + `vela-drive.js` (committed automation) |
 | Server dies between bash calls | Run server + node in same `bash` command with `&` |
 | Deck stuck on loading screen | Wait 15-30s+ for Babel compilation of 1MB JSX |
 | `networkidle` timeout | Use `load` + content polling instead |

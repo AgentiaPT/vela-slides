@@ -37,7 +37,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 185 UI tests in 33 suites |
+| `part-uitest.jsx` | 206 UI tests in 39 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
@@ -81,8 +81,8 @@ Layout: spacer, divider
 ## CLI — `vela.py`
 
 ```bash
-vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
-vela slide view|edit|remove|move|duplicate|insert|remove-block
+vela deck list|validate|split|dump|stats|find|extract|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble|init
+vela slide view|edit|remove|move|duplicate|insert|remove-block|append
 ```
 
 The shipped skill authors and ships decks only. The local-preview server, offline

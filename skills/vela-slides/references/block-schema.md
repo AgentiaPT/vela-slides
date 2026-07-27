@@ -459,7 +459,7 @@ Temporal progression / roadmap.
 }
 ```
 
-### svg *(v14)*
+### svg
 Inline SVG diagram — escape hatch for visuals that structured blocks can't express.
 
 **Use when:** Feedback loops, fan-outs (1→N), mesh connectors (M×N), variable-width layers, probability distributions, custom architecture diagrams with non-linear connections.
