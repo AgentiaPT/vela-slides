@@ -189,13 +189,19 @@ Automated-scanner output and AI-generated reports **without manual verification 
 ### Scope
 
 **In scope:**
-- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/` — including `scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py) and the experimental MCP bridge in `channel/`
+- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py)
 - The Vela JSX application (`src/parts/*.jsx`, built into `skills/vela-slides/app/vela.jsx`)
 - Deck JSON parsing, validation, and sanitization
 - Local development server endpoints and file handling
 - SVG sanitization pipeline
 
 **Out of scope:**
+- The experimental MCP bridge in `tools/vela-dev/channel/`. It is a prototype
+  against Claude MCP Channels — an Anthropic research preview as of July 2026 —
+  and is not part of Vela: nothing in the app, `serve.py`, or CI invokes it, and
+  it only runs if a developer registers it by hand and starts Claude Code with
+  `--dangerously-load-development-channels`. Vela's actual AI channel is
+  `tools/vela-dev/scripts/agent_backend.py`, which **is** in scope.
 - Claude.ai's artifact sandbox (managed by Anthropic)
 - The Anthropic API and its security model
 - Third-party CDN availability or integrity (html2canvas)
