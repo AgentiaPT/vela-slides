@@ -333,6 +333,23 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 continue
 
+    def _deck_name_from_path(self, prefix):
+        """Decode the deck name out of a request path beginning with `prefix`.
+
+        SINGLE PARSING POINT, for the same reason _iter_deck_files() is the
+        single enumeration point: the three name-taking routes must agree with
+        each other and with the listing.
+
+        The query string is stripped from the RAW path *before* percent-decoding.
+        Only a literal '?' delimits a query, so an encoded one belongs to the
+        filename and must survive; decoding first would truncate such a name and
+        make an entry that the listing legitimately exposes unservable.
+        """
+        raw = self.path[len(prefix):]
+        if "?" in raw:
+            raw = raw.split("?", 1)[0]
+        return unquote(raw)
+
     @staticmethod
     def _safe_deck_path(folder, name):
         """Resolve a deck path and verify it stays inside the folder.
@@ -463,6 +480,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._route_folder_get()
 
     def do_POST(self):
+        self._csp = None  # handler instances are reused across keep-alive requests
         if not self._check_host():
             return
         if not self._check_auth():
@@ -546,11 +564,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_serve_deck(self):
         """GET /deck/<name> — serve Vela app with this deck loaded."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/deck/"):])
-
-        # Strip query string
-        if "?" in deck_name:
-            deck_name = deck_name.split("?", 1)[0]
+        deck_name = self._deck_name_from_path("/deck/")
 
         # Security: no path traversal, enforce .vela extension
         if not self._validate_deck_name(deck_name):
@@ -580,11 +594,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_poll(self):
         """GET /poll/<name>?v=N — long-poll for a specific deck."""
         srv = self.server_ref
-        rest = self.path[len("/poll/"):]
-        if "?" in rest:
-            deck_name = unquote(rest.split("?", 1)[0])
-        else:
-            deck_name = unquote(rest)
+        deck_name = self._deck_name_from_path("/poll/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
@@ -603,7 +613,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_save(self):
         """POST /save/<name> — browser sends deck updates for a specific deck."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/save/"):])
+        deck_name = self._deck_name_from_path("/save/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")

@@ -1524,6 +1524,10 @@ class TestDeckNameCodeDataSeparation(FolderServerTestBase):
         "angle<>.vela": SAMPLE_DECK,
         "backtick`.vela": SAMPLE_DECK,
         "clean-name.vela": SAMPLE_DECK,
+        # A name whose percent-encoded form contains a query delimiter: it is
+        # listed, so it must also serve. Decoding before stripping the query
+        # would truncate it and break the listing/serving agreement.
+        "question?mark.vela": SAMPLE_DECK,
     }
 
     def test_listing_only_exposes_servable_names(self):
@@ -1537,12 +1541,20 @@ class TestDeckNameCodeDataSeparation(FolderServerTestBase):
                 f"listing exposed a name the serving routes would reject: {name!r}",
             )
 
+    @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
     def test_listed_names_are_actually_servable(self):
-        """No listed row can 400 when clicked — listing and serving agree."""
+        """Every listed row serves when clicked — listing and serving agree.
+
+        Asserts 200 rather than 'not 400': a rejection is a rejection whatever
+        its status code, so a weaker assertion would let listing/serving drift
+        back apart unnoticed.
+        """
         _, _, body = fetch(self._port, "GET", "/api/decks")
-        for name in [d["name"] for d in json.loads(body)["decks"]]:
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("question?mark.vela", names)  # the drift case is covered
+        for name in names:
             status, _, _ = fetch(self._port, "GET", "/deck/" + quote(name))
-            self.assertNotEqual(status, 400, f"listed but unservable: {name!r}")
+            self.assertEqual(status, 200, f"listed but not servable: {name!r}")
 
     def test_browser_page_has_no_inline_event_handlers(self):
         """No inline on*= attribute — data can never land in a code context."""
