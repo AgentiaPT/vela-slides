@@ -409,6 +409,25 @@ func newServer(token, nlPort string) http.Handler {
 		})
 	}))
 
+	// Physical-path service for the webview's filesystem guard (see resolve.go).
+	// Holds no allowlist and makes no decision — it reports what the filesystem
+	// says and fs-guard.js applies the policy. The reveal bucket is per-server
+	// so it survives across requests but resets with the process.
+	revealBucket := newTokenBucket(24, 0.5) // 24 burst, refill 1 every 2s
+	mux.HandleFunc("/resolve", authed(func(w http.ResponseWriter, r *http.Request) {
+		var req resolveRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": "bad json"})
+			return
+		}
+		entries, err := resolvePaths(req, revealBucket)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "entries": entries})
+	}))
+
 	mux.HandleFunc("/send", authed(func(w http.ResponseWriter, r *http.Request) {
 		var req sendRequest
 		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&req); err != nil {

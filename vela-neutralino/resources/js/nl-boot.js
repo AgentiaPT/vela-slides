@@ -23,6 +23,7 @@ import { configStore } from "./config-store.js";
 import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
+import { createResolver } from "./resolve-bridge.js";
 import { showDeckWarning } from "./deck-warning.js";
 
 const $ = (id) => document.getElementById(id);
@@ -75,10 +76,15 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
-  // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
+  // Wrap Neutralino.filesystem.* so every path must sit inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
   fsGuard.install();
+  // Give the guard its physical-path resolver. This must happen here, at boot,
+  // for two reasons: the resolver slot is one-shot, and this point is before
+  // any deck content has entered the realm — so the resolver the guard ends up
+  // holding is unambiguously ours.
+  await installPathResolver();
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
@@ -119,9 +125,13 @@ async function boot() {
       // pick; underRoot() still blocks "..". We only allow + probe here;
       // initWithFile() commits state/persistence once existence is confirmed,
       // so a missing file leaves the remembered folder untouched.
-      fsGuard.allow(cliFile.replace(/\/[^/]+$/, ""));
-      try { await Neutralino.filesystem.getStats(cliFile); }
-      catch { cliFile = null; } // missing / unreadable — fall through to picker
+      const reg = await fsGuard.allowVerified(cliFile.replace(/\/[^/]+$/, ""));
+      if (!reg.ok) {
+        cliFile = null; // unusable folder — fall through to the picker
+      } else {
+        try { await Neutralino.filesystem.getStats(cliFile); }
+        catch { cliFile = null; } // missing / unreadable — fall through to picker
+      }
     }
   } catch { /* NL_ARGS unavailable — ignore */ }
 
@@ -341,6 +351,35 @@ function promptForDeck() {
     picker.resolve = resolve;
     openPicker();
   });
+}
+
+// ---------- Path resolver -------------------------------------------------
+//
+// Hands fs-guard the one thing it cannot work out on its own: what a path
+// physically is. Without this the guard compares strings only, and an entry
+// inside an allowed root that redirects elsewhere passes every string test.
+//
+// Ordering is load-bearing. ~/.vela has to be registered lexically first
+// because the resolver's own handshake files live there — it cannot vet the
+// root it needs to read to exist. Once the resolver is up we re-register the
+// same root through allowVerified, so ~/.vela ends up held to the same
+// standard as the decks folder, just a moment later.
+
+async function installPathResolver() {
+  let velaDir = null;
+  try {
+    const home = (await Neutralino.os.getEnv("HOME")) || (await Neutralino.os.getEnv("USERPROFILE"));
+    if (home) velaDir = `${home.replace(/[\\/]+$/, "")}/.vela`;
+  } catch { /* env unavailable — fall through */ }
+  if (!velaDir) {
+    // No home directory means no handshake to read. Seal the slot anyway so a
+    // later caller cannot claim it, and let the guard report "degraded".
+    fsGuard.setResolver(null);
+    return;
+  }
+  fsGuard.allow(velaDir);           // bootstrap: needed to read the handshake
+  fsGuard.setResolver(createResolver(velaDir));
+  try { await fsGuard.allowVerified(velaDir); } catch { /* non-fatal */ }
 }
 
 // ---------- Trust bridge --------------------------------------------------

@@ -296,6 +296,54 @@ class FsGuardHardeningInvariants(unittest.TestCase):
         # Defense-in-depth traversal guard must remain in underRoot().
         self.assertIn('n.split("/").includes("..")', self.js)
 
+    def test_resolver_slot_is_one_shot(self):
+        # The physical-path resolver is what turns "this path reads as inside a
+        # root" into "this path leads inside a root". If the slot could be
+        # claimed twice, deck-borne script — which by definition arrives after
+        # boot — could install one that waves everything through.
+        self.assertIn("resolverSealed", self.js)
+        self.assertIn("if (resolverSealed) return false", self.js)
+
+    def test_verified_root_registration_still_screens_the_physical_path(self):
+        # Resolution must never launder an unsafe location into the allowlist:
+        # the resolved form goes through the same refusals as the named form.
+        self.assertIn("allowVerified", self.js)
+        self.assertIn("function isUnsafeRoot", self.js)
+        self.assertIn("function addRoot", self.js)
+
+    def test_callers_can_distinguish_missing_from_unclean(self):
+        # A deleted deck is not an attack. Collapsing the two would either brick
+        # normal use or teach users to click through a real warning.
+        for verdict in ('"missing"', '"unclean"', '"degraded"', '"clean"'):
+            self.assertIn(verdict, self.js)
+
+
+class ResolveBridgeInvariants(unittest.TestCase):
+    """Source locks for the loopback bridge that answers 'what is this path
+    physically'. A resolved path arriving over a transport that same-realm
+    script can replace is worth nothing, so the capture must not regress."""
+
+    def setUp(self):
+        self.js = read("vela-neutralino", "resources", "js", "resolve-bridge.js")
+
+    def test_fetch_is_captured_at_module_init(self):
+        # Captured at module scope — before boot() runs and long before any deck
+        # content enters the realm — mirroring how install() holds the unwrapped
+        # filesystem methods.
+        self.assertIn("const nativeFetch =", self.js)
+        self.assertIn("globalThis.fetch.bind(globalThis)", self.js)
+        # The request path must use the captured reference, never a live lookup.
+        self.assertIn("await nativeFetch(", self.js)
+        self.assertNotIn("await fetch(", self.js)
+
+    def test_requests_are_token_authenticated(self):
+        self.assertIn("x-vela-token", self.js)
+
+    def test_unreachable_gatekeeper_returns_null_not_a_verdict(self):
+        # The bridge must never manufacture an answer; fs-guard turns null into
+        # "degraded" and the caller decides.
+        self.assertIn("return null", self.js)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -40,8 +40,10 @@ async function getStoredFolder() {
     if (!keys.includes(FOLDER_KEY)) return null;
     const val = await Neutralino.storage.getData(FOLDER_KEY);
     if (!val) return null;
-    // Allow the candidate root before the guarded getStats below.
-    fsGuard.allow(val);
+    // Allow the candidate root before the guarded getStats below, resolving
+    // where it physically lives (see fs-guard allowVerified).
+    const reg = await fsGuard.allowVerified(val);
+    if (!reg.ok) return null;
     // Verify it still exists — user might have moved or deleted it.
     try { await Neutralino.filesystem.getStats(val); return val; }
     catch { return null; }
@@ -52,7 +54,8 @@ async function pickFolder() {
   const path = await Neutralino.os.showFolderDialog("Choose your Vela decks folder");
   if (!path) throw new Error("no folder selected");
   // The user just chose this folder — register it as an allowed FS root.
-  fsGuard.allow(path);
+  const reg = await fsGuard.allowVerified(path);
+  if (!reg.ok) throw new Error("that folder cannot be used as a decks folder");
   await Neutralino.storage.setData(FOLDER_KEY, path);
   return path;
 }
@@ -60,16 +63,25 @@ async function pickFolder() {
 async function listDecks() {
   if (!state.folder) return [];
   const entries = await Neutralino.filesystem.readDirectory(state.folder);
-  return entries
+  const candidates = entries
     .filter((e) => e.type === "FILE" && /\.(vela|json)$/i.test(e.entry))
     .map((e) => ({
       name: e.entry,
       path: `${state.folder}/${e.entry}`,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+  // readDirectory reports a link to a file as a plain FILE, so an entry that
+  // redirects outside the folder is indistinguishable from a deck here. Vet the
+  // whole listing in one batch and drop anything that is not what it looks
+  // like, so such an entry is never offered in the picker at all.
+  let verdicts;
+  try { verdicts = await fsGuard.inspect(candidates.map((d) => d.path)); }
+  catch { return candidates; }
+  return candidates.filter((d) => verdicts.get(d.path.replace(/\\/g, "/")) !== "unclean");
 }
 
 async function readDeck(path) {
+  await fsGuard.assertSafe(path);
   const text = await Neutralino.filesystem.readFile(path);
   return JSON.parse(text);
 }
@@ -119,6 +131,11 @@ async function flushSave() {
   state.pendingDeck = null;
   state.pendingPath = null;
   try {
+    // Re-check on every write, not just at open: a save target that has become
+    // an indirection since the deck was opened would otherwise let autosave
+    // truncate whatever it points at. "missing" is expected and fine here — a
+    // brand-new deck has no file yet.
+    await fsGuard.assertSafe(path);
     state.lastWriteAt = Date.now();
     const json = JSON.stringify(deck, null, 2);
     await Neutralino.filesystem.writeFile(path, json);
@@ -180,8 +197,15 @@ export const deckIO = {
     // watcher) is blocked because fsGuard.install() ran with an empty root
     // list. underRoot() still rejects any ".." traversal, so the blast radius
     // stays this one folder.
+    //
+    // This is the sharpest entry point: the user opened ONE file and its whole
+    // folder becomes the trust root, so the folder may be one they never chose
+    // deliberately (an extracted archive, a cloned repo, a synced share).
+    // allowVerified resolves the folder itself, and every deck read or written
+    // inside it is vetted individually.
     const folder = filePath.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
-    fsGuard.allow(folder);
+    const reg = await fsGuard.allowVerified(folder);
+    if (!reg.ok) throw new Error("that folder cannot be used as a decks folder");
     state.folder = folder;
     await Neutralino.storage.setData(FOLDER_KEY, folder);
   },
@@ -218,6 +242,9 @@ export const deckIO = {
     state.switching = true;
     try {
       await stopWatcher();
+      // A name that is already taken by an indirection must not be written
+      // through — assertSafe throws on that and leaves the old deck intact.
+      await fsGuard.assertSafe(path);
       // Write a minimal valid deck so the file exists on disk immediately.
       await Neutralino.filesystem.writeFile(path, JSON.stringify({ deckTitle: title || "Untitled", lanes: [] }, null, 2));
       state.lastWriteAt = Date.now();

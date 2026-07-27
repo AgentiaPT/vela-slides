@@ -67,7 +67,7 @@ acknowledgment before the deck mounts.
    script-execution escape could otherwise read/write arbitrary files.
    `fsGuard.install()` (called in `nl-boot.js` right after
    `Neutralino.init()`) wraps every `Neutralino.filesystem.*` method so its
-   path argument(s) must resolve inside an explicitly-allowed root. Only
+   path argument(s) must be inside an explicitly-allowed root. Only
    two roots are ever registered:
 
    - The **user's decks folder** — registered by `deck-io.js` when the user
@@ -91,6 +91,55 @@ acknowledgment before the deck mounts.
    ```
    grep -n "fsGuard.allow" resources/js/*.js
    ```
+   Containment runs in **two layers**, and the distinction is the important
+   part of this section:
+
+   - **Lexical** (synchronous, on every wrapped call). Path strings are
+     normalized and prefix-matched against the roots.
+   - **Physical** (asynchronous, at the points where a path enters trust or is
+     about to be read/written). Lexical containment believes the path string —
+     an entry inside a root that leads somewhere else satisfies every string
+     test while the OS operates elsewhere. The Neutralino client API cannot
+     tell the difference from inside the webview: it exposes no realpath, and
+     `getStats` reports neither links nor reparse points. So the guard asks the
+     gatekeeper extension (layer 5) what a path physically is, over the same
+     token-authenticated loopback channel, and fails closed on the answer.
+     Root registration, deck listing, deck open, autosave and new-deck creation
+     are each covered. A decks folder the user has deliberately pointed at
+     another location keeps working — both forms are registered, and the
+     resolved form faces the same volume/shallow/system-root refusals, so
+     resolution can never launder an unsafe location into the allowlist.
+
+   The gatekeeper holds **no allowlist and makes no decision** here; it reports
+   what the filesystem says and `fs-guard.js` applies the policy. That keeps one
+   allowlist to audit rather than two that can drift.
+
+   Two properties this layer depends on, both source-locked by tests:
+   the resolver slot is **one-shot** (script arriving after boot — i.e. through
+   deck content — cannot install one that answers "safe" to everything), and the
+   transport is **captured at module-init time**, the same way `install()` holds
+   the unwrapped filesystem methods.
+
+   **Standing limits — this narrows the gap, it does not close it:**
+
+   - **Check-then-use.** Resolution happens in the gatekeeper and the read or
+     write happens afterwards in the webview, so a local attacker able to swap a
+     path between the two still wins the race. Closing that needs the file
+     operation itself to move behind an `openat`/`O_NOFOLLOW`-style call in the
+     gatekeeper — the known next step, not yet taken.
+   - **Transport integrity is advisory.** Capturing the transport raises the bar
+     substantially; it is not an unforgeable channel.
+   - **Availability, not verdicts, fails open.** If the gatekeeper is
+     unreachable the guard reports `degraded` and callers proceed on lexical
+     containment alone. Refusing to open decks because a helper process is still
+     warming up would break the app for a condition that is not an attack
+     signal. A *detected* indirection always fails closed.
+   - **Windows.** `filepath.EvalSymlinks` is unreliable there (it fails on paths
+     containing a junction and its output is not stable in general), so the
+     per-path check walks components with `Lstat` and accepts only ordinary
+     files and directories — a positive test that stays correct across Go
+     versions and catches junctions and other reparse points, not just symlinks.
+
    This caps the *file* blast radius to Vela's own data. It is not a full
    sandbox — same-realm JS can never be fully contained — but combined
    with no `os.spawnProcess`, it removes the "arbitrary file read/write"
