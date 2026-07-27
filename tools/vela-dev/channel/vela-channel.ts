@@ -3,10 +3,22 @@
 /**
  * Vela Channel Server — bridges browser UI to Claude Code session.
  *
+ * EXPERIMENTAL, on both sides:
+ *   - Claude MCP Channels ("claude/channel", notifications/claude/channel, and the
+ *     --dangerously-load-development-channels flag) are, AS OF JULY 2026, a RESEARCH
+ *     PREVIEW by Anthropic. The API is unstable and may change or be withdrawn.
+ *   - This bridge is a prototype. Vela's actual AI channel is
+ *     tools/vela-dev/scripts/agent_backend.py; this file is not wired into serve.py
+ *     or CI.
+ *
  * Browser clicks "Ask Claude" → POST /action → channel pushes to Claude → Claude edits deck → browser updates.
  *
  * Usage:
  *   claude --dangerously-load-development-channels server:vela-channel
+ *
+ * The HTTP bridge is OFF unless VELA_CHANNEL_HTTP=1 is set explicitly. When on it
+ * binds loopback only, validates Host and Origin, and requires a token. See
+ * README.md — "Risks" — before enabling it.
  *
  * Requires:
  *   - Claude Code v2.1.80+ with claude.ai login
@@ -23,10 +35,27 @@ import {
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 // ── Configuration ──────────────────────────────────────────────────
 const PORT = parseInt(process.env.VELA_CHANNEL_PORT || "8787");
 const SERVER_NAME = "vela-channel";
+
+// The HTTP bridge is OPT-IN. Reaching /action means driving the operator's own
+// Claude Code session (their credentials, their spend, their tool access), so
+// the port never opens as a side effect of registering the MCP server — the
+// developer must ask for it, per run, and see the warning below when they do.
+// Without it the stdio MCP server still works; only the browser bridge is off.
+const HTTP_ENABLED = /^(1|true|yes|on)$/i.test(process.env.VELA_CHANNEL_HTTP || "");
+
+// Bind address is NOT configurable. Loopback only — matches agent_backend.py's
+// make_channel_server, which likewise refuses to honour a wider bind.
+const HOST = "127.0.0.1";
+
+// Shared secret for /action and /events. Supplied by the operator, or minted
+// per run and printed once. Defends against other local users on a shared
+// machine, which a loopback bind alone does not.
+const TOKEN = process.env.VELA_CHANNEL_TOKEN || crypto.randomBytes(24).toString("base64url");
 const LOG_PATH = path.join(process.env.HOME || "/tmp", "projects/vela-slides/vela-channel.log");
 const CACHE_DIR = path.resolve(process.cwd(), ".channel-cache");
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -36,6 +65,13 @@ function log(msg: string) {
   const line = `[${ts}] ${msg}\n`;
   process.stderr.write(line);
   try { fs.appendFileSync(LOG_PATH, line); } catch {}
+}
+
+// Secrets go to the operator's terminal ONLY. log() appends to LOG_PATH, which
+// is a long-lived file with default permissions — writing the token there would
+// outlive the run and defeat the point of having a token at all.
+function logSecret(msg: string) {
+  process.stderr.write(`[${new Date().toISOString()}] ${msg}\n`);
 }
 
 // ── Reply queue (Claude → browser) ────────────────────────────────
@@ -188,12 +224,85 @@ function broadcastSSE(data: string) {
   }
 }
 
+// ── Request guards ────────────────────────────────────────────────
+// Same defense model as agent_backend.py (_guard) and the Go gatekeeper:
+//   - Host must be loopback — blocks DNS rebinding, where a malicious domain
+//     resolving to 127.0.0.1 POSTs from a page the developer happens to visit.
+//   - Origin, when the browser sends one, must be loopback or "null" — so a
+//     random site cannot drive the channel or read its replies.
+//   - /action and /events additionally require the shared token.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function hostOnly(hostHeader?: string): string {
+  if (!hostHeader) return "";
+  const h = hostHeader.trim();
+  if (h.startsWith("[")) return h.includes("]") ? h.slice(1, h.indexOf("]")).toLowerCase() : h.toLowerCase();
+  return (h.includes(":") ? h.slice(0, h.lastIndexOf(":")) : h).toLowerCase();
+}
+
+function isLoopbackHost(hostHeader?: string): boolean {
+  return LOOPBACK_HOSTS.has(hostOnly(hostHeader));
+}
+
+function isAllowedOrigin(origin?: string): boolean {
+  // Absent Origin: a non-browser client (curl) — no ambient browser authority.
+  // "null": a file:// page. Otherwise the origin's HOST must be loopback, parsed
+  // rather than prefix-matched, so "http://localhost.evil.com" is REJECTED.
+  if (!origin || origin === "null") return true;
+  try {
+    return LOOPBACK_HOSTS.has(new URL(origin).hostname.toLowerCase().replace(/^\[|\]$/g, ""));
+  } catch {
+    return false;
+  }
+}
+
+function tokenMatches(candidate: string): boolean {
+  const sent = Buffer.from(candidate);
+  const want = Buffer.from(TOKEN);
+  return sent.length === want.length && crypto.timingSafeEqual(sent, want);
+}
+
+function hasValidToken(req: http.IncomingMessage, query: URLSearchParams): boolean {
+  // Header is the primary channel. /events also accepts ?token= because the
+  // browser EventSource API cannot set request headers — without that escape
+  // hatch a token-gated SSE stream is simply unreachable from a page. It is
+  // limited to /events: a token in a URL is more exposed (logs, Referer) than
+  // one in a header, so /action keeps the header-only path.
+  if (tokenMatches(String(req.headers["x-vela-token"] || ""))) return true;
+  return pathOf(req) === "/events" && tokenMatches(query.get("token") || "");
+}
+
+function pathOf(req: http.IncomingMessage): string {
+  // Route on the PATH, not the raw URL: with a query string attached, an exact
+  // `req.url === "/events"` comparison silently stops matching.
+  return new URL(req.url || "/", "http://localhost").pathname;
+}
+
 // ── HTTP Server (browser → channel) ──────────────────────────────
 const httpServer = http.createServer(async (req, res) => {
-  // CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const url = new URL(req.url || "/", "http://localhost");
+  const pathname = url.pathname;
+
+  // Access control is enforced by the guards below and the token — NOT by the
+  // CORS value. The Allow-Origin emitted is a CONSTANT "*", never the caller's
+  // Origin, so a CR/LF in that header cannot split the response. No credentials
+  // are ever used, so "*" is safe. A foreign origin gets no CORS grant at all.
+  if (isAllowedOrigin(req.headers.origin)) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-vela-token");
+
+  if (!isLoopbackHost(req.headers.host)) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "forbidden host" }));
+    return;
+  }
+  if (!isAllowedOrigin(req.headers.origin)) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "forbidden origin" }));
+    return;
+  }
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -201,8 +310,15 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // Everything but /health carries or returns session content — token required.
+  if (pathname !== "/health" && !hasValidToken(req, url.searchParams)) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "forbidden" }));
+    return;
+  }
+
   // POST /action — browser sends an action for Claude
-  if (req.method === "POST" && req.url === "/action") {
+  if (req.method === "POST" && pathname === "/action") {
     let body = "";
     for await (const chunk of req) body += chunk;
 
@@ -293,7 +409,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // GET /events — SSE stream for real-time replies
-  if (req.method === "GET" && req.url === "/events") {
+  if (req.method === "GET" && pathname === "/events") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -305,7 +421,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // GET /health
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === "GET" && pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
@@ -337,6 +453,19 @@ async function main() {
     process.exit(0);
   });
 
+  // The browser bridge is opt-in — without VELA_CHANNEL_HTTP no port is opened.
+  if (!HTTP_ENABLED) {
+    log(`HTTP bridge DISABLED (default). Set VELA_CHANNEL_HTTP=1 to open it.`);
+    return;
+  }
+
+  log(`⚠ HTTP bridge ENABLED on ${HOST}:${PORT} — anything that can reach it and`);
+  log(`⚠ present the token drives THIS Claude Code session (your credentials,`);
+  log(`⚠ spend, and tool access). Loopback-bound, Host/Origin-checked, token-gated.`);
+  if (!process.env.VELA_CHANNEL_TOKEN) {
+    logSecret(`Channel token (x-vela-token header, or ?token= on /events): ${TOKEN}`);
+  }
+
   // Now start HTTP server in background (non-blocking)
   // Kill stale process on our port before binding
   try {
@@ -360,8 +489,8 @@ async function main() {
       log(`HTTP server error: ${err.message}`);
     }
   });
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    log(`HTTP server on http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, HOST, () => {
+    log(`HTTP server on http://${HOST}:${PORT} (loopback only)`);
   });
 }
 
