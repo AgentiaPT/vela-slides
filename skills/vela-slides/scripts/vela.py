@@ -996,6 +996,8 @@ CAPABILITIES = {
             "commands": {
                 "list": "vela deck list <deck.vela> — TOC with slide#, title, blocks, duration",
                 "validate": "vela deck validate <deck.vela> — check deck JSON integrity",
+                "extract": "vela deck extract <source.jsx> [output.json] — extract STARTUP_PATCH deck JSON from a .jsx artifact",
+                "init": "vela deck init <output.vela> --title \"T\" --sections \"S1,S2\" [--palette '{...}'] [--themes '{...}'] [--force] — create a deck skeleton",
                 "split": "vela deck split <deck.vela> --sections \"Title:N,...\" | --flat | --size N — regroup slides into sections (--flat to merge all into one)",
                 "assemble": "vela deck assemble <deck.vela> [--output <path>] — inject deck into JSX artifact",
                 "ship": "vela deck ship <deck.vela> [--output <path>] — validate + assemble in one call",
@@ -1020,6 +1022,7 @@ CAPABILITIES = {
                 "duplicate": "vela slide duplicate <deck.vela> <N> — copy a slide",
                 "insert": "vela slide insert <deck.vela> <N> <slide.json> — insert slide from file",
                 "remove-block": "vela slide remove-block <deck.vela> <N> <block#> — remove a block from a slide",
+                "append": "vela slide append <deck.vela> <section_index> '<slide_json>' — append a slide to a deck section (0-based, inline JSON or @file)",
             },
             "description": "Slide-level operations (1-indexed slide numbers)"
         }

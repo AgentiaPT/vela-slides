@@ -4,77 +4,37 @@ How to take screenshots of Vela slides for visual testing and comparison.
 
 ## Prerequisites
 
-- **Node.js 22+** with Playwright installed via pnpm
-- Playwright is a Node module (not Python) — use `node` to run scripts, not `python3`
+This container **blocks the React/lucide CDNs (esm.sh) and the Playwright browser
+CDN**, so `serve.py`'s default esm.sh-importmap HTML never boots here, and
+`npx playwright install` cannot fetch a browser. Don't try either. Use the
+offline, no-CDN render harness instead — see skill **`vela-live-render`** (the
+shared recipe: vendored UMD React/ReactDOM/lucide-react + Babel, transpiled in
+Node, loaded as an external `<script>`; Chromium is pre-pinned at
+`/opt/pw-browsers/`).
 
 ## Quick Recipe
 
-### 1. Static HTML screenshots (fastest, no server needed)
+**Ad-hoc / one-off screenshot** (explore a state, reproduce a bug, verify a UX
+change): use the **`playwright-cli-setup`** skill. It drives a persistent
+Playwright-CLI browser session (`open`, `snapshot`, `eval`, screenshot) against
+the same offline render, one command at a time, so you can inspect state
+between steps instead of running a script blind.
 
-For testing isolated components (SVG arrows, block layouts, etc.), create a standalone HTML file and screenshot it directly:
-
-```bash
-# Create your test HTML in decks/ (gitignored)
-# Then screenshot it:
-node -e "
-import { chromium } from 'playwright';
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
-await page.goto('file:///absolute/path/to/test.html');
-await page.waitForTimeout(500);
-await page.screenshot({ path: 'decks/screenshot.png', fullPage: true });
-await browser.close();
-" --input-type=module
-```
-
-Or use a `.mjs` script:
-
-```javascript
-// decks/screenshot.mjs
-import { chromium } from 'playwright';
-import path from 'path';
-import { fileURLToPath } from 'url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
-await page.goto(`file://${path.join(__dirname, 'test.html')}`);
-await page.waitForTimeout(500);
-await page.screenshot({ path: path.join(__dirname, 'screenshot.png'), fullPage: true });
-await browser.close();
-```
+**Repeatable / committed screenshot** (CI, a benchmark, a recorded demo — the
+script itself is the deliverable): use the **`vela-live-render`** skill's
+committed `vela-drive.js`:
 
 ```bash
-node decks/screenshot.mjs
+python3 tools/vela-dev/scripts/concat.py                                   # after editing parts
+node tools/vela-dev/scripts/render-offline.js <deck.vela> /tmp/vout        # build offline render
+node tools/vela-dev/scripts/vela-drive.js shot /tmp/vout/render.html /tmp/s.png --w 1280 --h 800
+#     add: --eval "window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight'}))" --wait 500
 ```
 
-### 2. Full deck screenshots (requires server)
-
-The Vela server compiles JSX via in-browser Babel — the 1MB monolith takes **15-30+ seconds** to render. Key gotchas:
-
-**Server must run in the same bash invocation as the node script.** Background processes (`&`) don't persist across separate Bash tool calls. Use this pattern:
-
-```bash
-python3 tools/vela-dev/scripts/serve.py decks/ --no-open --no-auth --port 3034 &
-sleep 6
-node decks/screenshot-deck.mjs
-kill %1 2>/dev/null
-```
-
-**The deck takes a long time to load.** Wait for actual content, not just `networkidle`:
-
-```javascript
-// Wait for Vela loading screen to finish
-for (let attempt = 0; attempt < 30; attempt++) {
-  await page.waitForTimeout(2000);
-  const text = await page.textContent('body');
-  if (text && text.includes('Your Expected Content')) break;
-}
-```
-
-**Server auth:** Use `--no-auth` for automated screenshots. The token file is `.vela.env` (not `.vela-server-*`).
-
-**Deck URL pattern:** `http://127.0.0.1:{port}/deck/{filename.vela}`
+For isolated components (SVG arrows, block layouts, before/after comparisons)
+you don't need a full deck render at all — build a standalone HTML file (see
+the Before/After pattern below) and screenshot *that* with either skill above;
+it's much faster than booting the full app.
 
 ## Before/After Comparison Pattern
 
@@ -218,12 +178,10 @@ console.log(`dots at x=${positions.join(', ')}${allSame ? ' ✅ ALIGNED' : ' ❌
 
 | Issue | Solution |
 |-------|----------|
-| `ModuleNotFoundError: playwright` | Playwright is Node-only. Use `node`, not `python3` |
-| Server dies between bash calls | Run server + node in same `bash` command with `&` |
-| Deck stuck on loading screen | Wait 15-30s+ for Babel compilation of 1MB JSX |
-| `networkidle` timeout | Use `load` + content polling instead |
-| Screenshots show loading spinner | Increase wait time or poll for expected text content |
-| Port already in use | Use a different `--port` value |
+| esm.sh / CDN import fails, `npx playwright install` hangs | CDNs are blocked in-container — use the offline render harness (`vela-live-render`), not `serve.py`'s default HTML |
+| Inlining the 1.3MB monolith as `<script type="text/babel">` truncates | It contains literal `</script>` inside XSS-test payload strings; `render-offline.js` transpiles in Node and loads an external `app.js` instead |
+| `ERR_INVALID_URL` / `ERR_CONNECTION_CLOSED` console errors | Harmless — just blocked external font/asset fetches; the app still renders fully |
+| `serve.py` port binding gets SIGKILLed in a Bash tool call | Prefer the `file://` offline harness — it needs no server at all |
 
 ## File Conventions
 

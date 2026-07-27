@@ -7,8 +7,7 @@ Thanks for your interest in contributing to Vela Slides! This document explains 
 Requirements:
 - Python 3.8+ (for build scripts — stdlib only, no pip packages)
 - A Claude.ai account (for testing artifacts)
-
-No Node.js, npm, or build toolchain needed.
+- Node.js + `npm ci` (for the full test suite — jsdom-based sanitizer tests, React render tests, and Playwright e2e; not needed just to edit part-files or run `concat.py`/`assemble.py`)
 
 ## How to Make Changes
 
@@ -40,17 +39,20 @@ python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.j
 ### 4. Test
 
 ```bash
-# Run the full test suite (161 tests)
+# Install locked Node devDependencies (once per checkout)
+npm ci
+
+# Run the full test suite (410 tests)
 python3 tests/test_vela.py
 
-# Run server tests (91 tests)
+# Run server tests (121 tests)
 python3 -m unittest tests.test_serve
 
 # Validate a deck
 python3 skills/vela-slides/scripts/validate.py examples/vela-demo.vela
 
 # Assemble a test artifact
-python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --template skills/vela-slides/app/vela.jsx
+python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --output test.jsx
 ```
 
 Then paste the output `.jsx` into a Claude.ai artifact to verify.

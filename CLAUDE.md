@@ -37,7 +37,7 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-chat.jsx` | ChatPanel, tool traces |
 | `part-test.jsx` | Battery render tests |
 | `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 185 UI tests in 33 suites |
+| `part-uitest.jsx` | 206 UI tests in 38 suites |
 | `part-pdf.jsx` | Canvas PDF export, markdown export |
 | `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
@@ -95,7 +95,7 @@ Supports `--json` for structured output and `--dry-run` for previews.
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (361 tests)
+# 1. Run full test suite (410 tests)
 python3 tests/test_vela.py
 
 # 2. Verify template is in sync with parts

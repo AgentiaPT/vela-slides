@@ -74,20 +74,22 @@ Every Python module imported across all scripts. No third-party packages.
 
 ### Root `package.json` — devDependencies
 
-These are consumed at runtime via CDN (see §5), not bundled. The `package.json` exists for version tracking only.
+The app itself is never bundled from these — at runtime it loads React/lucide-react/Babel via CDN (see §5), pinned to specific versions independent of this table. These devDependencies exist so the Node-based test suites (jsdom-driven SVG sanitizer tests, `renderToStaticMarkup` block-render tests, Playwright e2e) have a locked, audited local copy to run against. Their versions can drift ahead of the CDN pins — that's expected, not a bug to reconcile.
 
 | Package | Version | License | Purpose |
 |---------|---------|---------|---------|
-| `react` | ^18.3.1 | MIT | UI framework |
-| `react-dom` | ^18.3.1 | MIT | DOM rendering |
-| `lucide-react` | ^0.344.0 | ISC | 280+ SVG icons |
-| `@babel/standalone` | ^7.24.0 | MIT | In-browser JSX transpilation |
+| `react` | ^18.3.1 | MIT | UI framework (test rendering) |
+| `react-dom` | ^18.3.1 | MIT | DOM rendering (test rendering) |
+| `lucide-react` | ^1.17.0 | ISC | SVG icons (test rendering) |
+| `@babel/standalone` | ^7.26.10 | MIT | In-browser JSX transpilation (test rendering) |
+| `jsdom` | ^29.1.1 | MIT | Fake DOM for the SVG mutation-XSS sanitizer test suite |
+| `playwright` | ^1.55.1 | Apache-2.0 | Headless Chromium driver for e2e/offline-render tests |
 
 ### Channel `package.json` — `tools/vela-dev/channel/`
 
 | Package | Version | Type | License | Purpose |
 |---------|---------|------|---------|---------|
-| `@modelcontextprotocol/sdk` | ^1.25.0 | dependency | MIT | MCP server SDK |
+| `@modelcontextprotocol/sdk` | ^1.29.0 | dependency | MIT | MCP server SDK |
 | `tsx` | ^4.0.0 | devDependency | MIT | TypeScript execution for Node.js |
 
 Node built-in modules used by channel: `node:http`, `node:fs`, `node:path`
@@ -278,7 +280,7 @@ All build scripts use **only Python stdlib**. No external packages.
 | Layer | Count | External (non-stdlib) |
 |-------|-------|-----------------------|
 | Python packages | 0 | **None** |
-| npm packages (root) | 4 | react, react-dom, lucide-react, @babel/standalone |
+| npm packages (root) | 6 | react, react-dom, lucide-react, @babel/standalone, jsdom, playwright |
 | npm packages (channel) | 2 | @modelcontextprotocol/sdk, tsx |
 | CDN JS libraries | 4 | html2canvas, Babel, React (esm.sh), lucide-react (esm.sh) |
 | CDN fonts | 3 families (8 TTFs) | Sora, DM Sans, Space Mono |
