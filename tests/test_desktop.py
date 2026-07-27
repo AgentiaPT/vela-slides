@@ -296,13 +296,13 @@ class FsGuardHardeningInvariants(unittest.TestCase):
         # Defense-in-depth traversal guard must remain in underRoot().
         self.assertIn('n.split("/").includes("..")', self.js)
 
-    def test_resolver_slot_is_one_shot(self):
-        # The physical-path resolver is what turns "this path reads as inside a
-        # root" into "this path leads inside a root". If the slot could be
-        # claimed twice, deck-borne script — which by definition arrives after
-        # boot — could install one that waves everything through.
-        self.assertIn("resolverSealed", self.js)
-        self.assertIn("if (resolverSealed) return false", self.js)
+    def test_confinement_bridge_is_a_static_import(self):
+        # The bridge must be a module binding, not something injected at boot.
+        # A binding cannot be reassigned at all, so deck-borne script — which by
+        # definition arrives after boot — has nothing to swap out. An injection
+        # point would only ever be as good as the guard written around it.
+        self.assertIn('import { askGatekeeper } from "./resolve-bridge.js"', self.js)
+        self.assertNotIn("setResolver", self.js)
 
     def test_verified_root_registration_still_screens_the_physical_path(self):
         # Resolution must never launder an unsafe location into the allowlist:
@@ -343,6 +343,48 @@ class ResolveBridgeInvariants(unittest.TestCase):
         # The bridge must never manufacture an answer; fs-guard turns null into
         # "degraded" and the caller decides.
         self.assertIn("return null", self.js)
+
+
+class ResolveConfinementInvariants(unittest.TestCase):
+    """Source locks for the gatekeeper side. The behavioral suite
+    (extensions/agent/resolve_test.go) exercises this against real links on
+    disk; these assert the confinement is built the standard way."""
+
+    def setUp(self):
+        self.go = read("vela-neutralino", "extensions", "agent", "resolve.go")
+
+    def test_uses_os_root_not_hand_rolled_path_walking(self):
+        # os.Root resolves each component with openat/O_NOFOLLOW and refuses
+        # anything leaving the root — symlink, junction or "..". Reimplementing
+        # that with stat calls is how the subtle cases get missed, and
+        # EvalSymlinks in particular is unreliable on Windows.
+        self.assertIn("os.OpenRoot(", self.go)
+        # Stat, not Lstat: permits a link that stays inside the root, refuses
+        # one that leaves it.
+        self.assertIn("r.Stat(", self.go)
+
+    def test_trailing_separator_is_stripped_before_openat(self):
+        # openat(fd, path, O_NOFOLLOW) follows a symlink when the path ends in
+        # "/", and os.Root did not account for that until recently. Stripping it
+        # here keeps the guard independent of the toolchain's patch level.
+        self.assertIn('strings.TrimRight(', self.go)
+
+    def test_absolute_names_are_refused(self):
+        # os.Root takes root-relative names; guessing what an absolute one meant
+        # is how confinement bugs start.
+        self.assertIn("name must be relative", self.go)
+
+    def test_errors_use_a_fixed_vocabulary(self):
+        # Raw OS errors embed absolute paths. Only a fixed vocabulary may reach
+        # a webview that could be under attacker control.
+        for token in ('"missing"', '"escapes"', '"invalid"'):
+            self.assertIn(token, self.go)
+
+    def test_unknown_failures_fail_closed(self):
+        # classifyErr must default to "escapes", never to success.
+        tail = self.go.split("func classifyErr")[1].split("\n}")[0]
+        self.assertIn('default:', tail)
+        self.assertIn('return "escapes"', tail)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-// Behavioural tests for the path-canonicalisation service (resolve.go).
+// Behavioural tests for the path-confinement service (resolve.go).
 //
 // These build real links on disk rather than mocking the filesystem — the whole
 // point of the endpoint is that string logic cannot answer the question, so a
-// test that only exercises string logic would prove nothing.
+// test that only exercised string logic would prove nothing.
 //
 // Run: `go test ./...` from vela-neutralino/extensions/agent.
 
@@ -63,99 +63,112 @@ func buildTree(t *testing.T) (root, outside string) {
 	return root, outside
 }
 
-func TestPathIsCleanDetectsLinks(t *testing.T) {
+func entryFor(t *testing.T, root string, names ...string) map[string]resolveEntry {
+	t.Helper()
+	res, err := checkNames(root, names)
+	if err != nil {
+		t.Fatalf("checkNames: %v", err)
+	}
+	return res.Entries
+}
+
+func TestOrdinaryDecksStayInsideTheRoot(t *testing.T) {
 	root, _ := buildTree(t)
-
-	// Ordinary files inside the root are clean, at any depth.
-	for _, p := range []string{
-		filepath.Join(root, "real.vela"),
-		filepath.Join(root, "sub", "inner.vela"),
-	} {
-		ok, err := pathIsClean(root, p)
-		if err != nil {
-			t.Fatalf("pathIsClean(%s): unexpected error %v", p, err)
+	got := entryFor(t, root, "real.vela", "sub/inner.vela")
+	for name, e := range got {
+		if !e.OK {
+			t.Fatalf("%s should be inside the root, got error %q", name, e.Error)
 		}
-		if !ok {
-			t.Fatalf("expected %s to be clean", p)
-		}
-	}
-
-	// A file link out of the root is the reported vulnerability: lexically
-	// inside, physically outside.
-	ok, err := pathIsClean(root, filepath.Join(root, "escape.vela"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("file symlink out of the root was reported clean")
-	}
-
-	// A DIRECTORY link is the nastier variant — it silently relocates listing
-	// and saving, and a per-file approval model would not catch it either.
-	ok, err = pathIsClean(root, filepath.Join(root, "outdir", "secret.txt"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("path through a directory symlink was reported clean")
 	}
 }
 
-func TestPathIsCleanRejectsOutsideBase(t *testing.T) {
+func TestFileLinkOutOfRootIsRefused(t *testing.T) {
+	// The reported issue: lexically inside the folder, physically outside.
+	root, _ := buildTree(t)
+	e := entryFor(t, root, "escape.vela")["escape.vela"]
+	if e.OK || e.Error != "escapes" {
+		t.Fatalf("file link out of the root was accepted: %+v", e)
+	}
+}
+
+func TestDirectoryLinkOutOfRootIsRefused(t *testing.T) {
+	// The nastier variant — it silently relocates listing and saving, and a
+	// per-file approval model would not catch it either.
+	root, _ := buildTree(t)
+	e := entryFor(t, root, "outdir/secret.txt")["outdir/secret.txt"]
+	if e.OK || e.Error != "escapes" {
+		t.Fatalf("path through a directory link was accepted: %+v", e)
+	}
+}
+
+func TestTraversalIsRefused(t *testing.T) {
+	root, _ := buildTree(t)
+	e := entryFor(t, root, "../outside/secret.txt")["../outside/secret.txt"]
+	if e.OK {
+		t.Fatal("traversal out of the root was accepted")
+	}
+}
+
+func TestTrailingSlashCannotEscape(t *testing.T) {
+	// openat(fd, path, O_NOFOLLOW) follows a symlink when the path ends in "/",
+	// and os.Root did not account for that until recently (CVE-2026-39822).
+	// sanitizeName strips the separator so this does not depend on the
+	// toolchain's patch level.
+	root, _ := buildTree(t)
+	for _, name := range []string{"escape.vela/", "outdir/"} {
+		if entryFor(t, root, name)[name].OK {
+			t.Fatalf("%q escaped via a trailing separator", name)
+		}
+	}
+}
+
+func TestAbsoluteNamesAreRefused(t *testing.T) {
+	// os.Root takes root-relative names. Accepting an absolute one and guessing
+	// what it meant is how confinement bugs start.
 	root, outside := buildTree(t)
-	// A path that is not under the claimed base must be refused outright rather
-	// than checked against the wrong prefix.
-	ok, err := pathIsClean(root, filepath.Join(outside, "secret.txt"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("path outside the base was reported clean")
-	}
-	// Prefix-sibling: "<root>Evil" must not count as being under "<root>".
-	sibling := root + "Evil"
-	if err := os.MkdirAll(sibling, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f := filepath.Join(sibling, "x.vela")
-	if err := os.WriteFile(f, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := pathIsClean(root, f); ok {
-		t.Fatal("prefix-sibling path was reported clean")
+	abs := filepath.Join(outside, "secret.txt")
+	e := entryFor(t, root, abs)[abs]
+	if e.OK || e.Error != "invalid" {
+		t.Fatalf("absolute name was not refused: %+v", e)
 	}
 }
 
-func TestPathIsCleanWalksWholePathWithoutBase(t *testing.T) {
+func TestMissingDeckIsDistinguishableFromAnEscape(t *testing.T) {
+	// A deleted deck is not an attack. Collapsing the two would either brick
+	// normal use or teach users to click through a real warning.
 	root, _ := buildTree(t)
-	// With no base, every component from the volume root down is walked — this
-	// is how a symlinked ROOT (or a symlinked parent of it) gets caught.
-	ok, err := pathIsClean("", filepath.Join(root, "outdir", "secret.txt"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("link component was reported clean in whole-path mode")
+	e := entryFor(t, root, "nope.vela")["nope.vela"]
+	if e.OK || e.Error != "missing" {
+		t.Fatalf("missing deck reported as %+v, want error \"missing\"", e)
 	}
 }
 
-func TestPathIsCleanMissingPathIsError(t *testing.T) {
+func TestUnusableRootFailsClosed(t *testing.T) {
+	// If confinement cannot be established at all, every name is refused —
+	// never silently accepted.
+	got := entryFor(t, filepath.Join(t.TempDir(), "not-a-folder"), "a.vela")
+	if got["a.vela"].OK {
+		t.Fatal("names under an unopenable root were accepted")
+	}
+}
+
+func TestErrorsCarryNoHostDetail(t *testing.T) {
+	// Error strings travel back to a webview that may be under attacker
+	// control; they must never become a disclosure channel. Raw OS errors embed
+	// absolute paths, so only the fixed vocabulary may cross the wire.
 	root, _ := buildTree(t)
-	// "gone" must be distinguishable from "not what it appears to be" — the
-	// webview shows different messages and must not treat a deleted deck as an
-	// attack.
-	if _, err := pathIsClean(root, filepath.Join(root, "nope.vela")); err == nil {
-		t.Fatal("expected an error for a missing path")
+	allowed := map[string]bool{"": true, "missing": true, "escapes": true, "invalid": true}
+	for name, e := range entryFor(t, root, "real.vela", "escape.vela", "nope.vela", "/abs") {
+		if !allowed[e.Error] {
+			t.Fatalf("%s produced a free-form error %q", name, e.Error)
+		}
 	}
 }
 
-func TestPathIsCleanRejectsRelative(t *testing.T) {
-	if _, err := pathIsClean("", "relative/path.vela"); err == nil {
-		t.Fatal("expected an error for a relative path")
-	}
-}
-
-func TestRealPathResolvesLinkedRoot(t *testing.T) {
+func TestRevealResolvesALinkedRoot(t *testing.T) {
+	// The "~/Decks → ~/Dropbox/Decks" setup must keep working, and the guard
+	// needs the physical form so it can hold it to the same standard as the
+	// name the user picked.
 	base := t.TempDir()
 	target := filepath.Join(base, "Dropbox", "Decks")
 	if err := os.MkdirAll(target, 0o755); err != nil {
@@ -164,90 +177,61 @@ func TestRealPathResolvesLinkedRoot(t *testing.T) {
 	link := filepath.Join(base, "Decks")
 	mkSymlink(t, target, link)
 
-	// The "~/Decks → ~/Dropbox/Decks" setup must keep working: reveal mode
-	// hands back the physical root so the guard can allow both forms.
-	phys, degraded, err := realPath(link)
+	res, err := revealRoot(link)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("revealRoot: %v", err)
 	}
-	if degraded {
+	if res.Degraded {
 		t.Skip("filesystem could not resolve links on this runner")
 	}
-	wantPhys, err := filepath.EvalSymlinks(target)
+	want, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if phys != filepath.Clean(wantPhys) {
-		t.Fatalf("realPath = %q, want %q", phys, wantPhys)
+	if res.Path != filepath.Clean(want) {
+		t.Fatalf("revealRoot = %q, want %q", res.Path, want)
 	}
 }
 
-func TestRealPathMissingIsError(t *testing.T) {
-	if _, _, err := realPath(filepath.Join(t.TempDir(), "nope")); err == nil {
-		t.Fatal("expected an error for a missing path")
-	}
-}
-
-func TestRevealIsRateLimited(t *testing.T) {
-	// Reveal mode is an information oracle; the bucket is what keeps it from
-	// being usable to sweep the filesystem. Legitimate use is a few calls per
-	// session, so a small burst plus a slow refill costs real users nothing.
+func TestConfinementHoldsInsideALinkedRoot(t *testing.T) {
+	// A root that is itself a link is confined from its target onward — the
+	// convenience case does not cost the guarantee.
 	root, _ := buildTree(t)
-	b := newTokenBucket(3, 0) // no refill, so the limit is deterministic
-	req := resolveRequest{Paths: []string{filepath.Join(root, "real.vela")}, Reveal: true}
-	for i := 0; i < 3; i++ {
-		if _, err := resolvePaths(req, b); err != nil {
-			t.Fatalf("call %d should have been allowed: %v", i, err)
-		}
+	base := t.TempDir()
+	link := filepath.Join(base, "Linked")
+	mkSymlink(t, root, link)
+
+	got := entryFor(t, link, "real.vela", "escape.vela")
+	if !got["real.vela"].OK {
+		t.Fatal("ordinary deck refused inside a linked root")
 	}
-	if _, err := resolvePaths(req, b); err == nil {
-		t.Fatal("expected the 4th reveal to be rate limited")
-	}
-	// Clean mode is NOT rate limited — it is on the hot path and discloses
-	// nothing beyond one bit per path.
-	clean := resolveRequest{Base: root, Paths: []string{filepath.Join(root, "real.vela")}}
-	for i := 0; i < 50; i++ {
-		if _, err := resolvePaths(clean, b); err != nil {
-			t.Fatalf("clean-mode call %d was refused: %v", i, err)
-		}
+	if got["escape.vela"].OK {
+		t.Fatal("escaping link accepted inside a linked root")
 	}
 }
 
-func TestResolveRejectsOversizedRequests(t *testing.T) {
-	many := make([]string, maxResolvePaths+1)
-	for i := range many {
-		many[i] = "/tmp/x"
+func TestRevealMissingRootIsError(t *testing.T) {
+	if _, err := revealRoot(filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Fatal("expected an error for a missing root")
 	}
-	if _, err := resolvePaths(resolveRequest{Paths: many}, nil); err == nil {
-		t.Fatal("expected too-many-paths to be refused")
+}
+
+func TestRejectsOversizedRequests(t *testing.T) {
+	root, _ := buildTree(t)
+	many := make([]string, maxResolveNames+1)
+	for i := range many {
+		many[i] = "a.vela"
+	}
+	if _, err := checkNames(root, many); err == nil {
+		t.Fatal("expected too-many-names to be refused")
 	}
 	long := make([]byte, maxResolvePath+1)
 	for i := range long {
 		long[i] = 'a'
 	}
-	if _, err := resolvePaths(resolveRequest{Paths: []string{"/" + string(long)}}, nil); err == nil {
-		t.Fatal("expected an over-long path to be refused")
-	}
-}
-
-func TestResolveErrorsCarryNoHostDetail(t *testing.T) {
-	// Error strings travel back to a webview that may be under attacker
-	// control; they must never become a second disclosure channel.
-	root, _ := buildTree(t)
-	entries, err := resolvePaths(resolveRequest{
-		Base:  root,
-		Paths: []string{filepath.Join(root, "definitely-not-here.vela")},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for p, e := range entries {
-		if e.Error != "missing" {
-			t.Fatalf("expected a fixed-vocabulary error, got %q", e.Error)
-		}
-		if e.Path != "" {
-			t.Fatalf("clean mode leaked a physical path for %s", p)
-		}
+	name := string(long)
+	if entryFor(t, root, name)[name].Error != "invalid" {
+		t.Fatal("expected an over-long name to be refused")
 	}
 }
 
@@ -255,7 +239,7 @@ func TestResolveEndpointRequiresToken(t *testing.T) {
 	srv := httptest.NewServer(newServer("s3cret", ""))
 	defer srv.Close()
 
-	body, _ := json.Marshal(resolveRequest{Paths: []string{"/tmp"}})
+	body, _ := json.Marshal(resolveRequest{Root: t.TempDir(), Names: []string{"a.vela"}})
 	post := func(token string) int {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/resolve", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -286,7 +270,7 @@ func TestResolveEndpointRefusesForeignOrigin(t *testing.T) {
 	srv := httptest.NewServer(newServer("s3cret", "1234"))
 	defer srv.Close()
 
-	body, _ := json.Marshal(resolveRequest{Paths: []string{"/tmp"}})
+	body, _ := json.Marshal(resolveRequest{Root: t.TempDir(), Names: []string{"a.vela"}})
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/resolve", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-vela-token", "s3cret")
@@ -306,13 +290,7 @@ func TestResolveEndpointRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(newServer("s3cret", ""))
 	defer srv.Close()
 
-	body, _ := json.Marshal(resolveRequest{
-		Base: root,
-		Paths: []string{
-			filepath.Join(root, "real.vela"),
-			filepath.Join(root, "escape.vela"),
-		},
-	})
+	body, _ := json.Marshal(resolveRequest{Root: root, Names: []string{"real.vela", "escape.vela"}})
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/resolve", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-vela-token", "s3cret")
@@ -332,10 +310,10 @@ func TestResolveEndpointRoundTrip(t *testing.T) {
 	if !decoded.OK {
 		t.Fatal("expected ok:true")
 	}
-	if !decoded.Entries[filepath.Join(root, "real.vela")].Clean {
-		t.Fatal("ordinary deck reported unclean over the wire")
+	if !decoded.Entries["real.vela"].OK {
+		t.Fatal("ordinary deck refused over the wire")
 	}
-	if decoded.Entries[filepath.Join(root, "escape.vela")].Clean {
-		t.Fatal("escaping link reported clean over the wire")
+	if decoded.Entries["escape.vela"].OK {
+		t.Fatal("escaping link accepted over the wire")
 	}
 }

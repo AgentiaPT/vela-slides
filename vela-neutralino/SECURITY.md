@@ -96,14 +96,22 @@ acknowledgment before the deck mounts.
 
    - **Lexical** (synchronous, on every wrapped call). Path strings are
      normalized and prefix-matched against the roots.
-   - **Physical** (asynchronous, at the points where a path enters trust or is
-     about to be read/written). Lexical containment believes the path string —
-     an entry inside a root that leads somewhere else satisfies every string
+   - **Confinement** (asynchronous, at the points where a path enters trust or
+     is about to be read/written). Lexical containment believes the path string
+     — an entry inside a root that leads somewhere else satisfies every string
      test while the OS operates elsewhere. The Neutralino client API cannot
      tell the difference from inside the webview: it exposes no realpath, and
      `getStats` reports neither links nor reparse points. So the guard asks the
-     gatekeeper extension (layer 5) what a path physically is, over the same
-     token-authenticated loopback channel, and fails closed on the answer.
+     gatekeeper extension (layer 5), over the same token-authenticated loopback
+     channel, and fails closed on the answer.
+
+     The gatekeeper answers with **`os.Root`** (Go 1.24) — the standard
+     library's traversal-resistant file API — rather than hand-rolled path
+     walking. It resolves each component with `openat`/`O_NOFOLLOW`
+     (`RESOLVE_BENEATH` where available) and refuses anything escaping the
+     root, whether by `..`, a symlink, or a Windows junction or other reparse
+     point. `Stat` rather than `Lstat`, so a link that stays inside the folder
+     is permitted and only one that leaves it is refused.
      Root registration, deck listing, deck open, autosave and new-deck creation
      are each covered. A decks folder the user has deliberately pointed at
      another location keeps working — both forms are registered, and the
@@ -114,11 +122,11 @@ acknowledgment before the deck mounts.
    what the filesystem says and `fs-guard.js` applies the policy. That keeps one
    allowlist to audit rather than two that can drift.
 
-   Two properties this layer depends on, both source-locked by tests:
-   the resolver slot is **one-shot** (script arriving after boot — i.e. through
-   deck content — cannot install one that answers "safe" to everything), and the
-   transport is **captured at module-init time**, the same way `install()` holds
-   the unwrapped filesystem methods.
+   Two properties this layer depends on, both source-locked by tests: the bridge
+   is a **static import** (a module binding cannot be reassigned, so script
+   arriving after boot — i.e. through deck content — has nothing to swap out),
+   and the transport is **captured at module-init time**, the same way
+   `install()` holds the unwrapped filesystem methods.
 
    **Standing limits — this narrows the gap, it does not close it:**
 
@@ -135,10 +143,15 @@ acknowledgment before the deck mounts.
      warming up would break the app for a condition that is not an attack
      signal. A *detected* indirection always fails closed.
    - **Windows.** `filepath.EvalSymlinks` is unreliable there (it fails on paths
-     containing a junction and its output is not stable in general), so the
-     per-path check walks components with `Lstat` and accepts only ordinary
-     files and directories — a positive test that stays correct across Go
-     versions and catches junctions and other reparse points, not just symlinks.
+     containing a junction and its output is not stable in general). It is
+     confined to the once-per-root resolution, where failure degrades rather
+     than blocking; the per-name confinement uses `os.Root`, which has a real
+     Windows implementation.
+   - **Trailing separators.** `openat(fd, path, O_NOFOLLOW)` follows a symlink
+     when the path ends in `/`, and `os.Root` did not account for that until
+     recently (CVE-2026-39822). The gatekeeper strips it before the call so this
+     does not depend on the toolchain's patch level. Building the desktop app
+     therefore requires **Go 1.24+** (`vela-neutralino/Dockerfile` pins it).
 
    This caps the *file* blast radius to Vela's own data. It is not a full
    sandbox — same-realm JS can never be fully contained — but combined
