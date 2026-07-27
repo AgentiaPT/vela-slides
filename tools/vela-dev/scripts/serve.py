@@ -293,7 +293,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     @classmethod
     def _iter_deck_files(cls, folder):
-        """Yield (name, path) for every deck in `folder` that is safe to expose.
+        """Yield (name, path, stat) for every deck in `folder` that is safe to expose.
 
         SINGLE ENFORCEMENT POINT for deck enumeration. Every caller that walks
         the folder must go through this — the listing endpoint, the startup
@@ -306,12 +306,18 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         model for no benefit. _safe_deck_path() additionally drops entries
         whose real path escapes the folder (e.g. via symlink), so metadata
         about files outside the served directory is never disclosed.
+
+        Uses scandir so the type test and the metadata come from the directory
+        entry itself rather than from a path rebuilt out of the name — one
+        syscall instead of two per file, and no second path expression to keep
+        in sync with the containment check above it.
         """
         try:
-            names = sorted(os.listdir(folder))
+            entries = sorted(os.scandir(folder), key=lambda e: e.name)
         except OSError:
             return
-        for name in names:
+        for entry in entries:
+            name = entry.name
             if not name.endswith(DECK_EXT):
                 continue
             if not cls._validate_deck_name(name):
@@ -320,9 +326,12 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 path = cls._safe_deck_path(folder, name)
             except ValueError:
                 continue
-            if not os.path.isfile(path):
+            try:
+                if not entry.is_file():  # follows symlinks, as os.path.isfile did
+                    continue
+                yield name, path, entry.stat()
+            except OSError:
                 continue
-            yield name, path
 
     @staticmethod
     def _safe_deck_path(folder, name):
@@ -494,8 +503,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_list_decks(self):
         srv = self.server_ref
         decks = []
-        for name, fpath in self._iter_deck_files(srv.folder_path):
-            stat = os.stat(fpath)
+        for name, fpath, stat in self._iter_deck_files(srv.folder_path):
             # Try to read deck metadata
             title = name
             slide_count = 0
