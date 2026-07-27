@@ -1685,7 +1685,12 @@ def test_server_hardening():
         fail("Old ArrowDown module-jump still present")
 
     # ── Auto-refresh deck list ──
-    if "setInterval(fetchDecks, 3000)" in serve_src:
+    # Folder-browser client code lives in tools/vela-dev/browser.js — it is
+    # served as an external script so the browser page can run with no
+    # 'unsafe-inline' in script-src.
+    browser_js = open(os.path.join(os.path.dirname(DEV_SCRIPTS), "browser.js"),
+                      encoding="utf-8").read()
+    if "setInterval(fetchDecks, 3000)" in browser_js:
         ok("Deck list auto-refreshes every 3s")
     else:
         fail("Deck list auto-refresh")
