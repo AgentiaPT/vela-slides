@@ -189,7 +189,7 @@ Automated-scanner output and AI-generated reports **without manual verification 
 ### Scope
 
 **In scope:**
-- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py)
+- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/` — including `scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py) and the experimental MCP bridge in `channel/`
 - The Vela JSX application (`src/parts/*.jsx`, built into `skills/vela-slides/app/vela.jsx`)
 - Deck JSON parsing, validation, and sanitization
 - Local development server endpoints and file handling
