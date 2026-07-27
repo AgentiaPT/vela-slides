@@ -29,8 +29,14 @@ Because of that, the HTTP bridge **does not open a port unless you ask for it**:
   server alone never opens a port.
 - **Loopback only.** The bind address is hard-coded to `127.0.0.1` and is not
   configurable — other machines on your network cannot reach it.
-- **Token-gated.** `/action` and `/events` require `x-vela-token`. Set
-  `VELA_CHANNEL_TOKEN`, or let the server mint one per run and print it to stderr.
+- **Token-gated.** `/action` and `/events` both require the token. `/action`
+  takes it in the `x-vela-token` header. `/events` also accepts `?token=`,
+  because the browser `EventSource` API cannot set request headers — without
+  that the SSE stream would be unreachable from a page. Only `/events` accepts
+  the query form: a token in a URL is more exposed (logs, `Referer`) than one in
+  a header. Set `VELA_CHANNEL_TOKEN`, or let the server mint one per run and
+  print it to your terminal. A minted token is written to stderr only, never to
+  the log file.
 - **Host + Origin validated.** Non-loopback `Host` or `Origin` values are rejected
   with 403, which is what stops a website you happen to be visiting from driving
   the channel via DNS rebinding. No CORS grant is issued to a foreign origin.
@@ -80,16 +86,23 @@ python3 tools/vela-dev/scripts/serve.py decks/your-deck.json --port 3030
 From the browser (local.html), add a button that POSTs to the channel:
 
 ```javascript
-// Ask Claude to improve a slide. The token is required — without it the
-// request is rejected with 403. Use the loopback host: a request whose Host
-// or Origin is not loopback is refused.
+// The token the server printed at startup (or the VELA_CHANNEL_TOKEN you set).
+const token = 'paste-the-channel-token-here';
+
+// Ask Claude to improve a slide. The token is required — without it the request
+// is rejected with 403. Use the loopback host: a request whose Host or Origin is
+// not loopback is refused.
 fetch('http://localhost:8787/action', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'x-vela-token': VELA_CHANNEL_TOKEN },
+  headers: { 'Content-Type': 'application/json', 'x-vela-token': token },
   body: JSON.stringify({ action: 'improve', slide: 3 })
 }).then(r => r.json()).then(result => {
   console.log('Claude says:', result.reply);
 });
+
+// Live replies. EventSource cannot send headers, so the token goes in the query.
+const es = new EventSource(`http://localhost:8787/events?token=${encodeURIComponent(token)}`);
+es.onmessage = (e) => console.log('reply:', JSON.parse(e.data));
 ```
 
 ## Available Actions

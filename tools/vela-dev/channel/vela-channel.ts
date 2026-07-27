@@ -67,6 +67,13 @@ function log(msg: string) {
   try { fs.appendFileSync(LOG_PATH, line); } catch {}
 }
 
+// Secrets go to the operator's terminal ONLY. log() appends to LOG_PATH, which
+// is a long-lived file with default permissions — writing the token there would
+// outlive the run and defeat the point of having a token at all.
+function logSecret(msg: string) {
+  process.stderr.write(`[${new Date().toISOString()}] ${msg}\n`);
+}
+
 // ── Reply queue (Claude → browser) ────────────────────────────────
 interface PendingReply {
   resolve: (value: string) => void;
@@ -249,14 +256,33 @@ function isAllowedOrigin(origin?: string): boolean {
   }
 }
 
-function hasValidToken(req: http.IncomingMessage): boolean {
-  const sent = Buffer.from(String(req.headers["x-vela-token"] || ""));
+function tokenMatches(candidate: string): boolean {
+  const sent = Buffer.from(candidate);
   const want = Buffer.from(TOKEN);
   return sent.length === want.length && crypto.timingSafeEqual(sent, want);
 }
 
+function hasValidToken(req: http.IncomingMessage, query: URLSearchParams): boolean {
+  // Header is the primary channel. /events also accepts ?token= because the
+  // browser EventSource API cannot set request headers — without that escape
+  // hatch a token-gated SSE stream is simply unreachable from a page. It is
+  // limited to /events: a token in a URL is more exposed (logs, Referer) than
+  // one in a header, so /action keeps the header-only path.
+  if (tokenMatches(String(req.headers["x-vela-token"] || ""))) return true;
+  return pathOf(req) === "/events" && tokenMatches(query.get("token") || "");
+}
+
+function pathOf(req: http.IncomingMessage): string {
+  // Route on the PATH, not the raw URL: with a query string attached, an exact
+  // `req.url === "/events"` comparison silently stops matching.
+  return new URL(req.url || "/", "http://localhost").pathname;
+}
+
 // ── HTTP Server (browser → channel) ──────────────────────────────
 const httpServer = http.createServer(async (req, res) => {
+  const url = new URL(req.url || "/", "http://localhost");
+  const pathname = url.pathname;
+
   // Access control is enforced by the guards below and the token — NOT by the
   // CORS value. The Allow-Origin emitted is a CONSTANT "*", never the caller's
   // Origin, so a CR/LF in that header cannot split the response. No credentials
@@ -285,14 +311,14 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // Everything but /health carries or returns session content — token required.
-  if (req.url !== "/health" && !hasValidToken(req)) {
+  if (pathname !== "/health" && !hasValidToken(req, url.searchParams)) {
     res.writeHead(403, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: false, error: "forbidden" }));
     return;
   }
 
   // POST /action — browser sends an action for Claude
-  if (req.method === "POST" && req.url === "/action") {
+  if (req.method === "POST" && pathname === "/action") {
     let body = "";
     for await (const chunk of req) body += chunk;
 
@@ -383,7 +409,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // GET /events — SSE stream for real-time replies
-  if (req.method === "GET" && req.url === "/events") {
+  if (req.method === "GET" && pathname === "/events") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -395,7 +421,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // GET /health
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === "GET" && pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
@@ -437,7 +463,7 @@ async function main() {
   log(`⚠ present the token drives THIS Claude Code session (your credentials,`);
   log(`⚠ spend, and tool access). Loopback-bound, Host/Origin-checked, token-gated.`);
   if (!process.env.VELA_CHANNEL_TOKEN) {
-    log(`Channel token (send as x-vela-token): ${TOKEN}`);
+    logSecret(`Channel token (x-vela-token header, or ?token= on /events): ${TOKEN}`);
   }
 
   // Now start HTTP server in background (non-blocking)

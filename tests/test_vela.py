@@ -1603,6 +1603,20 @@ def test_channel_local():
             ok("Channel gates requests on a token (constant-time compare)")
         else:
             fail("Channel token gate")
+        # A minted token must never reach LOG_PATH — that file outlives the run.
+        if "logSecret" in ch and "appendFileSync" not in ch.split("function logSecret")[1].split("}")[0]:
+            ok("Channel prints the minted token to stderr only")
+        else:
+            fail("Channel token kept out of the log file")
+        # EventSource cannot set headers; ?token= is allowed for /events ONLY.
+        if 'pathOf(req) === "/events" && tokenMatches(query.get("token")' in ch:
+            ok("Channel accepts ?token= for /events only (EventSource support)")
+        else:
+            fail("Channel /events query-token support")
+        if "url.pathname" in ch and 'req.url === "/action"' not in ch:
+            ok("Channel routes on pathname (query strings cannot bypass routes)")
+        else:
+            fail("Channel pathname routing")
         if "isLoopbackHost" in ch and "isAllowedOrigin" in ch:
             ok("Channel validates Host and Origin (DNS-rebinding defense)")
         else:
