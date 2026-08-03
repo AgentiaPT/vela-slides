@@ -996,6 +996,8 @@ CAPABILITIES = {
             "commands": {
                 "list": "vela deck list <deck.vela> — TOC with slide#, title, blocks, duration",
                 "validate": "vela deck validate <deck.vela> — check deck JSON integrity",
+                "init": "vela deck init <output.vela> --title \"T\" --sections \"S1,S2\" [--palette '{...}'] [--themes '{...}'] [--force] — create a deck skeleton",
+                "extract": "vela deck extract <source.jsx> [output.vela] — extract STARTUP_PATCH deck JSON from a shipped .jsx artifact",
                 "split": "vela deck split <deck.vela> --sections \"Title:N,...\" | --flat | --size N — regroup slides into sections (--flat to merge all into one)",
                 "assemble": "vela deck assemble <deck.vela> [--output <path>] — inject deck into JSX artifact",
                 "ship": "vela deck ship <deck.vela> [--output <path>] — validate + assemble in one call",
