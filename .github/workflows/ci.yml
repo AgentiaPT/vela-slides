@@ -121,6 +121,22 @@ jobs:
         # critical is worth investigating immediately.
         run: npm audit --audit-level=high
 
+      - name: Key-drift lint (deck ingress allowlist)
+        # Phase 6.3: every slide.<key>/block.<key> a renderer reads must be
+        # allowlisted in SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS (part-imports.jsx) —
+        # deck ingress is an allowlist, so a renderer that reads a key missing
+        # from it silently reads `undefined` for every loaded deck. `--parts`
+        # runs this drift check (plus the existing structural checks) against
+        # src/parts and fails the build (exit 1) on any drift.
+        run: python3 tools/vela-dev/scripts/lint.py --parts src/parts
+
+      - name: Release-build hardening assertions
+        # Phase 6.2: proves `concat.py --release` strips every test/debug hook
+        # (ASVS V14.1.3/V14.2.2) from the shipped bundle, that the strip is
+        # opt-in (the committed dev bundle keeps its runtime-gated hooks), and
+        # that the stripped output still parses. See tests/test_release_build.cjs.
+        run: node tests/test_release_build.cjs
+
       - name: Run non-browser stacks + browser install (concurrent)
         id: phase1
         if: always()
