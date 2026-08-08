@@ -284,5 +284,131 @@ else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
   }
 }
 
+// ── Phase 2: --vera-accent CSS custom property (accent → setProperty sink) ──
+// The "Vera is working" sweep (part-slides.jsx wrapper) sets --vera-accent from
+// the slide's `accent` field; two rules (part-imports.jsx .vera-thinking::before/
+// ::after) consume it via color-mix(in srgb, var(--vera-accent,#3b82f6) N%,
+// transparent). This walks hostile accent values through the REAL sanitizeSlide
+// (import-time scrub) THEN the REAL cssColor() encoder (the render-site gate now
+// wired at the --vera-accent assignment) THEN a REAL DOM
+// CSSStyleDeclaration.setProperty call (jsdom) — the actual sequence of calls the
+// shipped code makes — asserting: no network-triggering global is ever invoked,
+// and the value that lands on the custom property can never carry a url()/
+// string-source/var()-laundering/comment token into the color-mix() consumer.
+// sanitizeSlide's other branches (blocks/comments/studyNotes/bgImage/…) are never
+// entered for an accent-only input, so this needs no further dependencies.
+{
+  let JSDOM;
+  try { JSDOM = require("jsdom").JSDOM; }
+  catch (e) { try { JSDOM = require("/tmp/node_modules/jsdom").JSDOM; } catch (_) { JSDOM = null; } }
+
+  if (!JSDOM) {
+    bad("--vera-accent DOM sink suite", "jsdom not installed (run: npm i jsdom)");
+  } else {
+    let sanitizeSlide, cssColorSlide;
+    try {
+      const ssFn = grab(/function sanitizeSlide\(slide\)\s*\{[\s\S]*?\n\}/, "sanitizeSlide");
+      const ctx2 = { module: { exports: {} } };
+      vm.createContext(ctx2);
+      vm.runInContext(
+        [grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
+          grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (slide)"),
+          grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (slide)"),
+          grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (slide)"),
+          grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (slide)"),
+          grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK (slide)"),
+          grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor (slide)"),
+          ssFn,
+          "module.exports = { sanitizeSlide, cssColor };"].join("\n"),
+        ctx2, { filename: "part-imports-slice-slide.js" });
+      sanitizeSlide = ctx2.module.exports.sanitizeSlide;
+      cssColorSlide = ctx2.module.exports.cssColor;
+      ok("extracted real sanitizeSlide + cssColor for --vera-accent suite");
+    } catch (e) {
+      bad("extract sanitizeSlide for --vera-accent suite", e.message);
+    }
+
+    if (sanitizeSlide && cssColorSlide) {
+      const FALLBACK = "#3b82f6"; // mirrors the @property initial-value / var() fallback
+      const FORBIDDEN = /url\(|@import|image-set|image\(|cross-fade|src\(|expression\(|var\(|\/\*|[<>;]/i;
+
+      // Render-site sequence, reproduced exactly: sanitizeSlide (import-time) ->
+      // cssColor() (render-site encoder) -> DOM setProperty (the real sink call).
+      function renderAccent(dom, accent) {
+        const clean = sanitizeSlide({ accent });
+        const value = cssColorSlide(clean && clean.accent) || FALLBACK;
+        const el = dom.window.document.getElementById("w");
+        el.style.setProperty("--vera-accent", value);
+        return el.style.getPropertyValue("--vera-accent");
+      }
+
+      // Hostile accent values, one per required category, plus a plain-valid color.
+      const HOSTILE = {
+        "url()-bearing": 'url(https://a.invalid/x)',
+        "var()-laundering": 'var(--user-controlled, url(https://a.invalid/x))',
+        "image-set": 'image-set("https://a.invalid" 1x)',
+      };
+
+      for (const [label, payload] of Object.entries(HOSTILE)) {
+        const dom = new JSDOM("<!doctype html><div id='w'></div>");
+        const netCalls = { fetch: 0, xhr: 0, image: 0 };
+        dom.window.fetch = (...a) => { netCalls.fetch++; return Promise.reject(new Error("blocked")); };
+        const RealXHR = dom.window.XMLHttpRequest;
+        dom.window.XMLHttpRequest = function () {
+          const x = new RealXHR();
+          const realOpen = x.open.bind(x);
+          x.open = (...a) => { netCalls.xhr++; return realOpen(...a); };
+          return x;
+        };
+        dom.window.Image = function () {
+          const img = {};
+          Object.defineProperty(img, "src", { set() { netCalls.image++; }, get() { return ""; } });
+          return img;
+        };
+
+        const stored = renderAccent(dom, payload);
+
+        if (stored === FALLBACK) ok(`--vera-accent(${label}): hostile accent value falls back to the safe default`);
+        else bad(`--vera-accent(${label}): did not fall back`, JSON.stringify(stored));
+
+        if (!FORBIDDEN.test(stored)) ok(`--vera-accent(${label}): stored value carries no CSS auto-load/breakout token`);
+        else bad(`--vera-accent(${label}): stored value contains a forbidden token`, JSON.stringify(stored));
+
+        if (netCalls.fetch === 0 && netCalls.xhr === 0 && netCalls.image === 0)
+          ok(`--vera-accent(${label}): no network-triggering global invoked`);
+        else bad(`--vera-accent(${label}): a network global fired`, JSON.stringify(netCalls));
+      }
+
+      // Plain-valid color: survives sanitizeSlide, survives cssColor(), lands on the
+      // custom property unchanged — the fix must not regress the legitimate path.
+      {
+        const dom = new JSDOM("<!doctype html><div id='w'></div>");
+        const netCalls = { fetch: 0 };
+        dom.window.fetch = (...a) => { netCalls.fetch++; return Promise.reject(new Error("blocked")); };
+        const LEGIT = "#3b82f6";
+        const stored = renderAccent(dom, LEGIT);
+        if (stored === LEGIT) ok("--vera-accent(plain-valid-color): passes through unchanged");
+        else bad("--vera-accent(plain-valid-color): value altered/dropped", JSON.stringify(stored));
+        if (netCalls.fetch === 0) ok("--vera-accent(plain-valid-color): no network-triggering global invoked");
+        else bad("--vera-accent(plain-valid-color): fetch fired for a legit color", JSON.stringify(netCalls));
+      }
+
+      // The color-mix() consumer strings themselves (part-imports.jsx getCss()) are
+      // static template text with only var(--vera-accent, #hex) substitution points —
+      // never string-concatenated with the deck value — so a safe stored token (as
+      // asserted above) cannot alter the declaration's structure. Pin that the two
+      // consumer sites keep their hard-coded var() fallback (belt, per 2.3) and that
+      // the property is CSS type-registered (per 2.2) so a value reaching the DOM by
+      // any other path than this render site is still constrained at the CSS layer.
+      if (/@property --vera-accent\{syntax:"<color>";inherits:true;initial-value:#3b82f6\}/.test(src))
+        ok("--vera-accent is CSS type-registered via @property (syntax:\"<color>\", inherits:true)");
+      else bad("--vera-accent @property registration missing/changed shape");
+      const consumerSites = src.match(/var\(--vera-accent,#3b82f6\)/g) || [];
+      if (consumerSites.length >= 2) ok("both color-mix() consumer sites keep their var(--vera-accent, #hex) fallback");
+      else bad("--vera-accent consumer var() fallback missing at one or both sites", String(consumerSites.length));
+    }
+  }
+}
+
 console.log("\n  " + pass + " passed, " + failCount + " failed");
 process.exit(failCount ? 1 : 0);

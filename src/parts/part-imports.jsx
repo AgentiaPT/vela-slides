@@ -1427,6 +1427,14 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* Type-register --vera-accent as a real <color>: an @property-registered custom
+   property is subject to CSS's own syntax check at the CSS layer, so even a value
+   that reached this point outside the normal cssColor()-encoded render path (the
+   set-property call itself, part-slides.jsx) falls back to initial-value instead
+   of being usable in var()/color-mix() below — a CSS-native backstop alongside the
+   JS-side encoder. inherits:true is required: the ::before/::after sweeps below
+   consume the value on descendant pseudo-elements, not the declaring node itself. */
+@property --vera-accent{syntax:"<color>";inherits:true;initial-value:#3b82f6}
 /* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
    slide accent via --vera-accent (set on the wrapper), falling back to the
    original Vera blue/violet when unset or where color-mix is unsupported. */
