@@ -160,7 +160,7 @@ Vela Slides is a solo-maintained open-source project. We offer **symbolic bounti
 
 **Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
 
-**2026 remaining: $155 **
+**2026 remaining: $50 **
 
 This ceiling is non-negotiable. Reports submitted after the cap is hit are still triaged and credited — they simply do not receive cash that year. Final severity and reward are at maintainer discretion.
 
@@ -196,6 +196,12 @@ Automated-scanner output and AI-generated reports **without manual verification 
 - SVG sanitization pipeline
 
 **Out of scope:**
+- The experimental MCP bridge in `tools/vela-dev/channel/`. It is a prototype
+  against Claude MCP Channels — an Anthropic research preview as of July 2026 —
+  and is not part of Vela: nothing in the app, `serve.py`, or CI invokes it, and
+  it only runs if a developer registers it by hand and starts Claude Code with
+  `--dangerously-load-development-channels`. Vela's actual AI channel is
+  `tools/vela-dev/scripts/agent_backend.py`, which **is** in scope.
 - Claude.ai's artifact sandbox (managed by Anthropic)
 - The Anthropic API and its security model
 - Third-party CDN availability or integrity (html2canvas)

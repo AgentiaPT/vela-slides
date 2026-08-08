@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⛵ Vela Slides **(Alpha/Experimental)**
+# ⛵ Vela Slides **(Alpha/Experimental Dark Factory)**
 
 **Agent-native presentation engine — runs in any AI artifact host or as a desktop app driven by your local coding-agent CLI**
 
