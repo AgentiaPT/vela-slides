@@ -93,6 +93,12 @@
   <!-- window.storage shim (Neutralino.storage when available, localStorage fallback) -->
   <script src="js/storage-shim.js"></script>
 
+  <!-- Shared STARTUP_PATCH escaping helper (CommonJS module also require()'d by
+       tools/vela-dev/scripts/render-offline.js under Node) — classic script so it
+       runs before the deferred module script below and exposes a global; see
+       script-escape.js for why this can't be an ESM `import` in nl-boot.js. -->
+  <script src="js/script-escape.js"></script>
+
   <!-- Neutralino bootstrap: init(), deck I/O wiring, mount Vela when ready -->
   <script type="module" src="js/nl-boot.js"></script>
 

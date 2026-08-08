@@ -45,9 +45,19 @@ function build(deckPath, outDir, opts = {}) {
   const VENDOR = path.join(REPO, 'vela-neutralino/resources/vendor');
   if (!fs.existsSync(VELA_JSX)) throw new Error('vela.jsx not found — run skills/vela-slides/scripts/concat.py first');
   const Babel = require(path.join(VENDOR, 'babel.min.js'));
+  // Same canonical escaper as tools/vela-dev/scripts/render-offline.js and
+  // nl-boot.js (webview copy, loaded there as a classic <script>); mirrors
+  // skills/vela-slides/scripts/assemble.py's escape_for_script_context().
+  // Already depend on vela-neutralino/resources/vendor above, so this adds
+  // no new cross-tree assumption. tests/test_vela.py asserts parity.
+  const { escapeForScriptContext } = require(
+    path.join(REPO, 'vela-neutralino/resources/js/script-escape.js')
+  );
   const deck = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
   let jsx = fs.readFileSync(VELA_JSX, 'utf8');
   // Strip ESM imports (react/lucide) — provided as UMD globals instead.
+  // Audited: replacement is a fixed empty string in every case below — no
+  // deck/user data is interpolated, so there is no $-pattern splicing surface.
   jsx = jsx.replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, '');
   jsx = jsx.replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, '');
   jsx = jsx.replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, '');
@@ -55,8 +65,12 @@ function build(deckPath, outDir, opts = {}) {
   // Inject the deck via the STARTUP_PATCH sentinel (same mechanism as assemble.py).
   const marker = 'const STARTUP_PATCH = null;';
   if (!jsx.includes(marker)) throw new Error('STARTUP_PATCH marker missing in vela.jsx');
-  const deckJson = JSON.stringify(deck).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
-  jsx = jsx.replace(marker, `const STARTUP_PATCH = ${deckJson};`);
+  const deckJson = escapeForScriptContext(JSON.stringify(deck));
+  // Replacer-FUNCTION form (not a plain-string replacement): deck JSON is
+  // attacker-reachable, and String.prototype.replace interprets $&/$`/$'/$<name>
+  // specially in a string replacement, which could splice adjacent template
+  // bytes into STARTUP_PATCH. A function's return value is inserted verbatim.
+  jsx = jsx.replace(marker, () => `const STARTUP_PATCH = ${deckJson};`);
   const shim =
     'const { useState, useReducer, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;\n' +
     'const _LucideAll = window.lucideReact;\n' +

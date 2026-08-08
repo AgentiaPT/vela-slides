@@ -3618,6 +3618,139 @@ def test_block_primitives():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ━━━ Script-Context Injection Parity (Phase 5) ━━━━━━━━━━━━━━━━━━━
+
+def test_script_context_escape_parity():
+    """Phase 5 (script-context injection parity):
+
+    1. The Python helper (assemble.py:escape_for_script_context) and the ONE
+       canonical JS implementation (vela-neutralino/resources/js/script-escape.js)
+       must escape a hostile payload — <, >, &, $', $`, $&, U+2028, U+2029,
+       </script> — identically. The JS file is exercised through BOTH loader
+       shapes it supports: Node `require()` (render-offline.js call sites) and
+       classic-<script> global attachment with no `module`/`require` in scope
+       (the nl-boot.js webview call site).
+    2. Every JS call site that splices STARTUP_PATCH into source text
+       (nl-boot.js, tools/vela-dev/scripts/render-offline.js, and the sibling
+       .hyper-sprint/render-offline.js if present) must use the replacer-
+       FUNCTION form of `.replace()` — a plain-string replacement lets deck
+       content contain $&/$`/$'-style backreferences that splice adjacent
+       template bytes into the injected value.
+    """
+    print("\n── Script-Context Escape Parity (Phase 5) ──")
+
+    script_escape_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "script-escape.js")
+    nl_boot_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "nl-boot.js")
+    render_offline_js = os.path.join(DEV_SCRIPTS, "render-offline.js")
+    hyper_sprint_render_offline_js = os.path.join(REPO_ROOT, ".hyper-sprint", "render-offline.js")
+
+    if not os.path.exists(script_escape_js):
+        fail("script-escape.js exists", f"missing: {script_escape_js}")
+        return
+
+    # Payload deliberately includes every char class the escaper must handle,
+    # plus the $-pattern tokens that only the replacer-function form (not the
+    # escaper) neutralizes.
+    payload = "<>&$'$`$&  </script>"
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from assemble import escape_for_script_context
+    except Exception as e:
+        fail("Import assemble.escape_for_script_context", str(e))
+        return
+
+    py_json = json.dumps(payload, ensure_ascii=False)
+    py_escaped = escape_for_script_context(py_json)
+
+    node_probe = r'''
+const fs = require("fs");
+const vm = require("vm");
+const filePath = process.argv[1];
+const jsonStr = process.argv[2];
+
+// (a) Node CommonJS require() path — used by render-offline.js.
+const { escapeForScriptContext: viaRequire } = require(filePath);
+
+// (b) classic-<script> global-attachment path — used by nl-boot.js. Runs the
+// SAME source with no `module`/`require`/`exports` in scope, exactly like a
+// plain non-module <script src> tag in index.html.
+const src = fs.readFileSync(filePath, "utf8");
+const sandbox = {};
+vm.createContext(sandbox);
+vm.runInContext(src, sandbox);
+const viaGlobal = sandbox.escapeForScriptContext;
+
+process.stdout.write(JSON.stringify({
+  viaRequire: viaRequire(jsonStr),
+  viaGlobal: typeof viaGlobal === "function" ? viaGlobal(jsonStr) : null,
+}));
+'''
+    try:
+        r = subprocess.run(
+            ["node", "-e", node_probe, "--", script_escape_js, py_json],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        skip("Script-context escape parity", "node not on PATH")
+        return
+    except subprocess.TimeoutExpired:
+        fail("Script-context escape parity", "node probe timeout after 30s")
+        return
+
+    if r.returncode != 0:
+        fail("script-escape.js loads under Node (both loader shapes)", r.stdout + r.stderr)
+        return
+
+    try:
+        js_out = json.loads(r.stdout)
+    except Exception as e:
+        fail("Parse script-escape.js probe output", f"{e}: {r.stdout!r}")
+        return
+
+    if js_out.get("viaRequire") == py_escaped:
+        ok("JS require() path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS require() path parity", f"py={py_escaped!r} js={js_out.get('viaRequire')!r}")
+
+    if js_out.get("viaGlobal") == py_escaped:
+        ok("JS classic-<script> global path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS classic-<script> global path parity", f"py={py_escaped!r} js={js_out.get('viaGlobal')!r}")
+
+    # Source-level: every call site must use the replacer-FUNCTION form —
+    # `.replace(marker, () => ...)` — not a plain-string replacement.
+    replacer_fn_re = re.compile(r"\.replace\(\s*marker\s*,\s*\(\s*\)\s*=>")
+
+    sites = [
+        ("nl-boot.js", nl_boot_js),
+        ("tools/vela-dev/scripts/render-offline.js", render_offline_js),
+    ]
+    if os.path.exists(hyper_sprint_render_offline_js):
+        sites.append((".hyper-sprint/render-offline.js", hyper_sprint_render_offline_js))
+    else:
+        skip(".hyper-sprint/render-offline.js replacer-function form", "file not present in this tree")
+
+    for label, filepath in sites:
+        if not os.path.exists(filepath):
+            fail(f"{label} exists", f"missing: {filepath}")
+            continue
+        with open(filepath, "r", encoding="utf-8") as f:
+            src = f.read()
+        if replacer_fn_re.search(src):
+            ok(f"{label} uses replacer-function form for STARTUP_PATCH injection")
+        else:
+            fail(f"{label} replacer-function form",
+                 "expected `.replace(marker, () => ...)` — plain-string replacement "
+                 "lets deck content splice via $&/$`/$' backreferences")
+        # Every call site must delegate to the shared escaper, not a private copy.
+        if "escapeForScriptContext(" in src:
+            ok(f"{label} calls the shared escapeForScriptContext()")
+        else:
+            fail(f"{label} shared escaper usage",
+                 "expected a call to escapeForScriptContext() instead of an inline escape chain")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -3642,6 +3775,7 @@ if __name__ == "__main__":
         test_block_primitives()
         test_study_notes()
         test_pdf_title_cards()
+        test_script_context_escape_parity()
     if run_integration:
         test_integration()
         test_cli_commands()

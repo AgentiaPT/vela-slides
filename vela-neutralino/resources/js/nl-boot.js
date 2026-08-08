@@ -631,15 +631,18 @@ function injectStartupPatch(jsx, deck) {
     return jsx;
   }
   // Escape the full set of chars that can break out of a <script> block or
-  // terminate a JS string literal — aligned with assemble.py/serve.py's
-  // escape_for_script_context() for defense-in-depth consistency.
-  const safe = JSON.stringify(deck)
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
-  return jsx.replace(marker, `const STARTUP_PATCH = ${safe};`);
+  // terminate a JS string literal — the SAME escapeForScriptContext() Node's
+  // render-offline.js require()s (script-escape.js, loaded as a classic
+  // <script> before this module script — see index.html), aligned with
+  // assemble.py/serve.py's escape_for_script_context() for defense-in-depth
+  // consistency. tests/test_vela.py asserts all of these stay in parity.
+  const safe = window.escapeForScriptContext(JSON.stringify(deck));
+  // Replacer-FUNCTION form: String.prototype.replace treats a plain-string
+  // replacement specially (interprets $&, $`, $', $<name> as backreferences
+  // into the matched source), so deck content containing those sequences
+  // could splice adjacent template bytes into STARTUP_PATCH. A function's
+  // return value is always inserted verbatim, with no pattern substitution.
+  return jsx.replace(marker, () => `const STARTUP_PATCH = ${safe};`);
 }
 
 // ---------- Global error surfacing -----------------------------------------
