@@ -201,20 +201,26 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const handleSlideRowClick = (e, si) => {
     e.stopPropagation();
     if (editingSi === si) return;
-    if (!selected) dispatch({ type: "SELECT", id: item.id });
     if (e.shiftKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const anchor = selected ? slideIndex : si;
       const lo = Math.min(anchor, si), hi = Math.max(anchor, si);
       const range = []; for (let k = lo; k <= hi; k++) range.push(k);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: range, index: si });
     } else if (e.metaKey || e.ctrlKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const cur = new Set(multiSel);
       if (selected && multiSel.length === 0) cur.add(slideIndex); // seed from active slide
       if (cur.has(si)) cur.delete(si); else cur.add(si);
       const arr = Array.from(cur).sort((a, b) => a - b);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: arr.length > 1 ? arr : [], index: si });
     } else {
-      setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0);
+      // Plain click: select this row synchronously (folding the index into SELECT
+      // when the module wasn't selected). A deferred SET_SLIDE_INDEX used to land a
+      // tick late and clobber a slide-index change from a key pressed right after the
+      // click (e.g. ArrowDown on a just-clicked row), so commit it in one shot.
+      if (!selected) dispatch({ type: "SELECT", id: item.id, slideIndex: si });
+      else dispatch({ type: "SET_SLIDE_INDEX", index: si });
     }
   };
 

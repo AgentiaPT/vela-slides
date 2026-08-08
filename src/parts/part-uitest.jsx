@@ -787,8 +787,10 @@ uiSuite("TOC Collapse Nav", [
     await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
   }},
   { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
-    const headers = await _waitFor(() => (_tocHeaders().length >= 2 ? _tocHeaders() : null), 2000);
-    if (!headers) return; // soft pass: needs >= 2 sections
+    // Only sections WITH slides expose aria-expanded and can be folded (empty
+    // sections have nothing to collapse), so pick the first two of those.
+    const headers = await _waitFor(() => { const h = _tocHeaders().filter((x) => x.hasAttribute("aria-expanded")); return h.length >= 2 ? h : null; }, 2000);
+    if (!headers) return; // soft pass: needs >= 2 non-empty sections
     await _selectTocHeader(headers[0]);
     await _tocEnsureCollapsed(headers[0]);
     await _tocEnsureCollapsed(headers[1]);

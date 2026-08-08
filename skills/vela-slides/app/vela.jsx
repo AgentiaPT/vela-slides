@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.22";
+const VELA_VERSION = "13.23";
 const VELA_CHANGELOG = [
+  { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
   { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
   { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
   { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
@@ -8279,20 +8280,26 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const handleSlideRowClick = (e, si) => {
     e.stopPropagation();
     if (editingSi === si) return;
-    if (!selected) dispatch({ type: "SELECT", id: item.id });
     if (e.shiftKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const anchor = selected ? slideIndex : si;
       const lo = Math.min(anchor, si), hi = Math.max(anchor, si);
       const range = []; for (let k = lo; k <= hi; k++) range.push(k);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: range, index: si });
     } else if (e.metaKey || e.ctrlKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const cur = new Set(multiSel);
       if (selected && multiSel.length === 0) cur.add(slideIndex); // seed from active slide
       if (cur.has(si)) cur.delete(si); else cur.add(si);
       const arr = Array.from(cur).sort((a, b) => a - b);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: arr.length > 1 ? arr : [], index: si });
     } else {
-      setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0);
+      // Plain click: select this row synchronously (folding the index into SELECT
+      // when the module wasn't selected). A deferred SET_SLIDE_INDEX used to land a
+      // tick late and clobber a slide-index change from a key pressed right after the
+      // click (e.g. ArrowDown on a just-clicked row), so commit it in one shot.
+      if (!selected) dispatch({ type: "SELECT", id: item.id, slideIndex: si });
+      else dispatch({ type: "SET_SLIDE_INDEX", index: si });
     }
   };
 
@@ -10497,8 +10504,10 @@ uiSuite("TOC Collapse Nav", [
     await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
   }},
   { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
-    const headers = await _waitFor(() => (_tocHeaders().length >= 2 ? _tocHeaders() : null), 2000);
-    if (!headers) return; // soft pass: needs >= 2 sections
+    // Only sections WITH slides expose aria-expanded and can be folded (empty
+    // sections have nothing to collapse), so pick the first two of those.
+    const headers = await _waitFor(() => { const h = _tocHeaders().filter((x) => x.hasAttribute("aria-expanded")); return h.length >= 2 ? h : null; }, 2000);
+    if (!headers) return; // soft pass: needs >= 2 non-empty sections
     await _selectTocHeader(headers[0]);
     await _tocEnsureCollapsed(headers[0]);
     await _tocEnsureCollapsed(headers[1]);
