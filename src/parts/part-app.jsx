@@ -1193,7 +1193,7 @@ export default function App() {
   // Keep every test affordance inside the fence, and keep the fenced code free
   // of anything the app itself depends on.
   useEffect(() => {
-    if (!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode))) return;
+    if (!velaTestSurfaceEnabled()) return;
     const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
@@ -1717,6 +1717,19 @@ export default function App() {
     return <div style={{ width: "100vw", height: "100vh", background: T.bg }} />;
   }
 
+  // In-app TEST panels (render battery + UI battery runner). Declared null here
+  // and assigned only inside the fence, so a release build keeps a valid `null`
+  // with no reference to the gate or the panels — the same declare-outside /
+  // assign-inside shape part-uitest.jsx uses for its _hooks stub. These mounted
+  // on every non-presentation boot before v13.25, which meant a hosted artifact
+  // ran the render battery at startup and registered the UI battery's Ctrl+Alt+T
+  // and custom-event triggers. Both are test affordances; neither belongs on a
+  // surface an untrusted deck shares.
+  let devTestPanels = null;
+  // VELA:DEV-ONLY:BEGIN
+  if (velaTestSurfaceEnabled()) devTestPanels = <><VelaBatteryTest /><VelaUITestRunner /></>;
+  // VELA:DEV-ONLY:END
+
   return (
     <IconPickerContext.Provider value={openIconPicker}>
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
@@ -2024,8 +2037,7 @@ export default function App() {
           }
         }
       }} />}
-      {!VELA_PRESENTATION_MODE && <VelaBatteryTest />}
-      {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
+      {devTestPanels}
       {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
     </IconPickerContext.Provider>

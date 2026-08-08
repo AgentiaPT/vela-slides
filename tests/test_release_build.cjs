@@ -86,11 +86,33 @@ test('release build does not expose the UI-test battery entry point', () => {
 
 // The dev bundle intentionally KEEPS the battery (CI's offline harness drives
 // it), so the gate — not the fence — is what keeps it off a hosted artifact.
-test('dev build gates the UI-test battery behind local/test mode', () => {
-  const m = dev.match(/if \(typeof window !== "undefined" && \([^)]*\)\) \{\s*\n\s*window\.__velaRunUITests/);
-  assert(!!m, 'UI battery entry point is not runtime-gated in the dev bundle');
-  assert(/VELA_LOCAL_MODE/.test(m[0]) && /__velaTestMode/.test(m[0]),
-    'UI battery gate does not check VELA_LOCAL_MODE / test mode');
+test('dev build gates the UI-test battery behind the shared test-surface gate', () => {
+  assert(/velaTestSurfaceEnabled\(\)\) \{\s*\n\s*window\.__velaRunUITests/.test(dev),
+    'UI battery entry point is not runtime-gated in the dev bundle');
+  const gate = dev.match(/function velaTestSurfaceEnabled\(\)[\s\S]{0,200}?\n\}/);
+  assert(!!gate, 'shared test-surface gate is missing from the dev bundle');
+  assert(/VELA_LOCAL_MODE/.test(gate[0]) && /__velaTestMode/.test(gate[0]),
+    'test-surface gate does not check local mode / test mode');
+});
+
+// The in-app test PANELS were the reachable surface behind the battery: they
+// mounted on every non-presentation boot, which registered the Ctrl+Alt+T and
+// custom-event triggers and ran the render battery at startup on a hosted
+// artifact. They are now behind the same gate, and the whole test parts are
+// dropped from a release build rather than shipped as dead code.
+test('dev build mounts the test panels only behind the shared gate', () => {
+  assert(/velaTestSurfaceEnabled\(\) *&& *\(?<>?<VelaBatteryTest *\/><VelaUITestRunner *\/>/.test(dev)
+    || /velaTestSurfaceEnabled\(\)\)? *devTestPanels *=/.test(dev),
+    'test panels are not gated behind velaTestSurfaceEnabled()');
+  assert(!/\{!VELA_PRESENTATION_MODE && <VelaBatteryTest/.test(dev),
+    'test panels still mount on the old presentation-mode-only condition');
+});
+
+test('release build contains no test-only part at all', () => {
+  for (const sym of ['VelaBatteryTest', 'VelaUITestRunner', 'VELA_TESTS',
+                     'runUITests', 'velaTestSurfaceEnabled']) {
+    assert(!release.includes(sym), `test-only symbol '${sym}' survived into the release build`);
+  }
 });
 
 test('release build reports the strip in its own output', () => {
@@ -119,7 +141,8 @@ test('committed bundle is the DEV build (hooks present, runtime-gated)', () => {
 test('dev build keeps the test hooks behind a runtime gate', () => {
   assert(dev.includes('window.__velaTestMode'),
     'dev build installs test hooks without the __velaTestMode / local-mode gate');
-  assert(/if \(!\(VELA_LOCAL_MODE \|\| \(typeof window !== "undefined" && window\.__velaTestMode\)\)\) return;/.test(dev),
+  // v13.25: the three hand-copied conditions collapsed into one shared gate.
+  assert(/if \(!velaTestSurfaceEnabled\(\)\) return;/.test(dev),
     'expected runtime gate on the test-hook effect not found in the dev build');
 });
 

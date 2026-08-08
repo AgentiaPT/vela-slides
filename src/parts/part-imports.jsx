@@ -890,6 +890,25 @@ function scrubPaintFields(obj) {
   scrubCssFields(obj, (k) => CSS_PAINT_KEY.test(cssKeyStem(k)));
 }
 
+// VELA:DEV-ONLY:BEGIN
+// SECURITY (test surface): the SINGLE gate for every in-app test affordance —
+// the window hooks (part-app.jsx), the headless battery entry point and its
+// Ctrl+Alt+T / custom-event triggers (part-uitest.jsx), and the render battery
+// (part-test.jsx). Test code installs only in local/desktop mode, or when a
+// harness opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js
+// does this via addInitScript). A hosted artifact satisfies neither, so no
+// panel mounts, no listener or keyboard shortcut is registered, and no global
+// is written — there is nothing left to reach.
+//
+// ONE predicate on purpose: three hand-copied conditions is exactly how the
+// scrubber surfaces drifted apart. Every caller sits inside a DEV-ONLY fence,
+// so `concat.py --release` removes the gate and its callers together and the
+// release bundle carries no reference to the test-mode flag at all. (v13.25)
+function velaTestSurfaceEnabled() {
+  return !!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode));
+}
+// VELA:DEV-ONLY:END
+
 // SECURITY (deck sub-object ingress): the top-level slide/block objects are
 // rebuilt from a hardcoded key ALLOWLIST, but their nested SUB-OBJECTS — list
 // `items`, grid cells (`cell`), matrix `quadrants`, comparison sides and their

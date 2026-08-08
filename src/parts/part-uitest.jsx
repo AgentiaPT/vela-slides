@@ -160,7 +160,7 @@ async function runUITests(onProgress) {
 //   2. build-time strip — concat.py --release drops this fenced block.
 // The committed vela.jsx is a DEV build, so the gate is what keeps the battery
 // off a hosted artifact; the fence is what keeps it out of the desktop bundle.
-if (typeof window !== "undefined" && (VELA_LOCAL_MODE || window.__velaTestMode)) {
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
   window.__velaRunUITests = async () => {
     const results = await runUITests();
     window.__velaUITestResults = results;

@@ -43,6 +43,13 @@ import sys, os, re, tempfile
 # Adding a test-only global means giving it a marker name AND fencing it.
 TEST_GLOBAL_RE = re.compile(r"__vela\w*(?:Test|Mock|Stub|Fixture|Spy)\w*")
 
+# Parts that exist ONLY to test the app. A release build drops them wholesale
+# rather than shipping them as unreachable dead code: their sole cross-part
+# references (the two test panels mounted in part-app.jsx) sit inside a DEV-ONLY
+# fence and are stripped in the same pass, so nothing else can name them.
+# Verified by tests/test_release_build.cjs, which also Babel-parses the result.
+RELEASE_EXCLUDED_PARTS = {"part-test.jsx", "part-uitest.jsx"}
+
 # Fence markers for build-time-strippable dev-only code. Both must appear on
 # their own line (leading whitespace allowed); blocks must not nest.
 DEV_ONLY_BEGIN = "// VELA:DEV-ONLY:BEGIN"
@@ -120,6 +127,9 @@ def concat(parts_dir, output_path, release=False):
     total_stripped = 0
 
     for part_name in PART_ORDER:
+        if release and part_name in RELEASE_EXCLUDED_PARTS:
+            print(f"  {part_name}: skipped (test-only part, release build)")
+            continue
         part_path = os.path.join(parts_dir, part_name)
         if not os.path.exists(part_path):
             print(f"ERROR: Missing part: {part_path}", file=sys.stderr)
@@ -160,7 +170,7 @@ def concat(parts_dir, output_path, release=False):
 
     size_kb = os.path.getsize(output_path) // 1024
     print(f"\n✅ Built: {output_path}")
-    print(f"   {total_lines} lines | {size_kb}KB | {len(PART_ORDER)} parts")
+    print(f"   {total_lines} lines | {size_kb}KB | {len(chunks)} parts")
 
     # Verify STARTUP_PATCH marker exists
     if "const STARTUP_PATCH = null;" in result:

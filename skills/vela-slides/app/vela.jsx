@@ -890,6 +890,25 @@ function scrubPaintFields(obj) {
   scrubCssFields(obj, (k) => CSS_PAINT_KEY.test(cssKeyStem(k)));
 }
 
+// VELA:DEV-ONLY:BEGIN
+// SECURITY (test surface): the SINGLE gate for every in-app test affordance —
+// the window hooks (part-app.jsx), the headless battery entry point and its
+// Ctrl+Alt+T / custom-event triggers (part-uitest.jsx), and the render battery
+// (part-test.jsx). Test code installs only in local/desktop mode, or when a
+// harness opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js
+// does this via addInitScript). A hosted artifact satisfies neither, so no
+// panel mounts, no listener or keyboard shortcut is registered, and no global
+// is written — there is nothing left to reach.
+//
+// ONE predicate on purpose: three hand-copied conditions is exactly how the
+// scrubber surfaces drifted apart. Every caller sits inside a DEV-ONLY fence,
+// so `concat.py --release` removes the gate and its callers together and the
+// release bundle carries no reference to the test-mode flag at all. (v13.25)
+function velaTestSurfaceEnabled() {
+  return !!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode));
+}
+// VELA:DEV-ONLY:END
+
 // SECURITY (deck sub-object ingress): the top-level slide/block objects are
 // rebuilt from a hardcoded key ALLOWLIST, but their nested SUB-OBJECTS — list
 // `items`, grid cells (`cell`), matrix `quadrants`, comparison sides and their
@@ -9947,7 +9966,7 @@ async function runUITests(onProgress) {
 //   2. build-time strip — concat.py --release drops this fenced block.
 // The committed vela.jsx is a DEV build, so the gate is what keeps the battery
 // off a hosted artifact; the fence is what keeps it out of the desktop bundle.
-if (typeof window !== "undefined" && (VELA_LOCAL_MODE || window.__velaTestMode)) {
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
   window.__velaRunUITests = async () => {
     const results = await runUITests();
     window.__velaUITestResults = results;
@@ -19701,7 +19720,7 @@ export default function App() {
   // Keep every test affordance inside the fence, and keep the fenced code free
   // of anything the app itself depends on.
   useEffect(() => {
-    if (!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode))) return;
+    if (!velaTestSurfaceEnabled()) return;
     const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
@@ -20225,6 +20244,19 @@ export default function App() {
     return <div style={{ width: "100vw", height: "100vh", background: T.bg }} />;
   }
 
+  // In-app TEST panels (render battery + UI battery runner). Declared null here
+  // and assigned only inside the fence, so a release build keeps a valid `null`
+  // with no reference to the gate or the panels — the same declare-outside /
+  // assign-inside shape part-uitest.jsx uses for its _hooks stub. These mounted
+  // on every non-presentation boot before v13.25, which meant a hosted artifact
+  // ran the render battery at startup and registered the UI battery's Ctrl+Alt+T
+  // and custom-event triggers. Both are test affordances; neither belongs on a
+  // surface an untrusted deck shares.
+  let devTestPanels = null;
+  // VELA:DEV-ONLY:BEGIN
+  if (velaTestSurfaceEnabled()) devTestPanels = <><VelaBatteryTest /><VelaUITestRunner /></>;
+  // VELA:DEV-ONLY:END
+
   return (
     <IconPickerContext.Provider value={openIconPicker}>
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
@@ -20532,8 +20564,7 @@ export default function App() {
           }
         }
       }} />}
-      {!VELA_PRESENTATION_MODE && <VelaBatteryTest />}
-      {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
+      {devTestPanels}
       {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
     </IconPickerContext.Provider>
