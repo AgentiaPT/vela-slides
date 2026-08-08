@@ -9520,6 +9520,18 @@ function VelaBatteryTest() {
 // Triggered via Ctrl+Alt+T or the "🧪 UI" button in the battery toast.
 // Tests run against whatever deck is loaded — demo deck recommended.
 
+// ── Test-hook bridge ─────────────────────────────────────────────────
+// A few suites need states with no offline UI path (study notes, block
+// injection, the AI-working flag). The app installs its test-hook object only
+// in dev/local builds that opt in (see part-app.jsx), and concat.py --release
+// strips BOTH that block and the binding below — so a release bundle carries no
+// test-hook reference at all. In a stripped build _hooks() stays the empty stub
+// and the hook-dependent tests fail loudly rather than silently passing.
+let _hooks = () => ({});
+// VELA:DEV-ONLY:BEGIN
+_hooks = () => (typeof window !== "undefined" && window.__velaTestHooks) || {};
+// VELA:DEV-ONLY:END
+
 // ── Test Primitives ──────────────────────────────────────────────────
 const _$ = (sel, root = document) => root.querySelector(sel);
 const _$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -10282,11 +10294,11 @@ uiSuite("TOC Collapse Nav", [
     _click(rows[0]); // select + focus the first slide row
     await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
     await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
-    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
-    if (!before) throw new Error("no __velaTestGetSelection hook");
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
     _key("ArrowDown");
     // The REAL selection must advance (this is exactly what the bug broke).
-    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
     // Exactly one row is active AND it holds focus → a single, unified cursor.
     await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
   }},
@@ -10297,12 +10309,12 @@ uiSuite("TOC Collapse Nav", [
     await _tocEnsureCollapsed(headers[0]);
     await _tocEnsureCollapsed(headers[1]);
     await _focusTocHeader(headers[0]);
-    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
-    if (!before) throw new Error("no __velaTestGetSelection hook");
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
     _key("ArrowDown");
     // Down over a folded section jumps to the NEXT section and shows its first slide,
     // instead of stepping through the current section's hidden slides.
-    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
     // Neither section auto-expands during section-level nav.
     if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
     await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
@@ -10589,13 +10601,13 @@ uiSuite("Student Mode", [
 ]);
 
 // ── v12.32: Offline Study Notes Suite ───────────────────────────────
-// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// Uses the test-only affordance _hooks().injectStudyNotes (test-hook bridge) to
 // patch the current slide with a pre-authored studyNotes object, then
 // exercises the offline StaticStudyPanel rendering (text + glossary
 // X-Ray links + questions + diagram). Does not depend on a live API.
 uiSuite("Study Notes", [
-  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
-    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  { name: "Test hook injectStudyNotes available", fn: async () => {
+    if (typeof _hooks().injectStudyNotes !== "function") throw new Error("_hooks().injectStudyNotes not exposed");
   }},
   { name: "Inject studyNotes into current slide", fn: async () => {
     const sn = {
@@ -10604,7 +10616,7 @@ uiSuite("Study Notes", [
       questions: ["Why does this matter?", "When does it fail?"],
       glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
     };
-    const ok = window.__velaTestInjectStudyNotes(sn);
+    const ok = _hooks().injectStudyNotes(sn);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(150);
   }},
@@ -10673,7 +10685,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
     // Undo the UPDATE_SLIDE so we don't leak state into later tests
-    window.__velaTestInjectStudyNotes(undefined);
+    _hooks().injectStudyNotes(undefined);
     await _wait(100);
   }},
 ]);
@@ -10698,16 +10710,16 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
   }},
   { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
     // Light slide, no notes.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
     await _wait(180);
     const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
     const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
     // Heavy slide with lots of content AND speaker notes — the pre-fix notes
     // auto-expand + elastic viewport would shove the toolbar upward here.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY CONTENT SLIDE" },
       { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
       { type: "text", text: "A long paragraph ".repeat(20) },
@@ -10718,14 +10730,14 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
     if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
     // Restore a benign single heading.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "" }], { notes: "" });
     await _wait(80);
   }},
   { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Inject a centered heading (NO icon → the editor still forces its icon-slot
     // flex row, which is exactly the path that used to drop centering).
-    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    const okc = _hooks().injectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
     if (!okc) throw new Error("inject returned false — no current slide");
     await _wait(200);
     // Leaf element that actually holds the text node.
@@ -10752,7 +10764,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     }
   }},
   { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
     // A TALL/portrait image is the exact case that used to balloon a grid row
     // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
@@ -10791,7 +10803,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Cases: N=2..5 landscape runs — each must be contained AND visible.
     for (const N of [2, 3, 4, 5]) {
       const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
-      window.__velaTestInjectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      _hooks().injectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
       await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
       await _wait(160);
       const o = gridBottomOverflow();
@@ -10800,7 +10812,7 @@ uiSuite("Editor UX (CR1–CR3)", [
       assertVisibleAndUniform(`N=${N}`);
     }
     // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY + FOUR IMAGES" },
       { type: "text", text: "A long paragraph ".repeat(16) },
       { type: "image", src: land }, { type: "image", src: land },
@@ -10814,7 +10826,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     assertVisibleAndUniform("heavy-text+4");
     // Case C: a portrait image among the run must not balloon its row off-canvas —
     // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "PORTRAIT MIX" },
       { type: "image", src: land }, { type: "image", src: tall },
     ]);
@@ -10829,7 +10841,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -10840,8 +10852,8 @@ uiSuite("Editor UX (CR1–CR3)", [
 // Asserts the swap moves the item and that the arrow is disabled at a boundary.
 uiSuite("Block item reorder (▲▼) — v13.19", [
   { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
-    const ok = window.__velaTestInjectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const ok = _hooks().injectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(200);
     const order = () => _$$("[data-testid='slide-viewport'] *")
@@ -10869,7 +10881,7 @@ uiSuite("Block item reorder (▲▼) — v13.19", [
     const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
     _click(down);
     await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -11793,13 +11805,36 @@ uiSuite("Desktop save-status pill (CR3)", [
 // ── CR5: Consistent AI-working animation ─────────────────────────────
 // Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
 // magic-reveal contract. No live AI backend needed: we drive the reducer flag
-// directly via the app's test hook (window.__velaTestSetAIWork) and assert the
+// directly via the app's test hook (_hooks().setAIWork) and assert the
 // on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
 // isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
 const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Canonicalize a CSS color so an authored hex and a browser rgb() serialization
+// compare equal. --vera-accent is a registered custom property
+// (@property { syntax: "<color>" }) — once registered, getComputedStyle returns
+// the COMPUTED "rgb(r, g, b)" form, not the "#rrggbb" the deck authored. Round
+// tripping both sides through an element's computed `color` normalizes either
+// serialization; if the UA can't parse the value we fall back to a whitespace-
+// stripped lowercase compare (the pre-registration behaviour).
+const _normColor = (v) => {
+  const raw = String(v == null ? "" : v).trim();
+  const flat = raw.toLowerCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  try {
+    const el = document.createElement("span");
+    el.style.color = raw;
+    if (!el.style.color) return flat;      // UA rejected it — nothing to normalize
+    el.style.position = "absolute";
+    el.style.visibility = "hidden";
+    document.body.appendChild(el);
+    const out = getComputedStyle(el).color;
+    el.remove();
+    return out ? out.toLowerCase().replace(/\s+/g, "") : flat;
+  } catch { return flat; }
+};
 // Return the fx-wrapper to a static state (clear the flag, wait out any settle).
 const _settleFx = async () => {
-  if (typeof window.__velaTestSetAIWork === "function") window.__velaTestSetAIWork(null);
+  if (typeof _hooks().setAIWork === "function") _hooks().setAIWork(null);
   await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
 };
 // Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
@@ -11831,16 +11866,16 @@ const _allCssText = () => {
 };
 uiSuite("AI-working animation (CR5)", [
   { name: "test hooks + fx-wrapper present", fn: async () => {
-    if (typeof window.__velaTestSetAIWork !== "function") throw new Error("__velaTestSetAIWork not exposed");
-    if (typeof window.__velaTestGetSelection !== "function") throw new Error("__velaTestGetSelection not exposed");
+    if (typeof _hooks().setAIWork !== "function") throw new Error("setAIWork test hook not exposed");
+    if (typeof _hooks().getSelection !== "function") throw new Error("getSelection test hook not exposed");
     await _cr5Setup();
-    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: window.__velaTestGetSelection() }));
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: _hooks().getSelection() }));
   }},
   { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
     if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
     // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
@@ -11848,18 +11883,20 @@ uiSuite("AI-working animation (CR5)", [
     const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
     if (!acc) throw new Error("--vera-accent empty while working");
     if (sel.accent) {
-      const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
-      if (norm(acc) !== norm(sel.accent)) throw new Error(`--vera-accent=${acc} != slide accent ${sel.accent}`);
+      // Serialization-tolerant: --vera-accent may come back as rgb(...) once the
+      // custom property is registered, while the deck authors a hex.
+      const a = _normColor(acc), b = _normColor(sel.accent);
+      if (a !== b) throw new Error(`--vera-accent=${acc} (${a}) != slide accent ${sel.accent} (${b})`);
     }
     await _settleFx();
   }},
   { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
-    window.__velaTestSetAIWork(null);
+    _hooks().setAIWork(null);
     // The completion effect swaps the scan for the one-shot magic-reveal.
     await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
     // …and the reveal is one-shot — it settles back to static.
@@ -11867,10 +11904,10 @@ uiSuite("AI-working animation (CR5)", [
   }},
   { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
     // A target that is not the on-screen slide (bogus itemId) must leave it static.
-    window.__velaTestSetAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
     await _wait(250);
     const w = _fxWrap();
     if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
@@ -11878,10 +11915,10 @@ uiSuite("AI-working animation (CR5)", [
   }},
   { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
     // Mark THIS slide as the AI target and confirm the working scan is up.
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
     // Navigate to another slide mid-op (either direction is a slideIndex change).
     const p0 = _slidePos();
@@ -11902,7 +11939,7 @@ uiSuite("AI-working animation (CR5)", [
     const n = _tocRows().length;
     if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
     const meta = [];
-    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(window.__velaTestGetSelection()); }
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(_hooks().getSelection()); }
     // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
     let ai = -1, bi = -1;
     for (let i = 0; i < meta.length; i++) {
@@ -11914,13 +11951,13 @@ uiSuite("AI-working animation (CR5)", [
     if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
     // Select module A slide 0 and start its working scan.
     _click(_tocRows()[ai]); await _wait(160);
-    const sA = window.__velaTestGetSelection();
-    window.__velaTestSetAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    const sA = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
     // Single-step switch to module B slide 0 (same index, different module) while
     // aiWork is still set on A. The untouched destination must NOT settle.
     _click(_tocRows()[bi]); await _wait(180);
-    const sB = window.__velaTestGetSelection();
+    const sB = _hooks().getSelection();
     if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
     await _wait(420); // give the completion effect ample time to (wrongly) fire
     const wB = _fxWrap();
@@ -11928,10 +11965,10 @@ uiSuite("AI-working animation (CR5)", [
     await _settleFx();
     // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
     _click(_tocRows()[ai]); await _wait(160);
-    const sA2 = window.__velaTestGetSelection();
-    window.__velaTestSetAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    const sA2 = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
-    window.__velaTestSetAIWork(null);
+    _hooks().setAIWork(null);
     await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
     await _settleFx();
   }},
@@ -19366,40 +19403,49 @@ export default function App() {
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
 
-  // Test-only affordance: patch the current slide with a studyNotes object.
-  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
-  // offline student-mode renderer without depending on a live API. Always
-  // enabled — state.selectedId / slideIndex are readable in all modes.
+  // VELA:DEV-ONLY:BEGIN
+  // ━━━ Test-only affordances — DEV BUILDS ONLY ━━━━━━━━━━━━━━━━━━━━━
+  // The UI battery drives a handful of states that have no offline UI path
+  // (study notes, block injection, the unified AI-working flag). These are
+  // writable globals, so they are kept off the production surface by TWO
+  // independent layers (ASVS V14.1.3 / V14.2.2):
+  //   1. runtime gate — installed only in local/desktop mode, or when a test
+  //      harness explicitly opts in by setting window.__velaTestMode BEFORE
+  //      the app boots (vela-drive.js does this via addInitScript);
+  //   2. build-time strip — concat.py --release drops this whole fenced block,
+  //      so a release bundle carries no test-hook code at all.
+  // Keep every test affordance inside the fence, and keep the fenced code free
+  // of anything the app itself depends on.
   useEffect(() => {
-    window.__velaTestInjectStudyNotes = (studyNotes) => {
+    if (!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode))) return;
+    const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch, merge: true });
       return true;
     };
-    // Test-only: replace the current slide's blocks (used by the Editor UX
-    // alignment test — CR2 — to place a known centered heading and assert it
-    // renders centered in the editor path). No-op in production (unused).
-    window.__velaTestInjectBlocks = (blocks, extra) => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
-      return true;
+    window.__velaTestHooks = {
+      // Patch the current slide with a studyNotes object — lets the Study Notes
+      // suite exercise the offline student-mode renderer without a live API.
+      injectStudyNotes: (studyNotes) => _patchCurrent({ studyNotes }),
+      // Replace the current slide's blocks (Editor UX / alignment suites: place
+      // a known centered heading and assert the editor path renders it centered).
+      injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // On-screen slide identity {itemId, slideIdx, accent} for assertions.
+      getSelection: () => {
+        const s = _localSyncState.current;
+        if (!s || !s.selectedId) return null;
+        let accent = null;
+        for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+        return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+      },
+      // Drive the unified AI-working flag without a live AI backend, so the
+      // vera-thinking / magic-reveal contract is assertable offline.
+      setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
     };
-    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
-    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
-    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
-    // assert the vera-thinking / magic-reveal contract on the matching slide.
-    window.__velaTestGetSelection = () => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return null;
-      let accent = null;
-      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
-      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
-    };
-    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
+    return () => { window.__velaTestHooks = null; };
   }, [dispatch]);
+  // VELA:DEV-ONLY:END
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
@@ -19468,10 +19514,15 @@ export default function App() {
   }, []);
 
   // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
-  // Wired unconditionally so the desktop shell's emits land AND the UI battery
-  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  // Installed only where a shell actually feeds the channel — the desktop /
+  // local-preview build (VELA_LOCAL_MODE), or a host that already published a
+  // status before mount (nl-boot mirrors the latest into window.__velaSaveState,
+  // and the headless harness seeds a falsy-but-present value to opt the UI
+  // battery in). The hosted artifact matches none of these, so it never gains a
+  // writable global that can push arbitrary UI state.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!(VELA_LOCAL_MODE || window.__velaSaveState != null)) return;
     window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
     if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
     return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
