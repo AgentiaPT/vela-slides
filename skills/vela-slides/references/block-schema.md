@@ -31,6 +31,8 @@ Complete reference for all Vela v12 slide block types (27 total).
 
 **Numeric slide fields are type- and range-checked on load:** `imageCols` is coerced to an integer and clamped to 1–6; `gap` and `splitGap` to 0–200 px; `contentFlex`/`imageFlex` to 0.1–20. A non-numeric value is dropped, and the renderer default applies.
 
+**Reserved key namespace:** any slide or block key beginning with `_` is renderer-private (e.g. derived title-card state) and is never authored content — it is stripped on import and cannot be set from deck JSON.
+
 **Layout note:** Left-aligned slides (`align: "left"` or default) stretch blocks to full width. Center-aligned slides (`align: "center"`) shrink-wrap blocks. This means flow, grid, and progress blocks automatically fill the canvas on content slides.
 
 **Cols layout:** When `layout: "cols"`, the `blocks` array renders full-width above the two columns (optional header area — badge, heading, etc.). `L` and `R` arrays contain the left and right column blocks respectively. At least one of L/R must be present. `contentFlex`/`imageFlex` control column width ratio (default 1:1). `splitGap` controls the gap between columns (default 32px). All block types work inside L/R.
