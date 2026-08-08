@@ -1179,40 +1179,49 @@ export default function App() {
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
 
-  // Test-only affordance: patch the current slide with a studyNotes object.
-  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
-  // offline student-mode renderer without depending on a live API. Always
-  // enabled — state.selectedId / slideIndex are readable in all modes.
+  // VELA:DEV-ONLY:BEGIN
+  // ━━━ Test-only affordances — DEV BUILDS ONLY ━━━━━━━━━━━━━━━━━━━━━
+  // The UI battery drives a handful of states that have no offline UI path
+  // (study notes, block injection, the unified AI-working flag). These are
+  // writable globals, so they are kept off the production surface by TWO
+  // independent layers (ASVS V14.1.3 / V14.2.2):
+  //   1. runtime gate — installed only in local/desktop mode, or when a test
+  //      harness explicitly opts in by setting window.__velaTestMode BEFORE
+  //      the app boots (vela-drive.js does this via addInitScript);
+  //   2. build-time strip — concat.py --release drops this whole fenced block,
+  //      so a release bundle carries no test-hook code at all.
+  // Keep every test affordance inside the fence, and keep the fenced code free
+  // of anything the app itself depends on.
   useEffect(() => {
-    window.__velaTestInjectStudyNotes = (studyNotes) => {
+    if (!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode))) return;
+    const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch, merge: true });
       return true;
     };
-    // Test-only: replace the current slide's blocks (used by the Editor UX
-    // alignment test — CR2 — to place a known centered heading and assert it
-    // renders centered in the editor path). No-op in production (unused).
-    window.__velaTestInjectBlocks = (blocks, extra) => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
-      return true;
+    window.__velaTestHooks = {
+      // Patch the current slide with a studyNotes object — lets the Study Notes
+      // suite exercise the offline student-mode renderer without a live API.
+      injectStudyNotes: (studyNotes) => _patchCurrent({ studyNotes }),
+      // Replace the current slide's blocks (Editor UX / alignment suites: place
+      // a known centered heading and assert the editor path renders it centered).
+      injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // On-screen slide identity {itemId, slideIdx, accent} for assertions.
+      getSelection: () => {
+        const s = _localSyncState.current;
+        if (!s || !s.selectedId) return null;
+        let accent = null;
+        for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+        return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+      },
+      // Drive the unified AI-working flag without a live AI backend, so the
+      // vera-thinking / magic-reveal contract is assertable offline.
+      setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
     };
-    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
-    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
-    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
-    // assert the vera-thinking / magic-reveal contract on the matching slide.
-    window.__velaTestGetSelection = () => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return null;
-      let accent = null;
-      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
-      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
-    };
-    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
+    return () => { window.__velaTestHooks = null; };
   }, [dispatch]);
+  // VELA:DEV-ONLY:END
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
@@ -1281,10 +1290,15 @@ export default function App() {
   }, []);
 
   // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
-  // Wired unconditionally so the desktop shell's emits land AND the UI battery
-  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  // Installed only where a shell actually feeds the channel — the desktop /
+  // local-preview build (VELA_LOCAL_MODE), or a host that already published a
+  // status before mount (nl-boot mirrors the latest into window.__velaSaveState,
+  // and the headless harness seeds a falsy-but-present value to opt the UI
+  // battery in). The hosted artifact matches none of these, so it never gains a
+  // writable global that can push arbitrary UI state.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!(VELA_LOCAL_MODE || window.__velaSaveState != null)) return;
     window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
     if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
     return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
@@ -1724,7 +1738,8 @@ export default function App() {
           <div style={{ flex: 1 }} />
           <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
         </div>
-        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        {/* The desktop shell hands us {state, at, name} — a basename only, never an absolute path. */}
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to {saveStatus && saveStatus.name ? <span style={{ fontFamily: FONT.mono }}>{saveStatus.name}</span> : "your file"}. Your work is safe in the app.</div>
         <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
           <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
         </div>
@@ -1737,15 +1752,22 @@ export default function App() {
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
         {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
         {!isMobile && saveStatus && (() => {
+          // Payload from the desktop shell is {state, at, name}: a file BASENAME, no
+          // absolute path and no raw platform error (those stay shell-side).
           const st = saveStatus.state;
           const at = saveStatus.at;
+          const nm = saveStatus.name ? String(saveStatus.name) : "";
+          const forFile = nm ? ` ${nm}` : " your file";
           const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
           const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
-          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
-          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={`Saved${nm ? " to " + nm : ""}${timeStr ? " at " + timeStr : ""}`} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title={`Saving to${forFile}…`} style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          // Written, but the shell could not read the bytes back to confirm them.
+          // Shown distinctly rather than as a confident "Saved" the user can't rely on.
+          if (st === "unverified") return <span data-testid="save-status-pill" data-save-state="unverified" title={`Written to${forFile}, but Vela couldn't read it back to confirm. Keep a backup if this persists.`} style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"✓?"} Saved (unverified)</span>;
           if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
           // failed
-          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title={`Vela couldn't write to${forFile} — click to retry`} style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
         })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}

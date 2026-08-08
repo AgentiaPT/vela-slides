@@ -1684,7 +1684,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
   });
 
-  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]);
+  // Paste-detection heuristic: a DISTINCTIVE subset of SAFE_SLIDE_KEYS
+  // (part-imports.jsx) — not the whole allowlist, because keys shared with
+  // blocks (color, gap, padding, align…) would make a copied BLOCK look like a
+  // slide. Filtered through SAFE_SLIDE_KEYS so it can never name a key that deck
+  // ingress strips: the two lists cannot drift apart.
+  const SLIDE_KEYS = new Set(
+    ["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]
+      .filter((k) => SAFE_SLIDE_KEYS.has(k))
+  );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
@@ -2366,7 +2374,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 // toolbar); the local flags keep the scan up for toolbar ops even
                 // before their dispatch lands. --vera-accent tints the sweep to the
                 // slide's accent (see part-imports.jsx). data-testid drives verify.
-                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
+                // Routed through cssColor() (part-imports.jsx) — the same CSS-context
+                // output encoder used at every other color-scalar render sink — so this
+                // custom property can only ever carry a strict color token, never a
+                // deck-supplied string; see part-imports.jsx getCss() for the paired
+                // @property type registration (belt + suspenders on the same value).
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": cssColor(displaySlide?.accent) || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic

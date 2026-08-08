@@ -548,6 +548,7 @@ def test_security():
         ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+        ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
@@ -1771,6 +1772,34 @@ def test_server_hardening():
     serve_src = open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8").read()
     vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
     skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+
+    # ── Desktop <meta> CSP: img-src/font-src must not permit https: egress ──
+    # Regression guard for the desktop image/font beacon hardening: the Neutralino
+    # shell's meta CSP must match serve.py's tighter posture (no https: in img/font
+    # sinks) so a render-time image/font fetch is CSP-blocked on desktop too.
+    _nl_index = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "index.html")
+    nl_index_src = open(_nl_index, encoding="utf-8").read()
+    import re as _re
+    _csp_m = _re.search(r'Content-Security-Policy"\s+content="([^"]*)"', nl_index_src)
+    if _csp_m:
+        _csp = _csp_m.group(1)
+        _dirs = {}
+        for _seg in _csp.split(";"):
+            _seg = _seg.strip()
+            if not _seg:
+                continue
+            _name, _, _val = _seg.partition(" ")
+            _dirs[_name.strip()] = _val.strip()
+        if "https:" not in _dirs.get("img-src", ""):
+            ok("Desktop CSP img-src does not permit https: egress")
+        else:
+            fail("Desktop CSP img-src permits https:", _dirs.get("img-src", ""))
+        if "https:" not in _dirs.get("font-src", ""):
+            ok("Desktop CSP font-src does not permit https: egress")
+        else:
+            fail("Desktop CSP font-src permits https:", _dirs.get("font-src", ""))
+    else:
+        fail("Desktop CSP meta tag not found in vela-neutralino/resources/index.html")
 
     # ── Arrow keys: Up/Down same as Left/Right ──
     if '"ArrowRight" || e.key === "ArrowDown"' in tpl:
@@ -3305,6 +3334,231 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
+# ━━━ Slide Numeric Layout Fields (imageCols & friends) ━━━━━━━━━━━━
+# The app clamps these at deck ingress (SLIDE_NUMERIC_BOUNDS in
+# part-imports.jsx). validate.py must flag the same bad values at author time so
+# a deck never silently renders with a number the author did not write, and the
+# turbo format must carry imageCols instead of dropping it on round-trip.
+def test_slide_numeric_fields():
+    print("\n── Slide Numeric Layout Fields ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    def deck_with(slide_extra):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Numeric Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "n.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                                  capture_output=True, text=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 1. Valid values are accepted
+    for extra, label in [
+        ({"imageCols": 3}, "imageCols: 3"),
+        ({"imageCols": 1}, "imageCols: 1 (lower bound)"),
+        ({"imageCols": 6}, "imageCols: 6 (upper bound)"),
+        ({"gap": 16, "splitGap": 32, "contentFlex": 3, "imageFlex": 2}, "gap/splitGap/flex ratios"),
+        ({}, "fields absent entirely"),
+    ]:
+        r = run_validate(deck_with(extra))
+        if r.returncode == 0:
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", r.stdout + r.stderr)
+
+    # 2. Invalid values are rejected with a specific message
+    for extra, needle, label in [
+        ({"imageCols": 0}, "out of range", "imageCols: 0 (below range)"),
+        ({"imageCols": 7}, "out of range", "imageCols: 7 (above range)"),
+        ({"imageCols": 2147483647}, "out of range", "imageCols: 2147483647"),
+        ({"imageCols": -1}, "out of range", "imageCols: -1"),
+        ({"imageCols": "3"}, "must be a number", "imageCols: \"3\" (string)"),
+        ({"imageCols": "3; x"}, "must be a number", "imageCols: \"3; x\" (injection-shaped)"),
+        ({"imageCols": True}, "must be a number", "imageCols: true (bool)"),
+        ({"imageCols": None}, "must be a number", "imageCols: null"),
+        ({"imageCols": [3]}, "must be a number", "imageCols: [3]"),
+        ({"imageCols": 2.5}, "whole number", "imageCols: 2.5 (fractional)"),
+        ({"gap": 5000}, "out of range", "gap: 5000"),
+        ({"gap": "16px"}, "must be a number", "gap: \"16px\""),
+        ({"splitGap": -5}, "out of range", "splitGap: -5"),
+        ({"contentFlex": 1e6}, "out of range", "contentFlex: 1e6"),
+        ({"imageFlex": "wide"}, "must be a number", "imageFlex: \"wide\""),
+    ]:
+        r = run_validate(deck_with(extra))
+        out = r.stdout + r.stderr
+        if r.returncode != 0 and needle in out:
+            ok(f"validate.py rejects {label}")
+        else:
+            fail(f"validate.py rejects {label}", f"rc={r.returncode} out={out[:300]}")
+
+    # 3. imageCols survives the compact round-trip (unknown slide keys pass through)
+    deck = deck_with({"imageCols": 4})
+    rt = expand_deck(compact_deck(copy.deepcopy(deck)))
+    if rt["lanes"][0]["items"][0]["slides"][0].get("imageCols") == 4:
+        ok("compact → expand round-trip preserves imageCols")
+    else:
+        fail("compact → expand round-trip imageCols",
+             f"got {rt['lanes'][0]['items'][0]['slides'][0].get('imageCols')!r}")
+
+    # 4. imageCols survives the turbo round-trip (positional — needs registration)
+    turbo = turbo_deck(copy.deepcopy(deck))
+    back = unturbo_deck(copy.deepcopy(turbo))
+    if back["lanes"][0]["items"][0]["slides"][0].get("imageCols") == 4:
+        ok("turbo → unturbo round-trip preserves imageCols")
+    else:
+        fail("turbo → unturbo round-trip imageCols",
+             f"got {back['lanes'][0]['items'][0]['slides'][0].get('imageCols')!r}")
+
+    # A slide with neither studyNotes nor imageCols keeps the length-10 shape
+    plain = turbo_deck(deck_with({}))
+    if len(plain[1][0][1][0][3][0]) == 10:
+        ok("turbo keeps length 10 for slides without studyNotes/imageCols")
+    else:
+        fail("turbo backward-compat length", f"len={len(plain[1][0][1][0][3][0])}")
+
+    # imageCols without studyNotes still decodes (null placeholder at position 10)
+    arr = turbo[1][0][1][0][3][0]
+    if len(arr) == 12 and arr[10] is None and arr[11] == 4:
+        ok("turbo emits a null studyNotes placeholder before imageCols")
+    else:
+        fail("turbo imageCols positional encoding", f"arr tail={arr[10:]!r}")
+
+    # 5. Source-of-truth parity: the JS and Python bound tables must agree
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    m = re.search(r'const SLIDE_NUMERIC_BOUNDS = \{(.*?)\n\};', imports_src, re.S)
+    if not m:
+        fail("SLIDE_NUMERIC_BOUNDS present in part-imports.jsx")
+    else:
+        js_bounds = {k: (lo, hi, flag) for k, lo, hi, flag in
+                     re.findall(r'(\w+):\s*\[([-\d.]+),\s*([-\d.]+),\s*(true|false)\]', m.group(1))}
+        sys.path.insert(0, SCRIPTS)
+        import importlib
+        vmod = importlib.import_module("validate")
+        importlib.reload(vmod)
+        py_bounds = vmod.SLIDE_NUMERIC_BOUNDS
+        mismatches = []
+        if set(js_bounds) != set(py_bounds):
+            mismatches.append(f"key sets differ: js={sorted(js_bounds)} py={sorted(py_bounds)}")
+        for k in set(js_bounds) & set(py_bounds):
+            lo, hi, is_int = py_bounds[k]
+            if (float(js_bounds[k][0]) != float(lo) or float(js_bounds[k][1]) != float(hi)
+                    or (js_bounds[k][2] == "true") != bool(is_int)):
+                mismatches.append(f"{k}: js={js_bounds[k]} py={py_bounds[k]}")
+        if not mismatches:
+            ok("validate.py SLIDE_NUMERIC_BOUNDS matches part-imports.jsx")
+        else:
+            fail("SLIDE_NUMERIC_BOUNDS drift", "; ".join(mismatches))
+
+    # 6. imageCols is documented where slide keys are registered
+    schema = open(os.path.join(SKILL_DIR, "references", "block-schema.md"), encoding="utf-8").read()
+    if "imageCols" in schema:
+        ok("imageCols documented in block-schema.md")
+    else:
+        fail("imageCols missing from block-schema.md")
+    if "imageCols" in imports_src.split("const BLOCK_REFERENCE")[1][:2000]:
+        ok("imageCols listed in the in-app BLOCK_REFERENCE slide schema")
+    else:
+        fail("imageCols missing from BLOCK_REFERENCE")
+
+    # 7. The sink re-clamps too (belt-and-braces at the consumption site)
+    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in blocks_src:
+        ok("imageCols re-clamped at the render sink")
+    else:
+        fail("imageCols sink clamp missing in part-blocks.jsx")
+
+
+# ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
+def test_deck_key_allowlist_structure():
+    print("\n── Deck-Ingress Key Allowlist ──")
+
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+
+    for name in ("SAFE_SLIDE_KEYS", "SAFE_BLOCK_KEYS"):
+        if f"const {name} = new Set([" in imports_src:
+            ok(f"{name} allowlist defined")
+        else:
+            fail(f"{name} allowlist missing")
+
+    # The sanitizers must BUILD from the allowlist, not copy the caller's object.
+    if "const clean = { ...block };" not in imports_src and "for (const k of SAFE_BLOCK_KEYS)" in imports_src:
+        ok("sanitizeBlock builds from SAFE_BLOCK_KEYS (no wholesale spread)")
+    else:
+        fail("sanitizeBlock still spreads the caller's block object")
+    if "const clean = { ...slide };" not in imports_src and "for (const k of SAFE_SLIDE_KEYS)" in imports_src:
+        ok("sanitizeSlide builds from SAFE_SLIDE_KEYS (no wholesale spread)")
+    else:
+        fail("sanitizeSlide still spreads the caller's slide object")
+
+    # `_` is a reserved renderer-private namespace — nothing may allowlist one.
+    for name in ("SAFE_SLIDE_KEYS", "SAFE_BLOCK_KEYS"):
+        m = re.search(r'const ' + name + r' = new Set\(\[(.*?)\]\);', imports_src, re.S)
+        body = re.sub(r'//[^\n]*', '', m.group(1)) if m else ""
+        keys = re.findall(r'"([^"]+)"', body)
+        if keys and not any(k.startswith("_") for k in keys):
+            ok(f"{name} reserves the '_' namespace (no underscore keys, {len(keys)} keys)")
+        else:
+            fail(f"{name} underscore reservation", f"keys={[k for k in keys if k.startswith('_')]}")
+
+    # Recursion cap present and wired with an explicit depth argument (a bare
+    # .map(sanitizeBlock) would pass the array INDEX as the depth).
+    if "const MAX_BLOCK_DEPTH" in imports_src and "if (depth > MAX_BLOCK_DEPTH) return null;" in imports_src:
+        ok("sanitizeBlock enforces MAX_BLOCK_DEPTH")
+    else:
+        fail("sanitizeBlock recursion cap missing")
+    code_only = re.sub(r'//[^\n]*', '', imports_src)  # the pattern is named in comments too
+    if ".map(sanitizeBlock)" not in code_only:
+        ok("no bare .map(sanitizeBlock) (array index cannot leak into depth)")
+    else:
+        fail("bare .map(sanitizeBlock) leaks the array index into the depth param")
+
+    # Reconciliation: the two other slide-key lists derive from the allowlists.
+    engine_src = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
+        ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")
+    else:
+        fail("part-engine SLIDE_ONLY_KEYS still hand-maintained")
+    if re.search(r'SLIDE_KEYS\s*=\s*new Set\([\s\S]{0,400}SAFE_SLIDE_KEYS\.has', slides_src):
+        ok("part-slides SLIDE_KEYS filtered through SAFE_SLIDE_KEYS")
+    else:
+        fail("part-slides SLIDE_KEYS not reconciled with the allowlist")
+
+    # The key-drift lint must run as part of the parts lint.
+    lint_src = open(os.path.join(DEV_SCRIPTS, "lint.py"), encoding="utf-8").read()
+    if "def check_deck_key_drift" in lint_src and "errors += check_deck_key_drift(parts_dir)" in lint_src:
+        ok("lint.py key-drift check defined and wired into lint_parts")
+    else:
+        fail("lint.py key-drift check not wired in")
+    if "SAFE_SLIDE_KEYS" in lint_src and "_parse_set_literal" in lint_src:
+        ok("lint.py parses the allowlists from part-imports.jsx (single source of truth)")
+    else:
+        fail("lint.py does not parse the allowlists from source")
+
+    # And it must actually pass on the current tree.
+    r = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", PARTS_DIR],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        ok("lint.py --parts passes (no deck key drift)")
+    else:
+        fail("lint.py --parts reports drift", r.stdout + r.stderr)
+
+
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
@@ -3618,6 +3872,139 @@ def test_block_primitives():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ━━━ Script-Context Injection Parity (Phase 5) ━━━━━━━━━━━━━━━━━━━
+
+def test_script_context_escape_parity():
+    """Phase 5 (script-context injection parity):
+
+    1. The Python helper (assemble.py:escape_for_script_context) and the ONE
+       canonical JS implementation (vela-neutralino/resources/js/script-escape.js)
+       must escape a hostile payload — <, >, &, $', $`, $&, U+2028, U+2029,
+       </script> — identically. The JS file is exercised through BOTH loader
+       shapes it supports: Node `require()` (render-offline.js call sites) and
+       classic-<script> global attachment with no `module`/`require` in scope
+       (the nl-boot.js webview call site).
+    2. Every JS call site that splices STARTUP_PATCH into source text
+       (nl-boot.js, tools/vela-dev/scripts/render-offline.js, and the sibling
+       .hyper-sprint/render-offline.js if present) must use the replacer-
+       FUNCTION form of `.replace()` — a plain-string replacement lets deck
+       content contain $&/$`/$'-style backreferences that splice adjacent
+       template bytes into the injected value.
+    """
+    print("\n── Script-Context Escape Parity (Phase 5) ──")
+
+    script_escape_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "script-escape.js")
+    nl_boot_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "nl-boot.js")
+    render_offline_js = os.path.join(DEV_SCRIPTS, "render-offline.js")
+    hyper_sprint_render_offline_js = os.path.join(REPO_ROOT, ".hyper-sprint", "render-offline.js")
+
+    if not os.path.exists(script_escape_js):
+        fail("script-escape.js exists", f"missing: {script_escape_js}")
+        return
+
+    # Payload deliberately includes every char class the escaper must handle,
+    # plus the $-pattern tokens that only the replacer-function form (not the
+    # escaper) neutralizes.
+    payload = "<>&$'$`$&  </script>"
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from assemble import escape_for_script_context
+    except Exception as e:
+        fail("Import assemble.escape_for_script_context", str(e))
+        return
+
+    py_json = json.dumps(payload, ensure_ascii=False)
+    py_escaped = escape_for_script_context(py_json)
+
+    node_probe = r'''
+const fs = require("fs");
+const vm = require("vm");
+const filePath = process.argv[1];
+const jsonStr = process.argv[2];
+
+// (a) Node CommonJS require() path — used by render-offline.js.
+const { escapeForScriptContext: viaRequire } = require(filePath);
+
+// (b) classic-<script> global-attachment path — used by nl-boot.js. Runs the
+// SAME source with no `module`/`require`/`exports` in scope, exactly like a
+// plain non-module <script src> tag in index.html.
+const src = fs.readFileSync(filePath, "utf8");
+const sandbox = {};
+vm.createContext(sandbox);
+vm.runInContext(src, sandbox);
+const viaGlobal = sandbox.escapeForScriptContext;
+
+process.stdout.write(JSON.stringify({
+  viaRequire: viaRequire(jsonStr),
+  viaGlobal: typeof viaGlobal === "function" ? viaGlobal(jsonStr) : null,
+}));
+'''
+    try:
+        r = subprocess.run(
+            ["node", "-e", node_probe, "--", script_escape_js, py_json],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        skip("Script-context escape parity", "node not on PATH")
+        return
+    except subprocess.TimeoutExpired:
+        fail("Script-context escape parity", "node probe timeout after 30s")
+        return
+
+    if r.returncode != 0:
+        fail("script-escape.js loads under Node (both loader shapes)", r.stdout + r.stderr)
+        return
+
+    try:
+        js_out = json.loads(r.stdout)
+    except Exception as e:
+        fail("Parse script-escape.js probe output", f"{e}: {r.stdout!r}")
+        return
+
+    if js_out.get("viaRequire") == py_escaped:
+        ok("JS require() path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS require() path parity", f"py={py_escaped!r} js={js_out.get('viaRequire')!r}")
+
+    if js_out.get("viaGlobal") == py_escaped:
+        ok("JS classic-<script> global path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS classic-<script> global path parity", f"py={py_escaped!r} js={js_out.get('viaGlobal')!r}")
+
+    # Source-level: every call site must use the replacer-FUNCTION form —
+    # `.replace(marker, () => ...)` — not a plain-string replacement.
+    replacer_fn_re = re.compile(r"\.replace\(\s*marker\s*,\s*\(\s*\)\s*=>")
+
+    sites = [
+        ("nl-boot.js", nl_boot_js),
+        ("tools/vela-dev/scripts/render-offline.js", render_offline_js),
+    ]
+    if os.path.exists(hyper_sprint_render_offline_js):
+        sites.append((".hyper-sprint/render-offline.js", hyper_sprint_render_offline_js))
+    else:
+        skip(".hyper-sprint/render-offline.js replacer-function form", "file not present in this tree")
+
+    for label, filepath in sites:
+        if not os.path.exists(filepath):
+            fail(f"{label} exists", f"missing: {filepath}")
+            continue
+        with open(filepath, "r", encoding="utf-8") as f:
+            src = f.read()
+        if replacer_fn_re.search(src):
+            ok(f"{label} uses replacer-function form for STARTUP_PATCH injection")
+        else:
+            fail(f"{label} replacer-function form",
+                 "expected `.replace(marker, () => ...)` — plain-string replacement "
+                 "lets deck content splice via $&/$`/$' backreferences")
+        # Every call site must delegate to the shared escaper, not a private copy.
+        if "escapeForScriptContext(" in src:
+            ok(f"{label} calls the shared escapeForScriptContext()")
+        else:
+            fail(f"{label} shared escaper usage",
+                 "expected a call to escapeForScriptContext() instead of an inline escape chain")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -3641,7 +4028,10 @@ if __name__ == "__main__":
         test_server_hardening()
         test_block_primitives()
         test_study_notes()
+        test_slide_numeric_fields()
+        test_deck_key_allowlist_structure()
         test_pdf_title_cards()
+        test_script_context_escape_parity()
     if run_integration:
         test_integration()
         test_cli_commands()

@@ -44,7 +44,9 @@
         // localStorage already captured it, so this is non-fatal — but do not
         // stay fully silent: surface it so a persistent Neutralino.storage
         // outage is observable rather than an invisible divergence.
-        try { console.warn("[storage-shim] Neutralino.storage.setData failed:", key, e); } catch {}
+        // Log the message only — an error object can drag along the failed call's
+        // arguments (i.e. the value we just tried to persist) into the console.
+        try { console.warn("[storage-shim] Neutralino.storage.setData failed:", key, e && e.message); } catch {}
         try { if (typeof window.__velaOnStorageError === "function") window.__velaOnStorageError(key, e); } catch {}
       }
     },

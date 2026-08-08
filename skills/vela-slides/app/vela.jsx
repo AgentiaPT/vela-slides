@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.21";
+const VELA_VERSION = "13.22";
 const VELA_CHANGELOG = [
+  { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
   { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
   { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
   { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
@@ -880,10 +881,118 @@ function cssColor(c) {
   return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
 
-function sanitizeBlock(block) {
+// ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SECURITY (deck ingress): sanitizeSlide/sanitizeBlock used to start from a
+// wholesale copy of the caller's object, so ANY key an untrusted deck (file,
+// clipboard, startup patch, Vera tool result) chose rode into app state, was
+// persisted, and was handed to every renderer/exporter downstream. Ingress is
+// now an ALLOWLIST — same shape as SAFE_STYLE_KEYS for style objects: only the
+// keys below are copied, everything else is dropped. This keeps the attack
+// surface equal to the set of fields the app actually reads.
+//
+// The `_` prefix is a RESERVED renderer-private namespace. Internal flags
+// (_gridCell, _solo, _virtual, and any future one) are set by our own code
+// AFTER sanitization; a deck must never be able to forge one and pin itself
+// into a layout branch the author never selected. Neither set therefore holds
+// a `_` key, and building from the allowlist drops them by construction.
+//
+// MAINTENANCE: these two sets are the single source of truth for the key-drift
+// check in tools/vela-dev/scripts/lint.py, which fails the build when
+// part-blocks.jsx / part-slides.jsx read a slide.<key> or block.<key> that is
+// not listed (or `_`-prefixed). Adding a renderer feature means adding its key
+// here in the same change.
+const SAFE_SLIDE_KEYS = new Set([
+  // content
+  "blocks", "L", "R", "layout",
+  // legacy top-level content fields (pre-block decks; still sanitized above)
+  "title", "subtitle", "quote", "author", "bullets",
+  // theme / background
+  "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+  // layout & spacing
+  "align", "verticalAlign", "padding", "gap",
+  "splitGap", "contentFlex", "imageFlex", "imageCols",
+  // presentation metadata
+  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "comments", "image",
+]);
+const SAFE_BLOCK_KEYS = new Set([
+  // identity / shared. NOTE: `blocks` is deliberately absent — only a GRID CELL
+  // carries a blocks array (handled by the grid branch below), never a block
+  // itself, so `blocks` is a slide-only key (see SLIDE_ONLY_KEYS in part-engine).
+  "type", "hidden", "style", "link", "items", "quadrants",
+  "text", "content", "title", "label", "value", "name", "caption", "author",
+  // typography
+  "size", "align", "weight", "bold", "italic",
+  "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  // color
+  "color", "bg", "border", "borderColor", "titleColor", "textColor",
+  "labelColor", "sublabelColor", "captionColor", "dateColor", "dotColor",
+  "lineColor", "numberColor", "trackColor", "cellColor", "headerBg",
+  "headerColor", "arrowColor", "gateColor", "loopColor", "annotationColor",
+  "iconColor", "iconBg",
+  // box / spacing
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h",
+  "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  // media
+  "src", "alt", "fit", "markup",
+  // code
+  "lang", "copy",
+  // icon
+  "icon", "iconShape", "circle", "strokeWidth",
+  // table
+  "headers", "rows", "cols",
+  // flow / steps / timeline / cycle
+  "direction", "connectorStyle", "activeStep",
+  "gateIcon", "gateLabel", "loop", "loopLabel", "loopStyle",
+  "centerLabel", "centerSub",
+  // progress
+  "showValue", "showIcons", "showLabels", "annotation",
+  "leftLabel", "rightLabel", "leftIcon", "rightIcon",
+  // comparison / matrix
+  "dividerLabel", "variant", "xLeft", "xRight", "yTop", "yBottom",
+  // callout
+  "reveal",
+]);
+
+// Numeric slide fields: key → [min, max, integer?]. Deck input is coerced to a
+// finite number and clamped; anything else (NaN, Infinity, "3; x", objects) is
+// dropped so it can never reach a layout/CSS sink as an arbitrary token. The
+// bounds are layout-sanity limits taken from how the renderer consumes each on
+// the 960×540 canvas:
+//   imageCols             — CSS grid track count for a run of adjacent images
+//                           (1..6 cells across; beyond that a cell is unreadable)
+//   gap / splitGap        — px gap between blocks / between columns (0..200 of 540)
+//   contentFlex/imageFlex — flex-grow ratio of the two columns (0.1..20)
+const SLIDE_NUMERIC_BOUNDS = {
+  imageCols: [1, 6, true],
+  gap: [0, 200, false],
+  splitGap: [0, 200, false],
+  contentFlex: [0.1, 20, false],
+  imageFlex: [0.1, 20, false],
+};
+function clampDeckNumber(v, min, max, isInt) {
+  const n = typeof v === "number" ? v
+    : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const c = Math.min(max, Math.max(min, n));
+  return isInt ? Math.round(c) : c;
+}
+
+// Nesting cap for grid → items[].blocks[] recursion. A deck is a data file, so a
+// deeply self-nested structure is never authored content — it is a cheap way to
+// blow the stack (or the render tree) at load. Blocks deeper than this are dropped.
+const MAX_BLOCK_DEPTH = 4;
+
+function sanitizeBlock(block, depth = 0) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
-  const clean = { ...block };
+  if (depth > MAX_BLOCK_DEPTH) return null;
+  // Allowlist copy (see SAFE_BLOCK_KEYS): unknown and `_`-prefixed keys never
+  // enter `clean`, so the rest of this function only ever sees known fields.
+  const clean = {};
+  for (const k of SAFE_BLOCK_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(block, k)) clean[k] = block[k];
+  }
   // `hidden` (element visibility toggle) — coerce to a strict boolean so a
   // non-boolean value can never reach layout/render logic.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
@@ -908,9 +1017,11 @@ function sanitizeBlock(block) {
       );
     }
     if (clean.type === "grid") {
+      // NOTE: pass the recursion depth explicitly — a bare `.map(sanitizeBlock)`
+      // would hand the array INDEX to the depth parameter.
       clean.items = clean.items.slice(0, 6).map((cell) => ({
         ...cell,
-        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
+        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
       }));
     }
     if (clean.type === "icon-row") {
@@ -1080,12 +1191,27 @@ function sanitizeStudyNotes(raw) {
 
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
-  const clean = { ...slide };
+  // Allowlist copy (see SAFE_SLIDE_KEYS): unknown and `_`-prefixed keys are
+  // dropped here, so no deck-supplied field can impersonate a renderer-private
+  // flag or ride along into storage/export.
+  const clean = {};
+  for (const k of SAFE_SLIDE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(slide, k)) clean[k] = slide[k];
+  }
+  // Type + range at ingress for the numeric layout fields (see SLIDE_NUMERIC_BOUNDS).
+  for (const k in SLIDE_NUMERIC_BOUNDS) {
+    if (!(k in clean)) continue;
+    const [min, max, isInt] = SLIDE_NUMERIC_BOUNDS[k];
+    const n = clampDeckNumber(clean[k], min, max, isInt);
+    if (n === undefined) delete clean[k]; else clean[k] = n;
+  }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
-  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
+  // the array INDEX into the recursion-depth parameter.
+  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
@@ -1427,6 +1553,14 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* Type-register --vera-accent as a real <color>: an @property-registered custom
+   property is subject to CSS's own syntax check at the CSS layer, so even a value
+   that reached this point outside the normal cssColor()-encoded render path (the
+   set-property call itself, part-slides.jsx) falls back to initial-value instead
+   of being usable in var()/color-mix() below — a CSS-native backstop alongside the
+   JS-side encoder. inherits:true is required: the ::before/::after sweeps below
+   consume the value on descendant pseudo-elements, not the declaring node itself. */
+@property --vera-accent{syntax:"<color>";inherits:true;initial-value:#3b82f6}
 /* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
    slide accent via --vera-accent (set on the wrapper), falling back to the
    original Vera blue/violet when unset or where color-mix is unsupported. */
@@ -1490,7 +1624,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
@@ -3598,7 +3733,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
   const renderImageGrid = (idxs, region) => {
     const runLen = idxs.length;
-    const cols = slide.imageCols ? Math.max(1, slide.imageCols | 0) : gridColsFor(runLen, region);
+    // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
+    // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
+    // re-clamp at the sink for any slide object that reached here unsanitized.
+    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
     const rows = Math.ceil(runLen / cols);
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;
@@ -4962,9 +5100,16 @@ ${ICON_LIST}`;
   // Handle single block or array of blocks (for split operations)
   const newBlocks = Array.isArray(result) ? result : [result];
 
-  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
-  // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
+  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks.
+  // DERIVED, not hand-maintained: "slide-only" is exactly the set difference
+  // SAFE_SLIDE_KEYS − SAFE_BLOCK_KEYS (part-imports.jsx), so this list can never
+  // drift from the ingress allowlists. Keys valid on BOTH (bg, color, padding,
+  // gap, align, title, author, hidden…) are in both sets and so are not stripped.
+  // `presentCard` is added explicitly: it is a module/item-level key the model
+  // sometimes emits onto a slide, and it is not in either allowlist.
+  const SLIDE_ONLY_KEYS = new Set(
+    [...SAFE_SLIDE_KEYS].filter((k) => !SAFE_BLOCK_KEYS.has(k)).concat(["presentCard"])
+  );
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }
@@ -7041,7 +7186,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
   });
 
-  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]);
+  // Paste-detection heuristic: a DISTINCTIVE subset of SAFE_SLIDE_KEYS
+  // (part-imports.jsx) — not the whole allowlist, because keys shared with
+  // blocks (color, gap, padding, align…) would make a copied BLOCK look like a
+  // slide. Filtered through SAFE_SLIDE_KEYS so it can never name a key that deck
+  // ingress strips: the two lists cannot drift apart.
+  const SLIDE_KEYS = new Set(
+    ["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]
+      .filter((k) => SAFE_SLIDE_KEYS.has(k))
+  );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
@@ -7723,7 +7876,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 // toolbar); the local flags keep the scan up for toolbar ops even
                 // before their dispatch lands. --vera-accent tints the sweep to the
                 // slide's accent (see part-imports.jsx). data-testid drives verify.
-                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": displaySlide?.accent || T.accent }}>
+                // Routed through cssColor() (part-imports.jsx) — the same CSS-context
+                // output encoder used at every other color-scalar render sink — so this
+                // custom property can only ever carry a strict color token, never a
+                // deck-supplied string; see part-imports.jsx getCss() for the paired
+                // @property type registration (belt + suspenders on the same value).
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": cssColor(displaySlide?.accent) || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
@@ -9276,6 +9434,55 @@ const VELA_TESTS = [
     return patch.items[0].icon === "New" && patch.items[0].text === "Keep";
   }},
 
+  // ── Deck-ingress key allowlist ──
+  // sanitizeSlide/sanitizeBlock build from SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS
+  // instead of copying the caller's object. Two properties with opposite failure
+  // modes: unknown/`_` keys must be DROPPED, and every live renderer key must
+  // SURVIVE — sanitizeSlide re-runs on every edit, so a lost key never returns.
+  { name: "SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS defined", fn: () => SAFE_SLIDE_KEYS instanceof Set && SAFE_BLOCK_KEYS instanceof Set && SAFE_SLIDE_KEYS.size > 20 && SAFE_BLOCK_KEYS.size > 50 },
+  { name: "allowlists reserve the '_' namespace", fn: () => ![...SAFE_SLIDE_KEYS, ...SAFE_BLOCK_KEYS].some((k) => k.startsWith("_")) },
+  { name: "sanitizeSlide drops an unknown key", fn: () => sanitizeSlide({ duration: 10, blocks: [], nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops an unknown key", fn: () => sanitizeBlock({ type: "text", text: "t", nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops _gridCell from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _gridCell: true })._gridCell === undefined },
+  { name: "sanitizeBlock drops _solo from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _solo: true })._solo === undefined },
+  { name: "sanitizeSlide drops _virtual from deck JSON", fn: () => sanitizeSlide({ duration: 10, blocks: [], _virtual: true })._virtual === undefined },
+  { name: "renderer may still set _gridCell after sanitize", fn: () => ({ ...sanitizeBlock({ type: "image", src: "" }), _gridCell: true })._gridCell === true },
+  { name: "title cards survive save→load (derived from item.presentCard)", fn: () => {
+    const it = sanitizeItem({ title: "Mod", presentCard: true, slides: [{ duration: 20, blocks: [] }] });
+    if (it.presentCard !== true) return false;
+    const card = buildTitleCardSlide(it, { title: "Lane" }, null);
+    return !!card && card._virtual === true && JSON.stringify(card.blocks).includes("Mod");
+  } },
+  { name: "live slide keys survive sanitizeSlide", fn: () => {
+    const s = sanitizeSlide({ duration: 30, blocks: [], layout: "cols", L: [], R: [], mutedColor: "#aaa",
+      notes: "n", speakerNotes: "sn", timeLock: true, imageCols: 3, contentFlex: 2, splitGap: 20, gap: 14 });
+    return s.layout === "cols" && Array.isArray(s.L) && Array.isArray(s.R) && s.mutedColor === "#aaa"
+      && s.notes === "n" && s.speakerNotes === "sn" && s.timeLock === true
+      && s.imageCols === 3 && s.contentFlex === 2 && s.splitGap === 20 && s.gap === 14;
+  } },
+  { name: "live block keys survive sanitizeBlock", fn: () => {
+    const b = sanitizeBlock({ type: "flow", items: [{ label: "a" }], direction: "vertical", loop: true,
+      loopLabel: "again", gateLabel: "G", arrowColor: "#f00", sublabelColor: "#aaa" });
+    return b.direction === "vertical" && b.loop === true && b.loopLabel === "again"
+      && b.gateLabel === "G" && b.arrowColor === "#f00" && b.sublabelColor === "#aaa";
+  } },
+  { name: "imageCols: huge value clamps to 6", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 2147483647 }).imageCols === 6 },
+  { name: "imageCols: '3; x' dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: "3; x" }).imageCols === undefined },
+  { name: "imageCols: 0 clamps to 1", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 0 }).imageCols === 1 },
+  { name: "gap clamps to the 0..200 range", fn: () => sanitizeSlide({ duration: 10, blocks: [], gap: 1e9 }).gap === 200 },
+  { name: "contentFlex garbage dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], contentFlex: "wide" }).contentFlex === undefined },
+  { name: "grid nesting is depth-capped", fn: () => {
+    let node = { type: "heading", text: "BOTTOM" };
+    for (let i = 0; i < 6; i++) node = { type: "grid", cols: 1, items: [{ blocks: [node] }] };
+    let cur = sanitizeBlock(node), n = 0;
+    while (cur && cur.type === "grid") { n++; cur = cur.items?.[0]?.blocks?.[0]; }
+    return n <= MAX_BLOCK_DEPTH + 1 && (!cur || cur.text !== "BOTTOM");
+  } },
+  { name: "slide.blocks index never leaks into recursion depth", fn: () => {
+    const s = sanitizeSlide({ duration: 10, blocks: Array.from({ length: 12 }, (_, i) => ({ type: "heading", text: "B" + i })) });
+    return s.blocks.length === 12;
+  } },
+
   // ── Block Reference & Design Rules ──
   { name: "BLOCK_REFERENCE defined", fn: () => typeof BLOCK_REFERENCE === "string" && BLOCK_REFERENCE.length > 100 },
   { name: "DESIGN_RULES defined", fn: () => typeof DESIGN_RULES === "string" && DESIGN_RULES.length > 50 },
@@ -9506,6 +9713,18 @@ function VelaBatteryTest() {
 // Zero-dependency UI test runner that operates on the live DOM.
 // Triggered via Ctrl+Alt+T or the "🧪 UI" button in the battery toast.
 // Tests run against whatever deck is loaded — demo deck recommended.
+
+// ── Test-hook bridge ─────────────────────────────────────────────────
+// A few suites need states with no offline UI path (study notes, block
+// injection, the AI-working flag). The app installs its test-hook object only
+// in dev/local builds that opt in (see part-app.jsx), and concat.py --release
+// strips BOTH that block and the binding below — so a release bundle carries no
+// test-hook reference at all. In a stripped build _hooks() stays the empty stub
+// and the hook-dependent tests fail loudly rather than silently passing.
+let _hooks = () => ({});
+// VELA:DEV-ONLY:BEGIN
+_hooks = () => (typeof window !== "undefined" && window.__velaTestHooks) || {};
+// VELA:DEV-ONLY:END
 
 // ── Test Primitives ──────────────────────────────────────────────────
 const _$ = (sel, root = document) => root.querySelector(sel);
@@ -10269,11 +10488,11 @@ uiSuite("TOC Collapse Nav", [
     _click(rows[0]); // select + focus the first slide row
     await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
     await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
-    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
-    if (!before) throw new Error("no __velaTestGetSelection hook");
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
     _key("ArrowDown");
     // The REAL selection must advance (this is exactly what the bug broke).
-    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
     // Exactly one row is active AND it holds focus → a single, unified cursor.
     await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
   }},
@@ -10284,12 +10503,12 @@ uiSuite("TOC Collapse Nav", [
     await _tocEnsureCollapsed(headers[0]);
     await _tocEnsureCollapsed(headers[1]);
     await _focusTocHeader(headers[0]);
-    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
-    if (!before) throw new Error("no __velaTestGetSelection hook");
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
     _key("ArrowDown");
     // Down over a folded section jumps to the NEXT section and shows its first slide,
     // instead of stepping through the current section's hidden slides.
-    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
     // Neither section auto-expands during section-level nav.
     if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
     await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
@@ -10576,13 +10795,13 @@ uiSuite("Student Mode", [
 ]);
 
 // ── v12.32: Offline Study Notes Suite ───────────────────────────────
-// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// Uses the test-only affordance _hooks().injectStudyNotes (test-hook bridge) to
 // patch the current slide with a pre-authored studyNotes object, then
 // exercises the offline StaticStudyPanel rendering (text + glossary
 // X-Ray links + questions + diagram). Does not depend on a live API.
 uiSuite("Study Notes", [
-  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
-    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  { name: "Test hook injectStudyNotes available", fn: async () => {
+    if (typeof _hooks().injectStudyNotes !== "function") throw new Error("_hooks().injectStudyNotes not exposed");
   }},
   { name: "Inject studyNotes into current slide", fn: async () => {
     const sn = {
@@ -10591,7 +10810,7 @@ uiSuite("Study Notes", [
       questions: ["Why does this matter?", "When does it fail?"],
       glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
     };
-    const ok = window.__velaTestInjectStudyNotes(sn);
+    const ok = _hooks().injectStudyNotes(sn);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(150);
   }},
@@ -10660,7 +10879,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
     // Undo the UPDATE_SLIDE so we don't leak state into later tests
-    window.__velaTestInjectStudyNotes(undefined);
+    _hooks().injectStudyNotes(undefined);
     await _wait(100);
   }},
 ]);
@@ -10685,16 +10904,16 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
   }},
   { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
     // Light slide, no notes.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
     await _wait(180);
     const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
     const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
     // Heavy slide with lots of content AND speaker notes — the pre-fix notes
     // auto-expand + elastic viewport would shove the toolbar upward here.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY CONTENT SLIDE" },
       { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
       { type: "text", text: "A long paragraph ".repeat(20) },
@@ -10705,14 +10924,14 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
     if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
     // Restore a benign single heading.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "" }], { notes: "" });
     await _wait(80);
   }},
   { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Inject a centered heading (NO icon → the editor still forces its icon-slot
     // flex row, which is exactly the path that used to drop centering).
-    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    const okc = _hooks().injectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
     if (!okc) throw new Error("inject returned false — no current slide");
     await _wait(200);
     // Leaf element that actually holds the text node.
@@ -10739,7 +10958,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     }
   }},
   { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
     // A TALL/portrait image is the exact case that used to balloon a grid row
     // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
@@ -10778,7 +10997,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Cases: N=2..5 landscape runs — each must be contained AND visible.
     for (const N of [2, 3, 4, 5]) {
       const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
-      window.__velaTestInjectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      _hooks().injectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
       await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
       await _wait(160);
       const o = gridBottomOverflow();
@@ -10787,7 +11006,7 @@ uiSuite("Editor UX (CR1–CR3)", [
       assertVisibleAndUniform(`N=${N}`);
     }
     // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY + FOUR IMAGES" },
       { type: "text", text: "A long paragraph ".repeat(16) },
       { type: "image", src: land }, { type: "image", src: land },
@@ -10801,7 +11020,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     assertVisibleAndUniform("heavy-text+4");
     // Case C: a portrait image among the run must not balloon its row off-canvas —
     // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "PORTRAIT MIX" },
       { type: "image", src: land }, { type: "image", src: tall },
     ]);
@@ -10816,7 +11035,7 @@ uiSuite("Editor UX (CR1–CR3)", [
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -10827,8 +11046,8 @@ uiSuite("Editor UX (CR1–CR3)", [
 // Asserts the swap moves the item and that the arrow is disabled at a boundary.
 uiSuite("Block item reorder (▲▼) — v13.19", [
   { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
-    const ok = window.__velaTestInjectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const ok = _hooks().injectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(200);
     const order = () => _$$("[data-testid='slide-viewport'] *")
@@ -10856,7 +11075,7 @@ uiSuite("Block item reorder (▲▼) — v13.19", [
     const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
     _click(down);
     await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -11780,13 +11999,36 @@ uiSuite("Desktop save-status pill (CR3)", [
 // ── CR5: Consistent AI-working animation ─────────────────────────────
 // Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
 // magic-reveal contract. No live AI backend needed: we drive the reducer flag
-// directly via the app's test hook (window.__velaTestSetAIWork) and assert the
+// directly via the app's test hook (_hooks().setAIWork) and assert the
 // on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
 // isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
 const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Canonicalize a CSS color so an authored hex and a browser rgb() serialization
+// compare equal. --vera-accent is a registered custom property
+// (@property { syntax: "<color>" }) — once registered, getComputedStyle returns
+// the COMPUTED "rgb(r, g, b)" form, not the "#rrggbb" the deck authored. Round
+// tripping both sides through an element's computed `color` normalizes either
+// serialization; if the UA can't parse the value we fall back to a whitespace-
+// stripped lowercase compare (the pre-registration behaviour).
+const _normColor = (v) => {
+  const raw = String(v == null ? "" : v).trim();
+  const flat = raw.toLowerCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  try {
+    const el = document.createElement("span");
+    el.style.color = raw;
+    if (!el.style.color) return flat;      // UA rejected it — nothing to normalize
+    el.style.position = "absolute";
+    el.style.visibility = "hidden";
+    document.body.appendChild(el);
+    const out = getComputedStyle(el).color;
+    el.remove();
+    return out ? out.toLowerCase().replace(/\s+/g, "") : flat;
+  } catch { return flat; }
+};
 // Return the fx-wrapper to a static state (clear the flag, wait out any settle).
 const _settleFx = async () => {
-  if (typeof window.__velaTestSetAIWork === "function") window.__velaTestSetAIWork(null);
+  if (typeof _hooks().setAIWork === "function") _hooks().setAIWork(null);
   await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
 };
 // Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
@@ -11818,16 +12060,16 @@ const _allCssText = () => {
 };
 uiSuite("AI-working animation (CR5)", [
   { name: "test hooks + fx-wrapper present", fn: async () => {
-    if (typeof window.__velaTestSetAIWork !== "function") throw new Error("__velaTestSetAIWork not exposed");
-    if (typeof window.__velaTestGetSelection !== "function") throw new Error("__velaTestGetSelection not exposed");
+    if (typeof _hooks().setAIWork !== "function") throw new Error("setAIWork test hook not exposed");
+    if (typeof _hooks().getSelection !== "function") throw new Error("getSelection test hook not exposed");
     await _cr5Setup();
-    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: window.__velaTestGetSelection() }));
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: _hooks().getSelection() }));
   }},
   { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
     if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
     // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
@@ -11835,18 +12077,20 @@ uiSuite("AI-working animation (CR5)", [
     const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
     if (!acc) throw new Error("--vera-accent empty while working");
     if (sel.accent) {
-      const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
-      if (norm(acc) !== norm(sel.accent)) throw new Error(`--vera-accent=${acc} != slide accent ${sel.accent}`);
+      // Serialization-tolerant: --vera-accent may come back as rgb(...) once the
+      // custom property is registered, while the deck authors a hex.
+      const a = _normColor(acc), b = _normColor(sel.accent);
+      if (a !== b) throw new Error(`--vera-accent=${acc} (${a}) != slide accent ${sel.accent} (${b})`);
     }
     await _settleFx();
   }},
   { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
-    window.__velaTestSetAIWork(null);
+    _hooks().setAIWork(null);
     // The completion effect swaps the scan for the one-shot magic-reveal.
     await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
     // …and the reveal is one-shot — it settles back to static.
@@ -11854,10 +12098,10 @@ uiSuite("AI-working animation (CR5)", [
   }},
   { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
     // A target that is not the on-screen slide (bogus itemId) must leave it static.
-    window.__velaTestSetAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
     await _wait(250);
     const w = _fxWrap();
     if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
@@ -11865,10 +12109,10 @@ uiSuite("AI-working animation (CR5)", [
   }},
   { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
     await _settleFx();
-    const sel = window.__velaTestGetSelection();
+    const sel = _hooks().getSelection();
     if (!sel) throw new Error("no slide selected");
     // Mark THIS slide as the AI target and confirm the working scan is up.
-    window.__velaTestSetAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
     // Navigate to another slide mid-op (either direction is a slideIndex change).
     const p0 = _slidePos();
@@ -11889,7 +12133,7 @@ uiSuite("AI-working animation (CR5)", [
     const n = _tocRows().length;
     if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
     const meta = [];
-    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(window.__velaTestGetSelection()); }
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(_hooks().getSelection()); }
     // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
     let ai = -1, bi = -1;
     for (let i = 0; i < meta.length; i++) {
@@ -11901,13 +12145,13 @@ uiSuite("AI-working animation (CR5)", [
     if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
     // Select module A slide 0 and start its working scan.
     _click(_tocRows()[ai]); await _wait(160);
-    const sA = window.__velaTestGetSelection();
-    window.__velaTestSetAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    const sA = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
     // Single-step switch to module B slide 0 (same index, different module) while
     // aiWork is still set on A. The untouched destination must NOT settle.
     _click(_tocRows()[bi]); await _wait(180);
-    const sB = window.__velaTestGetSelection();
+    const sB = _hooks().getSelection();
     if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
     await _wait(420); // give the completion effect ample time to (wrongly) fire
     const wB = _fxWrap();
@@ -11915,10 +12159,10 @@ uiSuite("AI-working animation (CR5)", [
     await _settleFx();
     // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
     _click(_tocRows()[ai]); await _wait(160);
-    const sA2 = window.__velaTestGetSelection();
-    window.__velaTestSetAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    const sA2 = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
     await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
-    window.__velaTestSetAIWork(null);
+    _hooks().setAIWork(null);
     await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
     await _settleFx();
   }},
@@ -19353,40 +19597,49 @@ export default function App() {
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
 
-  // Test-only affordance: patch the current slide with a studyNotes object.
-  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
-  // offline student-mode renderer without depending on a live API. Always
-  // enabled — state.selectedId / slideIndex are readable in all modes.
+  // VELA:DEV-ONLY:BEGIN
+  // ━━━ Test-only affordances — DEV BUILDS ONLY ━━━━━━━━━━━━━━━━━━━━━
+  // The UI battery drives a handful of states that have no offline UI path
+  // (study notes, block injection, the unified AI-working flag). These are
+  // writable globals, so they are kept off the production surface by TWO
+  // independent layers (ASVS V14.1.3 / V14.2.2):
+  //   1. runtime gate — installed only in local/desktop mode, or when a test
+  //      harness explicitly opts in by setting window.__velaTestMode BEFORE
+  //      the app boots (vela-drive.js does this via addInitScript);
+  //   2. build-time strip — concat.py --release drops this whole fenced block,
+  //      so a release bundle carries no test-hook code at all.
+  // Keep every test affordance inside the fence, and keep the fenced code free
+  // of anything the app itself depends on.
   useEffect(() => {
-    window.__velaTestInjectStudyNotes = (studyNotes) => {
+    if (!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode))) return;
+    const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch, merge: true });
       return true;
     };
-    // Test-only: replace the current slide's blocks (used by the Editor UX
-    // alignment test — CR2 — to place a known centered heading and assert it
-    // renders centered in the editor path). No-op in production (unused).
-    window.__velaTestInjectBlocks = (blocks, extra) => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
-      return true;
+    window.__velaTestHooks = {
+      // Patch the current slide with a studyNotes object — lets the Study Notes
+      // suite exercise the offline student-mode renderer without a live API.
+      injectStudyNotes: (studyNotes) => _patchCurrent({ studyNotes }),
+      // Replace the current slide's blocks (Editor UX / alignment suites: place
+      // a known centered heading and assert the editor path renders it centered).
+      injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // On-screen slide identity {itemId, slideIdx, accent} for assertions.
+      getSelection: () => {
+        const s = _localSyncState.current;
+        if (!s || !s.selectedId) return null;
+        let accent = null;
+        for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+        return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+      },
+      // Drive the unified AI-working flag without a live AI backend, so the
+      // vera-thinking / magic-reveal contract is assertable offline.
+      setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
     };
-    // CR5 test-only: drive the unified AI-working flag without a live AI backend.
-    // `__velaTestGetSelection` returns the on-screen slide's {itemId, slideIdx,
-    // accent}; `__velaTestSetAIWork` dispatches SET_AI_WORK so the UI battery can
-    // assert the vera-thinking / magic-reveal contract on the matching slide.
-    window.__velaTestGetSelection = () => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return null;
-      let accent = null;
-      for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
-      return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
-    };
-    window.__velaTestSetAIWork = (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; window.__velaTestGetSelection = null; window.__velaTestSetAIWork = null; };
+    return () => { window.__velaTestHooks = null; };
   }, [dispatch]);
+  // VELA:DEV-ONLY:END
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
@@ -19455,10 +19708,15 @@ export default function App() {
   }, []);
 
   // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
-  // Wired unconditionally so the desktop shell's emits land AND the UI battery
-  // can drive the pill by calling window.__velaOnSaveStatus(...) directly.
+  // Installed only where a shell actually feeds the channel — the desktop /
+  // local-preview build (VELA_LOCAL_MODE), or a host that already published a
+  // status before mount (nl-boot mirrors the latest into window.__velaSaveState,
+  // and the headless harness seeds a falsy-but-present value to opt the UI
+  // battery in). The hosted artifact matches none of these, so it never gains a
+  // writable global that can push arbitrary UI state.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!(VELA_LOCAL_MODE || window.__velaSaveState != null)) return;
     window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
     if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
     return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
@@ -19898,7 +20156,8 @@ export default function App() {
           <div style={{ flex: 1 }} />
           <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
         </div>
-        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        {/* The desktop shell hands us {state, at, name} — a basename only, never an absolute path. */}
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to {saveStatus && saveStatus.name ? <span style={{ fontFamily: FONT.mono }}>{saveStatus.name}</span> : "your file"}. Your work is safe in the app.</div>
         <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
           <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
         </div>
@@ -19911,15 +20170,22 @@ export default function App() {
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
         {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
         {!isMobile && saveStatus && (() => {
+          // Payload from the desktop shell is {state, at, name}: a file BASENAME, no
+          // absolute path and no raw platform error (those stay shell-side).
           const st = saveStatus.state;
           const at = saveStatus.at;
+          const nm = saveStatus.name ? String(saveStatus.name) : "";
+          const forFile = nm ? ` ${nm}` : " your file";
           const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
           const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
-          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
-          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={`Saved${nm ? " to " + nm : ""}${timeStr ? " at " + timeStr : ""}`} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title={`Saving to${forFile}…`} style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          // Written, but the shell could not read the bytes back to confirm them.
+          // Shown distinctly rather than as a confident "Saved" the user can't rely on.
+          if (st === "unverified") return <span data-testid="save-status-pill" data-save-state="unverified" title={`Written to${forFile}, but Vela couldn't read it back to confirm. Keep a backup if this persists.`} style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"✓?"} Saved (unverified)</span>;
           if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
           // failed
-          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title={`Vela couldn't write to${forFile} — click to retry`} style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
         })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}

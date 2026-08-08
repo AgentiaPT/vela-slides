@@ -12,7 +12,7 @@ host page is allowed to do. Ranked highest-stakes first:
 
 | Runtime | Host capabilities | Worst case if a deck-JSON sanitizer is bypassed | Backstop |
 |---|---|---|---|
-| **Neutralino desktop** | Native `filesystem.*` (read/write decks on disk) **and** real network egress (top-level webview). Worst case is **both** outbound exfil *and* file read/overwrite | Read/overwrite files inside the two allowed roots (`<decks>`, `~/.vela`), **plus** zero-click outbound exfil of deck/host/file data. No host RCE — `os.spawnProcess`/`os.execCommand` are **not** in `nativeAllowList` | `<meta>` CSP, minimal `nativeAllowList`, `fs-guard` path containment, deck-open warning. **⚠ Asymmetry: the desktop `<meta>` CSP is *more permissive* than `serve.py` — `img-src` and `font-src` both allow `https:` (for legacy/data flexibility), so a render-time image/font beacon is NOT CSP-blocked here. The deck sanitizers are the *sole* backstop for image/font exfil on desktop.** |
+| **Neutralino desktop** | Native `filesystem.*` (read/write decks on disk) **and** real network egress (top-level webview). Worst case is **both** outbound exfil *and* file read/overwrite | Read/overwrite files inside the two allowed roots (`<decks>`, `~/.vela`), **plus** zero-click outbound exfil of deck/host/file data. No host RCE — `os.spawnProcess`/`os.execCommand` are **not** in `nativeAllowList` | `<meta>` CSP, minimal `nativeAllowList`, `fs-guard` path containment, deck-open warning. The desktop `<meta>` CSP no longer permits `https:` in `img-src`/`font-src`, so render-time image/font beacons are CSP-blocked here just as under `serve.py` — defense-in-depth on top of the deck sanitizers (which already force legitimate image `src`/`bgImage` to `data:` URIs), not the sole backstop. |
 | **Local `serve.py`** | Top-level browser page on `localhost` — real network egress, reads loopback ports | Zero-click **outbound exfil** of deck/host data (no artifact-iframe CSP to fall back on) | HTTP-header CSP (`img-src 'self' data:`, closed `connect-src` allowlist), origin/CSRF/auth, path containment. Tighter than desktop: image/font beacons *are* CSP-blocked here, so a sanitizer miss still needs a `connect-src`-reachable sink to exfil |
 | **Claude.ai artifact** | Sandboxed iframe; outbound network already blocked by Anthropic's CSP | Contained DOM XSS; exfil still blocked by the iframe CSP | Anthropic sandbox CSP (defense-in-depth on top of our sanitizers) |
 
@@ -35,13 +35,13 @@ that a hole exists — Vela's history (v12.52–v12.66) is a sequence of closing
 exactly these as they emerged:
 
 - **CSS auto-load beacons** — `url()`, `image-set()` / `image()` / `cross-fade()` / `src()` string sources, and any future string-taking CSS function in inline `style`, color/background scalars, or SVG `<style>`/presentation attributes. A render-time outbound GET = zero-click exfil.
-- **Inline-style-only exfil primitives** — current published research (PortSwigger, *Inline Style Exfiltration*, 2026) shows CSS custom properties, `attr()`, and `if()`/`style()` conditionals can leak **same-element** data through a single `style=""` attribute with no selector and no external sheet — defeating "we only ban external stylesheets" reasoning. Defensive posture: keep the style-key allowlist (no custom `--*` properties, no `attr()`/`if()`/`style()`-bearing values, no string-source functions) verified empirically against the real `sanitizeStyle`/`scrubColorFields`, since on the host runtimes the sanitizer is the primary control.
+- **Inline-style-only exfil primitives** — current published research (PortSwigger, *Inline Style Exfiltration*, 2026) shows CSS custom properties, `attr()`, and `if()`/`style()` conditionals can leak **same-element** data through a single `style=""` attribute with no selector and no external sheet — defeating "we only ban external stylesheets" reasoning. Defensive posture: no custom `--*` properties, no `attr()`/`if()`/`style()`-bearing values, no string-source functions — with exactly one narrow, deliberate exception (`--vera-accent`, the AI-working sweep tint). That property is held to a stricter bar than the general allowlist: the value is routed through the same CSS-context output encoder used at every other color sink before it ever reaches the custom property, *and* the property itself is CSS type-registered to the `<color>` syntax, so the CSS engine rejects any non-color value at the layer below JS as well. Both the general allowlist and this one gated exception are verified empirically against the real `sanitizeStyle`/`scrubColorFields`/encoder code, since on the host runtimes the sanitizer is the primary control.
 - **Font-driven character exfil** — `@font-face` / `unicode-range` / `local()`+`src:url()` combinations that fetch a glyph file per leaked character.
 - **Namespace-confusion / mutation XSS** — SVG↔HTML (and MathML) re-parse divergence where a node the sanitizer reads as inert text the browser re-parses as live markup (the `dangerouslySetInnerHTML` round-trip). Guarded by SVG-scope wrapping + CDATA/comment/PI stripping; must stay regression-tested.
-- **Script-context breakout at injection** — deck JSON is embedded inline in `<script type="text/babel">` by `assemble.py` / `serve.py`, and by the in-app **Standalone-HTML export** (`buildStandaloneHtml`, which also inlines the transpiled app); `<`, `>`, `&`, U+2028/2029 are escaped so a deck string cannot close the script element or terminate the JS literal. The escape rule is independently duplicated per language/module and kept in sync by review.
+- **Script-context breakout at injection** — deck JSON is embedded inline in `<script type="text/babel">` by `assemble.py` / `serve.py`, and by the in-app **Standalone-HTML export** (`buildStandaloneHtml`, which also inlines the transpiled app); `<`, `>`, `&`, U+2028/2029 are escaped so a deck string cannot close the script element or terminate the JS literal. The escaper is a single canonical implementation per language (Python / JS), reused at every injection site via replacer-function substitution (never pattern-splicing), and a parity test asserts the two implementations produce identical output — closing the "kept in sync by review" gap where the escapers could silently drift apart.
 - **`serve.py` server surface** — path traversal / symlink escape on deck names, auth-token / session handling, cross-origin write (CSRF) and Host-header (DNS-rebinding) checks, and the script-context escaping above.
 - **Neutralino native-bridge reachability** — the desktop webview is granted `filesystem.*` + `os.getEnv`. A deck value that achieves script execution in this realm could call `Neutralino.filesystem.*`/`os.getEnv` directly. `fs-guard.js` caps file blast radius to the two allowed roots (traversal-segment reject + prefix containment); `nativeAllowList` withholds `os.spawnProcess`/`os.execCommand` (no RCE). The invariant to keep tested: **no deck-supplied value reaches an active script context** (only inert/static SVG sinks), and `fs-guard` containment holds against path-normalization tricks (`..`, symlink, UNC/`\\`, drive-relative, URL-encoded separators).
-- **Desktop CSP image/font egress asymmetry** — because the desktop `<meta>` CSP permits `img-src/font-src https:`, *any* deck-controlled value that survives sanitization into an `<img src>`, CSS `background-image`/`url()`, `image-set()`, or `@font-face src:url()` is a live render-time beacon on desktop even though the identical payload is CSP-blocked under `serve.py`. Test image/font/CSS-url sinks against the desktop CSP, not just the server CSP.
+- **Desktop CSP image/font egress (resolved)** — the desktop `<meta>` CSP formerly permitted `img-src/font-src https:`, which left image/CSS-url and font sinks as live render-time beacons on desktop even though the identical payload was CSP-blocked under `serve.py`. `https:` has now been dropped from both directives (`img-src 'self' data: blob:`, `font-src 'self' data:`), so a deck value reaching an `<img src>`, CSS `background-image`/`url()`, `image-set()`, or `@font-face src:url()` is CSP-blocked on desktop as it is under `serve.py` — defense-in-depth on top of the deck sanitizers, which already force legitimate image sources to `data:`. Empirically verified in a real browser under the actual desktop meta CSP: an `https:` image is now blocked at the CSP layer (was previously allowed to leave), while `data:` images render unchanged. Google Fonts (Sora / DM Sans / Space Mono) were already system-fallback on desktop — the getCss() `@import` is governed by `style-src` (`'self' 'unsafe-inline'`, no `fonts.googleapis.com`) and blocked one layer above `font-src`, so dropping `font-src https:` is a visual no-op for typography. Keep testing image/font/CSS-url sinks against the desktop CSP, not just the server CSP.
 
 A defense in any of these classes is considered proven **only** when a payload
 is fed through the real sanitizers and the real browser sink and observed to be
@@ -80,10 +80,15 @@ Both layers strip:
 
 All imported deck JSON passes through `validateAndSanitizeDeck()` which enforces:
 - Whitelisted block types only (`SAFE_BLOCK_TYPES`)
+- Whitelisted slide/block **keys** — sanitizers build their output by iterating an explicit allowlist (`SAFE_SLIDE_KEYS` / `SAFE_BLOCK_KEYS`) instead of copying input, so any key not on the list is dropped at ingress rather than passed through
+- A reserved internal-use key namespace — any key beginning with `_` is stripped on import unconditionally, so deck JSON can never impersonate renderer-derived state
 - String fields stripped of HTML tags and truncated
-- Nested structures (grid cells, timeline entries) recursively sanitized
+- Nested structures (grid cells, timeline entries) recursively sanitized, with a bounded recursion depth so a deeply self-nested structure is rejected rather than exhausting the stack or render tree
+- Numeric layout fields coerced to type and clamped to a fixed range at ingress; non-numeric or out-of-range values are dropped in favor of the renderer default
 - Style objects validated as plain objects (no arrays, no primitives)
 - SVG markup sanitized with the full pipeline above
+
+A **CI drift guard** parses the same allowlists out of the source and fails the build if a renderer reads a slide/block key that isn't on the list — the allowlist is the single source of truth, not a document that can silently fall out of sync with the code.
 
 ### No Sensitive Data
 
@@ -110,6 +115,17 @@ Running `tools/vela-dev/scripts/serve.py <folder>` starts a local HTTP server fo
 
 When using `--host 0.0.0.0` (LAN mode), the server is accessible to other devices on the network. Use only on trusted networks.
 
+### Desktop Save Integrity (Neutralino)
+
+Deck saves on the desktop shell verify what actually landed on disk instead of trusting the write call to have succeeded:
+
+| Control | Detail |
+|---------|--------|
+| Read-back verification | Every save reads the file back and compares it against what was written (signature plus exact text) |
+| Tri-state outcome | A save reports confirmed / unverifiable / failed rather than collapsing "couldn't verify" into a silent success |
+| Watcher echo suppression | The file-change watcher confirms a signature hit against the exact written text before treating an event as its own echo, closing a window where a genuine external edit could be swallowed |
+| Bounded watcher reads | Watcher-triggered reads are size-capped and stat-checked before any file content is read, through a single audited read path |
+
 ### Supply Chain Security
 
 Node.js dependencies are managed with strict supply chain protections:
@@ -122,6 +138,8 @@ Node.js dependencies are managed with strict supply chain protections:
 | Lockfile integrity | `pnpm-lock.yaml` with SHA-512 hashes | Pins exact versions + verifies content |
 
 **Release-artifact packaging** — the shipped skill ZIP is built by `tools/vela-dev/scripts/package-skill.py` (dev toolchain, never shipped; also used by the release workflows). The archive builder skips file and directory symlinks and requires every member's canonical realpath to stay under the skill root, so a link planted in the tree cannot pull outside-of-root bytes into the ZIP under an in-root name. It also excludes `__pycache__` / `*.pyc` / `*.pyo` so no build-time bytecode is shipped. Regression-tested.
+
+**Release bundle hygiene** — `concat.py`'s opt-in release mode strips internal test hooks (window-scoped testing entry points) from the shipped bundle entirely, and a dedicated test suite asserts the stripped bundle carries none of them while the default dev build stays byte-identical to the committed template — a CI guard against either surface silently regressing.
 
 ### CLI Tools (`vela.py`, `assemble.py`, etc.)
 

@@ -842,9 +842,16 @@ ${ICON_LIST}`;
   // Handle single block or array of blocks (for split operations)
   const newBlocks = Array.isArray(result) ? result : [result];
 
-  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
-  // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
+  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks.
+  // DERIVED, not hand-maintained: "slide-only" is exactly the set difference
+  // SAFE_SLIDE_KEYS − SAFE_BLOCK_KEYS (part-imports.jsx), so this list can never
+  // drift from the ingress allowlists. Keys valid on BOTH (bg, color, padding,
+  // gap, align, title, author, hidden…) are in both sets and so are not stripped.
+  // `presentCard` is added explicitly: it is a module/item-level key the model
+  // sometimes emits onto a slide, and it is not in either allowlist.
+  const SLIDE_ONLY_KEYS = new Set(
+    [...SAFE_SLIDE_KEYS].filter((k) => !SAFE_BLOCK_KEYS.has(k)).concat(["presentCard"])
+  );
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }

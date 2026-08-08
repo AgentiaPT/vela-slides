@@ -19,6 +19,39 @@ VALID_BLOCK_TYPES = {
 }
 SIZE_TOKENS = {"xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"}
 
+# Numeric slide-level layout fields: key -> (min, max, must_be_int).
+# Mirrors SLIDE_NUMERIC_BOUNDS in src/parts/part-imports.jsx — the app coerces
+# and clamps these at load, so flag bad values here rather than let a deck render
+# with a value the author never wrote.
+#   imageCols             - column count for a run of adjacent image blocks
+#   gap / splitGap        - px gap between blocks / between columns
+#   contentFlex/imageFlex - flex-grow ratio of the two columns
+SLIDE_NUMERIC_BOUNDS = {
+    "imageCols": (1, 6, True),
+    "gap": (0, 200, False),
+    "splitGap": (0, 200, False),
+    "contentFlex": (0.1, 20, False),
+    "imageFlex": (0.1, 20, False),
+}
+
+
+def check_slide_numerics(slide, loc, errors):
+    """Type/range-check the numeric slide layout fields (see SLIDE_NUMERIC_BOUNDS)."""
+    for key, (lo, hi, must_int) in SLIDE_NUMERIC_BOUNDS.items():
+        if key not in slide:
+            continue
+        v = slide[key]
+        # bool is an int subclass in Python — reject it explicitly.
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            errors.append(f"{loc}: '{key}' must be a number (got {type(v).__name__})")
+            continue
+        if must_int and isinstance(v, float) and not v.is_integer():
+            errors.append(f"{loc}: '{key}' must be a whole number (got {v})")
+            continue
+        if not (lo <= v <= hi):
+            errors.append(f"{loc}: '{key}' out of range — must be {lo}..{hi} (got {v})")
+
+
 def validate(path):
     with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
@@ -100,6 +133,9 @@ def validate(path):
                                 warnings.append(f"{loc}: Auto-fixed dark-on-dark contrast (was {color_hex} on {bg_hex})")
                         except (ValueError, IndexError):
                             pass
+
+                # Numeric layout fields (imageCols, gap, splitGap, flex ratios)
+                check_slide_numerics(slide, loc, errors)
 
                 # studyNotes (offline student content) check
                 sn = slide.get("studyNotes")
