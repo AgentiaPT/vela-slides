@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.20";
+const VELA_VERSION = "13.21";
 const VELA_CHANGELOG = [
+  { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
   { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
   { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
   { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
@@ -8163,7 +8164,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
   };
 
-  // CR2 — slide-row (leaf treeitem) disclosure keys, scoped to row focus.
+  // Slide-row (leaf treeitem) keys: Up/Down drive the REAL slide selection
+  // (selection-follows-focus), Left goes to the parent header for disclosure.
   const nav = treeNav || {};
   const onSlideRowKeyDown = (e, si) => {
     if (editingSi === si) return; // rename input active
@@ -8172,9 +8174,9 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       // Standard tree "parent" — move focus to the section header (does not collapse).
       e.preventDefault(); e.stopPropagation(); nav.focusRow && nav.focusRow(item.id);
     } else if (k === "ArrowUp") {
-      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, -1);
+      e.preventDefault(); e.stopPropagation(); nav.moveSelection && nav.moveSelection(item.id, si, -1);
     } else if (k === "ArrowDown") {
-      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(item.id + ":" + si, +1);
+      e.preventDefault(); e.stopPropagation(); nav.moveSelection && nav.moveSelection(item.id, si, +1);
     } else if (k === "Enter" || k === " ") {
       e.preventDefault(); e.stopPropagation();
       if (!selected) dispatch({ type: "SELECT", id: item.id });
@@ -8331,7 +8333,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             onClick={(e) => handleSlideRowClick(e, si)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); if (!multiSel.includes(si)) setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); setCtxMenu({ x: e.clientX, y: e.clientY, si }); }}
             style={{
-              ...(isRowFocused ? { outline: `2px solid ${T.accent}`, outlineOffset: "-2px" } : {}),
+              // No separate focus outline on slide rows: the tree cursor now IS the
+              // selection, so a focused slide row is always the active slide and the
+              // active tint below is the single indicator. isRowFocused still drives
+              // the roving tabindex above. The header keeps its own focus ring.
               padding: "3px 8px 3px 12px", fontSize: 14, fontFamily: FONT.body, cursor: editingSi === si ? "text" : "grab",
               color: isActive ? T.accent : T.textMuted, fontWeight: isActive ? 600 : 400,
               borderLeft: `2px solid ${isMultiSel ? T.accent : "transparent"}`,
@@ -8496,16 +8501,23 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       e.preventDefault(); e.stopPropagation();
       if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: false, ids: nav.allIds }); return; }
       if (collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: false });
-      else if (hasSlides && nav.focusRow) nav.focusRow(item.id + ":0"); // enter first child
+      // enter first child AND select it (resume on the active slide when this
+      // section already holds it, so a Left→Right detour returns where you were).
+      else if (hasSlides && nav.selectSlide) nav.selectSlide(item.id, (selected && slideIndex < item.slides.length) ? slideIndex : 0);
     } else if (k === "ArrowLeft") {
       e.preventDefault(); e.stopPropagation();
       if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: nav.allIds }); return; }
       if (!collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: true });
       // already collapsed: no-op (top-level node has no parent)
     } else if (k === "ArrowDown") {
-      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, +1);
+      e.preventDefault(); e.stopPropagation();
+      if (selected && collapsed && hasSlides) nav.moveSelection && nav.moveSelection(item.id, slideIndex, +1); // step through the folded section (marker counts up)
+      else if (!collapsed && hasSlides) nav.selectSlide && nav.selectSlide(item.id, 0); // enter first child
+      else nav.moveFromHeader && nav.moveFromHeader(item.id, +1); // empty section → next section's first slide
     } else if (k === "ArrowUp") {
-      e.preventDefault(); e.stopPropagation(); nav.moveFocus && nav.moveFocus(rowId, -1);
+      e.preventDefault(); e.stopPropagation();
+      if (selected && collapsed && hasSlides) nav.moveSelection && nav.moveSelection(item.id, slideIndex, -1);
+      else nav.moveFromHeader && nav.moveFromHeader(item.id, -1); // prev section's last slide
     } else if (k === "Enter" || k === " ") {
       // Activate the section (Space must NOT also page the slide → stopPropagation).
       e.preventDefault(); e.stopPropagation(); dispatch({ type: "SELECT", id: item.id });
@@ -8625,17 +8637,39 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   // focused treeitem's neighbors. Row ids: section = item.id, slide = `${item.id}:${si}`.
   const [focusedRowId, setFocusedRowId] = useState(null);
   const rowRefs = useRef({}); // rowId -> DOM element (for programmatic .focus())
-  const buildVisibleRows = () => {
-    const rows = [];
-    for (const item of allItems) {
-      rows.push(item.id);
-      if (!collapsedSet.has(item.id)) for (let si = 0; si < (item.slides?.length || 0); si++) rows.push(item.id + ":" + si);
-    }
-    return rows;
-  };
   const focusRow = (rowId) => { setFocusedRowId(rowId); requestAnimationFrame(() => rowRefs.current[rowId]?.focus()); };
-  const moveFocus = (fromId, dir) => { const rows = buildVisibleRows(); const idx = rows.indexOf(fromId); if (idx < 0) return; const t = idx + dir; if (t < 0 || t >= rows.length) return; focusRow(rows[t]); };
-  const treeNav = { focusedRowId, setRef: (id, el) => { if (el) rowRefs.current[id] = el; else delete rowRefs.current[id]; }, focusRow, moveFocus, onFocusRow: (id) => setFocusedRowId(id), allIds };
+  // ── Selection-follows-focus ──────────────────────────────────────────
+  // The tree cursor IS the selection: moving it dispatches the REAL slide
+  // selection (SELECT / SET_SLIDE_INDEX) so the preview and the single active-
+  // slide indicator move together — never a separate roaming focus ring.
+  // Vertical nav rail. Collapse-aware: an expanded section contributes every slide,
+  // a COLLAPSED section contributes a single unit (its first slide) so Up/Down move
+  // section-to-section and entering a folded section shows its first slide. Empty
+  // sections are skipped.
+  const buildNavRail = () => {
+    const rail = [];
+    for (const item of allItems) {
+      const n = item.slides?.length || 0;
+      if (n === 0) continue;
+      if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
+      else for (let si = 0; si < n; si++) rail.push({ itemId: item.id, si });
+    }
+    return rail;
+  };
+  const selectSlide = (itemId, si) => {
+    if (itemId !== selectedId) dispatch({ type: "SELECT", id: itemId, slideIndex: si });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: si });
+    // Focus the row that will be active: the slide row when its section is
+    // expanded, or the always-mounted header (with its k/N marker) when folded.
+    focusRow(collapsedSet.has(itemId) ? itemId : itemId + ":" + si);
+  };
+  // Step the nav rail (slide→slide inside expanded sections, section→section over
+  // folded ones); no-op at the deck ends. A collapsed section is one unit, so match
+  // it by section id regardless of the active slide index inside it.
+  const moveSelection = (itemId, si, dir) => { const rail = buildNavRail(); const idx = rail.findIndex((r) => r.itemId === itemId && (collapsedSet.has(itemId) || r.si === si)); if (idx < 0) return; const t = idx + dir; if (t < 0 || t >= rail.length) return; selectSlide(rail[t].itemId, rail[t].si); };
+  // Leave a section header into the nearest section (in dir) that has slides.
+  const moveFromHeader = (itemId, dir) => { const idx = allItems.findIndex((i) => i.id === itemId); if (idx < 0) return; for (let j = idx + dir; j >= 0 && j < allItems.length; j += dir) { const it = allItems[j]; if ((it.slides?.length || 0) > 0) { selectSlide(it.id, dir > 0 ? 0 : it.slides.length - 1); return; } } };
+  const treeNav = { focusedRowId, setRef: (id, el) => { if (el) rowRefs.current[id] = el; else delete rowRefs.current[id]; }, focusRow, selectSlide, moveSelection, moveFromHeader, onFocusRow: (id) => setFocusedRowId(id), allIds };
 
   const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
@@ -10225,6 +10259,40 @@ uiSuite("TOC Collapse Nav", [
     if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
     await _focusTocHeader(header);
     await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
+  }},
+  { name: "Arrow on a focused slide row moves the shown slide (single cursor)", fn: async () => {
+    // Regression: the outline "focus ring" used to roam independently of the shown
+    // slide, so arrows on a focused TOC row moved only the ring, not state.slideIndex.
+    // Now the tree cursor IS the selection — focus and the active slide stay together.
+    const rows = await _waitFor(() => (_tocRows().length >= 2 ? _tocRows() : null), 2000);
+    if (!rows) return; // soft pass: needs >= 2 slides in the first module
+    _click(rows[0]); // select + focus the first slide row
+    await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
+    await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
+    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
+    if (!before) throw new Error("no __velaTestGetSelection hook");
+    _key("ArrowDown");
+    // The REAL selection must advance (this is exactly what the bug broke).
+    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    // Exactly one row is active AND it holds focus → a single, unified cursor.
+    await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
+  }},
+  { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
+    const headers = await _waitFor(() => (_tocHeaders().length >= 2 ? _tocHeaders() : null), 2000);
+    if (!headers) return; // soft pass: needs >= 2 sections
+    await _selectTocHeader(headers[0]);
+    await _tocEnsureCollapsed(headers[0]);
+    await _tocEnsureCollapsed(headers[1]);
+    await _focusTocHeader(headers[0]);
+    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
+    if (!before) throw new Error("no __velaTestGetSelection hook");
+    _key("ArrowDown");
+    // Down over a folded section jumps to the NEXT section and shows its first slide,
+    // instead of stepping through the current section's hidden slides.
+    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    // Neither section auto-expands during section-level nav.
+    if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
+    await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
   }},
 ], { setup: _selectFirstModule });
 

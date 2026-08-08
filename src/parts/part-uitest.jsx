@@ -757,6 +757,40 @@ uiSuite("TOC Collapse Nav", [
     await _focusTocHeader(header);
     await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
   }},
+  { name: "Arrow on a focused slide row moves the shown slide (single cursor)", fn: async () => {
+    // Regression: the outline "focus ring" used to roam independently of the shown
+    // slide, so arrows on a focused TOC row moved only the ring, not state.slideIndex.
+    // Now the tree cursor IS the selection — focus and the active slide stay together.
+    const rows = await _waitFor(() => (_tocRows().length >= 2 ? _tocRows() : null), 2000);
+    if (!rows) return; // soft pass: needs >= 2 slides in the first module
+    _click(rows[0]); // select + focus the first slide row
+    await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
+    await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
+    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
+    if (!before) throw new Error("no __velaTestGetSelection hook");
+    _key("ArrowDown");
+    // The REAL selection must advance (this is exactly what the bug broke).
+    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    // Exactly one row is active AND it holds focus → a single, unified cursor.
+    await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
+  }},
+  { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
+    const headers = await _waitFor(() => (_tocHeaders().length >= 2 ? _tocHeaders() : null), 2000);
+    if (!headers) return; // soft pass: needs >= 2 sections
+    await _selectTocHeader(headers[0]);
+    await _tocEnsureCollapsed(headers[0]);
+    await _tocEnsureCollapsed(headers[1]);
+    await _focusTocHeader(headers[0]);
+    const before = window.__velaTestGetSelection && window.__velaTestGetSelection();
+    if (!before) throw new Error("no __velaTestGetSelection hook");
+    _key("ArrowDown");
+    // Down over a folded section jumps to the NEXT section and shows its first slide,
+    // instead of stepping through the current section's hidden slides.
+    await _waitFor(() => { const s = window.__velaTestGetSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    // Neither section auto-expands during section-level nav.
+    if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
+    await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
+  }},
 ], { setup: _selectFirstModule });
 
 // ── Slide Content Suite ──────────────────────────────────────────────

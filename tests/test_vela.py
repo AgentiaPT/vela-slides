@@ -1262,10 +1262,12 @@ def test_toc_nav_and_gallery_titlecards():
         ok("CR2: header onKeyDown implements Right/Left disclosure")
     else:
         fail("CR2: header disclosure keys missing")
-    if "e.stopPropagation()" in lst and "onSlideRowKeyDown" in lst:
-        ok("CR2: slide-row onKeyDown + stopPropagation override global slide-advance")
+    # Selection-follows-focus: slide-row arrows now DRIVE the real slide selection
+    # (one cursor), not a separate roaming focus ring.
+    if "onSlideRowKeyDown" in lst and "nav.moveSelection" in lst and "e.stopPropagation()" in lst:
+        ok("CR2: slide-row arrows drive the real selection (selection-follows-focus)")
     else:
-        fail("CR2: slide-row disclosure keys missing")
+        fail("CR2: slide-row selection-follows-focus nav missing")
     # Ctrl/Cmd collapse-all mirror
     if "all: true" in lst and "ids: nav.allIds" in lst:
         ok("CR2: Ctrl/Cmd+Left/Right mirror collapse/expand all")
