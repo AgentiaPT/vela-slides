@@ -1773,6 +1773,34 @@ def test_server_hardening():
     vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
     skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
 
+    # ── Desktop <meta> CSP: img-src/font-src must not permit https: egress ──
+    # Regression guard for the desktop image/font beacon hardening: the Neutralino
+    # shell's meta CSP must match serve.py's tighter posture (no https: in img/font
+    # sinks) so a render-time image/font fetch is CSP-blocked on desktop too.
+    _nl_index = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "index.html")
+    nl_index_src = open(_nl_index, encoding="utf-8").read()
+    import re as _re
+    _csp_m = _re.search(r'Content-Security-Policy"\s+content="([^"]*)"', nl_index_src)
+    if _csp_m:
+        _csp = _csp_m.group(1)
+        _dirs = {}
+        for _seg in _csp.split(";"):
+            _seg = _seg.strip()
+            if not _seg:
+                continue
+            _name, _, _val = _seg.partition(" ")
+            _dirs[_name.strip()] = _val.strip()
+        if "https:" not in _dirs.get("img-src", ""):
+            ok("Desktop CSP img-src does not permit https: egress")
+        else:
+            fail("Desktop CSP img-src permits https:", _dirs.get("img-src", ""))
+        if "https:" not in _dirs.get("font-src", ""):
+            ok("Desktop CSP font-src does not permit https: egress")
+        else:
+            fail("Desktop CSP font-src permits https:", _dirs.get("font-src", ""))
+    else:
+        fail("Desktop CSP meta tag not found in vela-neutralino/resources/index.html")
+
     # ── Arrow keys: Up/Down same as Left/Right ──
     if '"ArrowRight" || e.key === "ArrowDown"' in tpl:
         ok("ArrowDown handled same as ArrowRight")
