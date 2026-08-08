@@ -880,10 +880,118 @@ function cssColor(c) {
   return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
 
-function sanitizeBlock(block) {
+// ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SECURITY (deck ingress): sanitizeSlide/sanitizeBlock used to start from a
+// wholesale copy of the caller's object, so ANY key an untrusted deck (file,
+// clipboard, startup patch, Vera tool result) chose rode into app state, was
+// persisted, and was handed to every renderer/exporter downstream. Ingress is
+// now an ALLOWLIST — same shape as SAFE_STYLE_KEYS for style objects: only the
+// keys below are copied, everything else is dropped. This keeps the attack
+// surface equal to the set of fields the app actually reads.
+//
+// The `_` prefix is a RESERVED renderer-private namespace. Internal flags
+// (_gridCell, _solo, _virtual, and any future one) are set by our own code
+// AFTER sanitization; a deck must never be able to forge one and pin itself
+// into a layout branch the author never selected. Neither set therefore holds
+// a `_` key, and building from the allowlist drops them by construction.
+//
+// MAINTENANCE: these two sets are the single source of truth for the key-drift
+// check in tools/vela-dev/scripts/lint.py, which fails the build when
+// part-blocks.jsx / part-slides.jsx read a slide.<key> or block.<key> that is
+// not listed (or `_`-prefixed). Adding a renderer feature means adding its key
+// here in the same change.
+const SAFE_SLIDE_KEYS = new Set([
+  // content
+  "blocks", "L", "R", "layout",
+  // legacy top-level content fields (pre-block decks; still sanitized above)
+  "title", "subtitle", "quote", "author", "bullets",
+  // theme / background
+  "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+  // layout & spacing
+  "align", "verticalAlign", "padding", "gap",
+  "splitGap", "contentFlex", "imageFlex", "imageCols",
+  // presentation metadata
+  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "comments", "image",
+]);
+const SAFE_BLOCK_KEYS = new Set([
+  // identity / shared. NOTE: `blocks` is deliberately absent — only a GRID CELL
+  // carries a blocks array (handled by the grid branch below), never a block
+  // itself, so `blocks` is a slide-only key (see SLIDE_ONLY_KEYS in part-engine).
+  "type", "hidden", "style", "link", "items", "quadrants",
+  "text", "content", "title", "label", "value", "name", "caption", "author",
+  // typography
+  "size", "align", "weight", "bold", "italic",
+  "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  // color
+  "color", "bg", "border", "borderColor", "titleColor", "textColor",
+  "labelColor", "sublabelColor", "captionColor", "dateColor", "dotColor",
+  "lineColor", "numberColor", "trackColor", "cellColor", "headerBg",
+  "headerColor", "arrowColor", "gateColor", "loopColor", "annotationColor",
+  "iconColor", "iconBg",
+  // box / spacing
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h",
+  "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  // media
+  "src", "alt", "fit", "markup",
+  // code
+  "lang", "copy",
+  // icon
+  "icon", "iconShape", "circle", "strokeWidth",
+  // table
+  "headers", "rows", "cols",
+  // flow / steps / timeline / cycle
+  "direction", "connectorStyle", "activeStep",
+  "gateIcon", "gateLabel", "loop", "loopLabel", "loopStyle",
+  "centerLabel", "centerSub",
+  // progress
+  "showValue", "showIcons", "showLabels", "annotation",
+  "leftLabel", "rightLabel", "leftIcon", "rightIcon",
+  // comparison / matrix
+  "dividerLabel", "variant", "xLeft", "xRight", "yTop", "yBottom",
+  // callout
+  "reveal",
+]);
+
+// Numeric slide fields: key → [min, max, integer?]. Deck input is coerced to a
+// finite number and clamped; anything else (NaN, Infinity, "3; x", objects) is
+// dropped so it can never reach a layout/CSS sink as an arbitrary token. The
+// bounds are layout-sanity limits taken from how the renderer consumes each on
+// the 960×540 canvas:
+//   imageCols             — CSS grid track count for a run of adjacent images
+//                           (1..6 cells across; beyond that a cell is unreadable)
+//   gap / splitGap        — px gap between blocks / between columns (0..200 of 540)
+//   contentFlex/imageFlex — flex-grow ratio of the two columns (0.1..20)
+const SLIDE_NUMERIC_BOUNDS = {
+  imageCols: [1, 6, true],
+  gap: [0, 200, false],
+  splitGap: [0, 200, false],
+  contentFlex: [0.1, 20, false],
+  imageFlex: [0.1, 20, false],
+};
+function clampDeckNumber(v, min, max, isInt) {
+  const n = typeof v === "number" ? v
+    : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const c = Math.min(max, Math.max(min, n));
+  return isInt ? Math.round(c) : c;
+}
+
+// Nesting cap for grid → items[].blocks[] recursion. A deck is a data file, so a
+// deeply self-nested structure is never authored content — it is a cheap way to
+// blow the stack (or the render tree) at load. Blocks deeper than this are dropped.
+const MAX_BLOCK_DEPTH = 4;
+
+function sanitizeBlock(block, depth = 0) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
-  const clean = { ...block };
+  if (depth > MAX_BLOCK_DEPTH) return null;
+  // Allowlist copy (see SAFE_BLOCK_KEYS): unknown and `_`-prefixed keys never
+  // enter `clean`, so the rest of this function only ever sees known fields.
+  const clean = {};
+  for (const k of SAFE_BLOCK_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(block, k)) clean[k] = block[k];
+  }
   // `hidden` (element visibility toggle) — coerce to a strict boolean so a
   // non-boolean value can never reach layout/render logic.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
@@ -908,9 +1016,11 @@ function sanitizeBlock(block) {
       );
     }
     if (clean.type === "grid") {
+      // NOTE: pass the recursion depth explicitly — a bare `.map(sanitizeBlock)`
+      // would hand the array INDEX to the depth parameter.
       clean.items = clean.items.slice(0, 6).map((cell) => ({
         ...cell,
-        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
+        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
       }));
     }
     if (clean.type === "icon-row") {
@@ -1080,12 +1190,27 @@ function sanitizeStudyNotes(raw) {
 
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
-  const clean = { ...slide };
+  // Allowlist copy (see SAFE_SLIDE_KEYS): unknown and `_`-prefixed keys are
+  // dropped here, so no deck-supplied field can impersonate a renderer-private
+  // flag or ride along into storage/export.
+  const clean = {};
+  for (const k of SAFE_SLIDE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(slide, k)) clean[k] = slide[k];
+  }
+  // Type + range at ingress for the numeric layout fields (see SLIDE_NUMERIC_BOUNDS).
+  for (const k in SLIDE_NUMERIC_BOUNDS) {
+    if (!(k in clean)) continue;
+    const [min, max, isInt] = SLIDE_NUMERIC_BOUNDS[k];
+    const n = clampDeckNumber(clean[k], min, max, isInt);
+    if (n === undefined) delete clean[k]; else clean[k] = n;
+  }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
-  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
+  // the array INDEX into the recursion-depth parameter.
+  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
@@ -1498,7 +1623,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}

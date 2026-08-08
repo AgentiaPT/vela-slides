@@ -66,14 +66,18 @@ const eq = (n, a, b) => JSON.stringify(a) === JSON.stringify(b)
 // ---- state builders ----
 let _c = 0;
 const nid = (p) => (p || "id") + "_" + (++_c);
-const slide = (mark, extra) => ({ title: "S" + (mark || ""), duration: 60, blocks: [{ type: "heading", text: "H" + (mark || "") }], _mark: mark, ...(extra || {}) });
+// The per-slide identity marker rides on `title` (an allowlisted slide key).
+// Deck ingress is an allowlist, so an ad-hoc `_mark` field would be stripped by
+// sanitizeSlide — which is exactly what the allowlist section below asserts.
+const slide = (mark, extra) => ({ title: "S" + (mark || ""), duration: 60, blocks: [{ type: "heading", text: "H" + (mark || "") }], ...(extra || {}) });
 const item = (id, slides, extra) => ({ id, title: "M-" + id, status: "todo", importance: "should", order: 1, comments: [], slides: slides || [], createdAt: "t0", ...(extra || {}) });
 const lane = (id, items, extra) => ({ id, title: "L-" + id, collapsed: false, items: items || [], ...(extra || {}) });
 const present = (lanes, sel, idx) => ({ ...init, lanes: lanes || [], selectedId: sel ?? null, slideIndex: idx ?? 0 });
 const H = (p) => ({ past: [], present: p, future: [] });
 // find an item across lanes by id
 const findItem = (st, id) => { for (const l of st.lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
-const marks = (arr) => (arr || []).map((s) => s._mark);
+const markOf = (s) => (s && typeof s.title === "string" && s.title.length > 1) ? Number(s.title.slice(1)) : undefined;
+const marks = (arr) => (arr || []).map(markOf);
 const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedMods.clear(); };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -138,7 +142,7 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const out = innerReducer(st, { type: "ADD_ITEM", laneId: "l1", title: "Sec", slides: [slide(1)] });
   const created = out.lanes[0].items[0];
   assert("ADD_ITEM appends an item", out.lanes[0].items.length === 1 && created.title === "Sec");
-  assert("ADD_ITEM sanitizes + keeps slides", created.slides.length === 1 && created.slides[0]._mark === 1);
+  assert("ADD_ITEM sanitizes + keeps slides", created.slides.length === 1 && markOf(created.slides[0]) === 1);
   assert("ADD_ITEM marks module dirty (had slides)", _dirtyMods.has(created.id));
   assert("ADD_ITEM marks module loaded", _loadedMods.has(created.id));
   const noLane = innerReducer(st, { type: "ADD_ITEM", laneId: "nope", title: "x" });

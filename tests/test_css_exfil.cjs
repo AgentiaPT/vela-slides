@@ -311,7 +311,10 @@ else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
       const ctx2 = { module: { exports: {} } };
       vm.createContext(ctx2);
       vm.runInContext(
-        [grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
+        [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (slide)"),
+          grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (slide)"),
+          grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (slide)"),
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (slide)"),
           grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (slide)"),
           grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (slide)"),

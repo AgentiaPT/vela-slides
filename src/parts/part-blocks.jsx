@@ -1757,7 +1757,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
   const renderImageGrid = (idxs, region) => {
     const runLen = idxs.length;
-    const cols = slide.imageCols ? Math.max(1, slide.imageCols | 0) : gridColsFor(runLen, region);
+    // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
+    // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
+    // re-clamp at the sink for any slide object that reached here unsanitized.
+    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
     const rows = Math.ceil(runLen / cols);
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;

@@ -1684,7 +1684,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
   });
 
-  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]);
+  // Paste-detection heuristic: a DISTINCTIVE subset of SAFE_SLIDE_KEYS
+  // (part-imports.jsx) — not the whole allowlist, because keys shared with
+  // blocks (color, gap, padding, align…) would make a copied BLOCK look like a
+  // slide. Filtered through SAFE_SLIDE_KEYS so it can never name a key that deck
+  // ingress strips: the two lists cannot drift apart.
+  const SLIDE_KEYS = new Set(
+    ["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]
+      .filter((k) => SAFE_SLIDE_KEYS.has(k))
+  );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;

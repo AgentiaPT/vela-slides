@@ -22,9 +22,14 @@ Complete reference for all Vela v12 slide block types (27 total).
   "R": [ ...block objects... ],                 // right column blocks (cols layout only)
   "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
   "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
-  "splitGap": 32                                // gap between columns in px (cols/split layouts)
+  "splitGap": 32,                               // gap between columns in px (cols/split layouts)
+  "imageCols": 3                                // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
 }
 ```
+
+**Image runs:** two or more adjacent `image` blocks are laid out as a balanced grid whose column count is chosen automatically. Set `imageCols` to pin it.
+
+**Numeric slide fields are type- and range-checked on load:** `imageCols` is coerced to an integer and clamped to 1–6; `gap` and `splitGap` to 0–200 px; `contentFlex`/`imageFlex` to 0.1–20. A non-numeric value is dropped, and the renderer default applies.
 
 **Layout note:** Left-aligned slides (`align: "left"` or default) stretch blocks to full width. Center-aligned slides (`align: "center"`) shrink-wrap blocks. This means flow, grid, and progress blocks automatically fill the canvas on content slides.
 

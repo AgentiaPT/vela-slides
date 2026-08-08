@@ -30,6 +30,40 @@ CONSOLE_LOG_RE = re.compile(r'(?<!dbg\()console\.log\(')
 # Unresolved merge conflict markers
 CONFLICT_RE = re.compile(r'^[<>=]{7}', re.MULTILINE)
 
+# ── Deck key-drift check ─────────────────────────────────────────────
+# Deck ingress (sanitizeSlide/sanitizeBlock in part-imports.jsx) is an
+# ALLOWLIST: only keys in SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS survive. A renderer
+# that reads a key missing from those sets therefore reads `undefined` for every
+# deck loaded from disk — silently, with no error. This check fails the build on
+# that drift. The allowlists are parsed from part-imports.jsx so there is exactly
+# one source of truth.
+KEY_SOURCE_FILE = "part-imports.jsx"
+KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+
+SET_LITERAL_RE_TPL = r'const\s+{name}\s*=\s*new\s+Set\(\[(.*?)\]\)'
+QUOTED_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
+
+# `slide.foo` / `block.foo` member reads. `rawBlock` is the pre-guard alias used
+# by RenderBlock.
+MEMBER_RE = re.compile(r'\b(slide|block|rawBlock)\.([A-Za-z_$][A-Za-z0-9_$]*)')
+# `const { a, b: c } = slide` destructuring.
+DESTRUCT_RE = re.compile(r'\{([^{}]*)\}\s*=\s*(slide|block|rawBlock)\b')
+
+# Members that are NOT deck fields: a local named `block` may hold a DOM element
+# (the measurement pass in part-slides.jsx walks rendered nodes), and JS/DOM
+# built-ins are never deck keys. Keep this list minimal and explicit — anything
+# added here is a key the drift check stops protecting.
+NON_DECK_MEMBERS = {
+    # DOM element members read off a variable named `block`
+    "getBoundingClientRect", "dataset", "className", "textContent", "classList",
+    "closest", "querySelector", "querySelectorAll", "parentElement", "children",
+    "scrollHeight", "offsetHeight", "offsetWidth", "getAttribute", "setAttribute",
+    "appendChild", "cloneNode", "remove",
+    # JS built-ins / React
+    "length", "map", "filter", "forEach", "slice", "find", "some", "every",
+    "push", "includes", "join", "toString", "hasOwnProperty", "props", "key",
+}
+
 
 # ── Checks ───────────────────────────────────────────────────────────
 
@@ -101,6 +135,81 @@ def check_balanced_braces(source, label="file"):
     return warnings
 
 
+def _parse_set_literal(source, name):
+    """Extract the string members of a `const <name> = new Set([...])` literal."""
+    m = re.search(SET_LITERAL_RE_TPL.format(name=name), source, re.DOTALL)
+    if not m:
+        return None
+    body = m.group(1)
+    # Drop comments so a key mentioned in prose isn't picked up as a member.
+    body = re.sub(r'//[^\n]*', '', body)
+    body = re.sub(r'/\*[\s\S]*?\*/', '', body)
+    return {a or b for a, b in QUOTED_RE.findall(body)}
+
+
+def _destructured_names(inner):
+    """Yield the source-side property names of a destructuring pattern body."""
+    for part in inner.split(","):
+        part = part.strip()
+        if not part or part.startswith("..."):
+            continue
+        # `foo: bar` renames -> the deck key is `foo`; `foo = 1` defaults -> `foo`
+        name = part.split(":")[0].split("=")[0].strip()
+        if re.fullmatch(r'[A-Za-z_$][A-Za-z0-9_$]*', name or ""):
+            yield name
+
+
+def check_deck_key_drift(parts_dir):
+    """Every slide.<key>/block.<key> read must be allowlisted at deck ingress."""
+    errors = []
+    src_path = os.path.join(parts_dir, KEY_SOURCE_FILE)
+    if not os.path.exists(src_path):
+        return [f"Key-drift check: {KEY_SOURCE_FILE} not found in {parts_dir}"]
+
+    with open(src_path, 'r', encoding="utf-8") as f:
+        allow_src = f.read()
+
+    allow = {}
+    for kind, set_name in (("slide", "SAFE_SLIDE_KEYS"), ("block", "SAFE_BLOCK_KEYS")):
+        keys = _parse_set_literal(allow_src, set_name)
+        if not keys:
+            return [f"Key-drift check: could not parse {set_name} from {KEY_SOURCE_FILE}"]
+        allow[kind] = keys
+    # `rawBlock` is RenderBlock's alias for the same object.
+    allow["rawBlock"] = allow["block"]
+
+    for fname in KEY_CONSUMER_FILES:
+        fpath = os.path.join(parts_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+        with open(fpath, 'r', encoding="utf-8") as f:
+            src = f.read()
+
+        seen = set()
+        hits = [(kind, key) for kind, key in MEMBER_RE.findall(src)]
+        for m in DESTRUCT_RE.finditer(src):
+            hits += [(m.group(2), name) for name in _destructured_names(m.group(1))]
+
+        for kind, key in hits:
+            # `_`-prefixed keys are the reserved renderer-private namespace:
+            # set by our own code after sanitization, never from deck input.
+            if key.startswith("_") or key in NON_DECK_MEMBERS:
+                continue
+            if key in allow[kind]:
+                continue
+            label = "block" if kind == "rawBlock" else kind
+            sig = (fname, label, key)
+            if sig in seen:
+                continue
+            seen.add(sig)
+            errors.append(
+                f"Deck key drift in {fname}: reads {label}.{key}, which is not in "
+                f"SAFE_{label.upper()}_KEYS ({KEY_SOURCE_FILE}) — deck ingress would "
+                f"strip it, so this always reads undefined for a loaded deck"
+            )
+    return errors
+
+
 # ── Main runners ─────────────────────────────────────────────────────
 
 def lint_monolith(filepath):
@@ -151,6 +260,7 @@ def lint_parts(parts_dir):
     errors += check_duplicates(combined, "combined parts")
     errors += check_startup_patch(combined, "combined parts")
     errors += check_version_constants(combined, "combined parts")
+    errors += check_deck_key_drift(parts_dir)
 
     return errors, warnings
 
