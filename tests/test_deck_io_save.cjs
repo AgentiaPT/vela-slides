@@ -358,6 +358,33 @@ const PATH = "/decks/a.vela";
     assert(C.warns.some((w) => /exceeds/i.test(w)), "oversized skip was silent: " + JSON.stringify(C.warns));
   });
 
+  // 13b. TOCTOU: the pre-read stat passes (small file), but the file GREW past
+  //      the cap before the read returns. The post-read size re-check must reject
+  //      it so an oversized document never reaches JSON.parse.
+  await test("bounded: file grown after stat (oversized read) is rejected post-read", async () => {
+    const cfg = {};
+    const N = makeNeu(cfg);
+    const C = recordingConsole();
+    const m = buildModule(N, C);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    let externalReloads = 0;
+    m.deckIO.onDeckLoaded((deck, p, meta) => { if (meta && meta.external) externalReloads++; });
+    m.saveCurrent(DECK());
+    await m.flushNow(); // real save + verify (default mock) must succeed first
+    // Simulate the race: stat reports a small file (passes the pre-read cap), but
+    // the read returns an oversized document grown inside the window.
+    const big = "x".repeat(6 * 1024 * 1024);
+    cfg.getStats = () => ({ size: 100 });
+    cfg.readFile = () => big;
+    N.resetCounts();
+    m.state.lastWriteAt = 0; // window lapsed: caps are the only thing left
+    m.onWatchEvent({ detail: { dir: "/decks", filename: "a.vela", action: "modified" } });
+    await tick(30);
+    assert(N.readCount() === 1, "expected exactly one (post-stat) read, got " + N.readCount());
+    assert(externalReloads === 0, "oversized post-stat-growth read was loaded as an external edit");
+    assert(C.warns.some((w) => /exceeds/.test(w)), "post-read oversize skip was silent: " + JSON.stringify(C.warns));
+  });
+
   // 14. Echo guard is signature AND exact text: a signature hit whose bytes differ
   //     is NOT our echo. Dropping it would silently diverge app state from disk.
   await test("echo-guard: signature hit with different text is NOT treated as our echo", async () => {
@@ -446,6 +473,10 @@ const PATH = "/decks/a.vela";
     assert(SRC.includes('verifyWrite'), "verify-after-write missing");
     assert(SRC.includes('lastWrittenText'), "exact-bytes echo baseline missing");
     assert(/const MAX_DECK_BYTES = 5 \* 1024 \* 1024;/.test(SRC), "deck read size cap missing");
+    // Post-read TOCTOU re-check: the watcher must re-validate the bytes it read
+    // against the cap, not trust the prior stat (which a writer can outrace).
+    assert(/const readBytes = byteLen\(text\);/.test(SRC) && /readBytes > MAX_DECK_BYTES/.test(SRC),
+      "post-read size re-check (stat→read TOCTOU close) missing");
     assert(/const WATCHER_IGNORE_MS = 400;/.test(SRC), "watcher ignore window not back to the small fast-path value");
     assert(SRC.includes('async function readDeckText('), "single audited read entry point missing");
     // Exactly one direct filesystem read call in the module — the chokepoint.

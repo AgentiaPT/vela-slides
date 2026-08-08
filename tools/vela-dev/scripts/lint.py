@@ -46,6 +46,11 @@ QUOTED_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
 # `slide.foo` / `block.foo` member reads. `rawBlock` is the pre-guard alias used
 # by RenderBlock.
 MEMBER_RE = re.compile(r'\b(slide|block|rawBlock)\.([A-Za-z_$][A-Za-z0-9_$]*)')
+# `slide["foo"]` / `block['foo']` bracket-notation reads with a STRING-LITERAL
+# key — the same drift the dotted form would trip, just written differently.
+# (Computed `block[k]` reads can't be resolved statically and are out of scope;
+# this catches the literal-key form only.)
+BRACKET_RE = re.compile(r'\b(slide|block|rawBlock)\[\s*["\']([A-Za-z_$][A-Za-z0-9_$]*)["\']\s*\]')
 # `const { a, b: c } = slide` destructuring.
 DESTRUCT_RE = re.compile(r'\{([^{}]*)\}\s*=\s*(slide|block|rawBlock)\b')
 
@@ -187,6 +192,7 @@ def check_deck_key_drift(parts_dir):
 
         seen = set()
         hits = [(kind, key) for kind, key in MEMBER_RE.findall(src)]
+        hits += [(kind, key) for kind, key in BRACKET_RE.findall(src)]
         for m in DESTRUCT_RE.finditer(src):
             hits += [(m.group(2), name) for name in _destructured_names(m.group(1))]
 

@@ -88,7 +88,7 @@ All imported deck JSON passes through `validateAndSanitizeDeck()` which enforces
 - Style objects validated as plain objects (no arrays, no primitives)
 - SVG markup sanitized with the full pipeline above
 
-A **CI drift guard** parses the same allowlists out of the source and fails the build if a renderer reads a slide/block key that isn't on the list — the allowlist is the single source of truth, not a document that can silently fall out of sync with the code.
+A **CI drift guard** (`tools/vela-dev/scripts/lint.py`, `check_deck_key_drift`) parses the same allowlists out of the source and fails the build when it finds a non-allowlisted key read. Its scope is bounded and stated here honestly rather than as universal coverage: it scans the two primary renderer part-files (`part-blocks.jsx`, `part-slides.jsx`) and matches `slide.`/`block.`/`rawBlock.` dotted reads, string-literal bracket reads (`slide["x"]`), and shallow destructuring. It does not resolve computed (`block[k]`) reads, aliased objects, or reads in the other consumers (PDF/PPTX exporters, engine). Within that scope the allowlist is the single source of truth, kept in sync with the code rather than a document that can silently drift.
 
 ### No Sensitive Data
 

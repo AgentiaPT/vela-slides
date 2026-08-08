@@ -58,7 +58,13 @@ USER node
 RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
 # Regenerate the monolith from parts, then preprocess it for the Neutralino shell.
-RUN python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx \
+# Use --release so the shipped desktop bundle carries NO dev-only test-hook
+# surface: sync-vela.py flips VELA_LOCAL_MODE→true (which would otherwise open the
+# runtime hook gate), so the strip is what keeps window.__velaTestHooks out of the
+# production shell. The --out target is this container's throwaway build artifact
+# (never committed), and the production save-status channel lives OUTSIDE the
+# strip fence and survives. Verified by tests/test_release_build.cjs.
+RUN python3 tools/vela-dev/scripts/concat.py --release --out skills/vela-slides/app/vela.jsx src/parts \
     && python3 vela-neutralino/scripts/sync-vela.py
 
 # Fetch the pinned Neutralino runtime, verify it against committed SHA256 pins,

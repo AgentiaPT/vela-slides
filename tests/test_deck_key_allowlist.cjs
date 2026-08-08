@@ -329,5 +329,74 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
   assert("sanitizeItem still yields usable slides", it.slides.length === 1 && it.slides[0].blocks.length === 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 9. Sub-object hardening — nested breadth cap (P1) + recursive scrub
+//    and `_`-namespace drop on raw-spread sub-objects (P2)
+// ═══════════════════════════════════════════════════════════════════
+{
+  // P1: a grid cell's blocks array is capped to 30 (matching the slide-level
+  //     cap), so nested grids cannot bypass the 30-blocks/slide breadth limit.
+  const cell40 = sanitizeBlock({
+    type: "grid", cols: 1,
+    items: [{ blocks: Array.from({ length: 40 }, (_, i) => ({ type: "text", text: "B" + i })) }],
+  });
+  assert("P1: grid cell with 40 blocks capped to 30", cell40.items[0].blocks.length === 30);
+}
+{
+  // P2: `_`-prefixed / arbitrary keys on a grid cell; legit keys + blocks survive.
+  const g = sanitizeBlock({
+    type: "grid", cols: 2,
+    items: [{ bg: "#111", align: "center", _gridCell: true, _evil: 1, blocks: [{ type: "text", text: "c" }] }],
+  });
+  const cell = g.items[0];
+  assert("P2: _-prefixed key dropped from grid cell", cell._gridCell === undefined && cell._evil === undefined);
+  assert("P2: legit grid-cell keys survive (bg/align/blocks)",
+    cell.bg === "#111" && cell.align === "center" && cell.blocks.length === 1);
+  // CSS auto-load value on a cell scalar is scrubbed through the recursive path.
+  const g2 = sanitizeBlock({ type: "grid", cols: 1, items: [{ bg: "url(https://x/?d=1)", blocks: [] }] });
+  assert("P2: CSS auto-load value scrubbed on a grid cell bg", g2.items[0].bg === undefined);
+}
+{
+  // P2: list item `_` keys dropped; legit item keys survive + scalar scrub fires.
+  const fl = sanitizeBlock({ type: "flow", items: [{ label: "S", color: "#f00", icon: "Zap", _solo: true }] });
+  const it = fl.items[0];
+  assert("P2: _-prefixed key dropped from list item", it._solo === undefined);
+  assert("P2: legit list-item keys survive (label/color/icon)",
+    it.label === "S" && it.color === "#f00" && it.icon === "Zap");
+  const ir = sanitizeBlock({ type: "icon-row", items: [{ text: "t", iconColor: "url(https://x/?d=1)" }] });
+  assert("P2: CSS auto-load value scrubbed on a list-item iconColor", ir.items[0].iconColor === undefined);
+}
+{
+  // P2: matrix quadrant `_` keys dropped; legit quadrant keys survive.
+  const mx = sanitizeBlock({
+    type: "matrix",
+    quadrants: [{ title: "Q", color: "#0f0", label: "L", _virtual: true }],
+    xLeft: "l", xRight: "r", yTop: "t", yBottom: "b",
+  });
+  const q = mx.quadrants[0];
+  assert("P2: _-prefixed key dropped from matrix quadrant", q._virtual === undefined);
+  assert("P2: legit quadrant keys survive (title/color/label)",
+    q.title === "Q" && q.color === "#0f0" && q.label === "L");
+}
+{
+  // P2: recursion reaches NESTED comparison points (side.items[]).
+  const cmp = sanitizeBlock({
+    type: "comparison",
+    items: [
+      { title: "A", items: [{ text: "p1", _hidden: true, color: "#fff" }] },
+      { title: "B", items: [{ text: "p2" }] },
+    ],
+  });
+  const pt = cmp.items[0].items[0];
+  assert("P2: _-prefixed key dropped from nested comparison point", pt._hidden === undefined);
+  assert("P2: nested comparison point text/color survive", pt.text === "p1" && pt.color === "#fff");
+  const cmp2 = sanitizeBlock({
+    type: "comparison",
+    items: [{ title: "A", items: [{ text: "p", color: "url(https://x/?d=1)" }] }],
+  });
+  assert("P2: CSS auto-load value scrubbed on a nested comparison point",
+    cmp2.items[0].items[0].color === undefined);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.23";
+const VELA_VERSION = "13.24";
 const VELA_CHANGELOG = [
+  { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
   { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
   { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
   { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
@@ -866,6 +867,42 @@ function scrubLayoutFields(obj) {
   }
 }
 
+// SECURITY (deck sub-object ingress): the top-level slide/block objects are
+// rebuilt from a hardcoded key ALLOWLIST, but their nested SUB-OBJECTS — list
+// `items`, grid cells (`cell`), matrix `quadrants`, comparison sides and their
+// nested points — are copied by raw object spread and therefore keep arbitrary
+// keys. Their safety rests on the pattern scrubbers, so run those on EVERY
+// nested object (not just the first level) and additionally drop the reserved
+// `_`-prefixed private namespace so a deck cannot forge a renderer-private flag
+// on a sub-object either. We deliberately do NOT allowlist sub-object keys: the
+// ~14 item shapes read wildly different key sets (see the renderer inventory),
+// so an allowlist risks silently dropping a legitimate rendered key. The
+// scrubbers only delete a color/layout/style VALUE that is dangerous, never a
+// renderer key, so this closes the surface without a rendering blast radius.
+const MAX_SUBOBJECT_DEPTH = 6;
+function scrubSubObject(obj, depth = 0) {
+  if (!obj || typeof obj !== "object" || depth > MAX_SUBOBJECT_DEPTH) return;
+  if (Array.isArray(obj)) {
+    for (const el of obj) scrubSubObject(el, depth + 1);
+    return;
+  }
+  // Drop the reserved renderer-private namespace: internal flags are set by our
+  // own code AFTER sanitization, never carried in from a deck.
+  for (const k of Object.keys(obj)) {
+    if (k.charCodeAt(0) === 95 /* "_" */) delete obj[k];
+  }
+  if ("style" in obj) {
+    const s = sanitizeStyle(obj.style);
+    if (s && Object.keys(s).length) obj.style = s; else delete obj.style;
+  }
+  scrubColorFields(obj);
+  scrubLayoutFields(obj);
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === "object") scrubSubObject(v, depth + 1);
+  }
+}
+
 // CSS-context output encoders for deck values interpolated into inline CSS at
 // render (a `url(...)` position or a bare color token). The value-level allowlists
 // above decide WHAT is allowed; these ensure a value cannot break out of its CSS
@@ -1022,7 +1059,10 @@ function sanitizeBlock(block, depth = 0) {
       // would hand the array INDEX to the depth parameter.
       clean.items = clean.items.slice(0, 6).map((cell) => ({
         ...cell,
-        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
+        // Cap nested breadth too: without this, a grid cell can carry an
+        // unbounded blocks array (and each may itself be a grid), bypassing the
+        // 30-blocks/slide breadth limit the slide-level arrays enforce.
+        blocks: Array.isArray(cell?.blocks) ? cell.blocks.slice(0, 30).map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
       }));
     }
     if (clean.type === "icon-row") {
@@ -1099,32 +1139,18 @@ function sanitizeBlock(block, depth = 0) {
     if (s && Object.keys(s).length) clean.style = s;
     else delete clean.style;
   }
-  if (Array.isArray(clean.items)) {
-    clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && "style" in it) {
-        const s = sanitizeStyle(it.style);
-        const c = { ...it };
-        if (s && Object.keys(s).length) c.style = s;
-        else delete c.style;
-        return c;
-      }
-      return it;
-    });
-  }
-  // Strip CSS auto-load values from color/background scalars on the block and on
-  // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
-  // item.color, dotColor …). See scrubColorFields above. (v12.61)
+  // Strip CSS auto-load values from color/background scalars on the block
+  // itself (the allowlisted top-level object). See scrubColorFields above. (v12.61)
   scrubColorFields(clean);
   scrubLayoutFields(clean);
-  if (Array.isArray(clean.items)) {
-    for (const it of clean.items) { scrubColorFields(it); scrubLayoutFields(it); }
-  }
-  // The matrix block renders from a separate `quadrants` array (not `items`),
-  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
-  // class as items; quadrants was previously never visited.)
-  if (Array.isArray(clean.quadrants)) {
-    for (const q of clean.quadrants) { scrubColorFields(q); scrubLayoutFields(q); }
-  }
+  // Harden deck SUB-OBJECTS recursively (list items, grid cells, matrix
+  // quadrants, comparison sides + their nested points): scrub color/layout/style
+  // values on every nested object and drop the `_`-prefixed private namespace.
+  // Unlike the top-level object these are raw-spread and keep arbitrary keys, so
+  // the scrubbers are their only backstop — apply them at every level, not just
+  // the first. See scrubSubObject above. (v13.24)
+  if (Array.isArray(clean.items)) scrubSubObject(clean.items);
+  if (Array.isArray(clean.quadrants)) scrubSubObject(clean.quadrants);
   return clean;
 }
 

@@ -143,6 +143,21 @@ test('desktop build opens the save-status gate via VELA_LOCAL_MODE', () => {
     'sync-vela.py no longer flips VELA_LOCAL_MODE — the desktop save-status pill would go dark at mount');
 });
 
+// ── The DESKTOP ship path must strip the hooks (F2) ──────────────────
+// sync-vela.py flips VELA_LOCAL_MODE→true for the Neutralino build, which opens
+// the runtime hook gate — so the Docker ship build MUST concat with --release,
+// otherwise window.__velaTestHooks would be live in the shipped desktop app.
+test('desktop Dockerfile builds the embedded bundle with --release', () => {
+  const dockerfile = path.join(ROOT, 'vela-neutralino', 'Dockerfile');
+  if (!fs.existsSync(dockerfile)) { console.log('     (Dockerfile missing — skipped)'); return; }
+  const df = fs.readFileSync(dockerfile, 'utf8');
+  // Find the concat.py invocation that feeds sync-vela.py.
+  const line = df.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in the Dockerfile');
+  assert(/concat\.py\s+--release\b/.test(line) && /--out\b/.test(line),
+    'Dockerfile concat.py does not use --release --out — the desktop ship bundle would keep test hooks live:\n     ' + (line || '').trim());
+});
+
 test('release build keeps the STARTUP_PATCH ship marker', () => {
   assert(release.includes('const STARTUP_PATCH = null;'),
     'STARTUP_PATCH marker missing — assemble.py could not inject a deck');

@@ -231,12 +231,21 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
 }
 
 // Wiring guards: the sinks/import path actually route through the new guards.
-if (/scrubLayoutFields\(clean\)/.test(src) && /for \(const it of clean\.items\) \{ scrubColorFields\(it\); scrubLayoutFields\(it\); \}/.test(src))
-  ok("sanitizeBlock wires scrubLayoutFields on block + items");
+// Sub-objects (items / grid cells / quadrants / nested points) are now hardened
+// recursively via scrubSubObject, which drops `_` keys and runs
+// scrubColorFields/scrubLayoutFields/sanitizeStyle at every level.
+if (/scrubLayoutFields\(clean\)/.test(src) && /if \(Array\.isArray\(clean\.items\)\) scrubSubObject\(clean\.items\);/.test(src))
+  ok("sanitizeBlock wires scrubLayoutFields on block + items (recursive scrubSubObject)");
 else bad("sanitizeBlock does not wire scrubLayoutFields on block/items");
-if (/Array\.isArray\(clean\.quadrants\)/.test(src) && /for \(const q of clean\.quadrants\) \{ scrubColorFields\(q\); scrubLayoutFields\(q\); \}/.test(src))
-  ok("sanitizeBlock scrubs block.quadrants (color + layout)");
+if (/if \(Array\.isArray\(clean\.quadrants\)\) scrubSubObject\(clean\.quadrants\);/.test(src))
+  ok("sanitizeBlock scrubs block.quadrants (color + layout via scrubSubObject)");
 else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
+// scrubSubObject itself must apply both scrubbers and drop the `_` namespace.
+if (/function scrubSubObject\(/.test(src) &&
+    /scrubColorFields\(obj\)/.test(src) && /scrubLayoutFields\(obj\)/.test(src) &&
+    /charCodeAt\(0\) === 95/.test(src))
+  ok("scrubSubObject applies color+layout scrubbers and drops the `_` namespace");
+else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 {
   const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
   const bsrc = fs.readFileSync(BLOCKS, "utf8");

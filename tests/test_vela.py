@@ -682,8 +682,10 @@ def test_css_color_exfil():
     else:
         fail("sanitizeSlide color scrub", "slide bg/bgGradient/color must be scrubbed")
     sblock = imports[imports.index("function sanitizeBlock("):imports.index("const VALID_COMMENT_STATUSES")] if "function sanitizeBlock(" in imports else ""
-    if "scrubColorFields(clean)" in sblock and "scrubColorFields(it)" in sblock:
-        ok("sanitizeBlock scrubs block + item/cell color scalars")
+    # Block scalars scrubbed directly; sub-objects (items/cells/quadrants/nested
+    # points) are hardened recursively via scrubSubObject.
+    if "scrubColorFields(clean)" in sblock and "scrubSubObject(clean.items)" in sblock:
+        ok("sanitizeBlock scrubs block + item/cell color scalars (recursive scrubSubObject)")
     else:
         fail("sanitizeBlock color scrub", "block + items (grid cell.bg/dotColor/…) must be scrubbed")
 
@@ -3557,6 +3559,32 @@ def test_deck_key_allowlist_structure():
         ok("lint.py --parts passes (no deck key drift)")
     else:
         fail("lint.py --parts reports drift", r.stdout + r.stderr)
+
+    # The drift check must ALSO catch bracket-notation reads (slide["x"] /
+    # block['x']), not only dotted member access — SECURITY.md now states this
+    # scope. Prove it by injecting a bracket-read of a non-allowlisted key into a
+    # throwaway copy of the parts and asserting the lint fails on it.
+    if "BRACKET_RE" in lint_src and "BRACKET_RE.findall" in lint_src:
+        ok("lint.py wires a bracket-notation read pattern into the drift check")
+    else:
+        fail("lint.py does not scan bracket-notation reads")
+    import tempfile as _tf, shutil as _sh
+    _tmp = _tf.mkdtemp(prefix="vela-drift-")
+    try:
+        for _f in os.listdir(PARTS_DIR):
+            if _f.endswith(".jsx"):
+                _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp, _f))
+        _victim = os.path.join(_tmp, "part-blocks.jsx")
+        with open(_victim, "a", encoding="utf-8") as _fh:
+            _fh.write('\nconst _driftProbe = block["nonAllowlistedBogusKey123"];\n')
+        _r = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", _tmp],
+                            capture_output=True, text=True)
+        if _r.returncode != 0 and "nonAllowlistedBogusKey123" in (_r.stdout + _r.stderr):
+            ok("lint.py catches a bracket-notation read of a non-allowlisted key")
+        else:
+            fail("lint.py missed a bracket-notation drift read", _r.stdout + _r.stderr)
+    finally:
+        _sh.rmtree(_tmp, ignore_errors=True)
 
 
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━

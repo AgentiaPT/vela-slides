@@ -329,6 +329,16 @@ function onWatchEvent(evt) {
     }
     // 3) Now read, through the single audited entry point.
     const text = await readDeckText(path);
+    // 3b) Close the stat→read TOCTOU: a local writer can grow the file past the
+    //     cap AFTER the getStats above but BEFORE this read, so the size we just
+    //     read is the only trustworthy measure. Re-check the actual bytes and
+    //     skip (warn, non-silent) rather than let an oversized document reach
+    //     JSON.parse.
+    const readBytes = byteLen(text);
+    if (readBytes > MAX_DECK_BYTES) {
+      console.warn(`[deck-io] ignoring external change: read ${readBytes} bytes exceeds the ${MAX_DECK_BYTES}-byte deck limit (grown after stat)`, path);
+      return;
+    }
     // Echo suppression, definitive and timing-independent: the signature narrows
     // the compare cheaply, the exact-text compare confirms it. The signature is a
     // short digest, so two different documents can share one — on its own it could
