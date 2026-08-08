@@ -32,7 +32,16 @@ RELEASE builds (--release):
   stripped build is clean (tests/test_release_build.cjs).
 """
 
-import sys, os, tempfile
+import sys, os, re, tempfile
+
+# Naming convention for test-only globals, enforced by the release check in
+# concat(). Matching one hardcoded literal proved too narrow — it missed the UI
+# battery's own entry point, so a release build reported "no test hooks" over a
+# bundle that still carried them. A marker in the NAME is what makes the check
+# fail closed without an allowlist of every production global (__velaForceSave,
+# __velaAgentSend, __velaTrustGate, …) that would need updating forever.
+# Adding a test-only global means giving it a marker name AND fencing it.
+TEST_GLOBAL_RE = re.compile(r"__vela\w*(?:Test|Mock|Stub|Fixture|Spy)\w*")
 
 # Fence markers for build-time-strippable dev-only code. Both must appear on
 # their own line (leading whitespace allowed); blocks must not nest.
@@ -182,10 +191,10 @@ def concat(parts_dir, output_path, release=False):
     if release:
         # Fail the build (never silently ship) if any test-hook surface survived
         # the strip — e.g. a new call site added outside the DEV-ONLY fences.
-        leaks = [i + 1 for i, ln in enumerate(result.split("\n")) if "__velaTest" in ln]
+        leaks = sorted(set(TEST_GLOBAL_RE.findall(result)))
         if leaks:
-            print(f"   ❌ RELEASE BUILD LEAK: '__velaTest' still present on "
-                  f"{len(leaks)} line(s), first at {leaks[0]}", file=sys.stderr)
+            print(f"   ❌ RELEASE BUILD LEAK: test-only global(s) survived the strip: "
+                  f"{', '.join(leaks)}", file=sys.stderr)
             sys.exit(1)
         print(f"   Release strip: {total_stripped} dev-only block(s) removed, no test hooks ✓")
 

@@ -30,9 +30,15 @@ const VENDOR = path.join(ROOT, 'vela-neutralino', 'resources', 'vendor');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-release-'));
 const RELEASE_BUNDLE = path.join(TMP, 'vela-release.jsx');
 
-// The token that must not survive into a release build. Assembled at runtime so
-// this test file itself never trips a repo-wide grep for the literal.
-const HOOK_TOKEN = '__vela' + 'Test';
+// Test-only globals must not survive into a release build. Matching a single
+// literal was too narrow — it missed the UI battery's own entry point, so the
+// build could report "no test hooks" over a bundle that still carried it. This
+// mirrors TEST_GLOBAL_RE in tools/vela-dev/scripts/concat.py: a test-only global
+// is identified by a marker in its NAME, which needs no allowlist of the many
+// production globals (__velaForceSave, __velaAgentSend, …) that must survive.
+// Assembled at runtime so this file never trips a repo-wide grep for the tokens.
+const HOOK_MARKERS = ['Test', 'Mock', 'Stub', 'Fixture', 'Spy'];
+const hookRe = () => new RegExp('__vela\\w*(?:' + HOOK_MARKERS.join('|') + ')\\w*', 'g');
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -64,9 +70,27 @@ function occurrences(hay, needle) {
 
 test('release build contains ZERO test-hook references', () => {
   const hits = release.split('\n')
-    .map((ln, i) => (ln.includes(HOOK_TOKEN) ? `${i + 1}: ${ln.trim().slice(0, 120)}` : null))
+    .map((ln, i) => (hookRe().test(ln) ? `${i + 1}: ${ln.trim().slice(0, 120)}` : null))
     .filter(Boolean);
   assert(hits.length === 0, `${hits.length} leaked line(s):\n     ` + hits.slice(0, 5).join('\n     '));
+});
+
+// Regression for the specific surface the single-literal check missed: the
+// in-bundle UI battery's headless entry point. It is now fenced (stripped here)
+// AND runtime-gated in the dev bundle, matching the other test hooks.
+test('release build does not expose the UI-test battery entry point', () => {
+  const names = release.match(hookRe()) || [];
+  assert(names.length === 0, 'surviving test-only global(s): ' + [...new Set(names)].join(', '));
+  assert(!/window\.__velaRunUI\w*\s*=/.test(release), 'UI battery entry point survived the strip');
+});
+
+// The dev bundle intentionally KEEPS the battery (CI's offline harness drives
+// it), so the gate — not the fence — is what keeps it off a hosted artifact.
+test('dev build gates the UI-test battery behind local/test mode', () => {
+  const m = dev.match(/if \(typeof window !== "undefined" && \([^)]*\)\) \{\s*\n\s*window\.__velaRunUITests/);
+  assert(!!m, 'UI battery entry point is not runtime-gated in the dev bundle');
+  assert(/VELA_LOCAL_MODE/.test(m[0]) && /__velaTestMode/.test(m[0]),
+    'UI battery gate does not check VELA_LOCAL_MODE / test mode');
 });
 
 test('release build reports the strip in its own output', () => {
@@ -88,7 +112,7 @@ test('release build is smaller than the dev build (something was actually remove
 test('committed bundle is the DEV build (hooks present, runtime-gated)', () => {
   // Intentional: the offline render harness + in-bundle UI battery build from
   // the committed template. If this ever flips, vela-drive.js uitests goes dark.
-  assert(occurrences(dev, HOOK_TOKEN) > 0,
+  assert((dev.match(hookRe()) || []).length > 0,
     'committed vela.jsx has no test hooks — did the committed template become a release build?');
 });
 

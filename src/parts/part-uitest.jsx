@@ -147,16 +147,27 @@ async function runUITests(onProgress) {
   return allResults;
 }
 
+// VELA:DEV-ONLY:BEGIN
 // Headless entry point for automated browser drivers (see the vela-live-render
 // skill / vela-drive.js). Runs every suite and resolves to the results array,
 // also stashing it on window.__velaUITestResults for pollers.
-if (typeof window !== "undefined") {
+//
+// Kept off the production surface by the SAME two layers as the __velaTestHooks
+// object in part-app.jsx (ASVS V14.1.3 / V14.2.2), which this previously lacked:
+//   1. runtime gate — installed only in local/desktop mode, or when a harness
+//      opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js does
+//      this via addInitScript, so the headless battery is unaffected);
+//   2. build-time strip — concat.py --release drops this fenced block.
+// The committed vela.jsx is a DEV build, so the gate is what keeps the battery
+// off a hosted artifact; the fence is what keeps it out of the desktop bundle.
+if (typeof window !== "undefined" && (VELA_LOCAL_MODE || window.__velaTestMode)) {
   window.__velaRunUITests = async () => {
     const results = await runUITests();
     window.__velaUITestResults = results;
     return results;
   };
 }
+// VELA:DEV-ONLY:END
 
 // ━━━ TEST SUITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

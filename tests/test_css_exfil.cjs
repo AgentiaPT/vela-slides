@@ -42,6 +42,8 @@ let api;
 try {
   const reject = grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
   const key = grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY");
+  // Shared value filter the three key-pattern scrubbers delegate to (v13.25).
+  const shared = grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields");
   const fn = grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields");
   const lkey = grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY");
   const lfn = grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields");
@@ -51,7 +53,7 @@ try {
   const ctx = { module: { exports: {} } };
   vm.createContext(ctx);
   vm.runInContext(
-    [reject, key, fn, lkey, lfn, ckey, cu, cc,
+    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc,
       "module.exports = { scrubColorFields, scrubLayoutFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, cssUrl, cssColor };"].join("\n"),
     ctx, { filename: "part-imports-slice.js" });
   api = ctx.module.exports;
@@ -326,6 +328,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
           grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (slide)"),
           grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (slide)"),
+          grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (slide)"),
           grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (slide)"),
           grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (slide)"),
           grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK (slide)"),

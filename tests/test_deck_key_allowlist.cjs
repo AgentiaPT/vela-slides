@@ -35,7 +35,7 @@ const prelude = `
 const combined = prelude + "\n" + importsSrc.slice(sliceStart, sliceEnd) + "\n" +
   "; return { sanitizeSlide, sanitizeBlock, sanitizeItem, validateAndSanitizeDeck," +
   " buildTitleCardSlide, SAFE_SLIDE_KEYS, SAFE_BLOCK_KEYS, SLIDE_NUMERIC_BOUNDS," +
-  " MAX_BLOCK_DEPTH };";
+  " MAX_BLOCK_DEPTH, MAX_SUBOBJECT_DEPTH };";
 
 let API;
 try {
@@ -396,6 +396,65 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
   });
   assert("P2: CSS auto-load value scrubbed on a nested comparison point",
     cmp2.items[0].items[0].color === undefined);
+}
+
+// ── v13.25: sub-object scrubber must FAIL CLOSED and cover the paint families ──
+// These are behavioral, driven through the real ingress entry point. The prior
+// coverage for this area asserted on part-imports.jsx SOURCE text, which passes
+// regardless of what the code does — both gaps below shipped green under it.
+{
+  const BEACON = "url(https://blocked.invalid/x)";
+
+  // (1) Fail closed at the recursion cap. Nest a hostile object well past
+  // MAX_SUBOBJECT_DEPTH: the over-deep subtree must be GONE, not merely
+  // unvisited. Previously the guard returned early and left it intact, so the
+  // deck chose whether the scrubbers ran at all.
+  let deep = { bg: BEACON, marker: "DEEP" };
+  for (let i = 0; i < API.MAX_SUBOBJECT_DEPTH + 4; i++) deep = { nest: deep };
+  const g = sanitizeBlock({ type: "grid", items: [deep] });
+  const flat = JSON.stringify(g.items);
+  assert("v13.25: over-deep sub-object subtree is dropped, not passed through",
+    !flat.includes("DEEP") && !flat.includes("blocked.invalid"));
+
+  // (2) A legitimately shallow structure is untouched by that change.
+  const shallow = sanitizeBlock({
+    type: "comparison",
+    items: [{ title: "A", items: [{ text: "p", label: "keep" }] }],
+  });
+  assert("v13.25: shallow nesting still survives the depth guard",
+    shallow.items[0].items[0].label === "keep");
+
+  // (3) Paint-family keys on raw-spread sub-objects. CSS_COLOR_KEY keys off
+  // Vela's own field names, which cannot cover a key an untrusted deck invents.
+  for (const k of ["background", "backgroundImage", "bgImage", "maskImage",
+                   "WebkitMaskImage", "filter", "boxShadow", "clipPath"]) {
+    const b = sanitizeBlock({ type: "flow", items: [{ text: "n", [k]: BEACON }] });
+    assert(`v13.25: CSS auto-load scrubbed on sub-object '${k}'`,
+      b.items[0][k] === undefined);
+  }
+  const q = sanitizeBlock({ type: "matrix", quadrants: [{ label: "q", bgImage: BEACON }] });
+  assert("v13.25: CSS auto-load scrubbed on a matrix quadrant bgImage",
+    q.quadrants[0].bgImage === undefined && q.quadrants[0].label === "q");
+
+  // (4) Feature transparency — the widened pattern must not eat real content.
+  // `link` carries a real URL (and so contains "://"), and `content` is a
+  // documented TEXT field whose prose may legitimately mention one.
+  const keep = sanitizeBlock({
+    type: "flow",
+    items: [{ text: "n", link: "https://example.com/docs", content: "see https://example.com",
+              background: "#0f172a", cursor: "pointer", filter: "status:open" }],
+  });
+  const it = keep.items[0];
+  assert("v13.25: legitimate sub-object link/content/paint values are preserved",
+    it.link === "https://example.com/docs" && it.content === "see https://example.com" &&
+    it.background === "#0f172a" && it.cursor === "pointer" && it.filter === "status:open");
+
+  // (5) The top level must NOT get the paint-key treatment: slide.bgImage is a
+  // real field holding a long data: URI that sanitizeSlide validates itself.
+  const dataUri = "data:image/png;base64," + "A".repeat(900);
+  const s = sanitizeSlide({ blocks: [], bgImage: dataUri });
+  assert("v13.25: a legitimate slide bgImage data: URI still survives ingress",
+    s.bgImage === dataUri);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

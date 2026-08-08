@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.24";
+const VELA_VERSION = "13.25";
 const VELA_CHANGELOG = [
+  { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
   { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
   { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
   { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
@@ -840,13 +841,20 @@ function sanitizeStyle(style) {
 // and block.style share ONE filter and can't drift apart. bgImage (a background
 // *image*) is clamped to data:image/* separately, like the image block / logo.
 const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
-function scrubColorFields(obj) {
+// Shared body for all three key-pattern scrubbers below: delete a STRING value
+// whose KEY names a CSS property and whose VALUE carries a dangerous CSS
+// primitive (or is absurdly long). One value filter, three key patterns — so
+// the surfaces cannot drift apart as they did when each carried its own copy.
+function scrubCssFields(obj, keyMatches) {
   if (!obj || typeof obj !== "object") return;
   for (const k of Object.keys(obj)) {
     const v = obj[k];
-    if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
+    if (typeof v !== "string" || !keyMatches(k)) continue;
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
+}
+function scrubColorFields(obj) {
+  scrubCssFields(obj, (k) => CSS_COLOR_KEY.test(k));
 }
 
 // Companion to scrubColorFields for the non-color LAYOUT/SIZING scalars that a
@@ -859,12 +867,27 @@ function scrubColorFields(obj) {
 // this is feature-transparent. (v12.71)
 const CSS_LAYOUT_KEY = /^(padding|margin|gap|spacing|borderRadius|borderWidth|maxWidth|maxHeight|minWidth|minHeight|width|height|inset|top|left|right|bottom)$/;
 function scrubLayoutFields(obj) {
-  if (!obj || typeof obj !== "object") return;
-  for (const k of Object.keys(obj)) {
-    const v = obj[k];
-    if (typeof v !== "string" || !CSS_LAYOUT_KEY.test(k)) continue;
-    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
-  }
+  scrubCssFields(obj, (k) => CSS_LAYOUT_KEY.test(k));
+}
+
+// SECURITY (sub-object PAINT keys): CSS_COLOR_KEY keys off the names Vela's own
+// schema uses, which is sound for the allowlisted top-level slide/block objects
+// — a key outside the allowlist cannot exist there at all. Raw-spread SUB-objects
+// keep whatever key a deck invents, so they additionally need the CSS property
+// families that FETCH: background / mask / filter / cursor and friends, where
+// url() is the canonical auto-load channel. Matched on a normalized stem
+// (lowercased, letters only, vendor prefix dropped) so background-image,
+// backgroundImage, bgImage and WebkitMaskImage all reduce to one test.
+//
+// Applied ONLY through scrubSubObject, never at the top level: `bgImage` is a
+// real slide field carrying a long data: URI that sanitizeSlide validates on its
+// own, so pattern-scrubbing it here would strip legitimate slide backgrounds.
+// `content` is deliberately absent — it is a documented TEXT field
+// (SAFE_BLOCK_KEYS), not a CSS sink, and prose may legitimately carry a URL. (v13.25)
+const CSS_PAINT_KEY = /^(bg|background|mask|filter|backdropfilter|clippath|cursor|liststyle|borderimage|shapeoutside|offsetpath|boxshadow|textshadow|behavior|binding)/;
+const cssKeyStem = (k) => k.toLowerCase().replace(/[^a-z]/g, "").replace(/^(webkit|moz|ms|epub)/, "");
+function scrubPaintFields(obj) {
+  scrubCssFields(obj, (k) => CSS_PAINT_KEY.test(cssKeyStem(k)));
 }
 
 // SECURITY (deck sub-object ingress): the top-level slide/block objects are
@@ -879,10 +902,28 @@ function scrubLayoutFields(obj) {
 // so an allowlist risks silently dropping a legitimate rendered key. The
 // scrubbers only delete a color/layout/style VALUE that is dangerous, never a
 // renderer key, so this closes the surface without a rendering blast radius.
-const MAX_SUBOBJECT_DEPTH = 6;
+// The cap FAILS CLOSED: at the limit the over-deep subtree is DELETED, never
+// returned unvisited. A depth guard that simply `return`s hands the attacker the
+// switch — nesting one level past the cap is all it takes to opt out of the very
+// scrubbers this function exists to guarantee, which is the classic
+// strip-and-return recursive-filter bypass. Dropping instead keeps the invariant
+// the callers rely on: every object still present here has been scrubbed. The
+// sibling caps in this file (MAX_BLOCK_DEPTH, the breadth slices) drop too, and
+// renderers read sub-objects at depth 1–3, so the limit is unreachable by real
+// authored content.
+//
+// BUDGET: this counts SUB-OBJECT hops, not block levels, and a legitimately
+// nested grid spends ~4 per block level (items array → cell → blocks array →
+// block). MAX_BLOCK_DEPTH already caps block nesting and fails closed, so the
+// real ceiling for authored content is ~4×MAX_BLOCK_DEPTH; the value below
+// clears that with headroom while still bounding recursion. Sizing it to the
+// renderer read-depth instead would truncate valid deeply-gridded decks — the
+// guard must fail closed on hostile input without eating real content. (v13.25)
+const MAX_SUBOBJECT_DEPTH = 32;
 function scrubSubObject(obj, depth = 0) {
-  if (!obj || typeof obj !== "object" || depth > MAX_SUBOBJECT_DEPTH) return;
+  if (!obj || typeof obj !== "object") return;
   if (Array.isArray(obj)) {
+    if (depth >= MAX_SUBOBJECT_DEPTH) { obj.length = 0; return; }
     for (const el of obj) scrubSubObject(el, depth + 1);
     return;
   }
@@ -896,10 +937,13 @@ function scrubSubObject(obj, depth = 0) {
     if (s && Object.keys(s).length) obj.style = s; else delete obj.style;
   }
   scrubColorFields(obj);
+  scrubPaintFields(obj);
   scrubLayoutFields(obj);
   for (const k of Object.keys(obj)) {
     const v = obj[k];
-    if (v && typeof v === "object") scrubSubObject(v, depth + 1);
+    if (!v || typeof v !== "object") continue;
+    if (depth >= MAX_SUBOBJECT_DEPTH) delete obj[k];
+    else scrubSubObject(v, depth + 1);
   }
 }
 
