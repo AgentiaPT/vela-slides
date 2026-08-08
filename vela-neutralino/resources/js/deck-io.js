@@ -20,12 +20,18 @@ import { fsGuard } from "./fs-guard.js";
 const FOLDER_KEY = "nl-deck-folder";
 const LAST_DECK_KEY = "nl-last-deck";
 const SAVE_DEBOUNCE_MS = 200;
-// Raised from 400ms: a large deck + Defender/OneDrive/AV can push the watcher
-// echo of our own write well past the old window, so the echo escaped and was
-// mistaken for an external edit (which suppresses in-app autosave). The
-// definitive guard is now the content-signature compare in onWatchEvent; this
-// window is only a cheap fast-path for the common case.
-const WATCHER_IGNORE_MS = 1500;
+// Cheap fast-path only. The DEFINITIVE echo guard in onWatchEvent compares the
+// on-disk bytes against the exact bytes we last wrote (signature AND full text),
+// so a slow write whose echo lands after this window is still recognised as ours.
+// Because the window now short-circuits before we touch the filesystem at all, it
+// is kept deliberately small: a wide window would also swallow a genuine external
+// edit that happens to land right after one of our saves.
+const WATCHER_IGNORE_MS = 400;
+// Upper bound on a deck file we are willing to read into memory and JSON.parse
+// in response to a watcher event. The watcher fires for whatever lands in the
+// folder, so the read must be bounded BEFORE it happens. Same 5 MB order as the
+// deck-save payload cap in the dev preview server (serve.py).
+const MAX_DECK_BYTES = 5 * 1024 * 1024;
 // Backoff between write attempts. A Windows write can transiently reject under
 // AV real-time scanning, a synced folder (OneDrive/Dropbox), or a briefly-held
 // file handle. 3 attempts total: the initial write + these two delays.
@@ -44,6 +50,7 @@ const state = {
   onStatus: null,     // set by nl-boot — receives {state,path,at,error}
   saveStatus: null,   // latest emitted status (mirrored to window.__velaSaveState)
   lastWrittenSig: null, // signature of the exact bytes last written (echo guard)
+  lastWrittenText: null, // those exact bytes — the signature alone can collide
 };
 
 // Cheap deterministic signature of a string, used for timing-independent
@@ -74,23 +81,40 @@ function isConnError(e) {
   return /token|nl_token|connection|socket|websocket|econn|not connected|disconnect|closed/.test(m);
 }
 
-function emitStatus(s) {
-  state.saveStatus = s;
-  if (typeof state.onStatus === "function") { try { state.onStatus(s); } catch {} }
+// Last path segment. Used to keep absolute paths on this side of the boundary.
+function baseName(p) {
+  return String(p == null ? "" : p).replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() || "";
 }
 
-// Cheap post-write verification: confirm the on-disk size matches the bytes we
-// wrote. If getStats can't report a size we do NOT fail the save (some
-// platforms omit it); a genuine mismatch, however, is treated as a failed write
-// so the retry loop re-attempts and the status surfaces.
-async function verifyWrite(path, expectedBytes) {
-  try {
-    const st = await Neutralino.filesystem.getStats(path);
-    if (st && typeof st.size === "number") return st.size === expectedBytes;
-    return true;
-  } catch {
-    return true;
-  }
+// Shell → renderer status boundary. The renderer is the less-trusted side and
+// only needs enough to render a pill, so it gets {state, at, name} — a basename,
+// never the absolute path, and never the raw platform error. Path and error stay
+// here and go to the console for the person debugging the machine. Trimming at
+// this single chokepoint means no call site can widen the payload by accident.
+function emitStatus(s) {
+  const out = { state: s.state, at: s.at || Date.now(), name: baseName(s.path) };
+  state.saveStatus = out;
+  if (typeof state.onStatus === "function") { try { state.onStatus(out); } catch {} }
+}
+
+// Post-write verification. Size alone is a weak check (a truncated-then-padded or
+// concurrently-rewritten file has the right length), so read the file back and
+// require it to be byte-identical to what we meant to write. Tri-state:
+//   "verified" — on-disk content is exactly our bytes
+//   "mismatch" — it is not: treat as a failed write so the retry loop re-attempts
+//   "unknown"  — the platform gave us no way to check (no size, read unavailable).
+//                We do NOT claim success in that case: the caller emits a distinct
+//                "unverified" status so an unverifiable write is never silent.
+async function verifyWrite(path, expectedBytes, expectedText) {
+  let st;
+  try { st = await Neutralino.filesystem.getStats(path); } catch { return "unknown"; }
+  if (!st || typeof st.size !== "number") return "unknown";
+  if (st.size !== expectedBytes) return "mismatch";
+  let text;
+  try { text = await readDeckText(path); } catch { return "unknown"; }
+  if (typeof text !== "string") return "unknown";
+  if (sigOf(text) !== sigOf(expectedText)) return "mismatch";
+  return text === expectedText ? "verified" : "mismatch";
 }
 
 async function getStoredFolder() {
@@ -128,9 +152,16 @@ async function listDecks() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// THE single filesystem read entry point for deck content. Every read — open,
+// watcher reload, post-write verification — goes through here so there is exactly
+// one place to audit (and, later, to extend with further checks). Do not call
+// Neutralino.filesystem.readFile directly elsewhere in this module.
+async function readDeckText(path) {
+  return await Neutralino.filesystem.readFile(path);
+}
+
 async function readDeck(path) {
-  const text = await Neutralino.filesystem.readFile(path);
-  return JSON.parse(text);
+  return JSON.parse(await readDeckText(path));
 }
 
 async function openDeck(path) {
@@ -196,13 +227,23 @@ async function flushSave() {
       // Stamp again AFTER the write resolves so the watcher-echo window is
       // measured from completion, not from when we started.
       state.lastWriteAt = Date.now();
-      if (!(await verifyWrite(path, bytes))) throw new Error("verify-after-write size mismatch");
-      // Success. Record the signature so our own watcher echo is suppressed
+      const verdict = await verifyWrite(path, bytes, json);
+      if (verdict === "mismatch") throw new Error("verify-after-write mismatch");
+      // Write landed. Record the exact bytes so our own watcher echo is suppressed
       // (timing-independent), then clear pending only if unchanged.
       state.lastWrittenSig = sig;
+      state.lastWrittenText = json;
       state.lastWriteAt = Date.now();
       if (state.pendingDeck === deck) { state.pendingDeck = null; state.pendingPath = null; }
-      emitStatus({ state: "saved", path, at: Date.now() });
+      if (verdict === "unknown") {
+        // The bytes went out and the platform reported no error, but we could not
+        // read them back to prove it. Report that honestly rather than showing a
+        // confident "Saved" the user cannot rely on.
+        console.warn("[deck-io] write could not be verified (read-back unavailable):", path);
+        emitStatus({ state: "unverified", path, at: Date.now() });
+      } else {
+        emitStatus({ state: "saved", path, at: Date.now() });
+      }
       return;
     } catch (e) {
       lastErr = e;
@@ -210,7 +251,8 @@ async function flushSave() {
         conn = true;
         // Liveness probe: if the folder still stats OK the socket is alive and
         // this was a one-off; otherwise stay in a "reconnecting" posture.
-        emitStatus({ state: "reconnecting", path, at: Date.now(), error: String((e && e.message) || e) });
+        console.warn("[deck-io] save connection error:", path, e);
+        emitStatus({ state: "reconnecting", path, at: Date.now() });
         try { await Neutralino.filesystem.getStats(state.folder); conn = false; } catch {}
       }
       if (i < attempts - 1) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
@@ -219,13 +261,18 @@ async function flushSave() {
   // Final failure — KEEP pendingDeck/pendingPath so the next autosave or a
   // manual __velaForceSave re-attempts the newest content. Never swallow: the
   // status is emitted so the UI can show it, in addition to the console log.
-  console.error("[deck-io] save failed:", lastErr);
-  emitStatus({ state: conn ? "reconnecting" : "failed", path, at: Date.now(), error: String((lastErr && lastErr.message) || lastErr) });
+  // The raw error and the absolute path stay here (console); the renderer gets
+  // only the state + basename.
+  console.error("[deck-io] save failed:", path, lastErr);
+  emitStatus({ state: conn ? "reconnecting" : "failed", path, at: Date.now() });
 }
 
 // Bypass the debounce and immediately re-attempt the pending write. Wired to
 // window.__velaForceSave for the save-status pill's "Retry" affordance. If the
 // last save failed, pendingDeck still holds the newest deck, so this flushes it.
+// Takes NO arguments, deliberately: it is an operation ("re-save what is pending"),
+// not a capability the renderer can aim at a path or payload of its choosing. Any
+// argument passed by a caller is ignored.
 async function flushNow() {
   if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
   return flushSave();
@@ -262,25 +309,40 @@ function onWatchEvent(evt) {
   const cur = state.currentPath.replace(/\\/g, "/");
   if (changed !== cur) return;
   if (payload.action !== "modified" && payload.action !== "add" && payload.action !== "moved") return;
-  const withinWindow = Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS;
-  // Read the raw bytes and compare against the signature of what we last wrote.
-  // If they match, this event is our own save echoing back — drop it. This is
-  // DEFINITIVE and timing-independent: on a slow Windows write the 400ms window
-  // used to lapse before the echo arrived, so the echo was mistaken for an
-  // external edit, which flipped _localSyncIncoming and starved autosave.
-  Neutralino.filesystem.readFile(state.currentPath)
-    .then((text) => {
-      if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig) return; // our own echo
-      if (withinWindow) return; // fast-path fallback (atomic-rename echoes arriving before the sig lands)
-      const deck = JSON.parse(text);
-      // D5/CR3: adopt the just-loaded external content as the new echo baseline.
-      // Without this, lastWrittenSig only ever tracks OUR writes, so a later external
-      // revert to a byte-exact previously-Vela-written state would match the stale sig
-      // and be wrongly dropped as "our own echo" (app/disk divergence).
-      state.lastWrittenSig = sigOf(text);
-      if (state.onDeckLoaded) state.onDeckLoaded(deck, state.currentPath, { external: true });
-    })
-    .catch((e) => console.warn("[deck-io] external reload failed:", e));
+  // 1) Cheap fast-path FIRST — inside the ignore window this is almost certainly
+  //    our own write echoing back, so do not touch the filesystem at all. Reading
+  //    first meant every one of our own saves paid a full file read.
+  if (Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS) return;
+  const path = state.currentPath;
+  (async () => {
+    // 2) Bound the read BEFORE it happens. The watcher fires for whatever landed
+    //    in the folder; an arbitrarily large file must not be pulled into memory
+    //    and JSON.parsed. Oversized → warn and skip, never silently.
+    let size = null;
+    try {
+      const st = await Neutralino.filesystem.getStats(path);
+      if (st && typeof st.size === "number") size = st.size;
+    } catch { /* no size available — fall through to the read */ }
+    if (size != null && size > MAX_DECK_BYTES) {
+      console.warn(`[deck-io] ignoring external change: ${size} bytes exceeds the ${MAX_DECK_BYTES}-byte deck limit`, path);
+      return;
+    }
+    // 3) Now read, through the single audited entry point.
+    const text = await readDeckText(path);
+    // Echo suppression, definitive and timing-independent: the signature narrows
+    // the compare cheaply, the exact-text compare confirms it. The signature is a
+    // short digest, so two different documents can share one — on its own it could
+    // drop a genuine external edit as "our own echo" (silent app/disk divergence).
+    if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig && text === state.lastWrittenText) return;
+    const deck = JSON.parse(text);
+    // D5/CR3: adopt the just-loaded external content as the new echo baseline.
+    // Without this the baseline only ever tracks OUR writes, so a later external
+    // revert to a byte-exact previously-Vela-written state would match the stale
+    // baseline and be wrongly dropped as "our own echo" (app/disk divergence).
+    state.lastWrittenSig = sigOf(text);
+    state.lastWrittenText = text;
+    if (state.onDeckLoaded) state.onDeckLoaded(deck, path, { external: true });
+  })().catch((e) => console.warn("[deck-io] external reload failed:", e));
 }
 
 export const deckIO = {
@@ -365,11 +427,13 @@ export const deckIO = {
   },
   currentPath() { return state.currentPath; },
   onDeckLoaded(cb) { state.onDeckLoaded = cb; },
-  // Subscribe to save-status transitions {state:"saving"|"saved"|"failed"|
-  // "reconnecting", path, at, error}. Consumed by nl-boot → the app's pill.
+  // Subscribe to save-status transitions {state:"saving"|"saved"|"unverified"|
+  // "failed"|"reconnecting", at, name}. Consumed by nl-boot → the app's pill.
+  // Deliberately no absolute path and no raw error — see emitStatus.
   onSaveStatus(cb) { state.onStatus = cb; },
   saveStatus() { return state.saveStatus; },
   // Bypass the debounce and immediately re-attempt the pending write (Retry).
-  flushNow,
+  // Wrapped, not aliased, so no argument can ever reach flushSave through it.
+  flushNow() { return flushNow(); },
   folder() { return state.folder; },
 };

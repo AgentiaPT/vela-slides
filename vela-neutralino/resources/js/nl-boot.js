@@ -191,7 +191,10 @@ async function boot() {
     window.__velaSaveState = s;
     if (typeof window.__velaOnSaveStatus === "function") { try { window.__velaOnSaveStatus(s); } catch {} }
   });
-  window.__velaForceSave = () => deckIO.flushNow();
+  // Exposed to the renderer as a fixed no-arg OPERATION ("re-save whatever is
+  // pending"), not a capability: arguments are dropped here so nothing the
+  // renderer passes can influence which file is written or with what content.
+  window.__velaForceSave = function () { return deckIO.flushNow(); };
 
   // New-deck hook: Vela calls this (desktop only) BEFORE creating a blank deck so
   // it lands in a fresh file in the same folder instead of overwriting the deck

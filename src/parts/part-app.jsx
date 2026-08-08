@@ -1724,7 +1724,8 @@ export default function App() {
           <div style={{ flex: 1 }} />
           <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
         </div>
-        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to your file. Your work is safe in the app.</div>
+        {/* The desktop shell hands us {state, at, name} — a basename only, never an absolute path. */}
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to {saveStatus && saveStatus.name ? <span style={{ fontFamily: FONT.mono }}>{saveStatus.name}</span> : "your file"}. Your work is safe in the app.</div>
         <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
           <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
         </div>
@@ -1737,15 +1738,22 @@ export default function App() {
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
         {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
         {!isMobile && saveStatus && (() => {
+          // Payload from the desktop shell is {state, at, name}: a file BASENAME, no
+          // absolute path and no raw platform error (those stay shell-side).
           const st = saveStatus.state;
           const at = saveStatus.at;
+          const nm = saveStatus.name ? String(saveStatus.name) : "";
+          const forFile = nm ? ` ${nm}` : " your file";
           const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
           const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
-          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={timeStr ? `Saved ${timeStr}` : "Saved"} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
-          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title="Saving to your file…" style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={`Saved${nm ? " to " + nm : ""}${timeStr ? " at " + timeStr : ""}`} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title={`Saving to${forFile}…`} style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          // Written, but the shell could not read the bytes back to confirm them.
+          // Shown distinctly rather than as a confident "Saved" the user can't rely on.
+          if (st === "unverified") return <span data-testid="save-status-pill" data-save-state="unverified" title={`Written to${forFile}, but Vela couldn't read it back to confirm. Keep a backup if this persists.`} style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"✓?"} Saved (unverified)</span>;
           if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
           // failed
-          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title="Vela couldn't write to your file — click to retry" style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title={`Vela couldn't write to${forFile} — click to retry`} style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
         })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
