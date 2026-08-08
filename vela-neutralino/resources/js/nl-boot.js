@@ -182,6 +182,17 @@ async function boot() {
   // Save hook: Vela calls this on every state change. deck-io debounces.
   window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
 
+  // Save-status channel: deck-io reports every save transition so the app's
+  // top-bar pill can show Saving/Saved/Couldn't-save/Reconnecting instead of a
+  // silent failure. Mirror the latest into window.__velaSaveState so the app
+  // can read it on mount even if it wired __velaOnSaveStatus after the first
+  // emit. window.__velaForceSave re-attempts the newest in-memory deck (Retry).
+  deckIO.onSaveStatus((s) => {
+    window.__velaSaveState = s;
+    if (typeof window.__velaOnSaveStatus === "function") { try { window.__velaOnSaveStatus(s); } catch {} }
+  });
+  window.__velaForceSave = () => deckIO.flushNow();
+
   // New-deck hook: Vela calls this (desktop only) BEFORE creating a blank deck so
   // it lands in a fresh file in the same folder instead of overwriting the deck
   // the user currently has open (CR). Returns the new path (or null).

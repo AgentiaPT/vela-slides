@@ -564,6 +564,31 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const last = out.present.chatMessages[out.present.chatMessages.length - 1];
   assert("REDO appends a restore marker message", /restore/i.test(last.content) && last._system === true);
 }
+{
+  // D1 (CR2): collapsedSections is view-only (in NO_HISTORY) and must survive
+  // UNDO/REDO UNCHANGED — a content undo must never re-fold/unfold a section.
+  // Simulate: prior snapshot was taken while a section was COLLAPSED; the user
+  // has since EXPANDED it; UNDO of the content edit must keep it EXPANDED.
+  const prior = { ...present([lane("l1", [item("m1", [slide(1)])])], "m1", 0), collapsedSections: ["sec-x"] };
+  const cur = { ...present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0), collapsedSections: [] };
+  const hist = { past: [prior], present: cur, future: [] };
+  const undone = reducer(hist, { type: "UNDO" });
+  assert("UNDO keeps CURRENT collapsedSections (does not restore snapshot's)", JSON.stringify(undone.present.collapsedSections) === "[]", "got " + JSON.stringify(undone.present.collapsedSections));
+  // REDO must likewise carry the (now current) collapse view-state forward, not the snapshot's.
+  const redone = reducer(undone, { type: "REDO" });
+  assert("REDO keeps CURRENT collapsedSections unchanged", JSON.stringify(redone.present.collapsedSections) === "[]", "got " + JSON.stringify(redone.present.collapsedSections));
+}
+{
+  // D4 (CR5): navigating (SET_SLIDE_INDEX / SELECT module) clears aiWork so a
+  // slide never keeps shimmering after the user moves away from an in-flight op.
+  const withWork = { ...present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0), aiWork: { itemId: "m1", slideIdx: 0 } };
+  const nav = reducer(H(withWork), { type: "SET_SLIDE_INDEX", index: 1 });
+  assert("SET_SLIDE_INDEX clears aiWork", nav.present.aiWork === null && nav.present.slideIndex === 1);
+  const back = reducer(nav, { type: "SET_SLIDE_INDEX", index: 0 });
+  assert("navigating back leaves slide 0 non-shimmering (aiWork stays null)", back.present.aiWork === null);
+  const sel = reducer(H(withWork), { type: "SELECT", id: "m2", slideIndex: 0 });
+  assert("SELECT (module switch) clears aiWork", sel.present.aiWork === null && sel.present.selectedId === "m2");
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 12. Batch multi-slide ops undo as a SINGLE step (PowerPoint parity)

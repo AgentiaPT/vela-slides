@@ -40,7 +40,13 @@
       try {
         await ready;
         await Neutralino.storage.setData(key, str);
-      } catch { /* localStorage already captured it */ }
+      } catch (e) {
+        // localStorage already captured it, so this is non-fatal — but do not
+        // stay fully silent: surface it so a persistent Neutralino.storage
+        // outage is observable rather than an invisible divergence.
+        try { console.warn("[storage-shim] Neutralino.storage.setData failed:", key, e); } catch {}
+        try { if (typeof window.__velaOnStorageError === "function") window.__velaOnStorageError(key, e); } catch {}
+      }
     },
     async delete(key) {
       try { localStorage.removeItem(key); } catch {}

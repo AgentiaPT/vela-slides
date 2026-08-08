@@ -31,6 +31,29 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
 
+  // ── Multi-image grid placement (image-run grid, gridColsFor) ──
+  { name: "gridColsFor is function", fn: () => typeof gridColsFor === "function" },
+  { name: "gridColsFor full: N=1 → 1 (solo)", fn: () => gridColsFor(1, "full") === 1 },
+  { name: "gridColsFor full: N=2 → 2 (1x2 side-by-side)", fn: () => gridColsFor(2, "full") === 2 },
+  { name: "gridColsFor full: N=3 → 3 (thirds)", fn: () => gridColsFor(3, "full") === 3 },
+  { name: "gridColsFor full: N=4 → 2 (2x2 quad)", fn: () => gridColsFor(4, "full") === 2 },
+  { name: "gridColsFor full: N=5 → 3 (3+2)", fn: () => gridColsFor(5, "full") === 3 },
+  { name: "gridColsFor half: N=1 → 1", fn: () => gridColsFor(1, "half") === 1 },
+  { name: "gridColsFor half: N>=2 → 2", fn: () => gridColsFor(2, "half") === 2 && gridColsFor(3, "half") === 2 && gridColsFor(5, "half") === 2 },
+  { name: "gridColsFor: floors/guards bad n to 1", fn: () => gridColsFor(0, "full") === 1 && gridColsFor(-3, "full") === 1 },
+  // Full-region row math matches the spec table (rows = ceil(n/cols)).
+  { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
+  { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
+  { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+
+  // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
+  { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
+  { name: "pasteImageLayout: content + 2 images → image-right (split grid)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 2) === "image-right" },
+  { name: "pasteImageLayout: content + 3 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 3) === "stack" },
+  { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
+  { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
+  { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
   { name: "imageAspect returns a Promise", fn: () => imageAspect("data:image/png;base64,x") instanceof Promise },
