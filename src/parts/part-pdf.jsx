@@ -3507,6 +3507,16 @@ function deckToMarkdown(state, opts = {}) {
   // the same sanitizeUrl gate used everywhere else, and (2) backslash-escape
   // Markdown metacharacters in any text placed inside a link label.
   const mdUrl = (u) => { try { return (typeof sanitizeUrl === "function" ? (sanitizeUrl(u) || "") : ""); } catch { return ""; } };
+  // Encode a scheme-validated URL for the Markdown link-DESTINATION context
+  // `(...)`. sanitizeUrl fixes the SCHEME, but that is an HTML-href validator, not
+  // a Markdown-destination encoder: the WHATWG URL parser leaves `)` (and `(`)
+  // unescaped in a path, and the authority-less (mailto:) branch returns the raw
+  // target — so a `)` closes the destination early (letting the trailing bytes
+  // render as a fresh image/link) and a mailto: newline injects block structure.
+  // Percent-encode exactly the bytes that break out of `(...)` — parens,
+  // whitespace/controls, angle brackets, backslash, backtick — leaving a still-
+  // functional URL. Every URL that lands inside `(...)` MUST go through this.
+  const mdDest = (u) => { const s = mdUrl(u); return s ? s.replace(/[\s()<>\\`]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")) : ""; };
   // Free BODY text: keep emphasis (**bold**, *italic*, ~~strike~~) but sanitize
   // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
   // renderer never auto-loads text images) — a blocked/opaque scheme collapses
@@ -3518,9 +3528,10 @@ function deckToMarkdown(state, opts = {}) {
     // is a zero-click auto-load in a .md viewer, so the exporter must catch the
     // empty-label form the live renderer can safely ignore (it never renders
     // text images). The optional leading `!` is consumed and never re-emitted,
-    // so an image can only ever downgrade to a link or plain text.
+    // so an image can only ever downgrade to a link or plain text. The emitted
+    // destination is mdDest-encoded so it cannot itself break out of `(...)`.
     return String(t).replace(/!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g, (_, label, target) => {
-      const safe = mdUrl(target);
+      const safe = mdDest(target);
       return safe ? `[${label}](${safe})` : label;
     }).replace(/\n/g, "  \n");
   };
@@ -3529,7 +3540,7 @@ function deckToMarkdown(state, opts = {}) {
   const mdLabel = (t) => String(t == null ? "" : t).replace(/\n/g, " ").replace(/([\\`*_\[\]()~!<>])/g, "\\$1");
   // Build a link only when the destination passes the scheme allowlist; a blocked
   // target degrades to the plain (escaped) label rather than emitting a bad URL.
-  const mdLink = (label, target) => { const s = mdUrl(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
+  const mdLink = (label, target) => { const s = mdDest(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
   // Table cell: inline-sanitize, then collapse newlines and escape pipes so a
   // cell cannot inject extra columns or break the row grammar.
   const mdCell = (t) => mdInline(t).replace(/\n/g, " ").replace(/\|/g, "\\|");
@@ -3551,7 +3562,7 @@ function deckToMarkdown(state, opts = {}) {
       }
       case "text": {
         blank();
-        const src = mdUrl(b.link);
+        const src = mdDest(b.link);
         ln(`${indent}${txt(b.text)}${src ? ` — [source](${src})` : ""}`);
         break;
       }
@@ -3580,17 +3591,17 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         ln(`${indent}> ${txt(b.text)}`);
         if (b.author) ln(`${indent}> — ${txt(b.author)}`);
-        { const s = mdUrl(b.link); if (s) ln(`${indent}> [Source](${s})`); }
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "callout":
         blank();
         if (b.title) ln(`${indent}> **${txt(b.title)}**`);
         ln(`${indent}> ${txt(b.text)}`);
-        { const s = mdUrl(b.link); if (s) ln(`${indent}> [Source](${s})`); }
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "metric":
         ln(`${indent}**${txt(b.value)}** ${b.label ? `— ${txt(b.label)}` : ""}`);
-        { const s = mdUrl(b.link); if (s) ln(`${indent}[Source](${s})`); }
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
       case "code": {
         blank();
@@ -3616,7 +3627,7 @@ function deckToMarkdown(state, opts = {}) {
           const cells = Array.isArray(row) ? row : (row.cells || []);
           ln(`${indent}| ${cells.map(mdCell).join(" | ")} |`);
         }
-        { const s = mdUrl(b.link); if (s) ln(`${indent}[Source](${s})`); }
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
       }
       case "grid":
@@ -3662,7 +3673,7 @@ function deckToMarkdown(state, opts = {}) {
       case "image": {
         // Only emit a markdown image for a scheme-allowlisted external src; alt
         // text is metachar-escaped. A blocked/opaque src degrades to the caption.
-        const isrc = (b.src && !b.src.startsWith("data:")) ? mdUrl(b.src) : "";
+        const isrc = (b.src && !b.src.startsWith("data:")) ? mdDest(b.src) : "";
         if (isrc) {
           blank();
           ln(`${indent}![${mdLabel(b.alt || b.caption || "")}](${isrc})`);

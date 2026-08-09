@@ -352,6 +352,27 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   noSub(m7, "![", "title: image syntax neutralized in heading");
   noSub(m7, "javascript:", "title: javascript URL removed from heading");
   noSub(m7, "\n# owned", "title: embedded newline cannot inject a second heading");
+
+  // (8) RED-TEAM regression (v13.28): a .link/.src DESTINATION whose sanitizeUrl
+  // output still carries markdown-breaking bytes (the URL parser leaves `)`/`(`
+  // unescaped; the mailto: branch returns raw newlines) must be percent-encoded
+  // so it cannot close `(...)` early and inject a sibling image/link or a heading.
+  const rt1 = md1([{ type: "text", text: "body", link: "https://ok.com/a)![](https://attacker.example/beacon.png)" }]);
+  noSub(rt1, "![](", "link field: unbalanced ) cannot spawn a sibling image");
+  noSub(rt1, ")![", "link field: destination-breaking ) is percent-encoded");
+  hasSub(rt1, "%29", "link field: ) is percent-encoded inside the destination");
+
+  const rt2 = md1([{ type: "quote", text: "q", link: "mailto:x\n# OWNED" }]);
+  noSub(rt2, "\n# OWNED", "mailto link field: embedded newline cannot inject a heading");
+
+  const rt3 = md1([{ type: "text", text: "see [x](https://ok.com/a)![](https://attacker.example/b.png)" }]);
+  noSub(rt3, "![](", "inline: destination breakout downgrades, never an image");
+
+  const rt4 = md1([{ type: "image", src: "https://ok.com/a)![](https://attacker.example/c.png)", alt: "z" }]);
+  noSub(rt4, "](https://attacker.example/c.png)", "image block src: breakout neutralized in destination");
+
+  const rt5 = md1([{ type: "bullets", items: [{ text: "b", link: "https://ok.com/a) ![](https://attacker.example/d.png)" }] }]);
+  noSub(rt5, "![](", "bullet link field: breakout neutralized");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

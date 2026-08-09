@@ -23,6 +23,7 @@ import os
 import re
 import secrets
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -539,27 +540,41 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         for name in sorted(os.listdir(srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
-            # SECURITY: the listing must enforce the SAME containment gate every
-            # other file-touching handler uses (_handle_serve_deck, _handle_deck_save,
-            # the watcher). os.stat/os.path.isfile/open all FOLLOW symlinks, so a
-            # deck-named symlink pointing outside the served folder would otherwise
-            # leak the target's size and (for JSON) its deckTitle. Reject deceptive
-            # names and realpath-contain every entry; skip anything that escapes.
+            # SECURITY (containment + no check/use race, CWE-22/59/367): every
+            # other file-touching handler realpath-validates then opens by PATH,
+            # which follows a symlink at the leaf and re-resolves it independently
+            # of the check — so a deck-named symlink to a file outside the served
+            # folder leaks its size and (for JSON) its deckTitle, and swapping the
+            # symlink between the check and the open wins a TOCTOU race even after a
+            # static-containment check. Open with O_NOFOLLOW so a symlinked entry is
+            # refused ATOMICALLY at the leaf (both the static escape and the race),
+            # and fstat the returned fd so size AND content come from the very object
+            # we opened, never a re-resolved path. Realpath containment still guards
+            # the parent directories; O_NONBLOCK avoids blocking on a fifo entry, and
+            # the S_ISREG check drops anything that is not a plain file.
             if not self._validate_deck_name(name):
                 continue
+            fpath = os.path.join(srv.folder_path, name)
+            open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
             try:
-                fpath = self._safe_deck_path(srv.folder_path, name)
-            except ValueError:
+                self._safe_deck_path(srv.folder_path, name)
+                fd = os.open(fpath, open_flags)
+            except (ValueError, OSError):
+                continue  # escapes the folder, is a symlink (ELOOP), or unreadable
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    os.close(fd)
+                    continue
+            except OSError:
+                os.close(fd)
                 continue
-            if not os.path.isfile(fpath):
-                continue
-            stat = os.stat(fpath)
-            # Try to read deck metadata
+            # Read metadata from the SAME fd (os.fdopen takes ownership and closes it).
             title = name
             slide_count = 0
             is_compact = False
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
+                with os.fdopen(fd, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
@@ -586,8 +601,8 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 "name": name,
                 "title": title,
                 "slides": slide_count,
-                "size": stat.st_size,
-                "modified": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+                "size": st.st_size,
+                "modified": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)),
                 "compact": is_compact,
             })
         response = json.dumps({"folder": os.path.basename(srv.folder_path), "decks": decks}).encode("utf-8")
