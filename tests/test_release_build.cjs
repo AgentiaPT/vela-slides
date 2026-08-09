@@ -222,6 +222,22 @@ test('_build-desktop.yml (the real desktop ship path) regenerates the monolith w
     (line || '').trim());
 });
 
+// F-16: build.sh is the LOCAL release helper ("produces dist/vela/ per-OS
+// binaries"). It flips VELA_LOCAL_MODE=true via sync-vela.py, which opens the
+// runtime test-surface gate — so it too must regenerate the monolith with
+// --release first, or a maintainer cutting a release with build.sh (instead of
+// CI/Docker) would ship the test surface live.
+test('build.sh (local desktop release helper) regenerates the monolith with --release', () => {
+  const script = path.join(ROOT, 'vela-neutralino', 'scripts', 'build.sh');
+  if (!fs.existsSync(script)) { console.log('     (build.sh missing — skipped)'); return; }
+  const sh = fs.readFileSync(script, 'utf8');
+  const line = sh.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in build.sh — it must strip the test surface before sync-vela.py flips VELA_LOCAL_MODE');
+  assert(/concat\.py\S*\s+--release\b/.test(line) && /--out\b/.test(line),
+    'build.sh concat.py does not use --release --out — a local release build would keep test hooks live:\n     ' +
+    (line || '').trim());
+});
+
 // Artifact-level guard: build the release bundle the way the desktop ship path
 // does (concat.py --release, then sync-vela.py's VELA_LOCAL_MODE flip which
 // opens the runtime test-surface gate) and grep the ACTUAL OUTPUT for the
