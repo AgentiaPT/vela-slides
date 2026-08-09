@@ -539,7 +539,18 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         for name in sorted(os.listdir(srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
-            fpath = os.path.join(srv.folder_path, name)
+            # SECURITY: the listing must enforce the SAME containment gate every
+            # other file-touching handler uses (_handle_serve_deck, _handle_deck_save,
+            # the watcher). os.stat/os.path.isfile/open all FOLLOW symlinks, so a
+            # deck-named symlink pointing outside the served folder would otherwise
+            # leak the target's size and (for JSON) its deckTitle. Reject deceptive
+            # names and realpath-contain every entry; skip anything that escapes.
+            if not self._validate_deck_name(name):
+                continue
+            try:
+                fpath = self._safe_deck_path(srv.folder_path, name)
+            except ValueError:
+                continue
             if not os.path.isfile(fpath):
                 continue
             stat = os.stat(fpath)

@@ -3497,8 +3497,48 @@ function deckToMarkdown(state, opts = {}) {
   const ln = (...a) => lines.push(...a);
   const blank = () => { if (lines.length && lines[lines.length - 1] !== "") lines.push(""); };
 
-  // Inline formatting is already markdown — pass through
-  const txt = (t) => (t || "").replace(/\n/g, "  \n");
+  // SECURITY (CWE-116, output encoding at the sink): deck text is emitted into a
+  // MARKDOWN grammar, so it needs Markdown-context encoding — the HTML-tag strip
+  // in sanitizeString does not cover it. Without this, a deck string could embed
+  // `[x](javascript:…)` or a zero-click image beacon `![](https://attacker/…)`
+  // that survives verbatim into the exported .md (the live renderer already
+  // re-validates such inline links via sanitizeUrl in parseInline; this reaches
+  // parity). Defense-in-depth: (1) allowlist link/image DESTINATION schemes via
+  // the same sanitizeUrl gate used everywhere else, and (2) backslash-escape
+  // Markdown metacharacters in any text placed inside a link label.
+  const mdUrl = (u) => { try { return (typeof sanitizeUrl === "function" ? (sanitizeUrl(u) || "") : ""); } catch { return ""; } };
+  // Free BODY text: keep emphasis (**bold**, *italic*, ~~strike~~) but sanitize
+  // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
+  // renderer never auto-loads text images) — a blocked/opaque scheme collapses
+  // the span to its plain label, an allowed one stays a link (never an image).
+  const mdInline = (t) => {
+    if (t == null) return "";
+    // NOTE the label group is `*?` (zero-or-more), unlike the live renderer's
+    // parseInline (`+?`): a markdown IMAGE with an empty alt — `![](beacon)` —
+    // is a zero-click auto-load in a .md viewer, so the exporter must catch the
+    // empty-label form the live renderer can safely ignore (it never renders
+    // text images). The optional leading `!` is consumed and never re-emitted,
+    // so an image can only ever downgrade to a link or plain text.
+    return String(t).replace(/!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g, (_, label, target) => {
+      const safe = mdUrl(target);
+      return safe ? `[${label}](${safe})` : label;
+    }).replace(/\n/g, "  \n");
+  };
+  // Text used INSIDE a [ … ] link label: strict metachar escape so a crafted
+  // label cannot break out of, or nest inside, the surrounding link syntax.
+  const mdLabel = (t) => String(t == null ? "" : t).replace(/\n/g, " ").replace(/([\\`*_\[\]()~!<>])/g, "\\$1");
+  // Build a link only when the destination passes the scheme allowlist; a blocked
+  // target degrades to the plain (escaped) label rather than emitting a bad URL.
+  const mdLink = (label, target) => { const s = mdUrl(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
+  // Table cell: inline-sanitize, then collapse newlines and escape pipes so a
+  // cell cannot inject extra columns or break the row grammar.
+  const mdCell = (t) => mdInline(t).replace(/\n/g, " ").replace(/\|/g, "\\|");
+  // Code fence long enough that backtick runs in the content cannot close it.
+  const mdFence = (code) => { const runs = String(code == null ? "" : code).match(/`+/g) || []; const max = runs.reduce((m, r) => Math.max(m, r.length), 0); return "`".repeat(Math.max(3, max + 1)); };
+  // Heading text: inline-sanitize then collapse newlines so a title cannot spill
+  // past its single `#`-prefixed line into injected markdown.
+  const mdHead = (t) => mdInline(t).replace(/\n/g, " ");
+  const txt = mdInline;
 
   const blockToMd = (b, depth = 0) => {
     const indent = "  ".repeat(depth);
@@ -3509,11 +3549,12 @@ function deckToMarkdown(state, opts = {}) {
         ln(`${indent}${"#".repeat(level)} ${txt(b.text)}`);
         break;
       }
-      case "text":
+      case "text": {
         blank();
-        if (b.link) ln(`${indent}${txt(b.text)} — [source](${b.link})`);
-        else ln(`${indent}${txt(b.text)}`);
+        const src = mdUrl(b.link);
+        ln(`${indent}${txt(b.text)}${src ? ` — [source](${src})` : ""}`);
         break;
+      }
       case "badge":
         ln(`${indent}**${txt(b.text)}**`);
         break;
@@ -3522,7 +3563,7 @@ function deckToMarkdown(state, opts = {}) {
         for (const item of (b.items || [])) {
           const t = typeof item === "string" ? item : item.text;
           const link = typeof item === "object" ? item.link : null;
-          if (link) ln(`${indent}- [${txt(t)}](${link})`);
+          if (link) ln(`${indent}- ${mdLink(t, link)}`);
           else ln(`${indent}- ${txt(t)}`);
         }
         break;
@@ -3530,8 +3571,8 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         for (const item of (b.items || [])) {
           const title = item.title || "";
-          const sub = item.text ? ` — ${item.text}` : "";
-          if (item.link) ln(`${indent}- [${txt(title)}](${item.link})${sub}`);
+          const sub = item.text ? ` — ${txt(item.text)}` : "";
+          if (item.link) ln(`${indent}- ${mdLink(title, item.link)}${sub}`);
           else ln(`${indent}- ${txt(title)}${sub}`);
         }
         break;
@@ -3539,38 +3580,43 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         ln(`${indent}> ${txt(b.text)}`);
         if (b.author) ln(`${indent}> — ${txt(b.author)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdUrl(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "callout":
         blank();
         if (b.title) ln(`${indent}> **${txt(b.title)}**`);
         ln(`${indent}> ${txt(b.text)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdUrl(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "metric":
         ln(`${indent}**${txt(b.value)}** ${b.label ? `— ${txt(b.label)}` : ""}`);
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdUrl(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
-      case "code":
+      case "code": {
         blank();
         if (b.label) ln(`${indent}*${txt(b.label)}*`);
-        ln(`${indent}\`\`\`${b.lang || ""}`);
+        // Fence longer than any backtick run in the body so `b.text` cannot close
+        // the fence early and inject markdown after it; lang is word-chars only.
+        const fence = mdFence(b.text);
+        const lang = String(b.lang || "").replace(/[^A-Za-z0-9_+.-]/g, "");
+        ln(`${indent}${fence}${lang}`);
         ln(b.text || "");
-        ln(`${indent}\`\`\``);
+        ln(`${indent}${fence}`);
         break;
+      }
       case "table": {
         blank();
         const cols = b.headers || [];
         const rows = b.rows || [];
         if (cols.length) {
-          ln(`${indent}| ${cols.join(" | ")} |`);
+          ln(`${indent}| ${cols.map(mdCell).join(" | ")} |`);
           ln(`${indent}| ${cols.map(() => "---").join(" | ")} |`);
         }
         for (const row of rows) {
           const cells = Array.isArray(row) ? row : (row.cells || []);
-          ln(`${indent}| ${cells.join(" | ")} |`);
+          ln(`${indent}| ${cells.map(mdCell).join(" | ")} |`);
         }
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdUrl(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
       }
       case "grid":
@@ -3611,16 +3657,20 @@ function deckToMarkdown(state, opts = {}) {
         break;
       case "tag-group":
         blank();
-        ln(`${indent}${(b.items || []).map(item => `\`${typeof item === "string" ? item : item.text || item.label || ""}\``).join("  ")}`);
+        ln(`${indent}${(b.items || []).map(item => { const s = String(typeof item === "string" ? item : (item.text || item.label || "")).replace(/[`\n]/g, " "); return `\`${s}\``; }).join("  ")}`);
         break;
-      case "image":
-        if (b.src && !b.src.startsWith("data:")) {
+      case "image": {
+        // Only emit a markdown image for a scheme-allowlisted external src; alt
+        // text is metachar-escaped. A blocked/opaque src degrades to the caption.
+        const isrc = (b.src && !b.src.startsWith("data:")) ? mdUrl(b.src) : "";
+        if (isrc) {
           blank();
-          ln(`${indent}![${b.alt || b.caption || ""}](${b.src})`);
+          ln(`${indent}![${mdLabel(b.alt || b.caption || "")}](${isrc})`);
         } else if (b.caption) {
           ln(`${indent}*${txt(b.caption)}*`);
         }
         break;
+      }
       case "divider":
         blank();
         ln(`${indent}---`);
@@ -3630,7 +3680,7 @@ function deckToMarkdown(state, opts = {}) {
   };
 
   // Title
-  ln(`# ${state.deckTitle || "Untitled Deck"}`);
+  ln(`# ${mdHead(state.deckTitle || "Untitled Deck")}`);
   blank();
 
   let slideNum = 0;
@@ -3639,13 +3689,13 @@ function deckToMarkdown(state, opts = {}) {
     blank();
     ln(`---`);
     blank();
-    ln(`# ${lane.title || "Untitled Section"}`);
+    ln(`# ${mdHead(lane.title || "Untitled Section")}`);
     blank();
 
     for (const item of (lane.items || [])) {
       // Module as sub-section
       blank();
-      ln(`## ${item.title || "Untitled Module"}`);
+      ln(`## ${mdHead(item.title || "Untitled Module")}`);
 
       for (const slide of (item.slides || [])) {
         if (slide && slide.hidden) continue; // hidden slides are not exported

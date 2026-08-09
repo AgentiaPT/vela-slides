@@ -24,9 +24,21 @@ function extract(name) {
   return src.slice(start, end);
 }
 
-// deckToMarkdown references no external helpers (it iterates state.lanes itself
-// and uses only txt/blockToMd defined inside it + `new Date`), so a lone extract
-// is enough. No stubs required beyond Node's built-in Date.
+// deckToMarkdown now routes every link/image DESTINATION through sanitizeUrl
+// (the shared http/https/mailto scheme allowlist) as its Markdown-context output
+// encoder, so load the REAL sanitizeUrl from part-imports.jsx first. It is
+// self-contained (only `new URL`), so a lone extract of each is enough.
+const importsSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-imports.jsx"), "utf8");
+function extractFrom(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`function ${name} not found`);
+  const after = start + `function ${name}`.length;
+  const m = source.slice(after).search(/\n(?:async function |function |const |let |var )/);
+  const end = m === -1 ? source.length : after + m;
+  return source.slice(start, end);
+}
+// eslint-disable-next-line no-eval
+eval(extractFrom(importsSrc, "sanitizeUrl"));
 // eslint-disable-next-line no-eval
 eval(extract("deckToMarkdown"));
 
@@ -89,7 +101,7 @@ const md1 = (blocks, slideExtra, deckExtra) => deckToMarkdown(deckWith(blocks, s
     { type: "text", text: "line1\nline2" },
   ]);
   hasLine(md, "hello world", "plain text passthrough");
-  hasLine(md, "cited — [source](https://x.io)", "text with link renders — [source](url)");
+  hasLine(md, "cited — [source](https://x.io/)", "text with link renders — [source](url)");
   hasSub(md, "line1  \nline2", "newline becomes markdown hard break (two spaces + \\n)");
 }
 
@@ -98,10 +110,10 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
 
 // ── bullets (string items, object items, links) ────────────────────
 {
-  const md = md1([{ type: "bullets", items: ["one", { text: "two" }, { text: "three", link: "u://l" }] }]);
+  const md = md1([{ type: "bullets", items: ["one", { text: "two" }, { text: "three", link: "https://l.io" }] }]);
   hasLine(md, "- one", "bullet string item");
   hasLine(md, "- two", "bullet object item");
-  hasLine(md, "- [three](u://l)", "bullet with link");
+  hasLine(md, "- [three](https://l.io/)", "bullet with allowlisted link");
 }
 
 // ── icon-row ───────────────────────────────────────────────────────
@@ -112,7 +124,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
     { title: "Bare" },
   ] }]);
   hasLine(md, "- Speed — fast", "icon-row title + text");
-  hasLine(md, "- [Docs](http://d)", "icon-row linked title");
+  hasLine(md, "- [Docs](http://d/)", "icon-row linked title");
   hasLine(md, "- Bare", "icon-row title only");
 }
 
@@ -121,7 +133,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   const md = md1([{ type: "quote", text: "be bold", author: "Ada", link: "http://q" }]);
   hasLine(md, "> be bold", "quote blockquote");
   hasLine(md, "> — Ada", "quote author attribution");
-  hasLine(md, "> [Source](http://q)", "quote source link");
+  hasLine(md, "> [Source](http://q/)", "quote source link");
 }
 
 // ── callout ────────────────────────────────────────────────────────
@@ -129,7 +141,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   const md = md1([{ type: "callout", title: "Note", text: "careful", link: "http://c" }]);
   hasLine(md, "> **Note**", "callout bold title");
   hasLine(md, "> careful", "callout body");
-  hasLine(md, "> [Source](http://c)", "callout source link");
+  hasLine(md, "> [Source](http://c/)", "callout source link");
 }
 
 // ── metric (with and without label — pins trailing space quirk) ────
@@ -139,7 +151,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
     { type: "metric", value: "99" },
   ]);
   hasLine(md, "**42** — Revenue", "metric value + label");
-  hasLine(md, "[Source](http://m)", "metric source link");
+  hasLine(md, "[Source](http://m/)", "metric source link");
   // no-label metric emits a trailing space after the bold value (real quirk)
   hasLine(md, "**99** ", "metric without label keeps trailing space after bold value");
 }
@@ -165,7 +177,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   hasLine(md, "| --- | --- |", "table separator row (one --- per column)");
   hasLine(md, "| a | 1 |", "table array row");
   hasLine(md, "| b | 2 |", "table {cells} row");
-  hasLine(md, "[Source](http://t)", "table source link");
+  hasLine(md, "[Source](http://t/)", "table source link");
 }
 
 // ── flow / steps (numbered, loop labels) ───────────────────────────
@@ -295,6 +307,52 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   if (!md.includes("# Untitled Section")) throw new Error("missing default section title");
   if (!md.includes("## Untitled Module")) throw new Error("missing default module title");
 });
+
+// ── SECURITY (F1): Markdown-context output encoding ────────────────
+// Untrusted deck text must not smuggle links/images that bypass the app's
+// http/https/mailto scheme allowlist. The live renderer validates inline
+// [x](url) via sanitizeUrl and never auto-loads text images; the export path
+// reaches parity here (CWE-116: encode at the sink for the Markdown grammar).
+{
+  // (1) javascript: inline link in free text collapses to its plain label
+  const m1 = md1([{ type: "text", text: "click [here](javascript:alert1) now" }]);
+  noSub(m1, "javascript:", "text: javascript inline link stripped");
+  hasSub(m1, "here", "text: blocked inline link degrades to plain label");
+
+  // (2) zero-click image beacons are neutralized — no markdown image survives
+  const m2a = md1([{ type: "text", text: "hi ![](https://attacker.example/x.png) bye" }]);
+  noSub(m2a, "![", "text: empty-alt image syntax neutralized (no auto-load)");
+  const m2b = md1([{ type: "text", text: "x ![alt](javascript:alert1) y" }]);
+  noSub(m2b, "![", "text: javascript image neutralized");
+  noSub(m2b, "javascript:", "text: javascript image URL removed");
+
+  // (3) file:/data:/vbscript: inline-link schemes are dropped
+  for (const scheme of ["file", "data", "vbscript"]) {
+    const t = scheme === "file" ? "file:///etc/passwd" : scheme === "data" ? "data:text/html,x" : "vbscript:msgbox";
+    const m = md1([{ type: "text", text: `a [l](${t}) b` }]);
+    noSub(m, scheme + ":", `text: ${scheme}: inline link dropped`);
+  }
+
+  // (4) an explicit .link field with a blocked scheme emits no link at all
+  const m4 = md1([{ type: "text", text: "body", link: "javascript:alert1" }]);
+  noSub(m4, "javascript:", "explicit .link javascript: dropped");
+  noSub(m4, "[source]", "explicit .link source omitted when scheme blocked");
+
+  // (5) table cell: literal pipe escaped (no column injection) + inline link sanitized
+  const m5 = md1([{ type: "table", headers: ["a|b", "[c](javascript:alert1)"], rows: [["p|q", "ok"]] }]);
+  noSub(m5, "javascript:", "table cell: inline javascript link stripped");
+  hasSub(m5, "a\\|b", "table cell: literal pipe escaped, not a column break");
+
+  // (6) code fence breakout: a ``` run in the body cannot close the fence early
+  const m6 = md1([{ type: "code", text: "```\n![](https://attacker.example/x)\n```" }]);
+  hasSub(m6, "````", "code: fence widened past the backtick run in the body");
+
+  // (7) title/heading injection is neutralized and stays on one line
+  const m7 = deckToMarkdown({ deckTitle: "T ![](javascript:alert1)\n# owned", lanes: [] });
+  noSub(m7, "![", "title: image syntax neutralized in heading");
+  noSub(m7, "javascript:", "title: javascript URL removed from heading");
+  noSub(m7, "\n# owned", "title: embedded newline cannot inject a second heading");
+}
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 2 : 0);
