@@ -205,6 +205,66 @@ test('desktop Dockerfile builds the embedded bundle with --release', () => {
     'Dockerfile concat.py does not use --release --out — the desktop ship bundle would keep test hooks live:\n     ' + (line || '').trim());
 });
 
+// F-15: the Dockerfile is "local convenience only" (CLAUDE.md) — CI never runs
+// it. The REAL ship path for desktop binaries is the reusable workflow below
+// (called by release.yml's build-desktop job and by release-preview.yml), so
+// pin the --release flag there too — the Dockerfile passing is not evidence
+// the actual shipped binary is stripped.
+test('_build-desktop.yml (the real desktop ship path) regenerates the monolith with --release', () => {
+  const workflow = path.join(ROOT, '.github', 'workflows', '_build-desktop.yml');
+  if (!fs.existsSync(workflow)) { console.log('     (_build-desktop.yml missing — skipped)'); return; }
+  const wf = fs.readFileSync(workflow, 'utf8');
+  const line = wf.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in _build-desktop.yml');
+  assert(/concat\.py\s+--release\b/.test(line) && /--out\b/.test(line),
+    '_build-desktop.yml concat.py does not use --release --out — the ACTUAL shipped desktop ' +
+    'binary (built by this workflow, not the Dockerfile) would keep test hooks live:\n     ' +
+    (line || '').trim());
+});
+
+// Artifact-level guard: build the release bundle the way the desktop ship path
+// does (concat.py --release, then sync-vela.py's VELA_LOCAL_MODE flip which
+// opens the runtime test-surface gate) and grep the ACTUAL OUTPUT for the
+// forbidden identifiers. This is the durable check — it fails on any future
+// ship path (workflow rewrite, new CI provider, manual release) that forgets
+// the --release flag, regardless of what the YAML says.
+test('a release-stripped + sync-vela-preprocessed bundle has NO test-surface identifiers', () => {
+  const syncScript = path.join(ROOT, 'vela-neutralino', 'scripts', 'sync-vela.py');
+  if (!fs.existsSync(syncScript)) { console.log('     (sync-vela.py missing — skipped)'); return; }
+  const forbidden = ['velaTestSurfaceEnabled', '__velaRunUITests', '__velaTestHooks',
+    'VelaBatteryTest', 'VelaUITestRunner', '__velaTestMode'];
+
+  const synced = execFileSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sync_vela", ${JSON.stringify(syncScript)})
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.preprocess(open(${JSON.stringify(RELEASE_BUNDLE)}, encoding="utf-8").read()))
+`], { encoding: 'utf8', cwd: ROOT, maxBuffer: 1024 * 1024 * 64 });
+
+  assert(synced.includes('const VELA_LOCAL_MODE = true;'),
+    'sanity check failed: sync-vela.py did not flip VELA_LOCAL_MODE — the gate-opening ' +
+    'condition this test defends against was not actually reproduced');
+
+  const leaked = forbidden.filter((sym) => synced.includes(sym));
+  assert(leaked.length === 0,
+    `desktop-ship-path bundle (release strip + sync-vela preprocess) leaks: ${leaked.join(', ')}`);
+
+  // And the discriminator: the SAME preprocessing over the (test-hook-carrying)
+  // dev bundle must find them, proving this check isn't vacuously passing.
+  const syncedDev = execFileSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sync_vela", ${JSON.stringify(syncScript)})
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.preprocess(${JSON.stringify(DEV_BUNDLE)} and open(${JSON.stringify(DEV_BUNDLE)}, encoding="utf-8").read() or ""))
+`], { encoding: 'utf8', cwd: ROOT, maxBuffer: 1024 * 1024 * 64 });
+  const foundInDev = forbidden.filter((sym) => syncedDev.includes(sym));
+  assert(foundInDev.length === forbidden.length,
+    'discriminator check failed: the dev bundle (which SHOULD carry test hooks) is missing ' +
+    `${forbidden.filter((s) => !foundInDev.includes(s)).join(', ')} — this check may be vacuous`);
+});
+
 test('release build keeps the STARTUP_PATCH ship marker', () => {
   assert(release.includes('const STARTUP_PATCH = null;'),
     'STARTUP_PATCH marker missing — assemble.py could not inject a deck');
