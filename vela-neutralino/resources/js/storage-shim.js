@@ -10,6 +10,14 @@
 // mirrored into Neutralino.storage once it comes online.
 //
 // Shape matches artifact behaviour: { value: string } | null on get.
+//
+// SECURITY (F-2, narrowed nativeAllowList): `storage.*` is admitted here as
+// three enumerated methods (getKeys/getData/setData), not the namespace
+// wildcard — same-realm JS can no longer reach any other `storage.*`
+// primitive. This module does NOT constrain which *key* same-realm JS may
+// read/write (Neutralino.storage keys are process-wide, not scoped to a
+// fs-guard-style root) — that key/content confinement is a separate,
+// independently tracked fix (F-3) and is intentionally out of scope here.
 
 (() => {
   const ready = new Promise((resolve) => {

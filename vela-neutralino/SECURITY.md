@@ -38,9 +38,16 @@ acknowledgment before the deck mounts.
    exfiltration — none of which the legitimate app needs.
 
 2. **Minimal `nativeAllowList`** (`neutralino.config.json`). Only the native
-   methods the shell actually calls are exposed; wildcards like `os.*` /
-   `filesystem.*` and unused namespaces (`clipboard.*`, `computer.*`) are
-   **not** granted. `enableExtensions` is on (so Neutralino launches the
+   methods the shell actually calls are exposed, enumerated one by one —
+   **no namespace wildcards** (`os.*`, `filesystem.*`, `window.*`, `app.*`,
+   `storage.*`, `events.*`) and no unused namespaces (`clipboard.*`,
+   `computer.*`). A wildcard silently admits every current *and future*
+   method in that namespace to the native bridge, including ones the app
+   never calls — a namespace can carry a path-writing primitive that has
+   nothing to do with why the namespace was granted in the first place, so
+   admission is enumerated per-method instead.
+
+   `enableExtensions` is on (so Neutralino launches the
    gatekeeper at startup); the client's init then makes one **read-only**
    `extensions.getStats` call, so that single method is granted — but
    **`extensions.dispatch` / `extensions.broadcast` are deliberately NOT in the
@@ -63,7 +70,8 @@ acknowledgment before the deck mounts.
    to run anything other than the two whitelisted agents.
 
 3. **Filesystem path guard** (`resources/js/fs-guard.js`). The shell still
-   needs `filesystem.*` to read/write decks and app config, so a
+   needs several `filesystem.*` methods (enumerated in `nativeAllowList`, not
+   a wildcard — see layer 2) to read/write decks and app config, so a
    script-execution escape could otherwise read/write arbitrary files.
    `fsGuard.install()` (called in `nl-boot.js` right after
    `Neutralino.init()`) wraps every `Neutralino.filesystem.*` method so its
@@ -92,9 +100,19 @@ acknowledgment before the deck mounts.
    grep -n "fsGuard.allow" resources/js/*.js
    ```
    This caps the *file* blast radius to Vela's own data. It is not a full
-   sandbox — same-realm JS can never be fully contained — but combined
-   with no `os.spawnProcess`, it removes the "arbitrary file read/write"
-   capability outside those two roots.
+   sandbox — same-realm JS can never be fully contained — and it is one
+   layer of a two-layer model, not a standalone guarantee: the
+   `nativeAllowList` (layer 2) is the deny-by-default **admission gate** —
+   it decides which native methods same-realm JS can reach at all, and a
+   path-writing method left off that list is unreachable regardless of
+   fs-guard. `fs-guard` then **confines** the `filesystem.*` methods that
+   *are* admitted to the two roots above. Both layers must hold: a
+   namespace wildcard in `nativeAllowList` would admit a path-taking method
+   fs-guard never wraps (it only wraps `Neutralino.filesystem.*`), and a
+   bug in fs-guard would widen the admitted methods' reach beyond the two
+   roots. Combined with no `os.spawnProcess`, this pair is what keeps
+   arbitrary file read/write out of same-realm JS's reach outside those two
+   roots — neither layer alone is that guarantee.
 
 4. **Inert error/UI surfaces** (`resources/js/nl-boot.js`). Strings that may
    contain attacker-controlled deck content (validator errors, agent
