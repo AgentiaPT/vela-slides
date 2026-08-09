@@ -176,7 +176,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
     ro.observe(el); return () => ro.disconnect();
   }, [mode, vw, vh, isFill]);
 
-  const bg = slide?.bg || slide?.bgGradient || T.slideBg;
+  // Encoder-gated the same way the main SlideContent render does (part-blocks.jsx)
+  // — this thumbnail/fullscreen wrapper is a separate render sink for the same
+  // deck-supplied bg/bgGradient scalars. (v13.26)
+  const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
 
@@ -615,7 +618,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
       <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
       {!loaded && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: slide?.bg || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
+        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
         </div>
       )}

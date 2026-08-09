@@ -50,18 +50,25 @@ try {
   const ckey = grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK");
   const cu = grab(/function cssUrl\(u\)\s*\{[\s\S]*?\n\}/, "cssUrl");
   const cc = grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor");
+  // v13.26 (F-1/F-11/F-13 fix): the gradient encoder + the paint-key scrubber
+  // (used for CSS_PAINT_KEY-matched sub-object keys via scrubSubObject).
+  const gkey = grab(/const CSS_GRADIENT_OK = .+;/, "CSS_GRADIENT_OK");
+  const cg = grab(/function cssGradient\(g\)\s*\{[\s\S]*?\n\}/, "cssGradient");
+  const pkey = grab(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY");
+  const stem = grab(/const cssKeyStem = .+;/, "cssKeyStem");
+  const pfn = grab(/function scrubPaintFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubPaintFields");
   const ctx = { module: { exports: {} } };
   vm.createContext(ctx);
   vm.runInContext(
-    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc,
-      "module.exports = { scrubColorFields, scrubLayoutFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, cssUrl, cssColor };"].join("\n"),
+    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc, gkey, cg, pkey, stem, pfn,
+      "module.exports = { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, CSS_PAINT_KEY, cssUrl, cssColor, cssGradient };"].join("\n"),
     ctx, { filename: "part-imports-slice.js" });
   api = ctx.module.exports;
 } catch (e) {
   console.log("\n  " + pass + " passed, " + failCount + " failed");
   process.exit(1);
 }
-const { scrubColorFields, scrubLayoutFields, STYLE_VALUE_REJECT, cssUrl, cssColor } = api;
+const { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, cssUrl, cssColor, cssGradient } = api;
 
 // Every color/background scalar field reported across slide/block/item/cell/branding.
 const COLOR_FIELDS = [
@@ -423,6 +430,228 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       else bad("--vera-accent consumer var() fallback missing at one or both sites", String(consumerSites.length));
     }
   }
+}
+
+// ── v13.26: F-1 fail-closed TYPE fuzz ─────────────────────────────────────
+// The root-cause bug: scrubCssFields SKIPPED (not deleted) a non-string value
+// on a matched CSS key, so an array/boxed-String/{toString}/{valueOf}/boolean
+// payload on an allowlisted key (bg, bgGradient, …) rode through verbatim into
+// a raw CSS sink. The fix inverts that skip into a delete for every shape that
+// can carry a CSS/URL grammar payload. Fuzz every scrubber (color/layout/paint)
+// with every dangerous non-string SHAPE — not just dangerous string VALUES,
+// which the pre-fix suite already covered — on a representative key from each
+// pattern, and assert the key is gone.
+{
+  class UrlBox { constructor(v) { this._v = v; } toString() { return this._v; } valueOf() { return this._v; } }
+  const TYPE_PAYLOADS = {
+    "array-of-string": ["url(http://a.invalid/beacon)"],
+    "boxed-String": new String("url(http://a.invalid/beacon)"),
+    "toString-gadget": { toString: () => "url(http://a.invalid/beacon)" },
+    "valueOf-gadget": { valueOf: () => "url(http://a.invalid/beacon)" },
+    "toString+valueOf-gadget": new UrlBox("url(http://a.invalid/beacon)"),
+    "nested-array": [["url(http://a.invalid/beacon)"]],
+    "boolean": true,
+    "plain-object": { a: 1 },
+    "NaN": NaN,
+    "Infinity": Infinity,
+  };
+  const SCRUBBERS = [
+    ["scrubColorFields", scrubColorFields, ["bg", "bgGradient", "color", "accent"]],
+    ["scrubLayoutFields", scrubLayoutFields, ["padding", "gap", "maxWidth"]],
+    ["scrubPaintFields", scrubPaintFields, ["bg", "background", "mask", "filter"]],
+  ];
+  const FORBIDDEN_TOKEN = /url\(|image-set\(|@import|expression\(|var\(|attr\(/i;
+  for (const [scrubberName, scrubber, keys] of SCRUBBERS) {
+    for (const key of keys) {
+      for (const [shapeName, payload] of Object.entries(TYPE_PAYLOADS)) {
+        const o = { [key]: payload, sibling: "kept" };
+        scrubber(o);
+        if (!(key in o)) ok(`${scrubberName}: drops non-string/non-finite-number \`${key}\` (${shapeName})`);
+        else bad(`${scrubberName}: \`${key}\` (${shapeName}) survived`, JSON.stringify(o[key]));
+        if (o.sibling === "kept") ok(`${scrubberName}: leaves sibling key untouched (${key}/${shapeName})`);
+        else bad(`${scrubberName}: clobbered sibling key (${key}/${shapeName})`);
+        // Belt-and-suspenders: whatever remains on the object must not itself
+        // stringify to a fetching primitive (covers a scrubber bug that stored
+        // a coerced string instead of deleting the key).
+        if (!FORBIDDEN_TOKEN.test(JSON.stringify(o)))
+          ok(`${scrubberName}: object carries no fetching primitive after scrub (${key}/${shapeName})`);
+        else bad(`${scrubberName}: residual fetching primitive in scrubbed object`, JSON.stringify(o));
+      }
+      // A finite number is the one non-string shape the app legitimately uses on
+      // these SAME key names (block.gap/height/spacing/maxWidth are plain px
+      // numbers) — it can never carry a `url(` token, so it must survive
+      // unchanged rather than being deleted like every other non-string shape.
+      const numObj = { [key]: 42 };
+      scrubber(numObj);
+      if (numObj[key] === 42) ok(`${scrubberName}: preserves a legitimate finite number on \`${key}\``);
+      else bad(`${scrubberName}: dropped a legitimate finite number on \`${key}\``, JSON.stringify(numObj));
+    }
+  }
+}
+
+// ── v13.26: cssGradient encoder (bgGradient's sibling to cssColor) ────────
+{
+  const gradOk = [
+    "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+    "radial-gradient(circle, #ffffff, #000000)",
+    "conic-gradient(from 90deg, red, yellow, green)",
+    "repeating-linear-gradient(45deg, #000, #000 10px, #fff 10px, #fff 20px)",
+    "linear-gradient(to right, rgba(0,0,0,0.5), rgba(255,255,255,0.5))",
+  ];
+  const gradBad = [
+    'linear-gradient(url(https://a.invalid/x))',
+    'linear-gradient(45deg, red), url(https://a.invalid/x)',
+    "linear-gradient(45deg, red)/* */",
+    "url(https://a.invalid/x)",
+    "javascript:alert(1)",
+    "",
+    ["linear-gradient(45deg, red)"],   // wrong type — String() coercion must not smuggle an array through
+  ];
+  const gOkMiss = gradOk.filter((v) => cssGradient(v) !== v);
+  const gBadPass = gradBad.filter((v) => cssGradient(v) !== "");
+  if (gOkMiss.length === 0) ok("cssGradient preserves legit linear/radial/conic gradients");
+  else bad("cssGradient dropped a legit gradient", JSON.stringify(gOkMiss));
+  if (gBadPass.length === 0) ok("cssGradient rejects url()/comment/non-gradient/array values");
+  else bad("cssGradient let a dangerous value through", JSON.stringify(gBadPass));
+}
+
+// ── v13.26: bg/bgGradient array-payload end-to-end via the real sanitizeSlide ──
+// The exact F-1 PoC shape, run through the shipped ingress function (not just
+// the scrubber it calls internally) — confirms the whole slide-sanitization
+// path drops the array payload, independent of the jsdom-gated suite below.
+{
+  let sanitizeSlideStandalone;
+  try {
+    const ctx4 = { module: { exports: {} } };
+    vm.createContext(ctx4);
+    vm.runInContext(
+      [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (bg-e2e)"),
+        grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (bg-e2e)"),
+        grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (bg-e2e)"),
+        grab(/function sanitizeString\([\s\S]*?\n\}/, "sanitizeString (bg-e2e)"),
+        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (bg-e2e)"),
+        grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (bg-e2e)"),
+        grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (bg-e2e)"),
+        grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (bg-e2e)"),
+        grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (bg-e2e)"),
+        grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (bg-e2e)"),
+        grab(/function sanitizeSlide\(slide\)\s*\{[\s\S]*?\n\}/, "sanitizeSlide (bg-e2e)"),
+        "module.exports = { sanitizeSlide };"].join("\n"),
+      ctx4, { filename: "part-imports-slice-bg-e2e.js" });
+    sanitizeSlideStandalone = ctx4.module.exports.sanitizeSlide;
+    ok("extracted real sanitizeSlide for bg/bgGradient array-payload e2e check");
+  } catch (e) {
+    bad("extract sanitizeSlide for bg/bgGradient e2e check", e.message);
+  }
+
+  if (sanitizeSlideStandalone) {
+    // The exact confirmed-finding PoC payload (F-1's `bg`/`bgGradient` array
+    // shape). `blocks` is intentionally omitted — this slice deliberately pulls
+    // in only the slide-level scrub path, not the full sanitizeBlock graph, the
+    // same scoping the --vera-accent suite above uses; block-level coverage
+    // lives in the TYPE-fuzz section and the full-browser proof covers the
+    // real end-to-end render with blocks present.
+    const poc = {
+      bg: ["url(http://attacker/beacon)"],
+      bgGradient: ["url(http://attacker/beacon)"],
+      title: "Q1 Kickoff",
+    };
+    const clean = sanitizeSlideStandalone(poc);
+    if (!("bg" in clean)) ok("sanitizeSlide drops an array payload on slide.bg (F-1 PoC)");
+    else bad("sanitizeSlide left slide.bg as an array", JSON.stringify(clean.bg));
+    if (!("bgGradient" in clean)) ok("sanitizeSlide drops an array payload on slide.bgGradient (F-1 PoC)");
+    else bad("sanitizeSlide left slide.bgGradient as an array", JSON.stringify(clean.bgGradient));
+    if (clean.title === "Q1 Kickoff")
+      ok("sanitizeSlide preserves the rest of the slide (title) alongside the drop");
+    else bad("sanitizeSlide over-dropped legitimate slide content", JSON.stringify(clean));
+
+    // Legit bg/bgGradient must survive unchanged.
+    const legitSlide = { bg: "#0f172a", bgGradient: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)" };
+    const legitClean = sanitizeSlideStandalone(legitSlide);
+    if (legitClean.bg === "#0f172a" && legitClean.bgGradient === legitSlide.bgGradient)
+      ok("sanitizeSlide preserves legitimate hex bg + gradient bgGradient");
+    else bad("sanitizeSlide altered a legitimate bg/bgGradient", JSON.stringify(legitClean));
+  }
+}
+
+// ── v13.26: F-13 — sanitizeSlide now also scrubs layout scalars (padding/gap) ──
+{
+  try {
+    const ctx5 = { module: { exports: {} } };
+    vm.createContext(ctx5);
+    vm.runInContext(
+      [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (F13)"),
+        grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (F13)"),
+        grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (F13)"),
+        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (F13)"),
+        grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (F13)"),
+        grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (F13)"),
+        grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (F13)"),
+        grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (F13)"),
+        grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (F13)"),
+        grab(/function sanitizeSlide\(slide\)\s*\{[\s\S]*?\n\}/, "sanitizeSlide (F13)"),
+        "module.exports = { sanitizeSlide };"].join("\n"),
+      ctx5, { filename: "part-imports-slice-f13.js" });
+    const sanitizeSlideF13 = ctx5.module.exports.sanitizeSlide;
+    const dirty = { padding: "0;background:url(http://a.invalid/x)", gap: 12 };
+    const clean = sanitizeSlideF13(dirty);
+    if (!("padding" in clean)) ok("sanitizeSlide (F-13) now scrubs slide.padding via scrubLayoutFields");
+    else bad("sanitizeSlide (F-13) left a dangerous slide.padding", JSON.stringify(clean.padding));
+  } catch (e) {
+    bad("F-13 sanitizeSlide layout-scrub check", e.message);
+  }
+}
+
+// ── Wiring guards: render sinks route bg/bgGradient/cell.bg/headerBg through
+//    the encoders (part-blocks.jsx main render + part-slides.jsx thumbnail). ──
+{
+  const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
+  const bsrc2 = fs.readFileSync(BLOCKS, "utf8");
+  if (/bgStyle\.background = c;/.test(bsrc2) && /cssColor\(slide\.bg\)/.test(bsrc2)) ok("slide.bg render sink uses cssColor()");
+  else bad("slide.bg sink not routed through cssColor (wiring missing)");
+  if (/cssGradient\(slide\.bgGradient\)/.test(bsrc2)) ok("slide.bgGradient render sink uses cssGradient()");
+  else bad("slide.bgGradient sink not routed through cssGradient (wiring missing)");
+  if (/cssColor\(cell\.bg\)/.test(bsrc2)) ok("grid cell.bg render sink uses cssColor()");
+  else bad("grid cell.bg sink not routed through cssColor (wiring missing)");
+  if (/cssColor\(block\.headerBg\)/.test(bsrc2)) ok("table headerBg render sink uses cssColor()");
+  else bad("table headerBg sink not routed through cssColor (wiring missing)");
+  if (/background: cssColor\(bg\)/.test(bsrc2)) ok("IconBubble background uses cssColor()");
+  else bad("IconBubble background not routed through cssColor (wiring missing)");
+
+  const SLIDES = path.join(__dirname, "..", "src", "parts", "part-slides.jsx");
+  const ssrc2 = fs.readFileSync(SLIDES, "utf8");
+  if (/cssColor\(slide\?\.bg\)\s*\|\|\s*cssGradient\(slide\?\.bgGradient\)/.test(ssrc2))
+    ok("thumbnail/fullscreen bg sink uses cssColor()/cssGradient()");
+  else bad("thumbnail/fullscreen bg sink not routed through the encoders (wiring missing)");
+}
+
+// ── F-11 wiring guard: the storage-load boot path re-sanitizes lanes before LOAD ──
+{
+  const APP = path.join(__dirname, "..", "src", "parts", "part-app.jsx");
+  const appsrc = fs.readFileSync(APP, "utf8");
+  const occurrences = (appsrc.match(/resanitizeLoadedLanes\(/g) || []).length;
+  // 3 call sites (v3/v2/v1 branches) + the function definition itself lives in
+  // part-imports.jsx, so part-app.jsx should reference it at least 3 times.
+  if (occurrences >= 3) ok(`storage-load path calls resanitizeLoadedLanes on all branches (${occurrences} call sites)`);
+  else bad("storage-load path missing resanitizeLoadedLanes wiring", `only ${occurrences} call site(s)`);
+  const IMPORTS2 = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
+  const impsrc2 = fs.readFileSync(IMPORTS2, "utf8");
+  if (/function resanitizeLoadedLanes\(lanes\)/.test(impsrc2) && /item\.slides\.map\(sanitizeSlide\)/.test(impsrc2))
+    ok("resanitizeLoadedLanes runs every persisted slide through sanitizeSlide");
+  else bad("resanitizeLoadedLanes missing/not wired to sanitizeSlide");
+}
+
+// ── F-12 wiring guard: deckTitle re-assignment sites use the coerce+cap helper ──
+{
+  const IMPORTS3 = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
+  const impsrc3 = fs.readFileSync(IMPORTS3, "utf8");
+  if (/function sanitizeDeckTitle\(t\)/.test(impsrc3)) ok("sanitizeDeckTitle helper defined");
+  else bad("sanitizeDeckTitle helper missing");
+  const APP2 = path.join(__dirname, "..", "src", "parts", "part-app.jsx");
+  const appsrc2 = fs.readFileSync(APP2, "utf8");
+  const rawAssigns = (appsrc2.match(/\.deckTitle\s*=\s*(?!sanitizeDeckTitle)[A-Za-z]/g) || []);
+  if (rawAssigns.length === 0) ok("no remaining raw (un-clamped) .deckTitle = assignment in part-app.jsx");
+  else bad("raw .deckTitle assignment still present", JSON.stringify(rawAssigns));
 }
 
 console.log("\n  " + pass + " passed, " + failCount + " failed");

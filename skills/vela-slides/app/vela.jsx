@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.25";
+const VELA_VERSION = "13.26";
 const VELA_CHANGELOG = [
+  { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
   { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
   { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
   { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
@@ -368,7 +369,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
     dbg("[PATCH] Full deck replace");
     try {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
+      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
       // on fundamentally invalid input (not an object / no lanes array) now that the
@@ -465,6 +466,17 @@ function sanitizeString(val, maxLen = 500) {
   let prev;
   do { prev = out; out = out.replace(/<[^>]*>/g, ""); } while (out !== prev);
   return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
+}
+
+// deckTitle is re-assigned raw (not run through sanitizeString) at a handful of
+// merge/import/patch call sites — it only ever reaches ESCAPED text sinks (React
+// text nodes, the browser tab title, an exported filename that's already
+// character-filtered), so there is no XSS here. But it is neither type- nor
+// length-clamped at those sites, so a non-string or absurdly long value could
+// still ride into state/storage. Small robustness coercion: always a string,
+// capped to a sane title length. (v13.26, F-12)
+function sanitizeDeckTitle(t) {
+  return String(t == null ? "" : t).slice(0, 200) || "Untitled";
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -841,15 +853,37 @@ function sanitizeStyle(style) {
 // and block.style share ONE filter and can't drift apart. bgImage (a background
 // *image*) is clamped to data:image/* separately, like the image block / logo.
 const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
-// Shared body for all three key-pattern scrubbers below: delete a STRING value
-// whose KEY names a CSS property and whose VALUE carries a dangerous CSS
-// primitive (or is absurdly long). One value filter, three key patterns — so
-// the surfaces cannot drift apart as they did when each carried its own copy.
+// Shared body for all three key-pattern scrubbers below: a KEY that names a CSS
+// property must carry a STRING or a finite NUMBER — any other shape is
+// out-of-schema for a CSS scalar and is DELETED, never passed through. This is
+// the fail-CLOSED contract: "produce a value of the declared type, or nothing".
+// A matched key whose value is a string still runs the dangerous-primitive/length
+// check below; a finite number is inherently safe (it can never carry a `url(`
+// token) and is let through unchanged — several of these SAME key names
+// (block.gap/height/spacing/maxWidth, slide.gap pre-clamped by
+// SLIDE_NUMERIC_BOUNDS) are legitimately plain numeric px values, mirroring how
+// sanitizeStyle's own numeric branch already treats style numbers. Every OTHER
+// non-string shape (array, boxed String, {toString}/{valueOf} object, boolean,
+// NaN/Infinity, plain object) is deleted outright, because every one of those
+// shapes reaches the same raw CSS sink downstream (React coerces a non-string,
+// non-number style value with `'' + value`, running any custom toString/valueOf)
+// and the denylist regex below only inspects real strings.
+// Previously a non-string on a matched key was skipped (`continue`), which let
+// an array/object payload on an allowlisted key (bg, bgGradient, …) ride through
+// untouched into `style.background`, a zero-click CSS exfil beacon on render —
+// the denylist was never even consulted for that shape. Inverting the skip into
+// a delete (while still admitting the one other genuinely-safe primitive type)
+// closes the whole family in one place: it cannot matter what future non-string,
+// non-number shape an attacker invents, only string/number values ever reach
+// render. One value filter, three key patterns — so the surfaces cannot drift
+// apart as they did when each carried its own copy. (v13.26)
 function scrubCssFields(obj, keyMatches) {
   if (!obj || typeof obj !== "object") return;
   for (const k of Object.keys(obj)) {
+    if (!keyMatches(k)) continue;
     const v = obj[k];
-    if (typeof v !== "string" || !keyMatches(k)) continue;
+    if (typeof v === "number") { if (!Number.isFinite(v)) delete obj[k]; continue; }
+    if (typeof v !== "string") { delete obj[k]; continue; }
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
 }
@@ -977,9 +1011,37 @@ function cssUrl(u) {
   return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
 }
 const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+// Fail-closed on TYPE first (v13.26): `String(c)` coerces ANY shape to a string
+// before the allowlist test, and a single-element array (`String(["red"])` ===
+// "red") or a {toString}/{valueOf} gadget would satisfy CSS_COLOR_OK exactly
+// the way a plain string would — the same type-confusion root cause as F-1,
+// just re-entering through the encoder instead of the scrubber. Reject any
+// non-string outright so this defense-in-depth gate can't be bypassed by shape.
 function cssColor(c) {
-  const v = String(c == null ? "" : c).trim();
+  if (typeof c !== "string") return "";
+  const v = c.trim();
   return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
+}
+// cssColor has no gradient-function alternative (a gradient is legitimately its
+// own grammar, not a color token), so slide.bgGradient needs a sibling encoder
+// rather than a weakened cssColor. Structural allowlist: only the three gradient
+// function names, only the charset a color-stop list can legitimately contain
+// (hex/rgb/hsl color tokens, numbers, %, deg, commas, the "to"/"at"/side/corner/
+// shape keywords, nested parens for rgba(...) stops). That charset alone still
+// contains every letter, so `url(` or `expression(` would satisfy it — the
+// canonical STYLE_VALUE_REJECT denylist (shared with scrubCssFields) is the
+// actual gate against those; the structural allowlist's job is only to reject
+// stray punctuation (quotes, semicolons, braces, backslashes) a fetching/
+// breakout primitive would need but a real gradient never does. (v13.26)
+const CSS_GRADIENT_OK = /^(?:repeating-)?(?:linear|radial|conic)-gradient\([a-zA-Z0-9#.,%\s()-]*\)$/;
+// Fail-closed on TYPE first — see cssColor above for why: a coercing `String(g)`
+// would let a single-element array or {toString} gadget satisfy the structural
+// allowlist exactly like a real string does. (v13.26)
+function cssGradient(g) {
+  if (typeof g !== "string") return "";
+  const v = g.trim();
+  if (!v || v.length > 500) return "";
+  return (CSS_GRADIENT_OK.test(v) && !STYLE_VALUE_REJECT.test(v)) ? v : "";
 }
 
 // ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1314,7 +1376,11 @@ function sanitizeSlide(slide) {
   }
   // Slide background/color scalars (bg, bgGradient, color, accent, mutedColor)
   // feed inline CSS directly — scrub CSS auto-load values. See scrubColorFields. (v12.61)
+  // sanitizeBlock also runs scrubLayoutFields on the analogous block-level layout
+  // scalars (padding, gap, …) — apply the same pair here so the two ingress paths
+  // stay consistent instead of one silently omitting a scrubber. (v13.26)
   scrubColorFields(clean);
+  scrubLayoutFields(clean);
   // bgImage is a background *image* (auto-fetches on render). Restrict to inline
   // data:image/* — no network — matching the image block / branding-logo rule.
   if ("bgImage" in clean) {
@@ -1343,6 +1409,38 @@ function sanitizeItem(item) {
     createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
+}
+
+// SECURITY (storage-load re-sanitization): the boot path reads the deck back
+// from persisted storage (localStorage / artifact storage) as raw
+// `JSON.parse(...)` and used to dispatch it straight into LOAD, which only
+// spreads the payload — it never re-runs sanitizeSlide. A slide that once
+// reached state unsanitized (e.g. a value written before a sanitizer fix
+// shipped, or via any future ingestion gap) would therefore reload — and keep
+// reloading — with its dangerous value intact: the value is JSON-native, so it
+// round-trips through storage perfectly. This is the persistence leg of the
+// same "trust the ingress sanitizer, nothing else" gap; every OTHER load path
+// (file import, startup-patch merge) already runs validateAndSanitizeDeck.
+//
+// Unlike validateAndSanitizeDeck (built for a fresh deck IMPORT — it discards
+// ids, chat history, selection, branding, etc. and is not safe to use for a
+// normal boot reload), this helper re-sanitizes ONLY the slide content inside
+// an already-loaded lanes tree: ids, comments, order, and every other item/lane
+// field are left exactly as read. It exists purely to re-run the same
+// sanitizeSlide() gate (allowlist copy + scrubCssFields fail-closed delete) that
+// every fresh-ingress path already gets, so a persisted deck can never be more
+// trusted than a freshly-supplied one. (v13.26)
+function resanitizeLoadedLanes(lanes) {
+  if (!Array.isArray(lanes)) return lanes;
+  return lanes.map((lane) => {
+    if (!lane || typeof lane !== "object") return lane;
+    const items = Array.isArray(lane.items) ? lane.items.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      if (!Array.isArray(item.slides)) return item;
+      return { ...item, slides: item.slides.map(sanitizeSlide).filter(Boolean) };
+    }) : lane.items;
+    return { ...lane, items };
+  });
 }
 
 function validateAndSanitizeDeck(raw) {
@@ -2566,7 +2664,9 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   const el = getIcon(icon, { size, color, strokeWidth });
   if (!el) return null;
   const d = size * 1.8;
-  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
+  // `bg` mixes deck-supplied values (block.bg/iconBg/item.iconBg) with computed
+  // theme+alpha fallbacks — encoder-gate once here for every caller. (v13.26)
+  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
@@ -2802,7 +2902,7 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
       });
     }
   };
-  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+  return <div className={cls} style={{ position: "relative", background: cssColor(block.bg) || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
     {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
     <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
     {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
@@ -2815,7 +2915,7 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
-  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
       {block.icon ? <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...((isReveal && !editable) ? { cursor: "pointer" } : {}) }} onClick={(isReveal && !editable) ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span> : null}
     </EditableIcon>
@@ -2909,7 +3009,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
         const cellStyle = { display: "flex", flexDirection: cell.direction || "column", alignItems: cell.direction === "row" ? "center" : (cell.align ? ({ left: "flex-start", center: "center", right: "flex-end" }[cell.align] || cell.align) : "center"), gap: cell.direction === "row" ? 12 : 8 };
-        if (cell.bg) cellStyle.background = cell.bg;
+        if (cell.bg) { const c = cssColor(cell.bg); if (c) cellStyle.background = c; }
         if (cell.padding) cellStyle.padding = cell.padding;
         if (cell.borderRadius) cellStyle.borderRadius = cell.borderRadius;
         if (cell.border) cellStyle.border = cell.border;
@@ -2964,7 +3064,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
-      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
+      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: cssColor(block.bg) || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
@@ -2979,7 +3079,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgeIconSize = badgeFontPx;
       const badgePadV = Math.max(3, Math.round(badgeFontPx * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontPx * 0.8));
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: cssColor(block.bg) || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
@@ -3096,7 +3196,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const headers = block.headers || [];
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
-      const hdrBg = block.headerBg || `${st.accent}20`;
+      const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
@@ -3647,10 +3747,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
+  // and bgImage already are — defense-in-depth so this fetching sink can't be
+  // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
   const bgStyle = {};
-  if (slide.bg) bgStyle.background = slide.bg;
+  if (slide.bg) { const c = cssColor(slide.bg); if (c) bgStyle.background = c; }
   if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
-  if (slide.bgGradient) bgStyle.background = slide.bgGradient;
+  if (slide.bgGradient) { const g = cssGradient(slide.bgGradient); if (g) bgStyle.background = g; }
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);
@@ -5768,7 +5871,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
     ro.observe(el); return () => ro.disconnect();
   }, [mode, vw, vh, isFill]);
 
-  const bg = slide?.bg || slide?.bgGradient || T.slideBg;
+  // Encoder-gated the same way the main SlideContent render does (part-blocks.jsx)
+  // — this thumbnail/fullscreen wrapper is a separate render sink for the same
+  // deck-supplied bg/bgGradient scalars. (v13.26)
+  const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
 
@@ -6207,7 +6313,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
       <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
       {!loaded && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: slide?.bg || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
+        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
         </div>
       )}
@@ -19530,7 +19636,7 @@ function MergePatchDialog({ localDeck, patchDeck, onComplete }) {
 
     // Update deck title if user hasn't changed it
     if (patchDeck.deckTitle && localDeck.deckTitle === "Untitled") {
-      merged.deckTitle = patchDeck.deckTitle;
+      merged.deckTitle = sanitizeDeckTitle(patchDeck.deckTitle);
     }
 
     // Store patchId so we don't ask again
@@ -19976,6 +20082,9 @@ export default function App() {
         if (data && data._version === 3) {
           // v3: full deck in one key
           delete data._version;
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -19998,6 +20107,9 @@ export default function App() {
             })),
           };
           delete payload._version;
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          payload.lanes = resanitizeLoadedLanes(payload.lanes);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -20007,6 +20119,9 @@ export default function App() {
           }, 3000);
         } else if (data) {
           // v1 legacy monolithic
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -20026,7 +20141,7 @@ export default function App() {
           dbg("[PATCH] New version detected:", STARTUP_PATCH._patchId, "vs stored:", loadedDeck._lastPatchId);
           try {
             const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-            sanitized.deckTitle = STARTUP_PATCH.deckTitle || "Untitled";
+            sanitized.deckTitle = sanitizeDeckTitle(STARTUP_PATCH.deckTitle);
             sanitized._patchId = STARTUP_PATCH._patchId;
             setMergeDialog({ localDeck: loadedDeck, patchDeck: sanitized });
           } catch (e) { dbg("[PATCH] Sanitize failed:", e); }
@@ -20174,7 +20289,7 @@ export default function App() {
         else if (raw.lanes) { deckData = raw; deckName = raw.deckTitle || "Imported"; }
         else throw new Error("Unrecognized format");
         const sanitized = validateAndSanitizeDeck(deckData);
-        sanitized.deckTitle = deckName;
+        sanitized.deckTitle = sanitizeDeckTitle(deckName);
         dispatch({ type: "LOAD", payload: sanitized });
         dispatch({ type: "DESELECT" });
         selectFirstModule();
@@ -20553,7 +20668,7 @@ export default function App() {
         if (result) {
           const patchId = result._lastPatchId || "";
           delete result._lastPatchId;
-          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
+          try { const s = validateAndSanitizeDeck(result); s.deckTitle = sanitizeDeckTitle(result.deckTitle); s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
         } else {
           // User skipped — store current patchId so we don't ask again
           if (STARTUP_PATCH?._patchId) {

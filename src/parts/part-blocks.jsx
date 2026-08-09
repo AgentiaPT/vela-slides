@@ -500,7 +500,9 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   const el = getIcon(icon, { size, color, strokeWidth });
   if (!el) return null;
   const d = size * 1.8;
-  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
+  // `bg` mixes deck-supplied values (block.bg/iconBg/item.iconBg) with computed
+  // theme+alpha fallbacks — encoder-gate once here for every caller. (v13.26)
+  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
@@ -736,7 +738,7 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
       });
     }
   };
-  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+  return <div className={cls} style={{ position: "relative", background: cssColor(block.bg) || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
     {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
     <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
     {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
@@ -749,7 +751,7 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
-  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
       {block.icon ? <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...((isReveal && !editable) ? { cursor: "pointer" } : {}) }} onClick={(isReveal && !editable) ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span> : null}
     </EditableIcon>
@@ -843,7 +845,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
         const cellStyle = { display: "flex", flexDirection: cell.direction || "column", alignItems: cell.direction === "row" ? "center" : (cell.align ? ({ left: "flex-start", center: "center", right: "flex-end" }[cell.align] || cell.align) : "center"), gap: cell.direction === "row" ? 12 : 8 };
-        if (cell.bg) cellStyle.background = cell.bg;
+        if (cell.bg) { const c = cssColor(cell.bg); if (c) cellStyle.background = c; }
         if (cell.padding) cellStyle.padding = cell.padding;
         if (cell.borderRadius) cellStyle.borderRadius = cell.borderRadius;
         if (cell.border) cellStyle.border = cell.border;
@@ -898,7 +900,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
-      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
+      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: cssColor(block.bg) || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
@@ -913,7 +915,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgeIconSize = badgeFontPx;
       const badgePadV = Math.max(3, Math.round(badgeFontPx * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontPx * 0.8));
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: cssColor(block.bg) || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
@@ -1030,7 +1032,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const headers = block.headers || [];
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
-      const hdrBg = block.headerBg || `${st.accent}20`;
+      const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
@@ -1581,10 +1583,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
+  // and bgImage already are — defense-in-depth so this fetching sink can't be
+  // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
   const bgStyle = {};
-  if (slide.bg) bgStyle.background = slide.bg;
+  if (slide.bg) { const c = cssColor(slide.bg); if (c) bgStyle.background = c; }
   if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
-  if (slide.bgGradient) bgStyle.background = slide.bgGradient;
+  if (slide.bgGradient) { const g = cssGradient(slide.bgGradient); if (g) bgStyle.background = g; }
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);

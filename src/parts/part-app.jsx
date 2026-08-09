@@ -1003,7 +1003,7 @@ function MergePatchDialog({ localDeck, patchDeck, onComplete }) {
 
     // Update deck title if user hasn't changed it
     if (patchDeck.deckTitle && localDeck.deckTitle === "Untitled") {
-      merged.deckTitle = patchDeck.deckTitle;
+      merged.deckTitle = sanitizeDeckTitle(patchDeck.deckTitle);
     }
 
     // Store patchId so we don't ask again
@@ -1449,6 +1449,9 @@ export default function App() {
         if (data && data._version === 3) {
           // v3: full deck in one key
           delete data._version;
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -1471,6 +1474,9 @@ export default function App() {
             })),
           };
           delete payload._version;
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          payload.lanes = resanitizeLoadedLanes(payload.lanes);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -1480,6 +1486,9 @@ export default function App() {
           }, 3000);
         } else if (data) {
           // v1 legacy monolithic
+          // Re-sanitize slide content read back from storage — see
+          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -1499,7 +1508,7 @@ export default function App() {
           dbg("[PATCH] New version detected:", STARTUP_PATCH._patchId, "vs stored:", loadedDeck._lastPatchId);
           try {
             const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-            sanitized.deckTitle = STARTUP_PATCH.deckTitle || "Untitled";
+            sanitized.deckTitle = sanitizeDeckTitle(STARTUP_PATCH.deckTitle);
             sanitized._patchId = STARTUP_PATCH._patchId;
             setMergeDialog({ localDeck: loadedDeck, patchDeck: sanitized });
           } catch (e) { dbg("[PATCH] Sanitize failed:", e); }
@@ -1647,7 +1656,7 @@ export default function App() {
         else if (raw.lanes) { deckData = raw; deckName = raw.deckTitle || "Imported"; }
         else throw new Error("Unrecognized format");
         const sanitized = validateAndSanitizeDeck(deckData);
-        sanitized.deckTitle = deckName;
+        sanitized.deckTitle = sanitizeDeckTitle(deckName);
         dispatch({ type: "LOAD", payload: sanitized });
         dispatch({ type: "DESELECT" });
         selectFirstModule();
@@ -2026,7 +2035,7 @@ export default function App() {
         if (result) {
           const patchId = result._lastPatchId || "";
           delete result._lastPatchId;
-          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
+          try { const s = validateAndSanitizeDeck(result); s.deckTitle = sanitizeDeckTitle(result.deckTitle); s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
         } else {
           // User skipped — store current patchId so we don't ask again
           if (STARTUP_PATCH?._patchId) {
