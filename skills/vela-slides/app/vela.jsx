@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.27";
+const VELA_VERSION = "13.28";
 const VELA_CHANGELOG = [
+  { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
   { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
   { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
   { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
@@ -2806,10 +2807,10 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       {icon
-        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span></EditableIcon>
+        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: cssColor(block.dotColor) || st.accent, strokeWidth: 2 })}</span></EditableIcon>
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
-          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />)}
+          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
       <EditableText text={text} editable={editMode} onSave={(v) => {
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
@@ -3080,7 +3081,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
-    case "divider": return <div className={cls} style={{ height: 1, background: block.color || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
+    case "divider": return <div className={cls} style={{ height: 1, background: cssColor(block.color) || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
     case "spacer": return <div style={{ height: block.h || 24 }} />;
 
     case "svg": {
@@ -3247,7 +3248,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "progress": {
       const items = block.items || (block.value != null ? [{ value: block.value, label: block.label, color: block.color }] : []);
       const hasItems = Array.isArray(block.items);
-      const trackCol = block.trackColor || `${st.accent}15`;
+      const trackCol = cssColor(block.trackColor) || `${st.accent}15`;
       const barH = block.height || 8;
       const labelColor = block.labelColor || st.muted;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style }}>
@@ -3265,7 +3266,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         )}
         {items.map((item, i) => {
           const val = Math.max(0, Math.min(item.value || 0, 100));
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
             link={itemLinkOf(item)} linkLabel={item.label}
@@ -3292,12 +3293,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "steps": {
       const items = block.items || [];
-      const lineCol = block.lineColor || `${st.accent}40`;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
       const active = typeof block.activeStep === "number" ? block.activeStep : items.length;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
         {items.map((item, i) => {
           const isActive = i < active;
-          const dotCol = isActive ? (block.numberColor || st.accent) : `${st.textDim}60`;
+          const dotCol = isActive ? (cssColor(block.numberColor) || st.accent) : `${st.textDim}60`;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
             link={itemLinkOf(item)} linkLabel={item.title}
@@ -3323,7 +3324,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const variant = block.variant || "filled";
       return <div className={cls} style={{ display: "flex", flexWrap: "wrap", gap: block.gap || 8, ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           const vs = variant === "outline"
             ? { background: "transparent", border: `1px solid ${col}`, color: col }
             : variant === "subtle"
@@ -3348,8 +3349,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "timeline": {
       const items = block.items || [];
       const isVert = block.direction === "vertical";
-      const lineCol = block.lineColor || `${st.accent}40`;
-      const dotCol = block.dotColor || st.accent;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
+      const dotCol = cssColor(block.dotColor) || st.accent;
 
       if (isVert) {
         return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
@@ -3401,8 +3402,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const items = block.items || [];
       const left = items[0] || {};
       const right = items[1] || {};
-      const leftColor = left.color || "#ef4444";
-      const rightColor = right.color || "#22c55e";
+      const leftColor = cssColor(left.color) || "#ef4444";
+      const rightColor = cssColor(right.color) || "#22c55e";
       const dividerLabel = block.dividerLabel || "VS";
       // Per-point delete/link, nested in items[side].items
       const deletePoint = (side, pi) => onChange?.({ items: items.map((col, k) => k === side ? { ...col, items: (col.items || []).filter((_, j) => j !== pi) } : col) });
@@ -3487,7 +3488,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={{ width: "100%", ...block.style }}>
         <svg viewBox={`0 0 700 ${count * (stageH + gap)}`} style={{ width: "100%", maxWidth: 700 }} xmlns="http://www.w3.org/2000/svg">
           {items.map((item, i) => {
-            const col = item.color || st.accent;
+            const col = cssColor(item.color) || st.accent;
             const inset = (i / count) * 250;
             const nextInset = ((i + 1) / count) * 250;
             const y = i * (stageH + gap);
@@ -3522,7 +3523,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <svg viewBox={`0 0 520 ${cy * 2 + 40}`} style={{ width: "100%", maxWidth: 520 }} xmlns="http://www.w3.org/2000/svg">
           <defs>
             {items.map((_, i) => {
-              const col = items[i]?.color || defaultColors[i % defaultColors.length];
+              const col = cssColor(items[i]?.color) || defaultColors[i % defaultColors.length];
               return <marker key={`m${i}`} id={`cyc-arr-${staggerIdx}-${i}`} markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                 <polygon points="0 0, 10 3.5, 0 7" fill={col} />
               </marker>;
@@ -3535,7 +3536,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
             const nextAngle = (2 * Math.PI * ((i + 1) % n) / n) - Math.PI / 2;
-            const col = item.color || defaultColors[i % defaultColors.length];
+            const col = cssColor(item.color) || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
             const nextNx = cx + radius * Math.cos(nextAngle);
@@ -3569,7 +3570,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const showIcons = block.showIcons !== false;
       return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <React.Fragment key={i}>
             {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}

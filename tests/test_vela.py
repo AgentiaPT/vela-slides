@@ -3586,6 +3586,48 @@ def test_deck_key_allowlist_structure():
     finally:
         _sh.rmtree(_tmp, ignore_errors=True)
 
+    # ── CSS fetch-sink encoder-gate (v13.28) ──────────────────────────
+    # A deck color reaching a URL-auto-loading CSS property (background /
+    # background-image / mask / …) must pass through the cssColor/cssGradient/
+    # cssUrl allowlist encoder (fail-closed). The ingress denylist alone is
+    # fail-open. This lint enforces complete mediation so a missed sink can't
+    # silently reintroduce a CSS auto-load beacon.
+    if "def check_css_fetch_sink_gate" in lint_src and "errors += check_css_fetch_sink_gate(parts_dir)" in lint_src:
+        ok("lint.py CSS fetch-sink encoder-gate defined and wired into lint_parts")
+    else:
+        fail("lint.py CSS fetch-sink encoder-gate not wired in")
+
+    # It must PASS on the current tree (every sink already encoder-gated).
+    if r.returncode == 0:
+        ok("lint.py --parts passes (all CSS fetch-sinks encoder-gated)")
+    else:
+        fail("lint.py --parts reports an ungated CSS fetch-sink", r.stdout + r.stderr)
+
+    # And it must CATCH both regression shapes: a raw deck color field written
+    # straight into a background, and a bare local that holds an un-encoded deck
+    # color reaching a background via a template. Prove both on throwaway copies.
+    for _label, _inject in (
+        ("raw deck color field in a background",
+         '\ncase "beacontest1": return <div style={{ background: block.dotColor }} />;\n'),
+        ("ungated local color reaching a background",
+         '\ncase "beacontest2": { const _bc = item.color || "#000"; return <div style={{ background: `${_bc}08` }} />; }\n'),
+    ):
+        _tmp2 = _tf.mkdtemp(prefix="vela-beacon-")
+        try:
+            for _f in os.listdir(PARTS_DIR):
+                if _f.endswith(".jsx"):
+                    _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp2, _f))
+            with open(os.path.join(_tmp2, "part-blocks.jsx"), "a", encoding="utf-8") as _fh:
+                _fh.write(_inject)
+            _r2 = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", _tmp2],
+                                 capture_output=True, text=True)
+            if _r2.returncode != 0 and "fetch-sink not encoder-gated" in (_r2.stdout + _r2.stderr):
+                ok(f"lint.py catches an ungated CSS fetch-sink ({_label})")
+            else:
+                fail(f"lint.py missed an ungated CSS fetch-sink ({_label})", _r2.stdout + _r2.stderr)
+        finally:
+            _sh.rmtree(_tmp2, ignore_errors=True)
+
 
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
 def test_pdf_title_cards():

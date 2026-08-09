@@ -216,6 +216,148 @@ def check_deck_key_drift(parts_dir):
     return errors
 
 
+# ── CSS fetch-sink encoder-gate check ────────────────────────────────
+# A deck-supplied color/paint scalar written into a CSS property that can
+# AUTO-LOAD a URL on render (background / background-image / mask / border-image
+# / list-style-image / cursor) MUST be routed through the allowlist output
+# encoder (cssColor / cssGradient / cssUrl) — never emitted raw. The ingress
+# scrubbers gate these fields with a value DENYLIST (STYLE_VALUE_REJECT), which
+# is fail-OPEN: any fetching primitive it does not enumerate (an image-set()/
+# image()/cross-fade() string source, a protocol-relative //host, a future CSS
+# function) rides through and becomes a render-time network beacon. The encoder
+# is an ALLOWLIST (accept only a color/gradient token, else empty) — fail-CLOSED
+# by construction. This check enforces COMPLETE MEDIATION: it fails the build if
+# any such sink in the renderer files receives a raw deck color field, or a local
+# variable whose own definition holds one un-encoded. One missed sink is all a
+# beacon needs, so the invariant is verified mechanically, not by review.
+CSS_FETCH_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+FETCH_PROP_RE = re.compile(
+    r'\b(background|backgroundImage|maskImage|WebkitMaskImage|borderImage'
+    r'|listStyleImage|cursor)\s*:')
+ENCODER_RE = re.compile(r'css(?:Color|Gradient|Url)\s*\(')
+# A deck object member read: block.x / item?.color / left.color / cell.bg / …
+DECK_REF_RE = re.compile(
+    r'\b(block|item|cell|left|right|qd|rawBlock|slide)\s*(?:\?\.|\.)\s*'
+    r'([A-Za-z_$][A-Za-z0-9_$]*)')
+# Field NAMES that carry a CSS color/paint value (mirrors CSS_COLOR_KEY intent):
+# only these, reached through a fetching property un-encoded, are the risk. A
+# boolean/layout field (block.striped, block.gap) in a condition is not.
+COLOR_FIELD_RE = re.compile(
+    r'(?:[Cc]olor|Bg|Gradient|Fill|Stroke)$|^(?:bg|color|accent|fill|stroke|background)$')
+LOCAL_DEF_RE = re.compile(r'\b(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=')
+# A bare VALUE identifier: not a property (`.x`) and not the object of a member
+# access (`x.`/`x[`). `st.accent` yields neither `st` (object) nor `accent`
+# (property); `${col}` yields `col`. This keeps theme reads (st./T.) out of scope
+# while still resolving a local like `trackCol` used as a sink value.
+VALUE_IDENT_RE = re.compile(r'(?<![\w$.])([A-Za-z_$][A-Za-z0-9_$]*)(?![\w$]*[.\[])')
+
+
+def _capture_expr(src, start):
+    """Capture an expression starting at `start`, up to the next top-level
+    ',' / ';' / newline or an unmatched ')' ']' '}' — respecting (), [], {},
+    and template-literal nesting. Bounded so a malformed source can't run away."""
+    depth = 0
+    i = start
+    n = min(len(src), start + 400)
+    tick = False
+    out = []
+    while i < n:
+        c = src[i]
+        if tick:
+            out.append(c)
+            if c == '`':
+                tick = False
+            i += 1
+            continue
+        if c == '`':
+            tick = True; out.append(c); i += 1; continue
+        if c in '([{':
+            depth += 1; out.append(c); i += 1; continue
+        if c in ')]}':
+            if depth == 0:
+                break
+            depth -= 1; out.append(c); i += 1; continue
+        if depth == 0 and (c in ',;\n'):
+            break
+        out.append(c); i += 1
+    return ''.join(out)
+
+
+def _expr_has_direct_deck_color(expr):
+    """True if `expr` reads a deck COLOR field directly (block.dotColor, item.color…)."""
+    for _obj, field in DECK_REF_RE.findall(expr):
+        if COLOR_FIELD_RE.search(field):
+            return True
+    return False
+
+
+def _local_defs(src):
+    """name -> list of (position, single-line RHS) for each `const/let name = …`.
+    Single-line only: the deck-color locals we guard are all one-liners; a
+    multi-line object (e.g. the theme `st`) is not a color scalar and must not
+    be misread as one. Positions let the sink resolve the NEAREST PRECEDING
+    definition — a lexical-scope approximation, so a `labelColor` computed from
+    literals in one block case is not confused with a same-named deck-color
+    local in another."""
+    defs = {}
+    for m in LOCAL_DEF_RE.finditer(src):
+        eol = src.find('\n', m.end())
+        rhs = src[m.end():eol if eol != -1 else len(src)]
+        defs.setdefault(m.group(1), []).append((m.start(), rhs))
+    return defs
+
+
+def _nearest_def(defs, name, before):
+    """The RHS of the `name` definition closest before `before`, or None."""
+    best = None
+    for pos, rhs in defs.get(name, ()):
+        if pos < before and (best is None or pos > best[0]):
+            best = (pos, rhs)
+    return best[1] if best else None
+
+
+def check_css_fetch_sink_gate(parts_dir):
+    """Every URL-auto-loading CSS property must route deck colors through the
+    cssColor/cssGradient/cssUrl allowlist encoder (fail-closed). Flags a raw
+    deck color field in the sink, or a bare local whose one-line definition
+    holds an un-encoded deck color."""
+    errors = []
+    for fname in CSS_FETCH_FILES:
+        fpath = os.path.join(parts_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+        with open(fpath, 'r', encoding="utf-8") as f:
+            src = f.read()
+        defs = _local_defs(src)
+        seen = set()
+        for m in FETCH_PROP_RE.finditer(src):
+            prop = m.group(1)
+            value = _capture_expr(src, m.end())
+            if ENCODER_RE.search(value):
+                continue
+            bad = _expr_has_direct_deck_color(value)
+            if not bad:
+                for ident in VALUE_IDENT_RE.findall(value):
+                    rhs = _nearest_def(defs, ident, m.start())
+                    if rhs and not ENCODER_RE.search(rhs) and _expr_has_direct_deck_color(rhs):
+                        bad = True
+                        break
+            if not bad:
+                continue
+            line = src.count('\n', 0, m.start()) + 1
+            sig = (fname, prop, line)
+            if sig in seen:
+                continue
+            seen.add(sig)
+            errors.append(
+                f"CSS fetch-sink not encoder-gated in {fname}:{line}: `{prop}` "
+                f"receives a raw deck color — route it through cssColor()/"
+                f"cssGradient() (the fail-closed allowlist). A raw value can "
+                f"auto-load a URL on render (CSS beacon)."
+            )
+    return errors
+
+
 # ── Main runners ─────────────────────────────────────────────────────
 
 def lint_monolith(filepath):
@@ -267,6 +409,7 @@ def lint_parts(parts_dir):
     errors += check_startup_patch(combined, "combined parts")
     errors += check_version_constants(combined, "combined parts")
     errors += check_deck_key_drift(parts_dir)
+    errors += check_css_fetch_sink_gate(parts_dir)
 
     return errors, warnings
 
