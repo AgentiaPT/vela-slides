@@ -3523,17 +3523,30 @@ function deckToMarkdown(state, opts = {}) {
   // the span to its plain label, an allowed one stays a link (never an image).
   const mdInline = (t) => {
     if (t == null) return "";
-    // NOTE the label group is `*?` (zero-or-more), unlike the live renderer's
-    // parseInline (`+?`): a markdown IMAGE with an empty alt — `![](beacon)` —
-    // is a zero-click auto-load in a .md viewer, so the exporter must catch the
-    // empty-label form the live renderer can safely ignore (it never renders
-    // text images). The optional leading `!` is consumed and never re-emitted,
-    // so an image can only ever downgrade to a link or plain text. The emitted
-    // destination is mdDest-encoded so it cannot itself break out of `(...)`.
-    return String(t).replace(/!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g, (_, label, target) => {
-      const safe = mdDest(target);
-      return safe ? `[${label}](${safe})` : label;
-    }).replace(/\n/g, "  \n");
+    const src = String(t);
+    // Walk the string as alternating INLINE-link spans and the gaps between them.
+    // In each gap, escape every `[`/`]` so Markdown reference-style links/images
+    // ([a][ref], ![a][ref], collapsed/shortcut [ref]) AND their definition lines
+    // ([ref]: url) cannot form: those forms contain no literal `(`, so the inline
+    // rewriter and mdDest never see them and their URL would otherwise reach a .md
+    // viewer unchecked. The live renderer (parseInline) supports only inline links,
+    // so escaping is both safe (same literal text) and parity-correct (CWE-116:
+    // cover the whole grammar, not just the `(...)` form). Each inline span is
+    // scheme-checked + destination-encoded (mdDest), the leading `!` dropped so an
+    // image can only downgrade to a link, and a blocked scheme collapses to the
+    // plain label. The label group is `*?` (empty allowed) so an empty-alt beacon
+    // `![](url)` (which the live renderer ignores) is caught too.
+    const escGap = (g) => g.replace(/[\[\]]/g, "\\$&");
+    const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+      out += escGap(src.slice(last, m.index));
+      const safe = mdDest(m[2]);
+      out += safe ? `[${m[1]}](${safe})` : escGap(m[1]);
+      last = m.index + m[0].length;
+    }
+    out += escGap(src.slice(last));
+    return out.replace(/\n/g, "  \n");
   };
   // Text used INSIDE a [ … ] link label: strict metachar escape so a crafted
   // label cannot break out of, or nest inside, the surrounding link syntax.

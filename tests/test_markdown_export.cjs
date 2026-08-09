@@ -373,6 +373,29 @@ noThrow("missing lane/module/deck titles use defaults", () => {
 
   const rt5 = md1([{ type: "bullets", items: [{ text: "b", link: "https://ok.com/a) ![](https://attacker.example/d.png)" }] }]);
   noSub(rt5, "![](", "bullet link field: breakout neutralized");
+
+  // (11) RED-TEAM regression #3: reference-style links/images and their
+  // definition lines contain no `(`, so they bypass the inline rewriter and the
+  // definition URL never reaches sanitizeUrl. Residual `[`/`]` are now escaped so
+  // no reference use resolves and no `[ref]: url` definition can form.
+  const ref1 = deckToMarkdown({ deckTitle: "D", lanes: [{ title: "S", items: [{ title: "M", slides: [{ blocks: [
+    { type: "text", text: "look ![beac][r1] here" },
+    { type: "text", text: "[r1]: https://attacker.example/ref1.png" },
+  ] }] }] }] });
+  noSub(ref1, "![beac][r1]", "reference image USE is escaped (cannot auto-load)");
+  noSub(ref1, "\n[r1]: https", "reference DEFINITION line cannot form");
+  hasSub(ref1, "\\[r1\\]", "residual reference brackets are backslash-escaped");
+
+  const ref2 = md1([{ type: "text", text: "[click][r3]\n\n[r3]: javascript:alert1" }]);
+  noSub(ref2, "[r3]: javascript", "reference def with dangerous scheme neutralized");
+  noSub(ref2, "[click][r3]", "reference link use escaped");
+
+  const ref3 = md1([{ type: "text", text: "![shortcut]\n\n[shortcut]: https://attacker.example/s.png" }]);
+  noSub(ref3, "![shortcut]", "shortcut/collapsed reference image escaped");
+
+  // inline links must still survive the bracket-escaping intact
+  const keep = md1([{ type: "text", text: "see [docs](https://ok.example/x) now" }]);
+  hasSub(keep, "[docs](https://ok.example/x)", "legit inline link preserved through escaping");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
