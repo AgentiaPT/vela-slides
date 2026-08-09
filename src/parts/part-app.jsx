@@ -1449,9 +1449,13 @@ export default function App() {
         if (data && data._version === 3) {
           // v3: full deck in one key
           delete data._version;
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -1474,9 +1478,13 @@ export default function App() {
             })),
           };
           delete payload._version;
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
+          if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -1486,9 +1494,13 @@ export default function App() {
           }, 3000);
         } else if (data) {
           // v1 legacy monolithic
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }

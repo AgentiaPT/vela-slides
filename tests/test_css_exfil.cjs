@@ -654,5 +654,131 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
   else bad("raw .deckTitle assignment still present", JSON.stringify(rawAssigns));
 }
 
+// ── v13.27: branding accentColor/footerBg — the last raw-`background` sink ──
+// A just-fixed adjacent bug (v13.26) made every OTHER color/background scalar
+// fail-closed by type and encoder-gated at render; this residual left TWO
+// branding fields (accentColor, footerBg) writing straight into a raw
+// `background` shorthand with neither protection, reachable only via a
+// legacy-persisted deck reloaded through the storage-load boot path (every
+// live ingress — import/startup-patch/merge/SET_BRANDING — already scrubs
+// branding). Two fixes, verified independently below: (1) the render sink
+// itself is now encoder-gated (cssColor), so even an unscrubbed value can't
+// reach `background`; (2) resanitizeLoadedBranding() re-runs the SAME
+// scrubColorFields the SET_BRANDING reducer already uses, closing the
+// storage-reload gap resanitizeLoadedLanes left open for `branding`.
+{
+  let JSDOM2;
+  try { JSDOM2 = require("jsdom").JSDOM; }
+  catch (e) { try { JSDOM2 = require("/tmp/node_modules/jsdom").JSDOM; } catch (_) { JSDOM2 = null; } }
+
+  if (!JSDOM2) {
+    bad("branding accentColor/footerBg suite", "jsdom not installed (run: npm i jsdom)");
+  } else {
+    let resanitizeLoadedBranding, cssColorB;
+    try {
+      const dom = new JSDOM2("<!doctype html><html><body></body></html>");
+      const ctx6 = {
+        DOMParser: dom.window.DOMParser, document: dom.window.document, window: dom.window,
+        atob: (b) => Buffer.from(b, "base64").toString("binary"),
+        module: { exports: {} },
+      };
+      vm.createContext(ctx6);
+      vm.runInContext(
+        [grab(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/, "SVG_ALLOWED_TAGS (branding)"),
+          grab(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/, "SVG_URL_REF_ATTRS (branding)"),
+          grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe (branding)"),
+          grab(/function sanitizeSvgMarkup\(raw\)\s*\{[\s\S]*?\n\}/, "sanitizeSvgMarkup (branding)"),
+          grab(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/, "SAFE_RASTER_DATA_IMAGE (branding)"),
+          grab(/function sanitizeImageDataUri\(s\)\s*\{[\s\S]*?\n\}/, "sanitizeImageDataUri (branding)"),
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (branding)"),
+          grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (branding)"),
+          grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (branding)"),
+          grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (branding)"),
+          grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK (branding)"),
+          grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor (branding)"),
+          grab(/function resanitizeLoadedBranding\(branding\)\s*\{[\s\S]*?\n\}/, "resanitizeLoadedBranding"),
+          "module.exports = { resanitizeLoadedBranding, cssColor };"].join("\n"),
+        ctx6, { filename: "part-imports-slice-branding.js" });
+      resanitizeLoadedBranding = ctx6.module.exports.resanitizeLoadedBranding;
+      cssColorB = ctx6.module.exports.cssColor;
+      ok("extracted real resanitizeLoadedBranding + cssColor for branding suite");
+    } catch (e) {
+      bad("extract resanitizeLoadedBranding for branding suite", e.message);
+    }
+
+    if (resanitizeLoadedBranding && cssColorB) {
+      class UrlBox2 { constructor(v) { this._v = v; } toString() { return this._v; } }
+      const HOSTILE_BRANDING = {
+        "url()": "url(http://127.0.0.1:1/branding-beacon)",
+        "array-of-string": ["url(http://127.0.0.1:1/branding-beacon)"],
+        "toString-gadget": new UrlBox2("url(http://127.0.0.1:1/branding-beacon)"),
+      };
+      const FETCH_TOKEN = /url\(|image-set\(|@import|expression\(/i;
+
+      // (a) storage-reload re-scrub neutralizes accentColor/footerBg on every hostile shape.
+      for (const field of ["accentColor", "footerBg"]) {
+        for (const [shape, payload] of Object.entries(HOSTILE_BRANDING)) {
+          const persisted = { enabled: true, [field]: payload, footerLeft: "Acme Inc." };
+          const clean = resanitizeLoadedBranding(persisted);
+          if (!(field in clean) || !FETCH_TOKEN.test(String(clean[field])))
+            ok(`resanitizeLoadedBranding neutralizes persisted \`${field}\` (${shape})`);
+          else bad(`resanitizeLoadedBranding left a fetching \`${field}\` (${shape})`, JSON.stringify(clean[field]));
+          if (clean.footerLeft === "Acme Inc.")
+            ok(`resanitizeLoadedBranding preserves sibling non-style field alongside \`${field}\` (${shape})`);
+          else bad(`resanitizeLoadedBranding dropped a sibling non-style field (${field}/${shape})`, JSON.stringify(clean));
+
+          // (b) render sink is encoder-gated: even if a value slipped past the
+          // scrub, the cssColor() encoder BrandingOverlay now routes through
+          // independently produces no fetching output for the same payload.
+          const encoded = cssColorB(payload);
+          if (encoded === "") ok(`render-sink encoder cssColor() rejects the same hostile \`${field}\` payload (${shape})`);
+          else bad(`render-sink encoder cssColor() let a hostile \`${field}\` payload through (${shape})`, JSON.stringify(encoded));
+        }
+      }
+
+      // (c) legit branding survives untouched (hex + the default semi-transparent rgba).
+      {
+        const legit = { enabled: true, accentColor: "#3B82F6", footerBg: "rgba(0,0,0,0.35)", footerColor: "#94a3b8", footerLeft: "Acme Inc." };
+        const clean = resanitizeLoadedBranding(legit);
+        if (clean.accentColor === "#3B82F6" && clean.footerBg === "rgba(0,0,0,0.35)" && clean.footerColor === "#94a3b8" && clean.footerLeft === "Acme Inc.")
+          ok("resanitizeLoadedBranding preserves legit hex accentColor + rgba footerBg unchanged");
+        else bad("resanitizeLoadedBranding altered a legit branding object", JSON.stringify(clean));
+        if (cssColorB(clean.accentColor) === clean.accentColor && cssColorB(clean.footerBg) === clean.footerBg)
+          ok("render-sink encoder cssColor() passes the legit values through unchanged");
+        else bad("render-sink encoder cssColor() altered a legit branding value");
+      }
+
+      // (d) logo (a separate <img src> fetch sink, not a CSS property) is re-clamped
+      // to data:image/* on the same reload path, mirroring the import-time clamp.
+      {
+        const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        const legitLogo = resanitizeLoadedBranding({ enabled: true, logo: PNG });
+        if (legitLogo.logo === PNG) ok("resanitizeLoadedBranding preserves a legit data:image/* logo");
+        else bad("resanitizeLoadedBranding altered a legit data:image logo", JSON.stringify(legitLogo.logo));
+        const hostileLogo = resanitizeLoadedBranding({ enabled: true, logo: "http://127.0.0.1:1/logo-beacon.png" });
+        if (!hostileLogo.logo) ok("resanitizeLoadedBranding strips a non-data: external logo URL");
+        else bad("resanitizeLoadedBranding left an external logo URL", JSON.stringify(hostileLogo.logo));
+      }
+    }
+  }
+}
+
+// Wiring guards: the render sink and the storage-load boot path actually call
+// the new gates, not just the extracted-slice tests above.
+{
+  const BLOCKS2 = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
+  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8");
+  if (/background: cssColor\(b\.accentColor\)/.test(bsrc3)) ok("branding accentColor render sink uses cssColor()");
+  else bad("branding accentColor sink not routed through cssColor (wiring missing)");
+  if (/cssColor\(b\.footerBg\)/.test(bsrc3)) ok("branding footerBg render sink uses cssColor()");
+  else bad("branding footerBg sink not routed through cssColor (wiring missing)");
+
+  const APP3 = path.join(__dirname, "..", "src", "parts", "part-app.jsx");
+  const appsrc3 = fs.readFileSync(APP3, "utf8");
+  const brandingOccurrences = (appsrc3.match(/resanitizeLoadedBranding\(/g) || []).length;
+  if (brandingOccurrences >= 3) ok(`storage-load path calls resanitizeLoadedBranding on all branches (${brandingOccurrences} call sites)`);
+  else bad("storage-load path missing resanitizeLoadedBranding wiring", `only ${brandingOccurrences} call site(s)`);
+}
+
 console.log("\n  " + pass + " passed, " + failCount + " failed");
 process.exit(failCount ? 1 : 0);

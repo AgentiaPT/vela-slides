@@ -1532,10 +1532,17 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   })();
   const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
   const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
-  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  // accentColor/footerBg are encoder-gated (cssColor) the same way slide bg/
+  // bgGradient/accent already are (v13.26): both feed a raw `background`
+  // shorthand, a fetching CSS sink, so a deck-supplied value must pass the
+  // strict color/gradient-token allowlist or fall back to the safe default —
+  // defense-in-depth so this sink can't be reached even by a future sanitizer
+  // gap. footerColor only ever reaches the non-fetching `color` property, so
+  // it stays scrubber-only like every other text-color field. (v13.27)
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
+    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;

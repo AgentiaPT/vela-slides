@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.26";
+const VELA_VERSION = "13.27";
 const VELA_CHANGELOG = [
+  { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
   { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
   { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
   { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
@@ -1441,6 +1442,33 @@ function resanitizeLoadedLanes(lanes) {
     }) : lane.items;
     return { ...lane, items };
   });
+}
+
+// SECURITY (storage-load re-sanitization, branding leg): resanitizeLoadedLanes
+// above re-scrubs slide/block content read back from storage but deliberately
+// leaves `branding` untouched (it isn't "slide content"). Branding's own color
+// scalars (accentColor, footerBg, footerColor, ...) feed the exact same raw-CSS
+// `background`/`color` sinks as slide/block fields, so a value that predates a
+// scrubber fix (or reached storage through any future ingestion gap) would
+// reload — and keep reloading — with its dangerous value intact, the same
+// persistence gap resanitizeLoadedLanes exists to close for slides. Reuse
+// scrubColorFields — the SAME function the SET_BRANDING reducer already runs on
+// every runtime branding edit — so a persisted branding object can never be
+// more trusted than a freshly-edited one. `logo` is additionally re-clamped to
+// an inline `data:image/*` URI (mirroring validateAndSanitizeDeck's import-time
+// clamp): it is an <img src> fetch sink that scrubColorFields' key patterns
+// don't cover, so it needs its own re-validation on the same reload path. Every
+// other branding field (names, ids, toggles, numeric sizing) is left exactly as
+// read — this only re-runs the two sanitizers that already gate fresh ingress. (v13.27)
+function resanitizeLoadedBranding(branding) {
+  if (!branding || typeof branding !== "object") return branding;
+  const b = { ...branding };
+  scrubColorFields(b);
+  if ("logo" in b) {
+    const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+    if (clamped) b.logo = clamped; else delete b.logo;
+  }
+  return b;
 }
 
 function validateAndSanitizeDeck(raw) {
@@ -3696,10 +3724,17 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   })();
   const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
   const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
-  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  // accentColor/footerBg are encoder-gated (cssColor) the same way slide bg/
+  // bgGradient/accent already are (v13.26): both feed a raw `background`
+  // shorthand, a fetching CSS sink, so a deck-supplied value must pass the
+  // strict color/gradient-token allowlist or fall back to the safe default —
+  // defense-in-depth so this sink can't be reached even by a future sanitizer
+  // gap. footerColor only ever reaches the non-fetching `color` property, so
+  // it stays scrubber-only like every other text-color field. (v13.27)
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
+    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
@@ -20082,9 +20117,13 @@ export default function App() {
         if (data && data._version === 3) {
           // v3: full deck in one key
           delete data._version;
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -20107,9 +20146,13 @@ export default function App() {
             })),
           };
           delete payload._version;
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
+          if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -20119,9 +20162,13 @@ export default function App() {
           }, 3000);
         } else if (data) {
           // v1 legacy monolithic
-          // Re-sanitize slide content read back from storage — see
-          // resanitizeLoadedLanes (F-11 backstop, part-imports.jsx). (v13.26)
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }

@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.26";
+const VELA_VERSION = "13.27";
 const VELA_CHANGELOG = [
+  { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
   { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
   { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
   { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
@@ -1441,6 +1442,33 @@ function resanitizeLoadedLanes(lanes) {
     }) : lane.items;
     return { ...lane, items };
   });
+}
+
+// SECURITY (storage-load re-sanitization, branding leg): resanitizeLoadedLanes
+// above re-scrubs slide/block content read back from storage but deliberately
+// leaves `branding` untouched (it isn't "slide content"). Branding's own color
+// scalars (accentColor, footerBg, footerColor, ...) feed the exact same raw-CSS
+// `background`/`color` sinks as slide/block fields, so a value that predates a
+// scrubber fix (or reached storage through any future ingestion gap) would
+// reload — and keep reloading — with its dangerous value intact, the same
+// persistence gap resanitizeLoadedLanes exists to close for slides. Reuse
+// scrubColorFields — the SAME function the SET_BRANDING reducer already runs on
+// every runtime branding edit — so a persisted branding object can never be
+// more trusted than a freshly-edited one. `logo` is additionally re-clamped to
+// an inline `data:image/*` URI (mirroring validateAndSanitizeDeck's import-time
+// clamp): it is an <img src> fetch sink that scrubColorFields' key patterns
+// don't cover, so it needs its own re-validation on the same reload path. Every
+// other branding field (names, ids, toggles, numeric sizing) is left exactly as
+// read — this only re-runs the two sanitizers that already gate fresh ingress. (v13.27)
+function resanitizeLoadedBranding(branding) {
+  if (!branding || typeof branding !== "object") return branding;
+  const b = { ...branding };
+  scrubColorFields(b);
+  if ("logo" in b) {
+    const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+    if (clamped) b.logo = clamped; else delete b.logo;
+  }
+  return b;
 }
 
 function validateAndSanitizeDeck(raw) {
