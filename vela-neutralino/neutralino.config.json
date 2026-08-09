@@ -48,7 +48,8 @@
     "storage.setData",
     "events.on",
     "events.off",
-    "extensions.getStats"
+    "extensions.getStats",
+    "debug.log"
   ],
   "modes": {
     "window": {

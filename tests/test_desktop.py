@@ -35,7 +35,12 @@ def read(*parts):
 # layer 2. Keep this list minimal and named — it is the ONLY escape hatch
 # from the "allowlist must be a subset of methods we can see called" check
 # below, so anything added here must be justified in SECURITY.md too.
-BOOT_HANDSHAKE_EXCEPTIONS = {"extensions.getStats"}
+# extensions.getStats: client init / extension-readiness handshake.
+# debug.log: the client library's internal error handler writes to the fixed
+#   runtime log file (logging.writeToLogFile is enabled). It takes a message,
+#   not a path — no arbitrary-path capability — so admitting it does not
+#   re-open the file-write class this allowlist confines.
+BOOT_HANDSHAKE_EXCEPTIONS = {"extensions.getStats", "debug.log"}
 
 
 def find_called_native_methods():

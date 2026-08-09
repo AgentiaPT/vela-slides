@@ -53,7 +53,10 @@ acknowledgment before the deck mounts.
    **`extensions.dispatch` / `extensions.broadcast` are deliberately NOT in the
    allowlist**, so the webview cannot message or send data to the extension. It
    reaches the gatekeeper only over a token-authenticated loopback socket,
-   keeping the webview's native surface minimal. Re-audit with:
+   keeping the webview's native surface minimal. `debug.log` is granted for the
+   same reason — the client library's internal error handler writes to the
+   fixed runtime log file (`logging.writeToLogFile` is on); it takes a message,
+   not a path, so it carries no arbitrary-path capability. Re-audit with:
    ```
    grep -rhoE "Neutralino\.[a-zA-Z]+\.[a-zA-Z]+" resources/ | sort -u
    ```
