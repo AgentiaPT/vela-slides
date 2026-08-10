@@ -135,8 +135,10 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.28";
+const VELA_VERSION = "13.30";
 const VELA_CHANGELOG = [
+  { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
+  { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
   { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
   { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
   { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
@@ -1168,6 +1170,14 @@ function sanitizeBlock(block, depth = 0) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  // Text-ish block fields that also reach the Markdown exporter — strip HTML at
+  // ingress so no field relies on the export encoder alone (defense-in-depth,
+  // complete mediation): a `<img>`/autolink in these must never survive import.
+  if (clean.loopLabel) clean.loopLabel = sanitizeString(clean.loopLabel, 200);
+  if (clean.alt) clean.alt = sanitizeString(clean.alt, 500);
+  if (clean.centerLabel) clean.centerLabel = sanitizeString(clean.centerLabel, 200);
+  if (clean.centerSub) clean.centerSub = sanitizeString(clean.centerSub, 200);
+  if (clean.annotation) clean.annotation = sanitizeString(clean.annotation, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
   // Image block <img src> auto-fetches on render. Vela decks load nothing
   // external, so restrict to inline data:image/* (no network, no data:text/html).
@@ -1199,6 +1209,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.text) c.text = sanitizeString(c.text, 500);
         if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.value) c.value = sanitizeString(String(c.value), 100);
         if (c.link) c.link = sanitizeUrl(c.link);
         return c;
@@ -1210,6 +1221,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (c.title) c.title = sanitizeString(c.title, 500);
+        if (c.sublabel) c.sublabel = sanitizeString(c.sublabel, 200);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
         if (c.link) c.link = sanitizeUrl(c.link);
@@ -1222,6 +1234,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        else if (c.value != null) c.value = sanitizeString(String(c.value), 20);
         return c;
       }).filter(Boolean);
     }
@@ -1370,6 +1383,11 @@ function sanitizeSlide(slide) {
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
+  // Speaker/presenter notes are plain-text metadata that the Markdown exporter
+  // emits — HTML-strip them at ingress so no field depends on the export encoder
+  // alone (defense-in-depth, complete mediation).
+  if (clean.speakerNotes) clean.speakerNotes = sanitizeString(String(clean.speakerNotes), 5000);
+  if (clean.notes) clean.notes = sanitizeString(String(clean.notes), 5000);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   if (clean.studyNotes) {

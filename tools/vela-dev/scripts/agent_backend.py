@@ -33,6 +33,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -243,11 +244,15 @@ def run_completion(system, messages, call_type="chat", timeout=None):
 #   - the socket binds loopback only (make_channel_server forces 127.0.0.1),
 #   - the Host header must be loopback — blocks DNS-rebinding, where a malicious
 #     domain resolving to 127.0.0.1 tries to POST from a page the user visits,
-#   - the Origin (when the browser sends one) must be loopback or "null" — a
-#     random website the user is browsing cannot drive the channel or read its
-#     response (no permissive CORS is handed to a foreign origin).
-# Same defense model as serve.py (_check_host) and the Go gatekeeper
-# (allowedOrigin). Residual surface is a pure text completion (CLAUDE_LOCKDOWN).
+#   - the Origin/Host checks are a COARSE PRE-FILTER, not the boundary: an opaque
+#     `Origin: null` is forgeable by any site (sandboxed iframe / data: / file:,
+#     CWE-346), so it is deliberately NOT relied on. What actually stops a random
+#     website the user is browsing from driving /action is the MANDATORY,
+#     unforgeable x-vela-token: a foreign page cannot read it, so it cannot call
+#     /action regardless of the Origin it presents. /events and /health carry no
+#     sensitive data (a content-free keep-alive and a readiness ping).
+# Same defense model as serve.py and the Go gatekeeper (allowedOrigin), with the
+# token as the enforced gate. Residual surface is a pure text completion (CLAUDE_LOCKDOWN).
 
 # Loopback host set. urlsplit().hostname strips IPv6 brackets, so store "::1"
 # (not "[::1]"); the Host header keeps brackets, handled in _host_only.
@@ -458,9 +463,14 @@ def make_channel_server(port=8787, host="127.0.0.1", token=None):
     caller passes 0.0.0.0. A remote browser could not use the channel anyway —
     the page fetches 127.0.0.1, which resolves to the client, not the server.
 
-    `token` (when set) gates /action. Pass it in-process (serve.py) or via the
-    VELA_CHANNEL_TOKEN env var (the CLI) — NEVER on argv, which `ps` exposes to
-    other local users."""
+    `token` gates /action and is MANDATORY: when the caller passes none, one is
+    generated here so there is no "open channel" mode. The origin/Host guard is a
+    coarse pre-filter only — an opaque `Origin: null` (a sandboxed iframe, a
+    `data:`/`file://` page) is forgeable by any site (CWE-346), so it can never be
+    the boundary. The unforgeable token is: a cross-origin page cannot read it, so
+    it cannot drive /action regardless of the Origin it presents. Pass the token
+    in-process (serve.py) or via the VELA_CHANNEL_TOKEN env var (the CLI) — NEVER
+    on argv, which `ps` exposes to other local users."""
     if host not in ("127.0.0.1", "::1", "localhost"):
         host = "127.0.0.1"
     httpd = ThreadingHTTPServer((host, port), _ChannelHandler)
@@ -468,7 +478,10 @@ def make_channel_server(port=8787, host="127.0.0.1", token=None):
     httpd._stop_event = threading.Event()
     httpd._sse_lock = threading.Lock()
     httpd._sse_count = 0
-    httpd._token = token or None
+    # Mandatory: never leave /action unauthenticated. A missing token is replaced
+    # with a fresh random one (which no external caller knows), closing the
+    # tokenless cross-origin-drive hole rather than trusting the request Origin.
+    httpd._token = token or secrets.token_urlsafe(32)
     httpd._spawn_sem = threading.BoundedSemaphore(MAX_CONCURRENT)
     return httpd
 
@@ -517,14 +530,19 @@ def _cli(argv):
             port = int(argv[argv.index("--port") + 1])
         if "--host" in argv:
             host = argv[argv.index("--host") + 1]
-        # Token from the env only — never argv (ps is world-readable). Empty =
-        # no /action auth (fine for a single-user dev box / tests).
+        # Token from the env only — never argv (ps is world-readable). If unset,
+        # make_channel_server mints a random one: /action is ALWAYS authenticated,
+        # so a cross-origin page (even one presenting Origin: null) cannot drive it.
         token = os.environ.get("VELA_CHANNEL_TOKEN") or None
         httpd = make_channel_server(port, host, token)
         actual = httpd.server_address[1]
         info = agent_available()
         status = f"{info['bin']} {info['version']}" if info["available"] else f"{info['bin']} NOT FOUND"
         print(f"⛵ Vela AI channel on http://{host}:{actual}  (agent: {status})", flush=True)
+        if not token:
+            # Surface the generated token so a manual caller can authenticate;
+            # the harness/serve.py inject their own token in-process instead.
+            print(f"   /action token (x-vela-token): {httpd._token}", flush=True)
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
