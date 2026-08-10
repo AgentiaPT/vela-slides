@@ -297,7 +297,8 @@ The three things no banner-cut can fix, done first (§2.4).
 
 Items 2 and 3 forfeit the byte-identical gate (§2.5) — full suite **and** the
 headless UI battery, and they are the only steps in this sprint where behaviour
-can regress. Push early and let CI carry the node tiers.
+can regress. Both run in-environment (§7), so gate each commit on them directly
+rather than pushing and waiting on CI.
 
 **Measure. Apply the stop rule** (§2.4).
 
@@ -460,42 +461,41 @@ before break-even — not as a bare percentage (§2.6).
 
 ## 7. Verification
 
-### ⚠️ `node` is not installed on the dev machine
-
-`node`, `npm`, `npx`, and `pnpm` are all absent locally; Python is `python`
-(3.12.10), **not** `python3`. Checks split into two tiers — a green local run is
-not full verification.
-
-**Runs locally (Python only):**
+The full toolchain is available in the execution environment — Node 22, pnpm, and
+the pinned Chromium and ffmpeg under `/opt/pw-browsers/`. Every check below runs
+in one tier, so a green run is full verification and nothing has to be deferred
+to CI.
 
 ```bash
 # 1. Monolith unchanged — the correctness proof for every phase except Phase 2 items 2-3
-python tools/vela-dev/scripts/concat.py
+python3 tools/vela-dev/scripts/concat.py
 git diff --exit-code skills/vela-slides/app/vela.jsx
 
 # 2. Lint now covers every part; fails on a manifest/disk mismatch
-python tools/vela-dev/scripts/lint.py --parts src/parts
+python3 tools/vela-dev/scripts/lint.py --parts src/parts
 
 # 3. Python suites
-python tests/test_vela.py --unit
-python tests/test_vela.py --integration
-python tests/test_serve.py
-python tests/test_cli.py
-```
+python3 tests/test_vela.py --unit
+python3 tests/test_vela.py --integration
+python3 tests/test_serve.py
+python3 tests/test_cli.py
 
-**CI-only (needs node + the pinned Chromium):**
-
-```bash
+# 4. Node suites
 node tests/test_block_render.cjs && node tests/test_engine_tools.cjs && \
 node tests/test_reducer.cjs && node tests/test_ux_logic.cjs
+
+# 5. Headless UI battery — the gate for Phase 2 items 2-3, which forfeit the
+#    byte-identical check (§2.5)
 node tools/vela-dev/scripts/render-offline.js examples/vela-demo.vela /tmp/vout
 node tools/vela-dev/scripts/vela-drive.js uitests /tmp/vout/render.html --json /tmp/ui.json
 ```
 
-**Capture a baseline first.** Run the local tier on the untouched branch and save
-the output — several node-backed assertions inside `test_vela.py` will already be
-red on this machine, and you need to know which so you don't chase pre-existing
-failures.
+**Capture a baseline first.** Run the whole set on the untouched branch and save
+the output, so any red is known to be pre-existing rather than chased mid-sprint.
+
+The UI battery being runnable at every step, not just in CI, is what makes the
+per-step commit discipline in §2.5 practical for the `SlidePanel` and `App`
+hoists — the two places where behaviour can actually regress.
 
 **Tests that read part-files by absolute path and must be updated as their target
 splits** — `tests/test_block_render.cjs:41-42`, `tests/test_engine_tools.cjs:15-16`,
