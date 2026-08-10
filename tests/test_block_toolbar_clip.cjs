@@ -22,8 +22,19 @@
 const fs = require("fs");
 const path = require("path");
 
-const SRC_PATH = path.join(__dirname, "..", "src/parts/part-blocks.jsx");
-const src = fs.readFileSync(SRC_PATH, "utf8");
+// The block renderer family is split across part-blocks-*.jsx part-files
+// (MANIFEST.txt order). Concatenate them so source-pattern checks stay
+// stable when a symbol moves between sibling parts.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
+const src = readPartFamily("part-blocks");
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };

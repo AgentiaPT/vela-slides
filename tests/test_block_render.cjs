@@ -38,8 +38,18 @@ const fs = require("fs");
 const path = require("path");
 
 const REPO = path.resolve(__dirname, "..");
-const BLOCKS_SRC = path.join(REPO, "src/parts/part-blocks.jsx");
-const IMPORTS_SRC = path.join(REPO, "src/parts/part-imports.jsx");
+const PARTS_DIR = path.join(REPO, "src", "parts");
+const IMPORTS_SRC = path.join(PARTS_DIR, "part-imports.jsx");
+// The block renderer family is split across part-blocks-*.jsx part-files.
+// Concatenate them in MANIFEST.txt order (the real build order — TDZ-safe)
+// so the evaluated module matches production.
+function blockFamilyFiles() {
+  const manifest = fs.readFileSync(path.join(PARTS_DIR, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === "part-blocks.jsx" || n.startsWith("part-blocks-"))
+    .map((n) => path.join(PARTS_DIR, n));
+}
 
 let React, renderToStaticMarkup, Babel, DOMParser;
 try {
@@ -52,12 +62,13 @@ try {
   console.error("Setup error — missing devDependency (run `npm ci`):", e.message);
   process.exit(2);
 }
-if (!fs.existsSync(BLOCKS_SRC) || !fs.existsSync(IMPORTS_SRC)) {
-  console.error("Missing source part-file(s). Expected src/parts/part-blocks.jsx and part-imports.jsx");
+const BLOCK_FILES = blockFamilyFiles();
+if (BLOCK_FILES.length === 0 || !BLOCK_FILES.every(fs.existsSync) || !fs.existsSync(IMPORTS_SRC)) {
+  console.error("Missing source part-file(s). Expected src/parts/part-blocks*.jsx and part-imports.jsx");
   process.exit(2);
 }
 
-const blocksSrc = fs.readFileSync(BLOCKS_SRC, "utf8");
+const blocksSrc = BLOCK_FILES.map((f) => fs.readFileSync(f, "utf8")).join("\n");
 const importsSrc = fs.readFileSync(IMPORTS_SRC, "utf8");
 
 // ── Source extraction helpers ────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 // Behavioral unit test for Markdown export (coverage gap G7).
-// deckToMarkdown (src/parts/part-pdf.jsx) is a pure state->string function with
+// deckToMarkdown (src/parts/part-pdf-vector.jsx) is a pure state->string function with
 // zero prior coverage. We eval-extract it under Node (no browser/React/canvas
 // needed — it only touches state, strings, and `new Date`) and pin its REAL
 // output contract for every block type + the slide/section structure, plus a
@@ -7,7 +7,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf.jsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf-vector.jsx"), "utf8");
 
 function extract(name) {
   const start = src.indexOf(`function ${name}(`);

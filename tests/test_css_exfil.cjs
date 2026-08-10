@@ -24,6 +24,18 @@ const vm = require("vm");
 
 const IMPORTS = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
 const src = fs.readFileSync(IMPORTS, "utf8");
+// The block renderer family is split across part-blocks-*.jsx part-files
+// (MANIFEST.txt order). Concatenate them so sink-wiring pattern checks stay
+// stable when a symbol moves between sibling parts.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
 
 let pass = 0, failCount = 0;
 function ok(name) { pass++; console.log("  ✅ " + name); }
@@ -256,8 +268,7 @@ if (/function scrubSubObject\(/.test(src) &&
   ok("scrubSubObject applies color+layout scrubbers and drops the `_` namespace");
 else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 {
-  const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc = fs.readFileSync(BLOCKS, "utf8");
+  const bsrc = readPartFamily("part-blocks");
   if (/backgroundImage = cssUrl\(slide\.bgImage\)/.test(bsrc)) ok("bgImage render sink uses cssUrl()");
   else bad("bgImage sink not routed through cssUrl (wiring missing)");
   if (/cssColor\(qd\.color\)/.test(bsrc)) ok("matrix quadrant color sink uses cssColor()");
@@ -605,8 +616,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 // ── Wiring guards: render sinks route bg/bgGradient/cell.bg/headerBg through
 //    the encoders (part-blocks.jsx main render + part-slides.jsx thumbnail). ──
 {
-  const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc2 = fs.readFileSync(BLOCKS, "utf8");
+  const bsrc2 = readPartFamily("part-blocks");
   if (/bgStyle\.background = c;/.test(bsrc2) && /cssColor\(slide\.bg\)/.test(bsrc2)) ok("slide.bg render sink uses cssColor()");
   else bad("slide.bg sink not routed through cssColor (wiring missing)");
   if (/cssGradient\(slide\.bgGradient\)/.test(bsrc2)) ok("slide.bgGradient render sink uses cssGradient()");
@@ -766,8 +776,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 // Wiring guards: the render sink and the storage-load boot path actually call
 // the new gates, not just the extracted-slice tests above.
 {
-  const BLOCKS2 = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8");
+  const bsrc3 = readPartFamily("part-blocks");
   if (/background: cssColor\(b\.accentColor\)/.test(bsrc3)) ok("branding accentColor render sink uses cssColor()");
   else bad("branding accentColor sink not routed through cssColor (wiring missing)");
   if (/cssColor\(b\.footerBg\)/.test(bsrc3)) ok("branding footerBg render sink uses cssColor()");

@@ -24,6 +24,19 @@ DEV_SCRIPTS = os.path.join(DEV_DIR, "scripts")         # concat.py, serve.py, sy
 PARTS_DIR = os.path.join(REPO_ROOT, "src", "parts")    # app source part-files (first-class)
 LOCAL_HTML = os.path.join(DEV_DIR, "local.html")       # dev preview shell (served by serve.py)
 
+def read_part_family(prefix):
+    """Concatenate every part-file whose name starts with `prefix` (e.g.
+    "part-blocks" → part-blocks-inline/-item/... + part-blocks.jsx), in
+    MANIFEST.txt order. Keeps source-pattern assertions stable across
+    part-file splits — a symbol may move between sibling parts freely."""
+    manifest = os.path.join(PARTS_DIR, "MANIFEST.txt")
+    names = []
+    for line in open(manifest, encoding="utf-8"):
+        entry = line.split("#", 1)[0].strip()
+        if entry and (entry == prefix + ".jsx" or entry.startswith(prefix + "-")):
+            names.append(entry)
+    return "\n".join(open(os.path.join(PARTS_DIR, n), encoding="utf-8").read() for n in names)
+
 passes = 0
 fails = 0
 skips = 0
@@ -1039,7 +1052,7 @@ def test_editor_ux_bugs():
     print("\n── Editor UX Bug Tests (CR1–CR3) ──")
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    blocks  = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    blocks  = read_part_family("part-blocks")
     slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
 
     # ── CR1: opening a deck must default to the first slide of the first
@@ -3318,7 +3331,7 @@ def test_study_notes():
     else:
         fail("TOC row study marker missing in part-list.jsx")
 
-    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    blocks_src = read_part_family("part-blocks")
     if "function GlossaryLink" in blocks_src and "data-xray-term" in blocks_src:
         ok("GlossaryLink component + X-Ray hook present in part-blocks.jsx")
     else:
@@ -3479,7 +3492,7 @@ def test_slide_numeric_fields():
         fail("imageCols missing from BLOCK_REFERENCE")
 
     # 7. The sink re-clamps too (belt-and-braces at the consumption site)
-    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    blocks_src = read_part_family("part-blocks")
     if "Math.min(6, Math.max(1, slide.imageCols | 0))" in blocks_src:
         ok("imageCols re-clamped at the render sink")
     else:
@@ -3636,7 +3649,7 @@ def test_pdf_title_cards():
 
     imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
-    pdf_src     = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    pdf_src     = read_part_family("part-pdf")
     app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
     # 1. Shared helper exists and tags its output as a virtual slide
@@ -3732,7 +3745,7 @@ def test_block_primitives():
             fail(f'"{bt}" in VALID_BLOCK_TYPES')
 
     # 3. All new types have renderers in part-blocks.jsx
-    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    blocks_src = read_part_family("part-blocks")
     for bt in NEW_BLOCKS:
         if f'case "{bt}"' in blocks_src:
             ok(f'Renderer for "{bt}" in part-blocks.jsx')

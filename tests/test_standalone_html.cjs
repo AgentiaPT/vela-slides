@@ -1,13 +1,13 @@
 /**
  * Standalone HTML export — machinery regression test (CI-gated).
  *
- * Covers buildStandaloneHtml() and its helpers (part-pdf.jsx), which power the
+ * Covers buildStandaloneHtml() and its helpers (part-pdf-vector.jsx), which power the
  * in-app "Export -> Standalone HTML" feature: splice the CURRENT deck into the
  * app's own JSX source, transpile with Babel, and inline the result (plus a
  * CDN+SRI React/ReactDOM/lucide-react loader and an optional "Made with Vela"
  * footer) into one shareable .html file.
  *
- * This loads the REAL functions from part-pdf.jsx (regex-extracted between the
+ * This loads the REAL functions from part-pdf-vector.jsx (regex-extracted between the
  * STANDALONE_HTML_PURE_START/_END comment markers — see that file) and drives
  * them with the vendored babel.min.js, exactly like the real vela.jsx source
  * and the real demo deck, so it exercises the actual production code path
@@ -34,7 +34,7 @@ const path = require("path");
 const vm = require("vm");
 
 const REPO = path.resolve(__dirname, "..");
-const PDF_SRC_PATH = path.join(REPO, "src/parts/part-pdf.jsx");
+const PDF_SRC_PATH = path.join(REPO, "src/parts/part-pdf-vector.jsx");
 const VELA_JSX_PATH = path.join(REPO, "skills/vela-slides/app/vela.jsx");
 const DEMO_DECK_PATH = path.join(REPO, "examples/vela-demo.vela");
 const BABEL_PATH = path.join(REPO, "vela-neutralino/resources/vendor/babel.min.js");
@@ -56,7 +56,7 @@ catch (e) { console.error("Could not require vendored babel.min.js:", e.message)
 
 const pdfSource = fs.readFileSync(PDF_SRC_PATH, "utf8");
 const m = pdfSource.match(/STANDALONE_HTML_PURE_START([\s\S]*?)STANDALONE_HTML_PURE_END/);
-if (!m) { console.error("Could not locate STANDALONE_HTML_PURE_START/_END markers in part-pdf.jsx"); process.exit(2); }
+if (!m) { console.error("Could not locate STANDALONE_HTML_PURE_START/_END markers in part-pdf-vector.jsx"); process.exit(2); }
 
 const sandbox = { window: { Babel }, console, module: { exports: {} } };
 vm.createContext(sandbox);
