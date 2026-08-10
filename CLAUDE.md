@@ -104,6 +104,17 @@ python3 tools/vela-dev/scripts/concat.py
 
 All checks must pass before committing.
 
+## Mandatory: Read the secure-coding skill before writing code
+
+**Before writing or changing ANY code in this repo — feature work, bug fixes,
+refactors, exports, tooling — read `.claude/skills/vela-secure-coding/SKILL.md`.**
+Vela renders untrusted deck JSON in runtimes with real filesystem and network
+capability, and nearly every vulnerability in this repo's history came from
+ordinary feature code, not from work labelled "security". The skill carries the
+threat model, the canonical sanitizer/encoder helpers you must reuse instead of
+re-implementing, the recurring failure classes this codebase has actually shipped
+and fixed, and the proof/CI gates a change must pass.
+
 ## Build Commands
 
 ```bash
