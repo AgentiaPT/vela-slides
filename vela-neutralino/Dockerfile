@@ -18,7 +18,7 @@
 # for every target OS/arch. Unit tests run first so a broken gatekeeper fails
 # the build. The webview never spawns — this binary is the sole process allowed
 # to launch the whitelisted agent CLIs (see SECURITY.md).
-FROM golang:1.22-bookworm AS gobuild
+FROM golang:1.26-bookworm AS gobuild
 WORKDIR /gk
 COPY vela-neutralino/extensions/agent/ ./
 RUN go test ./...

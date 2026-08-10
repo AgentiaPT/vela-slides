@@ -36,7 +36,10 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    # 10, not 5: we pin ~11 distinct actions, so a 5-PR cap silently starves
+    # the tail of the list — an action can sit unbumped for months purely
+    # because five other PRs are already open and nobody closed them.
+    open-pull-requests-limit: 10
     # Same supply-chain cooldown for Actions: wait out the window in which a
     # poisoned tag/release is typically detected and pulled. Security updates
     # are exempt.
@@ -45,3 +48,73 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+
+  # ── Ecosystems below were previously unmonitored ───────────────────────
+  # Everything above covers the repo root only. These four manifests are real
+  # build inputs (they run in CI, or land in a shipped desktop binary) but no
+  # bot was watching them, so they drifted silently.
+
+  # MCP channel bridge (tools/vela-dev/channel) — @modelcontextprotocol/sdk +
+  # tsx. Dev-only, committed pnpm-lock.yaml, cooldown floor also enforced at
+  # resolve time by that directory's pnpm-workspace.yaml.
+  - package-ecosystem: "npm"
+    directory: "/tools/vela-dev/channel"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+    labels:
+      - "dependencies"
+
+  # Neutralino shell build tooling — the exact-pinned @neutralinojs/neu CLI
+  # that produces the shipped desktop binaries.
+  - package-ecosystem: "npm"
+    directory: "/vela-neutralino"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+    labels:
+      - "dependencies"
+
+  # Python test dependencies (tests/requirements-test.txt). Installed in CI
+  # with a bare `pip install -r` and no lockfile, so the pin in that file is
+  # the only thing standing between CI and a same-day upload — which makes
+  # bot-proposed, cooldown-gated bumps the only safe way to move it.
+  - package-ecosystem: "pip"
+    directory: "/tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+    labels:
+      - "dependencies"
+
+  # Docker base images in vela-neutralino/Dockerfile (golang, node). These
+  # compile the agent gatekeeper and the desktop bundle, so a stale base image
+  # means shipping binaries built by an unpatched toolchain.
+  - package-ecosystem: "docker"
+    directory: "/vela-neutralino"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
