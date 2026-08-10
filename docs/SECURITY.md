@@ -22,9 +22,32 @@ denies.** The artifact's own CSP must never be treated as the primary control �
 the sanitizers are, and they are what these two host runtimes rely on.
 
 The central invariant the sanitizers protect, stated runtime-independently:
-**no deck-supplied value may reach a sink that auto-fetches an external
-resource on render, executes script, or reaches the native bridge.** Every
-"image-loading" CSS/SVG/HTML construct is the regulated surface.
+**no deck-supplied value may (a) reach a sink that auto-fetches an external
+resource on render, (b) execute script, (c) reach the native bridge, or
+(d) alter the presentation, geometry, hit-testing, or labeling of trusted
+application chrome.** Every "image-loading" CSS/SVG/HTML construct is the
+regulated surface for (a)–(c); any construct that can inject *cascade-global*
+CSS (rather than element-local styling) is the regulated surface for (d).
+
+Clause (d) is the **UI-integrity** invariant. It exists because untrusted
+deck-rendered markup shares one DOM and one CSS cascade with Vela's own UI, so
+a construct that injects a document-global stylesheet could restyle, hide,
+relocate, or re-label real controls — visual defacement at minimum, and (paired
+with any one-click no-confirm control) clickjacking a real action at worst.
+Egress/execution containment alone does not cover it: CSS needs no network and
+no script to redress trusted chrome. The regulated constructs are **both** the SVG
+`<style>` element (document-global CSS — therefore **not allowlisted** at all) and
+the CSS layout/positioning properties in any inline `style=""` or presentation
+attribute. Deck paint uses element-local presentation attributes (`fill="url(#id)"`,
+gradients, markers) and never an author-supplied stylesheet; and inline styling is
+**not** safe merely by being "element-local" — a positioned element
+(`position`/`inset`/`z-index`/`pointer-events`, or viewport-sizing) escapes its box
+and can overlay or clickjack app chrome from a render sink that isn't inside a
+`transform`+`overflow:hidden` block (the study-notes / teacher diagram panels are
+such sinks). So the SVG inline-style filter rejects those layout/position
+properties, mirroring the exclusion `SAFE_STYLE_KEYS` already enforces for
+`block.style`. The un-skippable real-browser redress/overlay regression tests are
+the ground-truth guard for this whole class.
 
 ### Actively-Monitored Exfil / Leak Vector Classes
 

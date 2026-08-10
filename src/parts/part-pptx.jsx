@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // part-pptx.jsx — native, editable PowerPoint (.pptx) exporter
 //
 // A second emitter over the SAME per-slide primitive IR the vector-PDF path
