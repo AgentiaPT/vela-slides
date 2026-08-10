@@ -190,6 +190,10 @@ node tests/test_release_build.cjs               # test surface stripped on relea
 tools/vela-dev/scripts/ci-local.sh              # all 8 CI stacks
 ```
 
+The lint runs in ~150 ms — run it after **every** part-file edit, not only
+before committing, so a non-allowlisted key read or an un-gated CSS sink is
+caught in the same turn that introduced it rather than minutes later in CI.
+
 Relevant existing suites to extend rather than duplicate: `test_css_exfil.cjs`,
 `test_svg_mxss.cjs`, `test_deck_key_allowlist.cjs`, `test_markdown_export.cjs`,
 `test_fs_guard.cjs`, `test_data_image_uri.cjs`, `test_pdf_export.cjs`,
