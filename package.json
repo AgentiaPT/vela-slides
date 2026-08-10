@@ -4,7 +4,7 @@
     "dev": "python3 tools/vela-dev/scripts/serve.py decks/"
   },
   "devDependencies": {
-    "@babel/standalone": "^7.29.8",
+    "@babel/standalone": "^8.0.4",
     "jsdom": "^30.0.1",
     "lucide-react": "^1.27.0",
     "playwright": "^1.61.1",
