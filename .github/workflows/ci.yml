@@ -137,6 +137,20 @@ jobs:
         # that the stripped output still parses. See tests/test_release_build.cjs.
         run: node tests/test_release_build.cjs
 
+      - name: Dependency-sweep tooling tests
+        # Guards tools/vela-dev/scripts/dep-sweep.py — the script that decides
+        # which dependency bumps have cleared their supply-chain cooldown. Its
+        # tier arithmetic is read straight out of .github/dependabot.yml, so
+        # this suite also fails if that policy is edited into a shape the
+        # sweeper can no longer parse. Fully offline (fixtures, no registry).
+        run: python3 -m unittest tests.test_dep_sweep
+
+      - name: Dependency manifest coverage
+        # Fails if a new manifest lands with no Dependabot entry watching it.
+        # This is the check that would have caught tools/vela-dev/channel and
+        # vela-neutralino drifting unmonitored. Offline — no registry calls.
+        run: python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage
+
       - name: Run non-browser stacks + browser install (concurrent)
         id: phase1
         if: always()

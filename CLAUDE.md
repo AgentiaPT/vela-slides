@@ -104,6 +104,26 @@ python3 tools/vela-dev/scripts/concat.py
 
 All checks must pass before committing.
 
+## Dependency bumps — start with the sweeper, not by hand
+
+```bash
+python3 tools/vela-dev/scripts/dep-sweep.py --vet            # ~10s, read this first
+python3 tools/vela-dev/scripts/dep-sweep.py --json --vet     # machine-readable
+```
+
+`dep-sweep.py` (dev-only, stdlib-only) does the deterministic half of a bump:
+discovers every manifest and flags any Dependabot is not watching, computes
+cooldown eligibility per tier from `.github/dependabot.yml`, verifies every
+SHA-pinned Action against its upstream tag, checks npm provenance / publisher
+changes / new install hooks, diffs lockfiles for newly-introduced packages, and
+runs each tree's audit. Exit `4` means a **verification failed** (bad pin or
+lockfile parity break) — investigate before bumping anything.
+
+It decides nothing. Which eligible version to take, whether a major is in
+scope, and whether to spend the security exemption stay human calls — see the
+**`dependency-sweep`** skill. A weekly report also runs via
+`.github/workflows/dep-sweep.yml`.
+
 ## Build Commands
 
 ```bash
@@ -146,7 +166,7 @@ src/                     ← APP SOURCE (edit these; built into vela.jsx, never 
 tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
   local.html             ← local-preview shell
   scripts/               ← concat.py, serve.py, agent_backend.py, render-offline.js,
-                            vela-drive.js, lint.py, sync-skill-docs.py
+                            vela-drive.js, lint.py, sync-skill-docs.py, dep-sweep.py
   channel/               ← Node/pnpm MCP bridge
   evals/, references/    ← evals.json, app-editing.md
 examples/                ← vela-demo.vela, themed example decks
