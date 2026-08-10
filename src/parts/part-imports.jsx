@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.38";
+const VELA_VERSION = "13.39";
 const VELA_CHANGELOG = [
+  { v: "13.39", d: ["Internal: source part-files split at section seams (slides/app families) — no functional change."] },
   { v: "13.38", d: ["Internal: source part-files split at section seams (imports/engine/pptx families) so each is readable in one pass — no functional change.", "Dev tooling: lint deck-key/SVG guards and node/python test extractors now address part-files by manifest family, so future splits can't silently drop a file from the scans."] },
   { v: "13.37", d: ["Internal: part list/order single-sourced to src/parts/MANIFEST.txt (build, lint, and tests all read it; fixes a drift where two consumers were missing a part).", "Dev tooling: parts lint gains a size-target warning and a manifest↔disk completeness error; new partsize.py section-size report."] },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },

@@ -4,7 +4,13 @@
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-app.jsx"), "utf8");
+// part-file families are split (MANIFEST.txt order) — concat for extraction.
+const partsDir = path.join(__dirname, "..", "src", "parts");
+const src = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8").split("\n")
+  .map((l) => l.split("#")[0].trim())
+  .filter((n) => n === "part-app.jsx" || n.startsWith("part-app-"))
+  .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+  .join("\n");
 
 function extractFn(name) {
   const start = src.indexOf(`function ${name}(`);

@@ -750,7 +750,7 @@ def test_css_color_exfil():
 
     # (5d) v12.67: the local live-sync LOAD must take branding from the sanitized copy,
     #      not the raw incoming deck (slide content was already sanitized; branding was missed).
-    appjs = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    appjs = read_part_family("part-app")
     if "...sanitized.branding" in appjs and "...deck.branding }" not in appjs:
         ok("local live-sync LOAD uses sanitized.branding (not raw deck.branding)")
     else:
@@ -979,7 +979,7 @@ def test_audit_2025_05_fixes():
 def test_known_bugs():
     print("\n── Known Bug Tests ──")
 
-    slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides_jsx = read_part_family("part-slides")
     engine_jsx = read_part_family("part-engine")
     imports_jsx = read_part_family("part-imports")
     chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
@@ -1053,7 +1053,7 @@ def test_editor_ux_bugs():
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     blocks  = read_part_family("part-blocks")
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides  = read_part_family("part-slides")
 
     # ── CR1: opening a deck must default to the first slide of the first
     #        non-empty module in EDITOR mode too — not only presentation mode.
@@ -1110,9 +1110,9 @@ def test_slide_editor_ux_features():
 
     imports = read_part_family("part-imports")
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides  = read_part_family("part-slides")
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
-    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    appjs   = read_part_family("part-app")
 
     # ── Feature 4: multi-slide clipboard ────────────────────────────
     if "velaClipboardWriteSlides" in imports and "velaClipboardReadSlides" in imports:
@@ -1229,9 +1229,9 @@ def test_toc_nav_and_gallery_titlecards():
     print("\n── TOC keyboard tree / collapsed marker / gallery title cards ──")
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides  = read_part_family("part-slides")
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
-    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    appjs   = read_part_family("part-app")
 
     # ── CR2 A: collapse state lifted into the reducer ──
     if "collapsedSections: []" in reducer:
@@ -3311,7 +3311,7 @@ def test_study_notes():
         fail("turbo → unturbo round-trip studyNotes.text")
 
     # 8. Part-file presence checks
-    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides_src = read_part_family("part-slides")
     if "function StaticStudyPanel" in slides_src and "function StudentPanel" in slides_src:
         ok("StudentPanel + StaticStudyPanel exist in part-slides.jsx")
     else:
@@ -3545,7 +3545,7 @@ def test_deck_key_allowlist_structure():
 
     # Reconciliation: the two other slide-key lists derive from the allowlists.
     engine_src = read_part_family("part-engine")
-    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides_src = read_part_family("part-slides")
     if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
         ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")
     else:
@@ -3648,9 +3648,9 @@ def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
 
     imports_src = read_part_family("part-imports")
-    slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    slides_src  = read_part_family("part-slides")
     pdf_src     = read_part_family("part-pdf")
-    app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    app_src     = read_part_family("part-app")
 
     # 1. Shared helper exists and tags its output as a virtual slide
     bm = re.search(r"function buildTitleCardSlide\([^)]*\)\s*\{(.*?)\n\}", imports_src, re.DOTALL)

@@ -302,7 +302,7 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
 // ═══════════════════════════════════════════════════════════════════
 {
   const engineSrc = readPartFamily("part-engine");
-  const slidesSrc = fs.readFileSync(P("part-slides.jsx"), "utf8");
+  const slidesSrc = readPartFamily("part-slides");
   assert("part-engine SLIDE_ONLY_KEYS is derived from the allowlists",
     /SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,120}SAFE_BLOCK_KEYS/.test(engineSrc));
   assert("part-slides SLIDE_KEYS is filtered through SAFE_SLIDE_KEYS",

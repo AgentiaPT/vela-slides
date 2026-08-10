@@ -18,7 +18,10 @@ part-reducer.jsx   # useReducer state + dispatch actions
 part-engine.jsx    # Vera AI engine core — callClaudeAPI(), shared API helpers
 part-engine-tools.jsx # tool execution engine (22 tools) + system prompts
 part-engine-modes.jsx # teacher mode, slide design API, timing estimation, chat step, SSE recovery, TOC slide generator
-part-slides.jsx    # SlidePanel rendering, fullscreen, thumbnails
+part-slides.jsx    # slide canvas core — VirtualSlide, layout stats, ScopeSelector, BrandingPanel, CinemaTip
+part-slides-presenter.jsx # fullscreen presenter chrome — PresenterTOC, GalleryView/Thumb, CommentPopover, PresenterView, TeacherMessage
+part-slides-student.jsx # student mode — StaticStudyPanel (offline study notes), StudentPanel dispatcher, TeacherPanel, SectionPicker
+part-slides-panel.jsx # SlidePanel component — fullscreen/nav/keyboard, Present Edit, Quick/Block Edit, Generate Slide, Alternatives
 part-list.jsx      # lane/module list, drag-and-drop
 part-chat.jsx      # ChatPanel, tool traces
 part-test.jsx      # battery render tests
@@ -29,4 +32,7 @@ part-pdf-fonts.jsx # embedded PDF fonts — zlib-compressed base64 TTF blobs (~2
 part-pdf-vector.jsx # vector PDF build, font pipeline, markdown + standalone HTML export
 part-pptx.jsx      # native editable PowerPoint (.pptx) export — DrawingML builders, ZIP writer, public entry
 part-pptx-extract.jsx # PPTX DOM extraction — text/SVG/table/image capture from rendered slides
-part-app.jsx       # root VelaApp, modals, keyboard handlers
+part-app-modals.jsx # Modal Backdrop (shared), PPTX Export Modal, Deck Stats Dialog, Changelog Dialog
+part-app-panels.jsx # Comments Panel, New Deck Dialog, Keyboard Shortcuts Overlay, Session Cost Badge, Agent status chip + settings dialog
+part-app-merge.jsx # Item Fingerprint + Merge Patch Dialog (startup-patch merge detection)
+part-app.jsx       # root VelaApp component — layout, storage load/save, startup patch, keyboard handlers, mobile
