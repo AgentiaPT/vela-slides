@@ -652,7 +652,7 @@ def test_css_color_exfil():
     previously bypassed sanitizeStyle. Source guards pin the wiring; the jsdom-free
     behavioral round-trip (test_css_exfil.cjs) executes the real predicate."""
     print("\n🎨 CSS color/background exfil (v12.61)")
-    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports = read_part_family("part-imports")
 
     # (1) one canonical filter — no duplicate reject regex that could drift.
     if "CSS_LOAD_REJECT" not in imports:
@@ -786,7 +786,7 @@ def test_audit_2025_05_fixes():
     rp_path = os.path.join(workflows, "release-preview.yml")
     ci_path = os.path.join(workflows, "ci.yml")
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports = read_part_family("part-imports")
     engine  = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
 
     # ── C1: release-preview.yml must not interpolate inputs.pr_ref into a
@@ -981,7 +981,7 @@ def test_known_bugs():
 
     slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
     engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
-    imports_jsx = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_jsx = read_part_family("part-imports")
     chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
 
     # BUG 1: Scroll wheel should use presSlides in fullscreen, not slides
@@ -1108,7 +1108,7 @@ def test_editor_ux_bugs():
 def test_slide_editor_ux_features():
     print("\n── Multi-select / Context-menu / Move-picker (Features 4–6) ──")
 
-    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports = read_part_family("part-imports")
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
@@ -3343,7 +3343,7 @@ def test_study_notes():
         fail("parseInline link sentinel tokenizer missing")
 
     # 9. sanitizeStudyNotes exists + wires in to sanitizeSlide
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_src = read_part_family("part-imports")
     if "function sanitizeStudyNotes" in imports_src and "sanitizeStudyNotes(clean.studyNotes)" in imports_src:
         ok("sanitizeStudyNotes wired into sanitizeSlide")
     else:
@@ -3455,7 +3455,7 @@ def test_slide_numeric_fields():
         fail("turbo imageCols positional encoding", f"arr tail={arr[10:]!r}")
 
     # 5. Source-of-truth parity: the JS and Python bound tables must agree
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_src = read_part_family("part-imports")
     m = re.search(r'const SLIDE_NUMERIC_BOUNDS = \{(.*?)\n\};', imports_src, re.S)
     if not m:
         fail("SLIDE_NUMERIC_BOUNDS present in part-imports.jsx")
@@ -3503,7 +3503,7 @@ def test_slide_numeric_fields():
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
 
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_src = read_part_family("part-imports")
 
     for name in ("SAFE_SLIDE_KEYS", "SAFE_BLOCK_KEYS"):
         if f"const {name} = new Set([" in imports_src:
@@ -3647,7 +3647,7 @@ def test_deck_key_allowlist_structure():
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
 
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_src = read_part_family("part-imports")
     slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
     pdf_src     = read_part_family("part-pdf")
     app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
@@ -3729,7 +3729,7 @@ def test_block_primitives():
     NEW_BLOCKS = ["comparison", "funnel", "cycle", "number-row", "matrix", "checklist"]
 
     # 1. All new types in SAFE_BLOCK_TYPES (part-imports.jsx)
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    imports_src = read_part_family("part-imports")
     for bt in NEW_BLOCKS:
         if f'"{bt}"' in imports_src and "SAFE_BLOCK_TYPES" in imports_src:
             ok(f'"{bt}" in SAFE_BLOCK_TYPES')
@@ -4108,9 +4108,9 @@ def test_svg_style_recurrence_guards():
 
     # Each idiom is (file, needle_or_None, replacement, label). needle=None => append.
     idioms = [
-        ("part-imports.jsx", '  "image",  // href/xlink:href pass scheme allowlist',
+        ("part-imports-sanitize.jsx", '  "image",  // href/xlink:href pass scheme allowlist',
          '  "image",  // href/xlink:href pass scheme allowlist\n  "style",', "literal <style> re-admit"),
-        ("part-imports.jsx", 'const SVG_URL_REF_ATTRS',
+        ("part-imports-sanitize.jsx", 'const SVG_URL_REF_ATTRS',
          'const _SAT = SVG_ALLOWED_TAGS;\n_SAT.has = (t) => t === "sty" + "le";\nconst SVG_URL_REF_ATTRS',
          "aliased .has membership override (part-imports)"),
         # Gap A: the tamper can live in ANY part-file (one module scope in the monolith).
@@ -4176,7 +4176,7 @@ def test_svg_style_recurrence_guards():
     mxss = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
     tmp = tempfile.mkdtemp()
     try:
-        with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+        with open(os.path.join(PARTS_DIR, "part-imports-sanitize.jsx"), encoding="utf-8") as f:
             s = f.read()
         decoy = "/* decoy\nfunction sanitizeSvgMarkup(raw) { return raw; }\n*/\n"
         fake = os.path.join(tmp, "pi.jsx")
@@ -4207,8 +4207,7 @@ def test_svg_style_recurrence_guards():
         ok("recurrence guards: runner fails a requiresAI-skipped security test at runtime")
     else:
         fail("recurrence guards: runner must fail a requiresAI-skipped security test")
-    with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
-        pi = f.read()
+    pi = read_part_family("part-imports")
     if "position|top|left|right|bottom|inset" in pi and "pointer-events" in pi:
         ok("recurrence guards: SVG inline-style layout/position denylist present")
     else:

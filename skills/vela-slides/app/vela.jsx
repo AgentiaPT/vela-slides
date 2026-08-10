@@ -464,6 +464,7 @@ function linkPreview(url, label) {
   } catch(_) { return url; }
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Sanitizers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function sanitizeString(val, maxLen = 500) {
   if (typeof val !== "string") return "";
@@ -1069,6 +1070,7 @@ function cssGradient(g) {
   return (CSS_GRADIENT_OK.test(v) && !STYLE_VALUE_REJECT.test(v)) ? v : "";
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SECURITY (deck ingress): sanitizeSlide/sanitizeBlock used to start from a
 // wholesale copy of the caller's object, so ANY key an untrusted deck (file,
@@ -1557,6 +1559,7 @@ function validateAndSanitizeDeck(raw) {
     chatLoading: false, lastDebug: "", branding: importedBranding };
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
   return new Promise((resolve) => {

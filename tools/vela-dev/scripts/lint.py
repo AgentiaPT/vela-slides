@@ -35,14 +35,30 @@ CONSOLE_LOG_RE = re.compile(r'(?<!dbg\()console\.log\(')
 CONFLICT_RE = re.compile(r'^[<>=]{7}', re.MULTILINE)
 
 # ── Deck key-drift check ─────────────────────────────────────────────
-# Deck ingress (sanitizeSlide/sanitizeBlock in part-imports.jsx) is an
-# ALLOWLIST: only keys in SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS survive. A renderer
+# Deck ingress (sanitizeSlide/sanitizeBlock, part-imports-sanitize-deck.jsx) is
+# an ALLOWLIST: only keys in SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS survive. A renderer
 # that reads a key missing from those sets therefore reads `undefined` for every
 # deck loaded from disk — silently, with no error. This check fails the build on
-# that drift. The allowlists are parsed from part-imports.jsx so there is exactly
-# one source of truth.
-KEY_SOURCE_FILE = "part-imports.jsx"
-KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+# that drift. The allowlists are parsed from the part-imports family so there is
+# exactly one source of truth. Files are addressed by manifest family PREFIX so
+# part-file splits don't silently drop a consumer from the scan.
+KEY_SOURCE_FAMILY = "part-imports"
+KEY_CONSUMER_FAMILIES = ["part-blocks", "part-slides"]
+
+
+def read_part_family(parts_dir, prefix):
+    """Concatenate every manifest part whose name starts with `prefix`
+    (e.g. "part-blocks" → part-blocks-inline/-item/... + part-blocks.jsx),
+    in MANIFEST.txt order. Returns "" if none exist."""
+    chunks = []
+    for name in load_manifest(parts_dir):
+        if name == prefix + ".jsx" or name.startswith(prefix + "-"):
+            fpath = os.path.join(parts_dir, name)
+            if os.path.exists(fpath):
+                with open(fpath, 'r', encoding="utf-8") as f:
+                    chunks.append(f.read())
+    return "\n".join(chunks)
+
 
 SET_LITERAL_RE_TPL = r'const\s+{name}\s*=\s*new\s+Set\(\[(.*?)\]\)'
 QUOTED_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
@@ -171,28 +187,24 @@ def _destructured_names(inner):
 def check_deck_key_drift(parts_dir):
     """Every slide.<key>/block.<key> read must be allowlisted at deck ingress."""
     errors = []
-    src_path = os.path.join(parts_dir, KEY_SOURCE_FILE)
-    if not os.path.exists(src_path):
-        return [f"Key-drift check: {KEY_SOURCE_FILE} not found in {parts_dir}"]
-
-    with open(src_path, 'r', encoding="utf-8") as f:
-        allow_src = f.read()
+    allow_src = read_part_family(parts_dir, KEY_SOURCE_FAMILY)
+    if not allow_src:
+        return [f"Key-drift check: {KEY_SOURCE_FAMILY} family not found in {parts_dir}"]
 
     allow = {}
     for kind, set_name in (("slide", "SAFE_SLIDE_KEYS"), ("block", "SAFE_BLOCK_KEYS")):
         keys = _parse_set_literal(allow_src, set_name)
         if not keys:
-            return [f"Key-drift check: could not parse {set_name} from {KEY_SOURCE_FILE}"]
+            return [f"Key-drift check: could not parse {set_name} from the {KEY_SOURCE_FAMILY} family"]
         allow[kind] = keys
     # `rawBlock` is RenderBlock's alias for the same object.
     allow["rawBlock"] = allow["block"]
 
-    for fname in KEY_CONSUMER_FILES:
-        fpath = os.path.join(parts_dir, fname)
-        if not os.path.exists(fpath):
+    for family in KEY_CONSUMER_FAMILIES:
+        fname = family + "*.jsx"
+        src = read_part_family(parts_dir, family)
+        if not src:
             continue
-        with open(fpath, 'r', encoding="utf-8") as f:
-            src = f.read()
 
         seen = set()
         hits = [(kind, key) for kind, key in MEMBER_RE.findall(src)]
@@ -214,7 +226,7 @@ def check_deck_key_drift(parts_dir):
             seen.add(sig)
             errors.append(
                 f"Deck key drift in {fname}: reads {label}.{key}, which is not in "
-                f"SAFE_{label.upper()}_KEYS ({KEY_SOURCE_FILE}) — deck ingress would "
+                f"SAFE_{label.upper()}_KEYS ({KEY_SOURCE_FAMILY} family) — deck ingress would "
                 f"strip it, so this always reads undefined for a loaded deck"
             )
     return errors
@@ -415,11 +427,9 @@ def check_svg_style_element_disallowed(parts_dir):
     in-browser UI-battery redress test both execute the actual code — this lint is the
     fast static backstop, now honest about verifying runtime meaning."""
     errors = []
-    fpath = os.path.join(parts_dir, "part-imports.jsx")
-    if not os.path.exists(fpath):
+    raw = read_part_family(parts_dir, "part-imports")
+    if not raw:
         return errors
-    with open(fpath, 'r', encoding="utf-8") as f:
-        raw = f.read()
     # Work on a comment-free, string-preserving copy so comments can neither hide a
     # `]`/`style` nor trip the static-list checks.
     src = _strip_js_comments(raw)
@@ -490,7 +500,7 @@ def check_svg_style_element_disallowed(parts_dir):
         )
     if re.search(r'tag\s*===?\s*["\']style["\']', src) or re.search(r'["\']style["\']\s*===?\s*tag', src):
         errors.append(
-            'part-imports.jsx has a `tag === "style"` retention branch — a <style> '
+            'the part-imports family has a `tag === "style"` retention branch — a <style> '
             'element must be dropped by the SVG_ALLOWED_TAGS allowlist, never '
             'filtered-and-kept (document-global CSS UI-redress / clickjack).'
         )

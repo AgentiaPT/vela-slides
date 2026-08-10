@@ -4,7 +4,10 @@
 # order; text after `#` on a line is a comment (the part's routing purpose).
 # Changing this order changes the build — the order matches the dependency
 # graph and must not be reordered casually.
-part-imports.jsx   # constants, sanitizers, helpers, storage API, startup patch system
+part-imports.jsx   # constants, version/changelog, capability detection, cost tracker, startup patch, storage API
+part-imports-sanitize.jsx # sanitizers — string/url/color/style/SVG encoders + allowlists (security surface)
+part-imports-sanitize-deck.jsx # deck-ingress key allowlists, slide/block/deck sanitizers, study-notes sanitizer
+part-imports-ui.jsx # image compression, status meta, themes, logo, style factories, CSS generator, prompt constants
 part-icons.jsx     # 270+ Lucide icon resolver
 part-blocks-inline.jsx # error boundary, EditableText, inline **md** formatting, glossary links
 part-blocks-item.jsx   # per-item machinery — hover chrome, link/delete/reorder, item sub-components

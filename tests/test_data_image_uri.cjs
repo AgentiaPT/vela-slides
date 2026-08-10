@@ -24,8 +24,17 @@ catch (e) {
 }
 
 const REPO = path.resolve(__dirname, "..");
-const SRC = path.join(REPO, "src/parts/part-imports.jsx");
-const source = fs.readFileSync(SRC, "utf8");
+// part-file families are split (MANIFEST.txt order) — concat for extraction.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
+const source = readPartFamily("part-imports");
 
 const grabs = {
   allowed:  source.match(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/),

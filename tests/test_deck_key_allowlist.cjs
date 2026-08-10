@@ -19,7 +19,17 @@ const fs = require("fs");
 const path = require("path");
 
 const P = (f) => path.join(__dirname, "..", "src/parts", f);
-const importsSrc = fs.readFileSync(P("part-imports.jsx"), "utf8");
+// part-file families are split (MANIFEST.txt order) — concat for extraction.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
+const importsSrc = readPartFamily("part-imports");
 
 const sliceStart = importsSrc.indexOf("const uid = () => crypto.randomUUID");
 const sliceEnd = importsSrc.indexOf("// ━━━ Vela Logo Icon");

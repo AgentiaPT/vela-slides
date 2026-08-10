@@ -22,8 +22,6 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const IMPORTS = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
-const src = fs.readFileSync(IMPORTS, "utf8");
 // The block renderer family is split across part-blocks-*.jsx part-files
 // (MANIFEST.txt order). Concatenate them so sink-wiring pattern checks stay
 // stable when a symbol moves between sibling parts.
@@ -36,6 +34,7 @@ const readPartFamily = (prefix) => {
     .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
     .join("\n");
 };
+const src = readPartFamily("part-imports");
 
 let pass = 0, failCount = 0;
 function ok(name) { pass++; console.log("  ✅ " + name); }
@@ -644,8 +643,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
   // part-imports.jsx, so part-app.jsx should reference it at least 3 times.
   if (occurrences >= 3) ok(`storage-load path calls resanitizeLoadedLanes on all branches (${occurrences} call sites)`);
   else bad("storage-load path missing resanitizeLoadedLanes wiring", `only ${occurrences} call site(s)`);
-  const IMPORTS2 = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
-  const impsrc2 = fs.readFileSync(IMPORTS2, "utf8");
+
+  const impsrc2 = readPartFamily("part-imports");
   if (/function resanitizeLoadedLanes\(lanes\)/.test(impsrc2) && /item\.slides\.map\(sanitizeSlide\)/.test(impsrc2))
     ok("resanitizeLoadedLanes runs every persisted slide through sanitizeSlide");
   else bad("resanitizeLoadedLanes missing/not wired to sanitizeSlide");
@@ -653,8 +652,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 
 // ── F-12 wiring guard: deckTitle re-assignment sites use the coerce+cap helper ──
 {
-  const IMPORTS3 = path.join(__dirname, "..", "src", "parts", "part-imports.jsx");
-  const impsrc3 = fs.readFileSync(IMPORTS3, "utf8");
+
+  const impsrc3 = readPartFamily("part-imports");
   if (/function sanitizeDeckTitle\(t\)/.test(impsrc3)) ok("sanitizeDeckTitle helper defined");
   else bad("sanitizeDeckTitle helper missing");
   const APP2 = path.join(__dirname, "..", "src", "parts", "part-app.jsx");

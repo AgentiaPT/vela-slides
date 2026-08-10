@@ -8,6 +8,16 @@ const fs = require("fs");
 const path = require("path");
 
 const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf-vector.jsx"), "utf8");
+// part-file families are split (MANIFEST.txt order) — concat for extraction.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
 
 function extract(name) {
   const start = src.indexOf(`function ${name}(`);
@@ -28,7 +38,7 @@ function extract(name) {
 // (the shared http/https/mailto scheme allowlist) as its Markdown-context output
 // encoder, so load the REAL sanitizeUrl from part-imports.jsx first. It is
 // self-contained (only `new URL`), so a lone extract of each is enough.
-const importsSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-imports.jsx"), "utf8");
+const importsSrc = readPartFamily("part-imports");
 function extractFrom(source, name) {
   const start = source.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`function ${name} not found`);

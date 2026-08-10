@@ -39,7 +39,7 @@ const path = require("path");
 
 const REPO = path.resolve(__dirname, "..");
 const PARTS_DIR = path.join(REPO, "src", "parts");
-const IMPORTS_SRC = path.join(PARTS_DIR, "part-imports.jsx");
+
 // The block renderer family is split across part-blocks-*.jsx part-files.
 // Concatenate them in MANIFEST.txt order (the real build order — TDZ-safe)
 // so the evaluated module matches production.
@@ -63,13 +63,17 @@ try {
   process.exit(2);
 }
 const BLOCK_FILES = blockFamilyFiles();
-if (BLOCK_FILES.length === 0 || !BLOCK_FILES.every(fs.existsSync) || !fs.existsSync(IMPORTS_SRC)) {
+if (BLOCK_FILES.length === 0 || !BLOCK_FILES.every(fs.existsSync)) {
   console.error("Missing source part-file(s). Expected src/parts/part-blocks*.jsx and part-imports.jsx");
   process.exit(2);
 }
 
 const blocksSrc = BLOCK_FILES.map((f) => fs.readFileSync(f, "utf8")).join("\n");
-const importsSrc = fs.readFileSync(IMPORTS_SRC, "utf8");
+const importsSrc = fs.readFileSync(path.join(PARTS_DIR, "MANIFEST.txt"), "utf8").split("\n")
+  .map((l) => l.split("#")[0].trim())
+  .filter((n) => n === "part-imports.jsx" || n.startsWith("part-imports-"))
+  .map((n) => fs.readFileSync(path.join(PARTS_DIR, n), "utf8"))
+  .join("\n");
 
 // ── Source extraction helpers ────────────────────────────────────────────────
 // Pull the REAL functions/constants out of part-imports.jsx by name so we run

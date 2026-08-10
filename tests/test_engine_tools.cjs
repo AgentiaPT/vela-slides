@@ -13,7 +13,17 @@ const fs = require("fs");
 const path = require("path");
 
 const engSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-engine.jsx"), "utf8");
-const impSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-imports.jsx"), "utf8");
+// part-file families are split (MANIFEST.txt order) — concat for extraction.
+const readPartFamily = (prefix) => {
+  const partsDir = path.join(__dirname, "..", "src", "parts");
+  const manifest = fs.readFileSync(path.join(partsDir, "MANIFEST.txt"), "utf8");
+  return manifest.split("\n")
+    .map((l) => l.split("#")[0].trim())
+    .filter((n) => n === prefix + ".jsx" || n.startsWith(prefix + "-"))
+    .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
+    .join("\n");
+};
+const impSrc = readPartFamily("part-imports");
 
 // Extract a top-level `function NAME(...) {...}` by capturing from its declaration
 // up to the next top-level function/const. Brace-matching is unsafe here because
