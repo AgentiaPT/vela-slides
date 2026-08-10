@@ -42,6 +42,36 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 | `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
 | `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
 
+## Where does X live? (routing table — open ONLY these files)
+
+The part list + one-line purposes live in `src/parts/MANIFEST.txt` (single
+source of truth for build order). For common change types, go straight to:
+
+| Change type | File(s) to open |
+|---|---|
+| Add/change a block renderer | `part-blocks.jsx` (`RenderBlock` switch, `renderBlockItem`) |
+| Block selection toolbar / edit popups | `part-blocks.jsx` (`renderBlockItem`) |
+| Branding (accent bar, logo, footer) render | `part-blocks.jsx` (`BrandingOverlay`) |
+| Branding settings UI | `part-slides.jsx` (`BrandingPanel`) |
+| Add a sanitizer / deck-ingress rule | `part-imports.jsx` (sanitize* helpers, SAFE_* allowlists) + JS tests in `part-uitest.jsx` + Python asserts in `tests/test_vela.py` |
+| New slide/block JSON field | `part-imports.jsx` (`SAFE_SLIDE_KEYS`/`SAFE_BLOCK_KEYS`) + `skills/vela-slides/scripts/validate.py` + `references/block-schema.md` + compact/turbo maps |
+| Slide TOC / lane-module list (rows, icons, drag-drop, context menu) | `part-list.jsx` (`SlideListWithAdder`) |
+| Slide canvas, fullscreen, presenter, thumbnails | `part-slides.jsx` (`SlidePanel`) |
+| Reducer action / state shape | `part-reducer.jsx` |
+| Vera/AI engine tool | `part-engine.jsx` + trace rendering in `part-chat.jsx` |
+| Chat panel UI | `part-chat.jsx` |
+| Keyboard shortcuts, modals, top-level layout | `part-app.jsx` (`App`) |
+| PDF / markdown / standalone-HTML export | `part-pdf.jsx` |
+| PPTX export | `part-pptx.jsx` |
+| Icon set | `part-icons.jsx` |
+| UI regression test | `part-uitest.jsx` |
+| Demo mode scene | `part-demo.jsx` |
+| Build/concat/lint tooling | `tools/vela-dev/scripts/concat.py`, `lint.py`, `vela_manifest.py`, `partsize.py` |
+
+Rule of thumb: grep for the symbol first (`grep -l <Symbol> src/parts/*.jsx`),
+then read only the matching section — never read a whole part-file to find out
+whether it is the right one.
+
 ## Deck Format
 
 JSON with three interchangeable formats (auto-expand on load via `_load_full()`):
