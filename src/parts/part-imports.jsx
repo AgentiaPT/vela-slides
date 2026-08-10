@@ -135,11 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.31";
+const VELA_VERSION = "13.32";
 const VELA_CHANGELOG = [
-  { v: "13.31", d: ["Security (defense-in-depth): Markdown export now also neutralizes raw-HTML and autolink syntax in deck text, and a few remaining text fields are HTML-stripped at import — closing the last markdown-export injection avenue (raw <img>/autolink beacons) at both the sink and the source.", "Regression tests added."] },
-  { v: "13.30", d: ["Security (defense-in-depth): Markdown export now also neutralizes reference-style link/image syntax and its definition lines in deck text, so a link target that never passes through the inline sanitizer cannot reach the exported file. Completes the export output-encoding hardening.", "Regression tests added."] },
-  { v: "13.29", d: ["Security (defense-in-depth): adversarial review hardened the 13.28 fixes — Markdown export now output-encodes link/image destinations so a validated URL cannot break out of the link grammar, and the dev-server deck listing now refuses to follow a symlinked entry at open time (closing a check/use race), not just by a prior path check.", "Regression tests added for both."] },
+  { v: "13.32", d: ["Security (defense-in-depth): adversarial review hardened the 13.28 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
   { v: "13.28", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
   { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
   { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
@@ -1235,6 +1233,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        else if (c.value != null) c.value = sanitizeString(String(c.value), 20);
         return c;
       }).filter(Boolean);
     }
@@ -1383,6 +1382,11 @@ function sanitizeSlide(slide) {
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
+  // Speaker/presenter notes are plain-text metadata that the Markdown exporter
+  // emits — HTML-strip them at ingress so no field depends on the export encoder
+  // alone (defense-in-depth, complete mediation).
+  if (clean.speakerNotes) clean.speakerNotes = sanitizeString(String(clean.speakerNotes), 5000);
+  if (clean.notes) clean.notes = sanitizeString(String(clean.notes), 5000);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   if (clean.studyNotes) {

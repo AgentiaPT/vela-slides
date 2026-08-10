@@ -420,6 +420,17 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   noRawTag(md1([{ type: "text", text: "[<img src=https://attacker.example/l.png>](https://ok.example/y)" }]), "inline-link label: raw <img> escaped");
   // and confirm the escaped form is actually emitted (fix present, not just absent)
   hasSub(md1([{ type: "text", text: "<img x>" }]), "\\<img x\\>", "raw < and > are backslash-escaped");
+
+  // (13) RED-TEAM regression #5/#6 + backslash-revive:
+  // progress.value and timeline.date were emitted RAW; both now route through the encoder.
+  noRawTag(md1([{ type: "progress", items: [{ label: "L", value: "<img src=https://attacker.example/p.png>" }] }]), "progress value: raw <img> neutralized");
+  noRawTag(md1([{ type: "timeline", items: [{ date: "<img src=https://attacker.example/d.png>", title: "t" }] }]), "timeline date: raw <img> neutralized");
+  // escGap now escapes BACKSLASH too, so an attacker `\<` cannot revive a live `<`.
+  noRawTag(md1([{ type: "text", text: "a \\<img src=https://attacker.example/b.png\\> z" }]), "text: backslash-revive of <img> neutralized");
+  // speakerNotes (a slide field) reaches the exporter; the backslash-revive attempt
+  // is neutralized at the export encoder (and additionally HTML-stripped at import).
+  const snExport = deckToMarkdown({ deckTitle: "D", lanes: [{ title: "S", items: [{ title: "M", slides: [{ blocks: [{ type: "text", text: "x" }], speakerNotes: "\\<img src=https://attacker.example/nu.png\\>" }] }] }] });
+  noRawTag(snExport, "speakerNotes: backslash-revive neutralized in export");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

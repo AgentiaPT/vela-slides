@@ -3541,7 +3541,11 @@ function deckToMarkdown(state, opts = {}) {
     // scheme collapses to the plain label. The label group is `*?` (empty allowed)
     // so an empty-alt beacon `![](url)` (which the live renderer ignores) is caught
     // too, and the surviving label is escaped so it cannot carry raw HTML either.
-    const escGap = (g) => g.replace(/[\[\]<>]/g, "\\$&");
+    // Backslash is escaped FIRST-CLASS (in the same class), not just the target
+    // metachars: a lone `\` before an escaped char would otherwise revive it —
+    // attacker `\<` -> `\\<` renders as a literal `\` + a LIVE `<`. Escaping `\`
+    // too makes every `\[`/`\]`/`\<`/`\>` unrevivable.
+    const escGap = (g) => g.replace(/[\\\[\]<>]/g, "\\$&");
     const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
     let out = "", last = 0, m;
     while ((m = re.exec(src)) !== null) {
@@ -3674,14 +3678,14 @@ function deckToMarkdown(state, opts = {}) {
       case "timeline":
         blank();
         for (const item of (b.items || [])) {
-          const date = item.date ? `**${item.date}** ` : "";
+          const date = item.date ? `**${txt(item.date)}** ` : "";
           ln(`${indent}- ${date}${txt(item.title || "")}${item.text ? ` — ${txt(item.text)}` : ""}`);
         }
         break;
       case "progress":
         blank();
         for (const item of (b.items || [])) {
-          ln(`${indent}- ${txt(item.label || "")}: ${item.value ?? 0}%`);
+          ln(`${indent}- ${txt(item.label || "")}: ${txt(item.value ?? 0)}%`);
         }
         break;
       case "tag-group":
