@@ -66,14 +66,18 @@ const eq = (n, a, b) => JSON.stringify(a) === JSON.stringify(b)
 // ---- state builders ----
 let _c = 0;
 const nid = (p) => (p || "id") + "_" + (++_c);
-const slide = (mark, extra) => ({ title: "S" + (mark || ""), duration: 60, blocks: [{ type: "heading", text: "H" + (mark || "") }], _mark: mark, ...(extra || {}) });
+// The per-slide identity marker rides on `title` (an allowlisted slide key).
+// Deck ingress is an allowlist, so an ad-hoc `_mark` field would be stripped by
+// sanitizeSlide — which is exactly what the allowlist section below asserts.
+const slide = (mark, extra) => ({ title: "S" + (mark || ""), duration: 60, blocks: [{ type: "heading", text: "H" + (mark || "") }], ...(extra || {}) });
 const item = (id, slides, extra) => ({ id, title: "M-" + id, status: "todo", importance: "should", order: 1, comments: [], slides: slides || [], createdAt: "t0", ...(extra || {}) });
 const lane = (id, items, extra) => ({ id, title: "L-" + id, collapsed: false, items: items || [], ...(extra || {}) });
 const present = (lanes, sel, idx) => ({ ...init, lanes: lanes || [], selectedId: sel ?? null, slideIndex: idx ?? 0 });
 const H = (p) => ({ past: [], present: p, future: [] });
 // find an item across lanes by id
 const findItem = (st, id) => { for (const l of st.lanes) { const it = l.items.find((i) => i.id === id); if (it) return it; } return null; };
-const marks = (arr) => (arr || []).map((s) => s._mark);
+const markOf = (s) => (s && typeof s.title === "string" && s.title.length > 1) ? Number(s.title.slice(1)) : undefined;
+const marks = (arr) => (arr || []).map(markOf);
 const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedMods.clear(); };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -138,7 +142,7 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const out = innerReducer(st, { type: "ADD_ITEM", laneId: "l1", title: "Sec", slides: [slide(1)] });
   const created = out.lanes[0].items[0];
   assert("ADD_ITEM appends an item", out.lanes[0].items.length === 1 && created.title === "Sec");
-  assert("ADD_ITEM sanitizes + keeps slides", created.slides.length === 1 && created.slides[0]._mark === 1);
+  assert("ADD_ITEM sanitizes + keeps slides", created.slides.length === 1 && markOf(created.slides[0]) === 1);
   assert("ADD_ITEM marks module dirty (had slides)", _dirtyMods.has(created.id));
   assert("ADD_ITEM marks module loaded", _loadedMods.has(created.id));
   const noLane = innerReducer(st, { type: "ADD_ITEM", laneId: "nope", title: "x" });
@@ -563,6 +567,31 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("REDO pushes old present onto past + shifts future", out.past.length === 1 && out.future.length === 0);
   const last = out.present.chatMessages[out.present.chatMessages.length - 1];
   assert("REDO appends a restore marker message", /restore/i.test(last.content) && last._system === true);
+}
+{
+  // D1 (CR2): collapsedSections is view-only (in NO_HISTORY) and must survive
+  // UNDO/REDO UNCHANGED — a content undo must never re-fold/unfold a section.
+  // Simulate: prior snapshot was taken while a section was COLLAPSED; the user
+  // has since EXPANDED it; UNDO of the content edit must keep it EXPANDED.
+  const prior = { ...present([lane("l1", [item("m1", [slide(1)])])], "m1", 0), collapsedSections: ["sec-x"] };
+  const cur = { ...present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0), collapsedSections: [] };
+  const hist = { past: [prior], present: cur, future: [] };
+  const undone = reducer(hist, { type: "UNDO" });
+  assert("UNDO keeps CURRENT collapsedSections (does not restore snapshot's)", JSON.stringify(undone.present.collapsedSections) === "[]", "got " + JSON.stringify(undone.present.collapsedSections));
+  // REDO must likewise carry the (now current) collapse view-state forward, not the snapshot's.
+  const redone = reducer(undone, { type: "REDO" });
+  assert("REDO keeps CURRENT collapsedSections unchanged", JSON.stringify(redone.present.collapsedSections) === "[]", "got " + JSON.stringify(redone.present.collapsedSections));
+}
+{
+  // D4 (CR5): navigating (SET_SLIDE_INDEX / SELECT module) clears aiWork so a
+  // slide never keeps shimmering after the user moves away from an in-flight op.
+  const withWork = { ...present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0), aiWork: { itemId: "m1", slideIdx: 0 } };
+  const nav = reducer(H(withWork), { type: "SET_SLIDE_INDEX", index: 1 });
+  assert("SET_SLIDE_INDEX clears aiWork", nav.present.aiWork === null && nav.present.slideIndex === 1);
+  const back = reducer(nav, { type: "SET_SLIDE_INDEX", index: 0 });
+  assert("navigating back leaves slide 0 non-shimmering (aiWork stays null)", back.present.aiWork === null);
+  const sel = reducer(H(withWork), { type: "SELECT", id: "m2", slideIndex: 0 });
+  assert("SELECT (module switch) clears aiWork", sel.present.aiWork === null && sel.present.selectedId === "m2");
 }
 
 // ═══════════════════════════════════════════════════════════════════

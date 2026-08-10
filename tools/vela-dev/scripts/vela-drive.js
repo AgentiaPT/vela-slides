@@ -8,9 +8,9 @@
 // playwright version expects a newer build, so executablePath is pinned).
 //
 // USAGE:
-//   node vela-drive.js boot       <render.html>
-//   node vela-drive.js shot       <render.html> <out.png> [--w 1280 --h 800] [--eval "js"] [--wait 800]
-//   node vela-drive.js uitests    <render.html> [--json out.json]
+//   node vela-drive.js boot       <render.html> [--testmode]
+//   node vela-drive.js shot       <render.html> <out.png> [--w 1280 --h 800] [--eval "js"] [--wait 800] [--testmode]
+//   node vela-drive.js uitests    <render.html> [--json out.json]      (test mode always on)
 //   node vela-drive.js video      <render.html> <outDir> --script scenario.js
 //
 // scenario.js (for `video`) exports async (page, helpers) => { ... }
@@ -74,6 +74,25 @@ async function launch(recordDir, viewport) {
   page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
   return { browser, ctx, page, logs };
+}
+
+// Opt this page into the app's dev/test affordances BEFORE any app code runs.
+// The app installs its test-hook object and its save-status channel only when a
+// host explicitly asks for them (part-app.jsx) — the hosted artifact never does,
+// which is the point. addInitScript runs on every navigation, ahead of the
+// bundle, so the flags are already set when the React effects mount.
+//   __velaTestMode  → installs the app's test-hook object (study notes / block
+//                     injection / selection / AI-working flag).
+//   __velaSaveState → falsy-but-present seed: satisfies the save-status channel
+//                     gate (`!= null`) without pushing a status, so no pill is
+//                     rendered and the CR3 suite drives the channel itself.
+// NOTE: a RELEASE bundle (concat.py --release) has that block stripped, so the
+// flags do nothing there — by design. Run the battery against a dev build.
+async function enableTestMode(page) {
+  await page.addInitScript(() => {
+    window.__velaTestMode = true;
+    if (window.__velaSaveState == null) window.__velaSaveState = false;
+  });
 }
 
 async function waitBoot(page, timeout = 20000) {
@@ -244,6 +263,8 @@ async function main() {
 
   if (mode === 'boot' || mode === 'shot') {
     const { browser, page, logs } = await launch(null, viewport);
+    // Opt-in for --eval snippets that need the app's test hooks.
+    if (args.includes('--testmode')) await enableTestMode(page);
     await page.goto('file://' + htmlPath, { waitUntil: 'load', timeout: 30000 });
     await waitBoot(page);
     const ev = flag('eval', null);
@@ -256,6 +277,7 @@ async function main() {
     await browser.close();
   } else if (mode === 'uitests') {
     const { browser, page, logs } = await launch(null, viewport);
+    await enableTestMode(page);
     await page.goto('file://' + htmlPath, { waitUntil: 'load', timeout: 30000 });
     await waitBoot(page);
     // Prefer the headless hook if present; else dispatch the event and scrape.

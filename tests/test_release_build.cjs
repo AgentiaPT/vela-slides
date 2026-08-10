@@ -1,0 +1,320 @@
+/**
+ * Vela Slides — Release-build hardening tests
+ *
+ * Asserts that `concat.py --release` produces a bundle with NO test-hook
+ * surface (ASVS V14.1.3 / V14.2.2 — remove test/debug code from the production
+ * build), and that stripping the dev-only fences leaves a bundle that still
+ * parses and keeps the ship-critical markers intact.
+ *
+ * The COMMITTED skills/vela-slides/app/vela.jsx is deliberately a DEV build:
+ * the in-bundle UI battery and the offline render harness both build from it
+ * and need the (runtime-gated, inert-by-default) hooks. This test is what CI
+ * calls to prove the release path is clean.
+ *
+ * Usage:  node tests/test_release_build.cjs
+ * Exit:   0 all pass · 1 any failure
+ */
+
+const { execFileSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const ROOT = path.resolve(__dirname, '..');
+const CONCAT = path.join(ROOT, 'tools', 'vela-dev', 'scripts', 'concat.py');
+const PARTS = path.join(ROOT, 'src', 'parts');
+const DEV_BUNDLE = path.join(ROOT, 'skills', 'vela-slides', 'app', 'vela.jsx');
+const VENDOR = path.join(ROOT, 'vela-neutralino', 'resources', 'vendor');
+
+// Unique temp dir so parallel stacks never race on the same release artifact.
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-release-'));
+const RELEASE_BUNDLE = path.join(TMP, 'vela-release.jsx');
+
+// Test-only globals must not survive into a release build. Matching a single
+// literal was too narrow — it missed the UI battery's own entry point, so the
+// build could report "no test hooks" over a bundle that still carried it. This
+// mirrors TEST_GLOBAL_RE in tools/vela-dev/scripts/concat.py: a test-only global
+// is identified by a marker in its NAME, which needs no allowlist of the many
+// production globals (__velaForceSave, __velaAgentSend, …) that must survive.
+// Assembled at runtime so this file never trips a repo-wide grep for the tokens.
+const HOOK_MARKERS = ['Test', 'Mock', 'Stub', 'Fixture', 'Spy'];
+const hookRe = () => new RegExp('__vela\\w*(?:' + HOOK_MARKERS.join('|') + ')\\w*', 'g');
+
+let pass = 0, fail = 0;
+function test(name, fn) {
+  try { fn(); console.log(`  ✅ ${name}`); pass++; }
+  catch (e) { console.log(`  ❌ ${name}\n     ${e.message}`); fail++; }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+
+console.log('\n━━━ Release-build strip ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+// ── Build the release bundle ─────────────────────────────────────────
+let buildOut = '';
+try {
+  buildOut = execFileSync('python3', [CONCAT, '--release', '--out', RELEASE_BUNDLE, PARTS],
+    { encoding: 'utf8', cwd: ROOT });
+} catch (e) {
+  console.error('concat.py --release FAILED:\n' + (e.stdout || '') + (e.stderr || ''));
+  process.exit(1);
+}
+
+const release = fs.readFileSync(RELEASE_BUNDLE, 'utf8');
+const dev = fs.existsSync(DEV_BUNDLE) ? fs.readFileSync(DEV_BUNDLE, 'utf8') : '';
+
+function occurrences(hay, needle) {
+  let n = 0, i = 0;
+  while ((i = hay.indexOf(needle, i)) !== -1) { n++; i += needle.length; }
+  return n;
+}
+
+test('release build contains ZERO test-hook references', () => {
+  const hits = release.split('\n')
+    .map((ln, i) => (hookRe().test(ln) ? `${i + 1}: ${ln.trim().slice(0, 120)}` : null))
+    .filter(Boolean);
+  assert(hits.length === 0, `${hits.length} leaked line(s):\n     ` + hits.slice(0, 5).join('\n     '));
+});
+
+// Regression for the specific surface the single-literal check missed: the
+// in-bundle UI battery's headless entry point. It is now fenced (stripped here)
+// AND runtime-gated in the dev bundle, matching the other test hooks.
+test('release build does not expose the UI-test battery entry point', () => {
+  const names = release.match(hookRe()) || [];
+  assert(names.length === 0, 'surviving test-only global(s): ' + [...new Set(names)].join(', '));
+  assert(!/window\.__velaRunUI\w*\s*=/.test(release), 'UI battery entry point survived the strip');
+});
+
+// The dev bundle intentionally KEEPS the battery (CI's offline harness drives
+// it), so the gate — not the fence — is what keeps it off a hosted artifact.
+test('dev build gates the UI-test battery behind the shared test-surface gate', () => {
+  assert(/velaTestSurfaceEnabled\(\)\) \{\s*\n\s*window\.__velaRunUITests/.test(dev),
+    'UI battery entry point is not runtime-gated in the dev bundle');
+  const gate = dev.match(/function velaTestSurfaceEnabled\(\)[\s\S]{0,200}?\n\}/);
+  assert(!!gate, 'shared test-surface gate is missing from the dev bundle');
+  assert(/VELA_LOCAL_MODE/.test(gate[0]) && /__velaTestMode/.test(gate[0]),
+    'test-surface gate does not check local mode / test mode');
+});
+
+// The in-app test PANELS were the reachable surface behind the battery: they
+// mounted on every non-presentation boot, which registered the Ctrl+Alt+T and
+// custom-event triggers and ran the render battery at startup on a hosted
+// artifact. They are now behind the same gate, and the whole test parts are
+// dropped from a release build rather than shipped as dead code.
+test('dev build mounts the test panels only behind the shared gate', () => {
+  assert(/velaTestSurfaceEnabled\(\) *&& *\(?<>?<VelaBatteryTest *\/><VelaUITestRunner *\/>/.test(dev)
+    || /velaTestSurfaceEnabled\(\)\)? *devTestPanels *=/.test(dev),
+    'test panels are not gated behind velaTestSurfaceEnabled()');
+  assert(!/\{!VELA_PRESENTATION_MODE && <VelaBatteryTest/.test(dev),
+    'test panels still mount on the old presentation-mode-only condition');
+});
+
+test('release build contains no test-only part at all', () => {
+  for (const sym of ['VelaBatteryTest', 'VelaUITestRunner', 'VELA_TESTS',
+                     'runUITests', 'velaTestSurfaceEnabled']) {
+    assert(!release.includes(sym), `test-only symbol '${sym}' survived into the release build`);
+  }
+});
+
+test('release build reports the strip in its own output', () => {
+  assert(/Release strip: [1-9]\d* dev-only block\(s\) removed/.test(buildOut),
+    'concat.py --release did not report stripping any dev-only block:\n' + buildOut.trim().slice(-400));
+});
+
+test('no unstripped DEV-ONLY fences remain in the release build', () => {
+  assert(!release.includes('VELA:DEV-ONLY:BEGIN') && !release.includes('VELA:DEV-ONLY:END'),
+    'DEV-ONLY marker survived the release strip');
+});
+
+test('release build is smaller than the dev build (something was actually removed)', () => {
+  assert(dev.length > 0, 'dev bundle missing — run concat.py first');
+  assert(release.length < dev.length,
+    `release ${release.length}B is not smaller than dev ${dev.length}B`);
+});
+
+test('committed bundle is the DEV build (hooks present, runtime-gated)', () => {
+  // Intentional: the offline render harness + in-bundle UI battery build from
+  // the committed template. If this ever flips, vela-drive.js uitests goes dark.
+  assert((dev.match(hookRe()) || []).length > 0,
+    'committed vela.jsx has no test hooks — did the committed template become a release build?');
+});
+
+test('dev build keeps the test hooks behind a runtime gate', () => {
+  assert(dev.includes('window.__velaTestMode'),
+    'dev build installs test hooks without the __velaTestMode / local-mode gate');
+  // v13.25: the three hand-copied conditions collapsed into one shared gate.
+  assert(/if \(!velaTestSurfaceEnabled\(\)\) return;/.test(dev),
+    'expected runtime gate on the test-hook effect not found in the dev build');
+});
+
+test('release build keeps the save-status channel gated', () => {
+  assert(release.includes('if (!(VELA_LOCAL_MODE || window.__velaSaveState != null)) return;'),
+    'save-status channel is not gated in the release build');
+});
+
+// ── The strip must be strictly opt-in ────────────────────────────────
+// tests/test_vela.py's template-sync check asserts the committed vela.jsx is
+// byte-identical to a fresh default concat.py build. If --release ever leaks
+// into the default path, that check breaks — so pin it here too.
+test('default build is byte-identical to the committed template (strip is opt-in)', () => {
+  const probe = path.join(TMP, 'vela-default.jsx');
+  execFileSync('python3', [CONCAT, PARTS, probe], { encoding: 'utf8', cwd: ROOT });
+  const built = fs.readFileSync(probe, 'utf8');
+  assert(built === dev,
+    `default concat.py output differs from the committed vela.jsx (${built.length}B vs ${dev.length}B) — ` +
+    'the release strip must not affect the default build');
+});
+
+test('default build keeps every DEV-ONLY fence intact', () => {
+  const b = occurrences(dev, 'VELA:DEV-ONLY:BEGIN'), e = occurrences(dev, 'VELA:DEV-ONLY:END');
+  assert(b > 0 && b === e, `dev build fences unbalanced: ${b} BEGIN vs ${e} END`);
+});
+
+// ── Desktop (Neutralino) save-status is PRODUCTION wiring, not a test hook ──
+// It lives next to the test hooks in part-app.jsx and must survive the strip and
+// the runtime gate. The desktop shell satisfies the gate's FIRST clause:
+// sync-vela.py flips VELA_LOCAL_MODE → true for the Neutralino build, so the
+// channel is wired at mount — nl-boot only publishes __velaSaveState on the
+// first save transition, which happens after mount.
+test('release build keeps the desktop save-status production wiring', () => {
+  for (const sym of ['__velaOnSaveStatus', '__velaForceSave', '__velaSaveState']) {
+    assert(release.includes(sym), `desktop save wiring '${sym}' was stripped from the release build`);
+  }
+  assert(release.includes('data-testid="save-status-pill"'), 'save-status pill removed from the release build');
+});
+
+test('desktop build opens the save-status gate via VELA_LOCAL_MODE', () => {
+  const sync = path.join(ROOT, 'vela-neutralino', 'scripts', 'sync-vela.py');
+  if (!fs.existsSync(sync)) { console.log('     (sync-vela.py missing — skipped)'); return; }
+  const src = fs.readFileSync(sync, 'utf8');
+  assert(src.includes('const VELA_LOCAL_MODE = false;') && src.includes('const VELA_LOCAL_MODE = true;'),
+    'sync-vela.py no longer flips VELA_LOCAL_MODE — the desktop save-status pill would go dark at mount');
+});
+
+// ── The DESKTOP ship path must strip the hooks (F2) ──────────────────
+// sync-vela.py flips VELA_LOCAL_MODE→true for the Neutralino build, which opens
+// the runtime hook gate — so the Docker ship build MUST concat with --release,
+// otherwise window.__velaTestHooks would be live in the shipped desktop app.
+test('desktop Dockerfile builds the embedded bundle with --release', () => {
+  const dockerfile = path.join(ROOT, 'vela-neutralino', 'Dockerfile');
+  if (!fs.existsSync(dockerfile)) { console.log('     (Dockerfile missing — skipped)'); return; }
+  const df = fs.readFileSync(dockerfile, 'utf8');
+  // Find the concat.py invocation that feeds sync-vela.py.
+  const line = df.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in the Dockerfile');
+  assert(/concat\.py\s+--release\b/.test(line) && /--out\b/.test(line),
+    'Dockerfile concat.py does not use --release --out — the desktop ship bundle would keep test hooks live:\n     ' + (line || '').trim());
+});
+
+// F-15: the Dockerfile is "local convenience only" (CLAUDE.md) — CI never runs
+// it. The REAL ship path for desktop binaries is the reusable workflow below
+// (called by release.yml's build-desktop job and by release-preview.yml), so
+// pin the --release flag there too — the Dockerfile passing is not evidence
+// the actual shipped binary is stripped.
+test('_build-desktop.yml (the real desktop ship path) regenerates the monolith with --release', () => {
+  const workflow = path.join(ROOT, '.github', 'workflows', '_build-desktop.yml');
+  if (!fs.existsSync(workflow)) { console.log('     (_build-desktop.yml missing — skipped)'); return; }
+  const wf = fs.readFileSync(workflow, 'utf8');
+  const line = wf.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in _build-desktop.yml');
+  assert(/concat\.py\s+--release\b/.test(line) && /--out\b/.test(line),
+    '_build-desktop.yml concat.py does not use --release --out — the ACTUAL shipped desktop ' +
+    'binary (built by this workflow, not the Dockerfile) would keep test hooks live:\n     ' +
+    (line || '').trim());
+});
+
+// F-16: build.sh is the LOCAL release helper ("produces dist/vela/ per-OS
+// binaries"). It flips VELA_LOCAL_MODE=true via sync-vela.py, which opens the
+// runtime test-surface gate — so it too must regenerate the monolith with
+// --release first, or a maintainer cutting a release with build.sh (instead of
+// CI/Docker) would ship the test surface live.
+test('build.sh (local desktop release helper) regenerates the monolith with --release', () => {
+  const script = path.join(ROOT, 'vela-neutralino', 'scripts', 'build.sh');
+  if (!fs.existsSync(script)) { console.log('     (build.sh missing — skipped)'); return; }
+  const sh = fs.readFileSync(script, 'utf8');
+  const line = sh.split('\n').find((l) => l.includes('concat.py') && !l.trim().startsWith('#'));
+  assert(line, 'no concat.py invocation found in build.sh — it must strip the test surface before sync-vela.py flips VELA_LOCAL_MODE');
+  assert(/concat\.py\S*\s+--release\b/.test(line) && /--out\b/.test(line),
+    'build.sh concat.py does not use --release --out — a local release build would keep test hooks live:\n     ' +
+    (line || '').trim());
+});
+
+// Artifact-level guard: build the release bundle the way the desktop ship path
+// does (concat.py --release, then sync-vela.py's VELA_LOCAL_MODE flip which
+// opens the runtime test-surface gate) and grep the ACTUAL OUTPUT for the
+// forbidden identifiers. This is the durable check — it fails on any future
+// ship path (workflow rewrite, new CI provider, manual release) that forgets
+// the --release flag, regardless of what the YAML says.
+test('a release-stripped + sync-vela-preprocessed bundle has NO test-surface identifiers', () => {
+  const syncScript = path.join(ROOT, 'vela-neutralino', 'scripts', 'sync-vela.py');
+  if (!fs.existsSync(syncScript)) { console.log('     (sync-vela.py missing — skipped)'); return; }
+  const forbidden = ['velaTestSurfaceEnabled', '__velaRunUITests', '__velaTestHooks',
+    'VelaBatteryTest', 'VelaUITestRunner', '__velaTestMode'];
+
+  const synced = execFileSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sync_vela", ${JSON.stringify(syncScript)})
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.preprocess(open(${JSON.stringify(RELEASE_BUNDLE)}, encoding="utf-8").read()))
+`], { encoding: 'utf8', cwd: ROOT, maxBuffer: 1024 * 1024 * 64 });
+
+  assert(synced.includes('const VELA_LOCAL_MODE = true;'),
+    'sanity check failed: sync-vela.py did not flip VELA_LOCAL_MODE — the gate-opening ' +
+    'condition this test defends against was not actually reproduced');
+
+  const leaked = forbidden.filter((sym) => synced.includes(sym));
+  assert(leaked.length === 0,
+    `desktop-ship-path bundle (release strip + sync-vela preprocess) leaks: ${leaked.join(', ')}`);
+
+  // And the discriminator: the SAME preprocessing over the (test-hook-carrying)
+  // dev bundle must find them, proving this check isn't vacuously passing.
+  const syncedDev = execFileSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sync_vela", ${JSON.stringify(syncScript)})
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sys.stdout.write(m.preprocess(${JSON.stringify(DEV_BUNDLE)} and open(${JSON.stringify(DEV_BUNDLE)}, encoding="utf-8").read() or ""))
+`], { encoding: 'utf8', cwd: ROOT, maxBuffer: 1024 * 1024 * 64 });
+  const foundInDev = forbidden.filter((sym) => syncedDev.includes(sym));
+  assert(foundInDev.length === forbidden.length,
+    'discriminator check failed: the dev bundle (which SHOULD carry test hooks) is missing ' +
+    `${forbidden.filter((s) => !foundInDev.includes(s)).join(', ')} — this check may be vacuous`);
+});
+
+test('release build keeps the STARTUP_PATCH ship marker', () => {
+  assert(release.includes('const STARTUP_PATCH = null;'),
+    'STARTUP_PATCH marker missing — assemble.py could not inject a deck');
+});
+
+test('release build still parses (Babel transpile of the stripped monolith)', () => {
+  const babelPath = path.join(VENDOR, 'babel.min.js');
+  if (!fs.existsSync(babelPath)) { console.log('     (vendored babel missing — skipped)'); return; }
+  const Babel = require(babelPath);
+  let src = release
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, '')
+    .replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, '')
+    .replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, '')
+    .replace(/^export\s+default\s+function\s+/m, 'function ');
+  const { code } = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] });
+  assert(code && code.length > 100000, 'transpiled release bundle looks truncated');
+});
+
+test('unbalanced DEV-ONLY fences fail the build', () => {
+  const bad = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-fence-'));
+  for (const f of fs.readdirSync(PARTS)) fs.copyFileSync(path.join(PARTS, f), path.join(bad, f));
+  const victim = path.join(bad, 'part-app.jsx');
+  fs.writeFileSync(victim,
+    fs.readFileSync(victim, 'utf8').replace('// VELA:DEV-ONLY:END', '// (end removed by test)'));
+  let failed = false;
+  try {
+    execFileSync('python3', [CONCAT, bad, path.join(bad, 'out.jsx')],
+      { encoding: 'utf8', cwd: ROOT, stdio: 'pipe' });
+  } catch { failed = true; }
+  fs.rmSync(bad, { recursive: true, force: true });
+  assert(failed, 'concat.py accepted an unclosed DEV-ONLY fence');
+});
+
+fs.rmSync(TMP, { recursive: true, force: true });
+
+console.log(`\n${fail === 0 ? '✅' : '❌'} Release build: ${pass} passed, ${fail} failed, ${pass + fail} total\n`);
+process.exit(fail ? 1 : 0);

@@ -629,6 +629,38 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 403, "Symlink escaping folder must return 403")
         self.assertNotIn(b"Escaped!", body)
 
+    def test_symlink_outside_folder_not_listed(self):
+        """SECURITY (F2): the /api/decks listing must apply the SAME realpath
+        containment as /deck/. A deck-named symlink resolving OUTSIDE the served
+        folder must not appear in the listing at all — otherwise it leaks the
+        target's byte size (a universal existence/size oracle for any file the
+        server can read) and, for a JSON target, its deckTitle."""
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(outside_dir, ignore_errors=True))
+        outside_deck = os.path.join(outside_dir, "confidential.vela")
+        sentinel = "LEAKED_SECRET_TITLE_F2"
+        with open(outside_deck, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": sentinel, "lanes": []}, f)
+        outside_plain = os.path.join(outside_dir, "private.bin")
+        with open(outside_plain, "w", encoding="utf-8") as f:
+            f.write("x" * 3)  # any readable non-JSON file — size-oracle target
+
+        made = []
+        for target, linkname in ((outside_deck, "innocuous.vela"), (outside_plain, "readme.vela")):
+            lp = os.path.join(self._tmpdir, linkname)
+            try:
+                os.symlink(target, lp)
+            except OSError:
+                self.skipTest("Cannot create symlinks on this filesystem")
+            made.append(lp)
+        self.addCleanup(lambda: [os.unlink(p) for p in made if os.path.lexists(p)])
+
+        status, _, body = fetch(self._port, "GET", "/api/decks")
+        self.assertEqual(status, 200)
+        self.assertNotIn(sentinel.encode(), body, "escaping symlink deckTitle leaked in listing")
+        self.assertNotIn(b"innocuous.vela", body, "escaping symlink must not be listed")
+        self.assertNotIn(b"readme.vela", body, "escaping non-JSON symlink must not be listed")
+
     def test_watcher_reread_enforces_folder_containment(self):
         """The live-reload file-watcher re-reads a deck after it changes. That
         re-read must enforce the same folder containment as the HTTP read/write
@@ -1261,6 +1293,10 @@ class TestAgentBackendChannel(unittest.TestCase):
         )
         cls.server = agent_backend.make_channel_server(port=0)
         cls.port = cls.server.server_address[1]
+        # /action auth is now MANDATORY: make_channel_server always has a token
+        # (auto-generated when none is passed). Capture it so the happy-path posts
+        # authenticate; negative tests pass token=None to prove rejection.
+        cls.token = cls.server._token
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -1269,11 +1305,16 @@ class TestAgentBackendChannel(unittest.TestCase):
         agent_backend.run_completion = cls._orig
         agent_backend.stop_channel_server(cls.server)
 
-    def _post(self, path, body, origin=None):
+    _NO_TOKEN = object()
+
+    def _post(self, path, body, origin=None, token=_NO_TOKEN):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         headers = {"Content-Type": "application/json"}
         if origin:
             headers["Origin"] = origin
+        tok = self.token if token is self._NO_TOKEN else token
+        if tok:
+            headers["x-vela-token"] = tok
         conn.request("POST", path, json.dumps(body), headers)
         r = conn.getresponse()
         data = r.read()
@@ -1297,6 +1338,26 @@ class TestAgentBackendChannel(unittest.TestCase):
         body = json.loads(data)
         self.assertTrue(body["ok"])
         self.assertEqual(body["reply"], "STUB:ping")
+
+    def test_null_origin_without_token_rejected(self):
+        # SECURITY (F3, CWE-346): Origin: null is forgeable by ANY site (a
+        # sandboxed iframe / data:/file: page), so it must not grant access. A
+        # null-origin caller with no token is rejected — the mandatory unforgeable
+        # token, not the Origin, is the boundary. This is the drive-by hole a
+        # random web page previously used against the tokenless channel.
+        status, _, _ = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "x"}],
+        }, origin="null", token=None)
+        self.assertEqual(status, 401)
+
+    def test_null_origin_with_token_allowed(self):
+        # The one legitimate null-origin caller (the file:// render harness)
+        # authenticates with the token and still works.
+        status, data, _ = self._post("/action", {
+            "action": "complete", "messages": [{"role": "user", "content": "ping"}],
+        }, origin="null", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["reply"], "STUB:ping")
 
     def test_action_unknown_action(self):
         status, data, _ = self._post("/action", {"action": "delete_everything"})

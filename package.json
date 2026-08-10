@@ -5,7 +5,7 @@
   },
   "devDependencies": {
     "@babel/standalone": "^7.26.10",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "lucide-react": "^1.17.0",
     "playwright": "^1.55.1",
     "react": "^18.3.1",

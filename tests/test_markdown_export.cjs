@@ -24,9 +24,21 @@ function extract(name) {
   return src.slice(start, end);
 }
 
-// deckToMarkdown references no external helpers (it iterates state.lanes itself
-// and uses only txt/blockToMd defined inside it + `new Date`), so a lone extract
-// is enough. No stubs required beyond Node's built-in Date.
+// deckToMarkdown now routes every link/image DESTINATION through sanitizeUrl
+// (the shared http/https/mailto scheme allowlist) as its Markdown-context output
+// encoder, so load the REAL sanitizeUrl from part-imports.jsx first. It is
+// self-contained (only `new URL`), so a lone extract of each is enough.
+const importsSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-imports.jsx"), "utf8");
+function extractFrom(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`function ${name} not found`);
+  const after = start + `function ${name}`.length;
+  const m = source.slice(after).search(/\n(?:async function |function |const |let |var )/);
+  const end = m === -1 ? source.length : after + m;
+  return source.slice(start, end);
+}
+// eslint-disable-next-line no-eval
+eval(extractFrom(importsSrc, "sanitizeUrl"));
 // eslint-disable-next-line no-eval
 eval(extract("deckToMarkdown"));
 
@@ -46,6 +58,13 @@ const hasSub = (md, sub, name) => {
 const noSub = (md, sub, name) => {
   if (!md.includes(sub)) ok(name);
   else bad(name, "unexpected substring: " + JSON.stringify(sub));
+};
+// A `<` is only dangerous (raw HTML tag / autolink) when UNescaped. `\<` renders
+// as a literal `<`, so assert there is no `<` (that isn't backslash-escaped)
+// immediately followed by a tag/comment/autolink start.
+const noRawTag = (md, name) => {
+  if (/(^|[^\\])<[a-zA-Z/!]/.test(md)) bad(name, "unescaped tag/autolink open present");
+  else ok(name);
 };
 
 // Build a minimal deck wrapping a single slide's block list.
@@ -89,7 +108,7 @@ const md1 = (blocks, slideExtra, deckExtra) => deckToMarkdown(deckWith(blocks, s
     { type: "text", text: "line1\nline2" },
   ]);
   hasLine(md, "hello world", "plain text passthrough");
-  hasLine(md, "cited — [source](https://x.io)", "text with link renders — [source](url)");
+  hasLine(md, "cited — [source](https://x.io/)", "text with link renders — [source](url)");
   hasSub(md, "line1  \nline2", "newline becomes markdown hard break (two spaces + \\n)");
 }
 
@@ -98,10 +117,10 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
 
 // ── bullets (string items, object items, links) ────────────────────
 {
-  const md = md1([{ type: "bullets", items: ["one", { text: "two" }, { text: "three", link: "u://l" }] }]);
+  const md = md1([{ type: "bullets", items: ["one", { text: "two" }, { text: "three", link: "https://l.io" }] }]);
   hasLine(md, "- one", "bullet string item");
   hasLine(md, "- two", "bullet object item");
-  hasLine(md, "- [three](u://l)", "bullet with link");
+  hasLine(md, "- [three](https://l.io/)", "bullet with allowlisted link");
 }
 
 // ── icon-row ───────────────────────────────────────────────────────
@@ -112,7 +131,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
     { title: "Bare" },
   ] }]);
   hasLine(md, "- Speed — fast", "icon-row title + text");
-  hasLine(md, "- [Docs](http://d)", "icon-row linked title");
+  hasLine(md, "- [Docs](http://d/)", "icon-row linked title");
   hasLine(md, "- Bare", "icon-row title only");
 }
 
@@ -121,7 +140,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   const md = md1([{ type: "quote", text: "be bold", author: "Ada", link: "http://q" }]);
   hasLine(md, "> be bold", "quote blockquote");
   hasLine(md, "> — Ada", "quote author attribution");
-  hasLine(md, "> [Source](http://q)", "quote source link");
+  hasLine(md, "> [Source](http://q/)", "quote source link");
 }
 
 // ── callout ────────────────────────────────────────────────────────
@@ -129,7 +148,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   const md = md1([{ type: "callout", title: "Note", text: "careful", link: "http://c" }]);
   hasLine(md, "> **Note**", "callout bold title");
   hasLine(md, "> careful", "callout body");
-  hasLine(md, "> [Source](http://c)", "callout source link");
+  hasLine(md, "> [Source](http://c/)", "callout source link");
 }
 
 // ── metric (with and without label — pins trailing space quirk) ────
@@ -139,7 +158,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
     { type: "metric", value: "99" },
   ]);
   hasLine(md, "**42** — Revenue", "metric value + label");
-  hasLine(md, "[Source](http://m)", "metric source link");
+  hasLine(md, "[Source](http://m/)", "metric source link");
   // no-label metric emits a trailing space after the bold value (real quirk)
   hasLine(md, "**99** ", "metric without label keeps trailing space after bold value");
 }
@@ -165,7 +184,7 @@ hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
   hasLine(md, "| --- | --- |", "table separator row (one --- per column)");
   hasLine(md, "| a | 1 |", "table array row");
   hasLine(md, "| b | 2 |", "table {cells} row");
-  hasLine(md, "[Source](http://t)", "table source link");
+  hasLine(md, "[Source](http://t/)", "table source link");
 }
 
 // ── flow / steps (numbered, loop labels) ───────────────────────────
@@ -295,6 +314,130 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   if (!md.includes("# Untitled Section")) throw new Error("missing default section title");
   if (!md.includes("## Untitled Module")) throw new Error("missing default module title");
 });
+
+// ── SECURITY (F1): Markdown-context output encoding ────────────────
+// Untrusted deck text must not smuggle links/images that bypass the app's
+// http/https/mailto scheme allowlist. The live renderer validates inline
+// [x](url) via sanitizeUrl and never auto-loads text images; the export path
+// reaches parity here (CWE-116: encode at the sink for the Markdown grammar).
+{
+  // (1) javascript: inline link in free text collapses to its plain label
+  const m1 = md1([{ type: "text", text: "click [here](javascript:alert1) now" }]);
+  noSub(m1, "javascript:", "text: javascript inline link stripped");
+  hasSub(m1, "here", "text: blocked inline link degrades to plain label");
+
+  // (2) zero-click image beacons are neutralized — no markdown image survives
+  const m2a = md1([{ type: "text", text: "hi ![](https://attacker.example/x.png) bye" }]);
+  noSub(m2a, "![", "text: empty-alt image syntax neutralized (no auto-load)");
+  const m2b = md1([{ type: "text", text: "x ![alt](javascript:alert1) y" }]);
+  noSub(m2b, "![", "text: javascript image neutralized");
+  noSub(m2b, "javascript:", "text: javascript image URL removed");
+
+  // (3) file:/data:/vbscript: inline-link schemes are dropped
+  for (const scheme of ["file", "data", "vbscript"]) {
+    const t = scheme === "file" ? "file:///etc/passwd" : scheme === "data" ? "data:text/html,x" : "vbscript:msgbox";
+    const m = md1([{ type: "text", text: `a [l](${t}) b` }]);
+    noSub(m, scheme + ":", `text: ${scheme}: inline link dropped`);
+  }
+
+  // (4) an explicit .link field with a blocked scheme emits no link at all
+  const m4 = md1([{ type: "text", text: "body", link: "javascript:alert1" }]);
+  noSub(m4, "javascript:", "explicit .link javascript: dropped");
+  noSub(m4, "[source]", "explicit .link source omitted when scheme blocked");
+
+  // (5) table cell: literal pipe escaped (no column injection) + inline link sanitized
+  const m5 = md1([{ type: "table", headers: ["a|b", "[c](javascript:alert1)"], rows: [["p|q", "ok"]] }]);
+  noSub(m5, "javascript:", "table cell: inline javascript link stripped");
+  hasSub(m5, "a\\|b", "table cell: literal pipe escaped, not a column break");
+
+  // (6) code fence breakout: a ``` run in the body cannot close the fence early
+  const m6 = md1([{ type: "code", text: "```\n![](https://attacker.example/x)\n```" }]);
+  hasSub(m6, "````", "code: fence widened past the backtick run in the body");
+
+  // (7) title/heading injection is neutralized and stays on one line
+  const m7 = deckToMarkdown({ deckTitle: "T ![](javascript:alert1)\n# owned", lanes: [] });
+  noSub(m7, "![", "title: image syntax neutralized in heading");
+  noSub(m7, "javascript:", "title: javascript URL removed from heading");
+  noSub(m7, "\n# owned", "title: embedded newline cannot inject a second heading");
+
+  // (8) RED-TEAM regression (v13.28): a .link/.src DESTINATION whose sanitizeUrl
+  // output still carries markdown-breaking bytes (the URL parser leaves `)`/`(`
+  // unescaped; the mailto: branch returns raw newlines) must be percent-encoded
+  // so it cannot close `(...)` early and inject a sibling image/link or a heading.
+  const rt1 = md1([{ type: "text", text: "body", link: "https://ok.com/a)![](https://attacker.example/beacon.png)" }]);
+  noSub(rt1, "![](", "link field: unbalanced ) cannot spawn a sibling image");
+  noSub(rt1, ")![", "link field: destination-breaking ) is percent-encoded");
+  hasSub(rt1, "%29", "link field: ) is percent-encoded inside the destination");
+
+  const rt2 = md1([{ type: "quote", text: "q", link: "mailto:x\n# OWNED" }]);
+  noSub(rt2, "\n# OWNED", "mailto link field: embedded newline cannot inject a heading");
+
+  const rt3 = md1([{ type: "text", text: "see [x](https://ok.com/a)![](https://attacker.example/b.png)" }]);
+  noSub(rt3, "![](", "inline: destination breakout downgrades, never an image");
+
+  const rt4 = md1([{ type: "image", src: "https://ok.com/a)![](https://attacker.example/c.png)", alt: "z" }]);
+  noSub(rt4, "](https://attacker.example/c.png)", "image block src: breakout neutralized in destination");
+
+  const rt5 = md1([{ type: "bullets", items: [{ text: "b", link: "https://ok.com/a) ![](https://attacker.example/d.png)" }] }]);
+  noSub(rt5, "![](", "bullet link field: breakout neutralized");
+
+  // (11) RED-TEAM regression #3: reference-style links/images and their
+  // definition lines contain no `(`, so they bypass the inline rewriter and the
+  // definition URL never reaches sanitizeUrl. Residual `[`/`]` are now escaped so
+  // no reference use resolves and no `[ref]: url` definition can form.
+  const ref1 = deckToMarkdown({ deckTitle: "D", lanes: [{ title: "S", items: [{ title: "M", slides: [{ blocks: [
+    { type: "text", text: "look ![beac][r1] here" },
+    { type: "text", text: "[r1]: https://attacker.example/ref1.png" },
+  ] }] }] }] });
+  noSub(ref1, "![beac][r1]", "reference image USE is escaped (cannot auto-load)");
+  noSub(ref1, "\n[r1]: https", "reference DEFINITION line cannot form");
+  hasSub(ref1, "\\[r1\\]", "residual reference brackets are backslash-escaped");
+
+  const ref2 = md1([{ type: "text", text: "[click][r3]\n\n[r3]: javascript:alert1" }]);
+  noSub(ref2, "[r3]: javascript", "reference def with dangerous scheme neutralized");
+  noSub(ref2, "[click][r3]", "reference link use escaped");
+
+  const ref3 = md1([{ type: "text", text: "![shortcut]\n\n[shortcut]: https://attacker.example/s.png" }]);
+  noSub(ref3, "![shortcut]", "shortcut/collapsed reference image escaped");
+
+  // inline links must still survive the bracket-escaping intact
+  const keep = md1([{ type: "text", text: "see [docs](https://ok.example/x) now" }]);
+  hasSub(keep, "[docs](https://ok.example/x)", "legit inline link preserved through escaping");
+
+  // (12) RED-TEAM regression #4: Markdown permits RAW HTML and autolinks
+  // (`<img src>`, `<a href=javascript:>`, `<scheme:...>`) which need neither `(`
+  // nor `[`. Every field routed through mdInline/mdLabel now escapes `<`/`>` so
+  // none render as live markup in the exported .md.
+  noRawTag(md1([{ type: "text", text: "x <img src=https://attacker.example/x.png> y" }]), "text: raw <img> beacon escaped");
+  noRawTag(md1([{ type: "text", text: "a <https://attacker.example/auto.png> b" }]), "text: autolink escaped");
+  noRawTag(md1([{ type: "text", text: "z <a href=\"javascript:alert(1)\">c</a>" }]), "text: raw <a>/<script> escaped");
+  // the specific fields the red-team found un-backstopped at import — all route
+  // through mdInline/mdLabel in export, so all are neutralized there
+  noRawTag(md1([{ type: "flow", items: [{ label: "S", sublabel: "<img src=https://attacker.example/sub.png>" }] }]), "flow sublabel: raw <img> escaped");
+  noRawTag(md1([{ type: "steps", items: [{ label: "x" }], loop: true, loopLabel: "<img src=https://attacker.example/loop.png>" }]), "loopLabel: raw <img> escaped");
+  noRawTag(md1([{ type: "icon-row", items: [{ title: "<img src=https://attacker.example/t.png>" }] }]), "icon-row unlinked title: raw <img> escaped");
+  // raw HTML smuggled inside an inline-link LABEL is escaped too
+  noRawTag(md1([{ type: "text", text: "[<img src=https://attacker.example/l.png>](https://ok.example/y)" }]), "inline-link label: raw <img> escaped");
+  // and confirm the escaped form is actually emitted (fix present, not just absent)
+  hasSub(md1([{ type: "text", text: "<img x>" }]), "\\<img x\\>", "raw < and > are backslash-escaped");
+
+  // (13) RED-TEAM regression #5/#6 + backslash-revive:
+  // progress.value and timeline.date were emitted RAW; both now route through the encoder.
+  noRawTag(md1([{ type: "progress", items: [{ label: "L", value: "<img src=https://attacker.example/p.png>" }] }]), "progress value: raw <img> neutralized");
+  noRawTag(md1([{ type: "timeline", items: [{ date: "<img src=https://attacker.example/d.png>", title: "t" }] }]), "timeline date: raw <img> neutralized");
+  // escGap now escapes BACKSLASH too, so an attacker `\<` cannot revive a live `<`.
+  noRawTag(md1([{ type: "text", text: "a \\<img src=https://attacker.example/b.png\\> z" }]), "text: backslash-revive of <img> neutralized");
+  // speakerNotes (a slide field) reaches the exporter; the backslash-revive attempt
+  // is neutralized at the export encoder (and additionally HTML-stripped at import).
+  const snExport = deckToMarkdown({ deckTitle: "D", lanes: [{ title: "S", items: [{ title: "M", slides: [{ blocks: [{ type: "text", text: "x" }], speakerNotes: "\\<img src=https://attacker.example/nu.png\\>" }] }] }] });
+  noRawTag(snExport, "speakerNotes: backslash-revive neutralized in export");
+
+  // (14) CodeQL regression: a table cell escapes backslash AND pipe in one pass —
+  // backslash exactly once (no double-escape), pipe escaped so it can't add a column.
+  const cellbs = md1([{ type: "table", headers: ["a\\b|c"], rows: [["p|q"]] }]);
+  hasSub(cellbs, "a\\\\b\\|c", "table cell: backslash escaped once + pipe escaped");
+  noSub(cellbs, "a\\\\\\\\b", "table cell: backslash NOT double-escaped");
+}
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 2 : 0);

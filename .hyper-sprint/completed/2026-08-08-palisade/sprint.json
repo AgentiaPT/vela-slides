@@ -1,0 +1,14 @@
+{
+  "codename": "palisade",
+  "date": "2026-08-08",
+  "branch": "claude/harden-deck-data-ingress-7uoi4p",
+  "base": "ux-updates-15",
+  "pr": 115,
+  "version": "13.22",
+  "phases": 7,
+  "commits": 7,
+  "outcome": "clean",
+  "blind_gate": {"validators": 4, "verdicts": ["V1b:PASS","V2:PASS","V3:PASS","hunter:CLEAN"], "in_scope_defects": 0, "rounds": 2, "round1_note": "V1 inconclusive on harness timing, re-run V1b PASS"},
+  "tests": {"python": 480, "python_baseline": 430, "cjs_suites": 24, "ui_battery": "219 pass / 3 known-fail / 9 ai-skip"},
+  "cost_usd": 105.83
+}

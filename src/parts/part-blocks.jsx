@@ -329,6 +329,47 @@ function addItemAt(block, onChange, newItem) {
   onChange?.({ items: [...(block.items || []), newItem] });
 }
 
+// Swap block.items[idx] with its neighbour ("up" = earlier, "down" = later) and
+// call onChange. No-op at the list boundary. Mirrors the reducer's REORDER swap.
+function moveItemAt(block, onChange, idx, dir) {
+  const items = [...(block.items || [])];
+  const t = dir === "up" ? idx - 1 : idx + 1;
+  if (t < 0 || t >= items.length) return;
+  [items[idx], items[t]] = [items[t], items[idx]];
+  onChange?.({ items });
+}
+
+// Build the pin-aware control ItemChrome renders as ▲▼ arrows:
+//   { onUp, onDown, pinned, anyPinned, clearPin }
+// `move(dir)` performs the swap; `keyOf(i)` maps a slot index to its pin key;
+// `pin` = { key, set } is shared per-block state (from RenderBlock).
+//
+// After a move we pin the DESTINATION slot (keyOf(idx±1)) so its cluster stays
+// visible on the item that just landed there — instead of the neighbour that
+// slid under the cursor stealing focus. The pin is positional (survives the swap
+// without item ids) and is cleared on the next mouse move (see ItemChrome).
+// `anyPinned` lets every other item suppress its own hover cluster while pinned.
+const _noPin = { key: null, set: () => {} };
+const reorderCtl = (n, idx, move, keyOf, pin) => {
+  const p = pin || _noPin;
+  return {
+    onUp: idx > 0 ? () => { move("up"); p.set(keyOf(idx - 1)); } : undefined,
+    onDown: idx < n - 1 ? () => { move("down"); p.set(keyOf(idx + 1)); } : undefined,
+    pinned: p.key === keyOf(idx),
+    anyPinned: p.key != null,
+    clearPin: () => p.set(null),
+  };
+};
+
+// Reorder control for a plain block.items list — undefined when not editable or
+// when there is nothing to reorder (0–1 items).
+function itemReorder(block, onChange, idx, pin) {
+  if (!onChange) return undefined;
+  const n = (block.items || []).length;
+  if (n <= 1) return undefined;
+  return reorderCtl(n, idx, (d) => moveItemAt(block, onChange, idx, d), String, pin);
+}
+
 // Placeholder item factory for the "+ add" affordance on multi-item blocks.
 // Returns a blank item with neutral placeholder text/icon matching each block
 // type's item shape — so a fresh item is editable inline without resorting to AI.
@@ -459,7 +500,9 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   const el = getIcon(icon, { size, color, strokeWidth });
   if (!el) return null;
   const d = size * 1.8;
-  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
+  // `bg` mixes deck-supplied values (block.bg/iconBg/item.iconBg) with computed
+  // theme+alpha fallbacks — encoder-gate once here for every caller. (v13.26)
+  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
@@ -473,10 +516,13 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
 const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
+// Reorder arrow — a full-size round button (same footprint as the link/delete
+// chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
+const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge }) {
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -489,19 +535,27 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   const ba = badgeAnchor || { top: 2, right: 2 };
   const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
   const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
+  // While a reorder pin is active anywhere in the block, the pinned slot keeps its
+  // cluster and every other item suppresses hover — so the item that just moved
+  // stays focused instead of the neighbour now under the cursor. The pin clears on
+  // the next mouse move, handing control back to plain hover.
+  const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
+      onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
-      {/* Idle link badge — edit mode, not hovered */}
-      {link && showLinkUI && !hovered && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {/* Idle link badge — edit mode, cluster not shown */}
+      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
-      {/* Hover cluster — edit mode */}
-      {hovered && editMode && (showLinkUI || deletable) && <div style={{ position: "absolute", ...a, display: "flex", gap: 3, zIndex: 11 }}>
+      {/* Hover cluster — edit mode (or pinned after a reorder move) */}
+      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
         {deletable && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ ...itemChromeBtn(T.red, T.red, "#fff"), fontWeight: 700 }} title="Delete item">✕</button>}
       </div>}
@@ -516,7 +570,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
 }
 
 // ━━━ Icon Row Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false, pin }) {
   const link = item.link;
   const editMode = editable && !presenting;
   return (
@@ -524,6 +578,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
       link={link} linkLabel={item.title}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
@@ -538,7 +593,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
 }
 
 // ━━━ Bullet Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━
-function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false }) {
+function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false, pin }) {
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
   const link = itemLinkOf(item);
@@ -555,13 +610,14 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
       link={link} linkLabel={text}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       {icon
-        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span></EditableIcon>
+        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: cssColor(block.dotColor) || st.accent, strokeWidth: 2 })}</span></EditableIcon>
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
-          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />)}
+          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
       <EditableText text={text} editable={editMode} onSave={(v) => {
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
@@ -607,7 +663,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled, link }) {
+function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -649,7 +705,7 @@ function ZoomWrap({ children, enabled, link }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -682,7 +738,7 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
       });
     }
   };
-  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+  return <div className={cls} style={{ position: "relative", background: cssColor(block.bg) || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
     {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
     <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
     {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
@@ -695,7 +751,7 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
-  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
       {block.icon ? <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...((isReveal && !editable) ? { cursor: "pointer" } : {}) }} onClick={(isReveal && !editable) ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span> : null}
     </EditableIcon>
@@ -733,6 +789,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
   // icon slot) must also never leak into Present mode — gate it the same way.
   const textEditable = editable && !presenting;
+  // Per-block reorder pin (see reorderCtl/ItemChrome): keeps the just-moved item's
+  // ▲▼ cluster focused at its destination slot. `_pin` is handed to itemReorder;
+  // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
+  const [pinKey, setPinKey] = useState(null);
+  const _pin = { key: pinKey, set: setPinKey };
   switch (block.type) {
 
     case "heading": {
@@ -754,18 +815,28 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "bullets":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 8, ...block.style }}>{(block.items || []).map((item, i) =>
-        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} />
+        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} pin={_pin} />
       )}
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      // _gridCell: this image is a cell in a multi-image grid — fill the cell and
+      // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : block._gridCell
+          // Absolutely fill the grid cell so the row height is driven ONLY by the
+          // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
+          // portrait/tall image therefore letterboxes (objectFit:contain) into the
+          // uniform cell instead of ballooning the row off-canvas — and, critically,
+          // it contributes 0 to the auto-height fit measurement, so a tall image no
+          // longer forces an over-aggressive slide fit-scale.
+          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
 
     case "code":
@@ -774,7 +845,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
         const cellStyle = { display: "flex", flexDirection: cell.direction || "column", alignItems: cell.direction === "row" ? "center" : (cell.align ? ({ left: "flex-start", center: "center", right: "flex-end" }[cell.align] || cell.align) : "center"), gap: cell.direction === "row" ? 12 : 8 };
-        if (cell.bg) cellStyle.background = cell.bg;
+        if (cell.bg) { const c = cssColor(cell.bg); if (c) cellStyle.background = c; }
         if (cell.padding) cellStyle.padding = cell.padding;
         if (cell.borderRadius) cellStyle.borderRadius = cell.borderRadius;
         if (cell.border) cellStyle.border = cell.border;
@@ -783,6 +854,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         return <ItemChrome key={ci} editable={editable} presenting={presenting}
           wrapStyle={{ ...cellStyle, ...safeStyle }}
           link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
+          reorder={itemReorder(block, onChange, ci, _pin)}
           onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
           anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
@@ -816,7 +888,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
-    case "divider": return <div className={cls} style={{ height: 1, background: block.color || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
+    case "divider": return <div className={cls} style={{ height: 1, background: cssColor(block.color) || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
     case "spacer": return <div style={{ height: block.h || 24 }} />;
 
     case "svg": {
@@ -828,7 +900,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
-      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
+      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: cssColor(block.bg) || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
@@ -843,7 +915,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgeIconSize = badgeFontPx;
       const badgePadV = Math.max(3, Math.round(badgeFontPx * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontPx * 0.8));
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: cssColor(block.bg) || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
@@ -873,7 +945,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         ? { display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: block.gap || 14, ...block.style }
         : { display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style };
       return <div className={cls} style={containerStyle}>{(block.items || []).map((item, i) => (
-        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} />
+        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} pin={_pin} />
       ))}
       {canEdit && <AddItem label="Add item" accent={st.accent} style={cols > 1 ? { gridColumn: "1 / -1" } : undefined} onAdd={() => addItemAt(block, onChange, newItemFor(block,"icon-row"))} />}
       </div>;
@@ -905,6 +977,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -959,7 +1032,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const headers = block.headers || [];
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
-      const hdrBg = block.headerBg || `${st.accent}20`;
+      const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
@@ -982,7 +1055,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "progress": {
       const items = block.items || (block.value != null ? [{ value: block.value, label: block.label, color: block.color }] : []);
       const hasItems = Array.isArray(block.items);
-      const trackCol = block.trackColor || `${st.accent}15`;
+      const trackCol = cssColor(block.trackColor) || `${st.accent}15`;
       const barH = block.height || 8;
       const labelColor = block.labelColor || st.muted;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style }}>
@@ -1000,10 +1073,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         )}
         {items.map((item, i) => {
           const val = Math.max(0, Math.min(item.value || 0, 100));
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={hasItems ? itemReorder(block, onChange, i, _pin) : undefined}
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -1026,15 +1100,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "steps": {
       const items = block.items || [];
-      const lineCol = block.lineColor || `${st.accent}40`;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
       const active = typeof block.activeStep === "number" ? block.activeStep : items.length;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
         {items.map((item, i) => {
           const isActive = i < active;
-          const dotCol = isActive ? (block.numberColor || st.accent) : `${st.textDim}60`;
+          const dotCol = isActive ? (cssColor(block.numberColor) || st.accent) : `${st.textDim}60`;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
             link={itemLinkOf(item)} linkLabel={item.title}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
@@ -1056,7 +1131,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const variant = block.variant || "filled";
       return <div className={cls} style={{ display: "flex", flexWrap: "wrap", gap: block.gap || 8, ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           const vs = variant === "outline"
             ? { background: "transparent", border: `1px solid ${col}`, color: col }
             : variant === "subtle"
@@ -1065,6 +1140,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
             link={itemLinkOf(item)} linkLabel={item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -1080,8 +1156,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "timeline": {
       const items = block.items || [];
       const isVert = block.direction === "vertical";
-      const lineCol = block.lineColor || `${st.accent}40`;
-      const dotCol = block.dotColor || st.accent;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
+      const dotCol = cssColor(block.dotColor) || st.accent;
 
       if (isVert) {
         return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
@@ -1089,6 +1165,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
@@ -1114,6 +1191,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
@@ -1131,8 +1209,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const items = block.items || [];
       const left = items[0] || {};
       const right = items[1] || {};
-      const leftColor = left.color || "#ef4444";
-      const rightColor = right.color || "#22c55e";
+      const leftColor = cssColor(left.color) || "#ef4444";
+      const rightColor = cssColor(right.color) || "#22c55e";
       const dividerLabel = block.dividerLabel || "VS";
       // Per-point delete/link, nested in items[side].items
       const deletePoint = (side, pi) => onChange?.({ items: items.map((col, k) => k === side ? { ...col, items: (col.items || []).filter((_, j) => j !== pi) } : col) });
@@ -1148,6 +1226,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         cols[side] = { ...cols[side], items: [...prev, clonePoint(prev[prev.length - 1])] };
         onChange?.({ items: cols });
       };
+      const movePoint = (side, pi, dir) => onChange?.({ items: items.map((col, k) => {
+        if (k !== side) return col;
+        const pts = [...(col.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return col;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...col, items: pts };
+      }) });
+      const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
         <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -1161,6 +1249,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(0, left.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
@@ -1185,6 +1274,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(1, right.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
@@ -1205,7 +1295,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={{ width: "100%", ...block.style }}>
         <svg viewBox={`0 0 700 ${count * (stageH + gap)}`} style={{ width: "100%", maxWidth: 700 }} xmlns="http://www.w3.org/2000/svg">
           {items.map((item, i) => {
-            const col = item.color || st.accent;
+            const col = cssColor(item.color) || st.accent;
             const inset = (i / count) * 250;
             const nextInset = ((i + 1) / count) * 250;
             const y = i * (stageH + gap);
@@ -1240,7 +1330,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <svg viewBox={`0 0 520 ${cy * 2 + 40}`} style={{ width: "100%", maxWidth: 520 }} xmlns="http://www.w3.org/2000/svg">
           <defs>
             {items.map((_, i) => {
-              const col = items[i]?.color || defaultColors[i % defaultColors.length];
+              const col = cssColor(items[i]?.color) || defaultColors[i % defaultColors.length];
               return <marker key={`m${i}`} id={`cyc-arr-${staggerIdx}-${i}`} markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                 <polygon points="0 0, 10 3.5, 0 7" fill={col} />
               </marker>;
@@ -1253,7 +1343,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
             const nextAngle = (2 * Math.PI * ((i + 1) % n) / n) - Math.PI / 2;
-            const col = item.color || defaultColors[i % defaultColors.length];
+            const col = cssColor(item.color) || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
             const nextNx = cx + radius * Math.cos(nextAngle);
@@ -1287,12 +1377,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const showIcons = block.showIcons !== false;
       return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <React.Fragment key={i}>
             {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
               link={itemLinkOf(item)} linkLabel={item.label}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               {showIcons && <EditableIcon editable={editable && !presenting} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -1335,6 +1426,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         const prev = qq.items || [];
         return { ...qq, items: [...prev, clonePoint(prev[prev.length - 1])] };
       }) });
+      const moveQPoint = (qi, pi, dir) => onChange?.({ [qKey]: quadrants.map((qq, k) => {
+        if (k !== qi) return qq;
+        const pts = [...(qq.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return qq;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...qq, items: pts };
+      }) });
+      const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
       const renderRow = (indices, radii, yLabel) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
@@ -1355,6 +1456,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
                     wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
                     link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
                     <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
@@ -1393,6 +1495,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
             link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
@@ -1429,10 +1532,17 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   })();
   const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
   const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
-  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  // accentColor/footerBg are encoder-gated (cssColor) the same way slide bg/
+  // bgGradient/accent already are (v13.26): both feed a raw `background`
+  // shorthand, a fetching CSS sink, so a deck-supplied value must pass the
+  // strict color/gradient-token allowlist or fall back to the safe default —
+  // defense-in-depth so this sink can't be reached even by a future sanitizer
+  // gap. footerColor only ever reaches the non-fetching `color` property, so
+  // it stays scrubber-only like every other text-color field. (v13.27)
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
+    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
@@ -1480,10 +1590,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
+  // and bgImage already are — defense-in-depth so this fetching sink can't be
+  // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
   const bgStyle = {};
-  if (slide.bg) bgStyle.background = slide.bg;
+  if (slide.bg) { const c = cssColor(slide.bg); if (c) bgStyle.background = c; }
   if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
-  if (slide.bgGradient) bgStyle.background = slide.bgGradient;
+  if (slide.bgGradient) { const g = cssGradient(slide.bgGradient); if (g) bgStyle.background = g; }
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);
@@ -1649,6 +1762,69 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return [block, ...comments];
   };
 
+  // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
+  // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
+  // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
+  // the image block's _gridCell flag). An incomplete last row is centered by giving
+  // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
+  const renderImageGrid = (idxs, region) => {
+    const runLen = idxs.length;
+    // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
+    // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
+    // re-clamp at the sink for any slide object that reached here unsanitized.
+    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
+    const rows = Math.ceil(runLen / cols);
+    const lastRowCount = runLen - (rows - 1) * cols;
+    const incomplete = lastRowCount < cols;
+    const gap = slide.gap || 12;
+    return (
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        {idxs.map((bi, k) => {
+          const firstOfLastRow = k === (rows - 1) * cols;
+          const gridColumn = (incomplete && firstOfLastRow)
+            ? `${cols - lastRowCount + 1} / span 2`
+            : "span 2";
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const [blockEl, ...rest] = rendered;
+          // Make the block wrapper fill its cell height so the image (height:100%)
+          // and objectFit:contain letterbox uniformly across mixed aspect ratios.
+          const filled = React.cloneElement(blockEl, {
+            style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
+          });
+          return (
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+              {filled}{rest}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
+  // blocks with a balanced image grid (full region). Single images render as before.
+  const renderStackWithImageGrids = () => {
+    const out = [];
+    let i = 0;
+    while (i < blocks.length) {
+      if (blocks[i].type === "image") {
+        let j = i;
+        while (j < blocks.length && blocks[j].type === "image") j++;
+        if (j - i >= 2) {
+          const idxs = [];
+          for (let k = i; k < j; k++) idxs.push(k);
+          out.push(renderImageGrid(idxs, "full"));
+          i = j;
+          continue;
+        }
+      }
+      out.push(...renderBlockWithComments(blocks[i], i));
+      i++;
+    }
+    return out;
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isCols) {
@@ -1693,11 +1869,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+      // >=2 images beside content → grid them (half region) so they fill the column
+      // balanced instead of stacking vertically. Single image keeps the height-capped
+      // column so a lone side image conforms to the content column's height.
+      const imageCol = imageIdxs.length >= 2
+        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
+        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
-    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+    return renderStackWithImageGrids();
   };
 
   return (

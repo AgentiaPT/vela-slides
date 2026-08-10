@@ -139,11 +139,20 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const onToolCall = (evt) => {
       dispatch({ type: "STREAM_TOOL", event: evt });
+      // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
+      // (chat/engine edits previously animated nothing). On `calling`, scan the
+      // slide currently in view; when a tool completes with a jump, follow it and
+      // move the scan to the edited slide. FINALIZE_STREAM clears aiWork → the
+      // SlidePanel plays magic-reveal on the on-screen edited slide.
+      if (evt.type === "calling" && state.selectedId) {
+        dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+      }
       // Auto-navigate when a tool completes with a jump
       if (evt.type === "done" && evt.jump?.length > 0) {
         const j = evt.jump[0];
         dispatch({ type: "SELECT", id: j.itemId });
         dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
+        dispatch({ type: "SET_AI_WORK", value: { itemId: j.itemId, slideIdx: j.slideIdx ?? 0 } });
       }
     };
     const layoutStats = getLayoutStats?.() || null;
@@ -160,6 +169,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
+    dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
     // Register late-reply handler for SSE recovery (channel timeout fallback)
     if (result._lateReplyPending) {
       window.__velaLateReply = (msg, jumps) => {
@@ -194,7 +204,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
       const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); } };
+      // CR5: same canvas "working" mirror as the main send() path (see there).
+      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
@@ -202,6 +213,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
         dispatch({ type: "SET_DEBUG", text: result.debug || "" });
         dispatch({ type: "SET_LOADING", value: false });
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
   }, [state._bootstrap]);

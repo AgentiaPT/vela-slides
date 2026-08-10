@@ -10,6 +10,14 @@
 // mirrored into Neutralino.storage once it comes online.
 //
 // Shape matches artifact behaviour: { value: string } | null on get.
+//
+// SECURITY (F-2, narrowed nativeAllowList): `storage.*` is admitted here as
+// three enumerated methods (getKeys/getData/setData), not the namespace
+// wildcard — same-realm JS can no longer reach any other `storage.*`
+// primitive. This module does NOT constrain which *key* same-realm JS may
+// read/write (Neutralino.storage keys are process-wide, not scoped to a
+// fs-guard-style root) — that key/content confinement is a separate,
+// independently tracked fix (F-3) and is intentionally out of scope here.
 
 (() => {
   const ready = new Promise((resolve) => {
@@ -40,7 +48,15 @@
       try {
         await ready;
         await Neutralino.storage.setData(key, str);
-      } catch { /* localStorage already captured it */ }
+      } catch (e) {
+        // localStorage already captured it, so this is non-fatal — but do not
+        // stay fully silent: surface it so a persistent Neutralino.storage
+        // outage is observable rather than an invisible divergence.
+        // Log the message only — an error object can drag along the failed call's
+        // arguments (i.e. the value we just tried to persist) into the console.
+        try { console.warn("[storage-shim] Neutralino.storage.setData failed:", key, e && e.message); } catch {}
+        try { if (typeof window.__velaOnStorageError === "function") window.__velaOnStorageError(key, e); } catch {}
+      }
     },
     async delete(key) {
       try { localStorage.removeItem(key); } catch {}

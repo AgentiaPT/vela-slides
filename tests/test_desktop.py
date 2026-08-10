@@ -12,6 +12,7 @@ hardening cannot silently regress in CI:
 Run:  python tests/test_vela.py  (suite)  or  python tests/test_desktop.py
 """
 
+import glob
 import json
 import os
 import re
@@ -24,6 +25,37 @@ NEU = os.path.join(ROOT, "vela-neutralino")
 def read(*parts):
     with open(os.path.join(ROOT, *parts), encoding="utf-8") as f:
         return f.read()
+
+
+# Entries the runtime (or its bundled client library, which is fetched by
+# `neu update` and is not checked into this repo — see checksums/) needs at
+# boot time but that never appear as a `Neutralino.<ns>.<method>(` call site
+# in our own source: the official client library calls these internally as
+# part of its init/extension-readiness handshake. Documented in SECURITY.md
+# layer 2. Keep this list minimal and named — it is the ONLY escape hatch
+# from the "allowlist must be a subset of methods we can see called" check
+# below, so anything added here must be justified in SECURITY.md too.
+# extensions.getStats: client init / extension-readiness handshake.
+# debug.log: the client library's internal error handler writes to the fixed
+#   runtime log file (logging.writeToLogFile is enabled). It takes a message,
+#   not a path — no arbitrary-path capability — so admitting it does not
+#   re-open the file-write class this allowlist confines.
+BOOT_HANDSHAKE_EXCEPTIONS = {"extensions.getStats", "debug.log"}
+
+
+def find_called_native_methods():
+    """Return the set of "<namespace>.<method>" pairs actually invoked as
+    `Neutralino.<namespace>.<method>(` across the webview's own JS source
+    (resources/js/*.js). Deliberately source-level (no Node/Neutralino
+    runtime needed) so this runs in plain CI."""
+    calls = set()
+    pattern = re.compile(r"Neutralino\.([a-zA-Z]+)\.([a-zA-Z]+)\(")
+    for path in sorted(glob.glob(os.path.join(NEU, "resources", "js", "*.js"))):
+        with open(path, encoding="utf-8") as f:
+            src = f.read()
+        for ns, method in pattern.findall(src):
+            calls.add(f"{ns}.{method}")
+    return calls
 
 
 class NeutralinoConfigInvariants(unittest.TestCase):
@@ -57,6 +89,67 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         for c in cmds:
             self.assertIn("extensions/agent/vela-agent", c)
             self.assertNotIn("node", c, "gatekeeper must be a compiled binary, not node")
+
+    # ── F-2: no FS/OS-capable namespace wildcard may ever re-enter the list ──
+    def test_no_namespace_wildcard_for_fs_or_os_capable_namespaces(self):
+        # A wildcard admits every current AND future method in a namespace —
+        # including path-writing primitives (window.snapshot, window.setIcon,
+        # os.spawnProcess, filesystem writers, storage bulk ops) that have
+        # nothing to do with why the namespace was granted. Every entry must
+        # be a single enumerated "<namespace>.<method>", never a wildcard.
+        allow = self.cfg["nativeAllowList"]
+        forbidden_wildcards = (
+            "window.*", "storage.*", "filesystem.*", "os.*", "app.*",
+            "events.*", "extensions.*", "*",
+        )
+        for forbidden in forbidden_wildcards:
+            self.assertNotIn(
+                forbidden, allow,
+                f"{forbidden} must never be in nativeAllowList — it re-admits "
+                "every method in the namespace, including path-writing ones "
+                "fs-guard never wraps (F-2)",
+            )
+
+    def test_window_snapshot_and_seticon_not_admitted(self):
+        # F-2 (confirmed, High): Neutralino.window.snapshot(path) writes a PNG
+        # to ANY caller-supplied absolute path — a native primitive that
+        # bypasses the fs-guard's filesystem-only confinement entirely, since
+        # fs-guard only wraps Neutralino.filesystem.*. window.setIcon is the
+        # sibling path-READ primitive. Neither is ever called by the shell
+        # (see WindowNamespaceMatchesActualUsage below) — they must never be
+        # admitted to the native bridge.
+        allow = self.cfg["nativeAllowList"]
+        self.assertNotIn("window.snapshot", allow)
+        self.assertNotIn("window.setIcon", allow)
+
+    def test_allowlist_is_subset_of_actually_called_methods(self):
+        # Deny-by-default: every allowlisted "<ns>.<method>" must correspond
+        # to a real `Neutralino.<ns>.<method>(` call site in our own JS, or be
+        # one of the small, named, documented boot-handshake exceptions the
+        # client library makes internally (see BOOT_HANDSHAKE_EXCEPTIONS).
+        # This is what stops an unused FS/OS-capable method from ever being
+        # silently re-admitted: add it to the allowlist without a real call
+        # site, and this test fails.
+        allow = set(self.cfg["nativeAllowList"])
+        called = find_called_native_methods()
+        unused = allow - called - BOOT_HANDSHAKE_EXCEPTIONS
+        self.assertEqual(
+            unused, set(),
+            f"nativeAllowList admits methods with no call site and no "
+            f"documented boot-handshake exception: {sorted(unused)}",
+        )
+
+    def test_window_namespace_matches_actual_usage(self):
+        # Narrower companion to the subset check above, pinned to the exact
+        # set F-2 was opened against — fails loudly (not just "a diff") if
+        # window.* usage drifts without the allowlist being updated to match.
+        allow = self.cfg["nativeAllowList"]
+        window_entries = {e for e in allow if e.startswith("window.")}
+        expected = {
+            "window.setFullScreen", "window.exitFullScreen", "window.maximize",
+            "window.unmaximize", "window.isMaximized", "window.focus",
+        }
+        self.assertEqual(window_entries, expected)
 
 
 class WebviewNeverSpawns(unittest.TestCase):

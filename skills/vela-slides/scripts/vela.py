@@ -898,12 +898,19 @@ def turbo_deck(deck):
             s.get("duration", 0),
             [_turbo_encode_block(b, palette) for b in s.get("blocks", [])]
         ]
-        # Optional position 10: studyNotes (offline student content).
+        # Optional trailing positions, appended only when present:
+        #   10 = studyNotes (offline student content)
+        #   11 = imageCols  (pinned column count for a run of adjacent images)
         # Backward compatible — old decoders reading new decks ignore extras;
-        # new decoders reading old decks handle missing position via len() guard.
+        # new decoders reading old decks handle missing positions via len() guards.
+        # Position 11 requires 10 to exist, so emit a null placeholder when a
+        # slide has imageCols but no studyNotes.
         sn = s.get("studyNotes")
-        if sn:
-            arr.append(sn)
+        ic = s.get("imageCols")
+        if sn or ic:
+            arr.append(sn if sn else None)
+        if ic:
+            arr.append(ic)
         return arr
 
     def encode_item(item):
@@ -953,9 +960,12 @@ def unturbo_deck(data):
         if s[7]: result["padding"] = s[7]
         if s[8]: result["duration"] = s[8]
         result["blocks"] = [_turbo_decode_block(b, palette) for b in s[9]]
-        # Optional position 10: studyNotes (backward compatible with length-10 turbo)
+        # Optional trailing positions (backward compatible with length-10 turbo):
+        #   10 = studyNotes, 11 = imageCols
         if len(s) > 10 and s[10]:
             result["studyNotes"] = s[10]
+        if len(s) > 11 and s[11]:
+            result["imageCols"] = s[11]
         return result
 
     def decode_item(item):

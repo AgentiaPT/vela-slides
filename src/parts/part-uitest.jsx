@@ -4,6 +4,18 @@
 // Triggered via Ctrl+Alt+T or the "🧪 UI" button in the battery toast.
 // Tests run against whatever deck is loaded — demo deck recommended.
 
+// ── Test-hook bridge ─────────────────────────────────────────────────
+// A few suites need states with no offline UI path (study notes, block
+// injection, the AI-working flag). The app installs its test-hook object only
+// in dev/local builds that opt in (see part-app.jsx), and concat.py --release
+// strips BOTH that block and the binding below — so a release bundle carries no
+// test-hook reference at all. In a stripped build _hooks() stays the empty stub
+// and the hook-dependent tests fail loudly rather than silently passing.
+let _hooks = () => ({});
+// VELA:DEV-ONLY:BEGIN
+_hooks = () => (typeof window !== "undefined" && window.__velaTestHooks) || {};
+// VELA:DEV-ONLY:END
+
 // ── Test Primitives ──────────────────────────────────────────────────
 const _$ = (sel, root = document) => root.querySelector(sel);
 const _$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -114,6 +126,21 @@ async function runUITests(onProgress) {
       // Tests flagged requiresAI degrade to a visible skip (not a failure) when
       // Vera AI is unavailable (offline/keyless) — see CR-02.
       if (test.requiresAI && typeof velaAIAvailable === "function" && !velaAIAvailable()) {
+        // Security regression tests (SVG sanitizer / redress / clickjack) must NEVER
+        // skip. CI treats a skip as non-failing, so allowing requiresAI on them would
+        // let a re-admitted <style> — or any sanitizer regression — reach green CI by
+        // skipping the real-runtime test that catches it. requiresAI on such a test is
+        // itself the tampering signal, so FAIL instead of skip. This is RUNTIME
+        // enforcement on the actual test object, immune to the source-parse dodges
+        // (comment padding, property order) that a static lint check can be fooled by.
+        const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
+        if (_secPat.test(suite.name) || _secPat.test(test.name)) {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "security test must not be requiresAI-skippable (would let a sanitizer regression pass CI by skipping)", ms: Math.round(performance.now() - t0) });
+          if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
+          await _wait(20);
+          continue;
+        }
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
@@ -121,9 +148,21 @@ async function runUITests(onProgress) {
         continue;
       }
       try {
-        await test.fn();
-        passed++;
-        allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        // A test passes by returning a truthy value OR by assertion-style running
+        // to completion with no explicit return (undefined). A DEFINED-FALSY return
+        // (false/null/0/"") is a real assertion failure. Historically the return
+        // value was discarded — only a throw failed a test — so every `return
+        // boolExpr` test (~a third of the battery, incl. the SVG-<style> redress
+        // regression test) could never fail. Check the result so those assertions
+        // are actually load-bearing.
+        const r = await test.fn();
+        if (r === undefined || !!r) {
+          passed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        } else {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "assertion returned " + JSON.stringify(r), ms: Math.round(performance.now() - t0) });
+        }
       } catch (e) {
         failed++;
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
@@ -135,16 +174,27 @@ async function runUITests(onProgress) {
   return allResults;
 }
 
+// VELA:DEV-ONLY:BEGIN
 // Headless entry point for automated browser drivers (see the vela-live-render
 // skill / vela-drive.js). Runs every suite and resolves to the results array,
 // also stashing it on window.__velaUITestResults for pollers.
-if (typeof window !== "undefined") {
+//
+// Kept off the production surface by the SAME two layers as the __velaTestHooks
+// object in part-app.jsx (ASVS V14.1.3 / V14.2.2), which this previously lacked:
+//   1. runtime gate — installed only in local/desktop mode, or when a harness
+//      opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js does
+//      this via addInitScript, so the headless battery is unaffected);
+//   2. build-time strip — concat.py --release drops this fenced block.
+// The committed vela.jsx is a DEV build, so the gate is what keeps the battery
+// off a hosted artifact; the fence is what keeps it out of the desktop bundle.
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
   window.__velaRunUITests = async () => {
     const results = await runUITests();
     window.__velaUITestResults = results;
     return results;
   };
 }
+// VELA:DEV-ONLY:END
 
 // ━━━ TEST SUITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -250,6 +300,19 @@ uiSuite("Presenter", [
     if (ghostPlus.length > 0) throw new Error(`found ${ghostPlus.length} ghost "+" affordance(s) while presenting`);
     const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
     if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
+  }},
+  { name: "Present Edit toggle flips inline editing (Shift+E)", fn: async () => {
+    // The ✎ toggle restores click-to-edit while presenting. It must start OFF
+    // (audience-clean, per CR-03) and flip deterministically via Shift+E. The
+    // title reflects presentEdit regardless of deck content, so it's a stable
+    // signal. Reset to OFF afterwards so the audience-clean invariant holds.
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
+    if (!btn) throw new Error("present-edit-toggle not found in Present view");
+    if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
   }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
@@ -652,6 +715,136 @@ uiSuite("Slide Ops", [
   }},
 ]);
 
+// ── TOC Collapse / Keyboard-Tree Suite (CR2) ─────────────────────────
+// Verifies the roving ARIA tree, the disclosure keys (Right=expand /
+// Left=collapse on a focused section header), and the CORE fix: a collapsed
+// section that holds the active slide keeps a live k/N marker + accent border
+// so the user never loses "you are here" — WITHOUT auto-expanding.
+const _tocHeaders = () => _$$('[data-testid="toc-section-header"]');
+// NOTE: _tocRows() is defined once later in this file (shared helper) — reuse it.
+const _tocToggle = (header) => Array.from(header.querySelectorAll("span")).find((s) => (s.textContent || "").trim() === "▼");
+const _tocCollapsed = (header) => header.getAttribute("aria-expanded") === "false";
+// D3: deterministic act-and-settle for the disclosure toggle. The on-load auto-run
+// can start a beat before the roving-tree state is fully wired, so a single toggle
+// click may be dropped. Re-issue the click ONLY after giving the previous one time
+// to land (spaced re-clicks never oscillate — once the aria state matches we stop),
+// and CONFIRM the settled aria-expanded state before returning (no swallowed wait).
+const _tocDriveState = async (header, wantCollapsed) => {
+  let lastClick = 0;
+  await _waitFor(() => {
+    if (_tocCollapsed(header) === wantCollapsed) return true;
+    if (Date.now() - lastClick > 400) { const t = _tocToggle(header); if (t) { _click(t); lastClick = Date.now(); } }
+    return false;
+  }, 3000);
+};
+const _tocEnsureExpanded = (header) => _tocDriveState(header, false);
+const _tocEnsureCollapsed = (header) => _tocDriveState(header, true);
+// D3: focus a treeitem and RETRY until focus actually sticks — a collapse/expand
+// re-render (which flips the roving tabindex from -1 to 0) can drop a focus set a
+// beat too early, which is what made the key-nav tests race in the auto-run.
+const _focusTocHeader = (header) => _waitFor(() => { header.focus(); return document.activeElement === header; }, 1500);
+// Select a section header and wait for the selection (and thus its active-slide
+// marker eligibility) to actually settle before driving collapse state.
+const _selectTocHeader = async (header) => { _click(header); await _waitFor(() => header.getAttribute("aria-selected") === "true", 1500); };
+
+uiSuite("TOC Collapse Nav", [
+  { name: "Collapse hides slide rows + shows k/N marker with accent border", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header); // select this section (active slide = its slide 0)
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500); // rows mounted before we measure
+    const before = _tocRows().length;
+    _click(_tocToggle(header));
+    await _waitFor(() => _tocCollapsed(header) && _tocRows().length < before, 2000);
+    const marker = await _waitFor(() => header.querySelector('[data-testid="toc-collapsed-marker"]'), 1500);
+    if (!/^\d+ \/ \d+$/.test((marker.textContent || "").trim())) throw new Error("marker not k/N: " + marker.textContent);
+    if (!/2px solid/.test(header.style.borderLeft) || /transparent/.test(header.style.borderLeft)) throw new Error("no accent left-border on collapsed active header");
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "Marker updates live as the active slide advances (stays folded)", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    // need a section with >= 2 slides for a live delta
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500);
+    const n = _tocRows().length;
+    await _tocEnsureCollapsed(header);
+    const readK = () => { const m = header.querySelector('[data-testid="toc-collapsed-marker"]'); return m ? parseInt((m.textContent || "").trim(), 10) : null; };
+    await _waitFor(() => readK() != null, 1500); // collapsed active marker present before we read it
+    const k0 = readK();
+    if (k0 == null) throw new Error("no marker while collapsed");
+    if (n >= 2) {
+      document.activeElement?.blur(); await _wait(60);
+      _key("ArrowRight"); // global slide-advance (focus off the rail)
+      await _waitFor(() => readK() === k0 + 1, 1500);
+      if (_tocCollapsed(header) !== true) throw new Error("section auto-expanded — must stay folded");
+    }
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ArrowRight on a focused collapsed header expands it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureCollapsed(header);
+    await _focusTocHeader(header); // retries until focus sticks (post-collapse re-render)
+    _key("ArrowRight");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "true", 1500);
+    if (_tocRows().length === 0) throw new Error("rows did not reappear after expand");
+  }},
+  { name: "ArrowLeft on a focused expanded header collapses it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureExpanded(header);
+    await _focusTocHeader(header);
+    _key("ArrowLeft");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "false", 1500);
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ARIA tree roles + roving tabindex present", fn: async () => {
+    if (!_$('[role="tree"]')) throw new Error("no role=tree container");
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    if (header.getAttribute("role") !== "treeitem") throw new Error("header not role=treeitem");
+    if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
+    await _focusTocHeader(header);
+    await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
+  }},
+  { name: "Arrow on a focused slide row moves the shown slide (single cursor)", fn: async () => {
+    // Regression: the outline "focus ring" used to roam independently of the shown
+    // slide, so arrows on a focused TOC row moved only the ring, not state.slideIndex.
+    // Now the tree cursor IS the selection — focus and the active slide stay together.
+    const rows = await _waitFor(() => (_tocRows().length >= 2 ? _tocRows() : null), 2000);
+    if (!rows) return; // soft pass: needs >= 2 slides in the first module
+    _click(rows[0]); // select + focus the first slide row
+    await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
+    await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
+    _key("ArrowDown");
+    // The REAL selection must advance (this is exactly what the bug broke).
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    // Exactly one row is active AND it holds focus → a single, unified cursor.
+    await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
+  }},
+  { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
+    // Only sections WITH slides expose aria-expanded and can be folded (empty
+    // sections have nothing to collapse), so pick the first two of those.
+    const headers = await _waitFor(() => { const h = _tocHeaders().filter((x) => x.hasAttribute("aria-expanded")); return h.length >= 2 ? h : null; }, 2000);
+    if (!headers) return; // soft pass: needs >= 2 non-empty sections
+    await _selectTocHeader(headers[0]);
+    await _tocEnsureCollapsed(headers[0]);
+    await _tocEnsureCollapsed(headers[1]);
+    await _focusTocHeader(headers[0]);
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
+    _key("ArrowDown");
+    // Down over a folded section jumps to the NEXT section and shows its first slide,
+    // instead of stepping through the current section's hidden slides.
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    // Neither section auto-expands during section-level nav.
+    if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
+    await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
+  }},
+], { setup: _selectFirstModule });
+
 // ── Slide Content Suite ──────────────────────────────────────────────
 uiSuite("Content", [
   { name: "Slide has visible headings", fn: async () => {
@@ -845,8 +1038,21 @@ uiSuite("Student Mode", [
     if (!btn) throw new Error("student-toggle not found");
     _click(btn);
     await _waitFor(() => _$("[data-teacher-panel]"), 5000);
+    // The demo deck has slides with pre-authored studyNotes; on those the student
+    // panel renders the static StaticStudyPanel (data-study-panel), NOT the live
+    // TeacherPanel. The next tests assert TeacherPanel's shell (which renders
+    // unconditionally, no AI needed), so navigate to a notes-free slide —
+    // TeacherPanel is [data-teacher-panel] WITHOUT data-study-panel. (These 4 tests
+    // were previously mislabeled requiresAI, hiding this suite-ordering dependency.)
+    for (let i = 0; i < 40 && _$("[data-teacher-panel][data-study-panel]"); i++) {
+      _key("ArrowRight"); await _wait(90);
+    }
+    await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 2000).catch(() => {});
   }},
   { name: "Teacher panel renders VERA header", fn: async () => {
+    // TeacherPanel renders its VERA header / disclaimer / Ask UI unconditionally
+    // (no AI backend needed). The suite setup navigates to a notes-free slide so
+    // this is TeacherPanel, not StaticStudyPanel — see "Activate student mode".
     const panel = _$("[data-teacher-panel]");
     return !!panel && (panel.textContent || "").includes("VERA");
   }},
@@ -932,13 +1138,13 @@ uiSuite("Student Mode", [
 ]);
 
 // ── v12.32: Offline Study Notes Suite ───────────────────────────────
-// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// Uses the test-only affordance _hooks().injectStudyNotes (test-hook bridge) to
 // patch the current slide with a pre-authored studyNotes object, then
 // exercises the offline StaticStudyPanel rendering (text + glossary
 // X-Ray links + questions + diagram). Does not depend on a live API.
 uiSuite("Study Notes", [
-  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
-    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  { name: "Test hook injectStudyNotes available", fn: async () => {
+    if (typeof _hooks().injectStudyNotes !== "function") throw new Error("_hooks().injectStudyNotes not exposed");
   }},
   { name: "Inject studyNotes into current slide", fn: async () => {
     const sn = {
@@ -947,7 +1153,7 @@ uiSuite("Study Notes", [
       questions: ["Why does this matter?", "When does it fail?"],
       glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
     };
-    const ok = window.__velaTestInjectStudyNotes(sn);
+    const ok = _hooks().injectStudyNotes(sn);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(150);
   }},
@@ -1016,7 +1222,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
     // Undo the UPDATE_SLIDE so we don't leak state into later tests
-    window.__velaTestInjectStudyNotes(undefined);
+    _hooks().injectStudyNotes(undefined);
     await _wait(100);
   }},
 ]);
@@ -1041,16 +1247,16 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
   }},
   { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
     // Light slide, no notes.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
     await _wait(180);
     const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
     const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
     // Heavy slide with lots of content AND speaker notes — the pre-fix notes
     // auto-expand + elastic viewport would shove the toolbar upward here.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY CONTENT SLIDE" },
       { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
       { type: "text", text: "A long paragraph ".repeat(20) },
@@ -1061,14 +1267,14 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
     if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
     // Restore a benign single heading.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "" }], { notes: "" });
     await _wait(80);
   }},
   { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Inject a centered heading (NO icon → the editor still forces its icon-slot
     // flex row, which is exactly the path that used to drop centering).
-    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    const okc = _hooks().injectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
     if (!okc) throw new Error("inject returned false — no current slide");
     await _wait(200);
     // Leaf element that actually holds the text node.
@@ -1094,11 +1300,125 @@ uiSuite("Editor UX (CR1–CR3)", [
       if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
     }
   }},
+  { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
+    // A TALL/portrait image is the exact case that used to balloon a grid row
+    // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
+    const land = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E";
+    const tall = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='100'%20height='400'%3E%3Crect%20width='100'%20height='400'%20fill='%23ef4444'/%3E%3C/svg%3E";
+    const gridBottomOverflow = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const vp = _$("[data-testid='slide-viewport']");
+      const gb = grid.getBoundingClientRect();
+      const vb = vp.getBoundingClientRect();
+      return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
+    };
+    // CR4/D2b: every grid-cell <img> must be VISIBLE (rendered height > 0). The
+    // absolute-fill img resolves height:100% through the nested ZoomWrap wrapper;
+    // if that intermediate div carries no height the img collapses to 0 (invisible).
+    const zeroHeightImgs = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const imgs = Array.from(grid.querySelectorAll("img"));
+      if (!imgs.length) return -1; // no imgs found at all
+      return imgs.filter((im) => im.getBoundingClientRect().height <= 0).length;
+    };
+    const assertVisibleAndUniform = (label) => {
+      const z = zeroHeightImgs();
+      if (z == null) throw new Error(`${label}: image grid not rendered`);
+      if (z === -1) throw new Error(`${label}: no <img> found in grid`);
+      if (z > 0) throw new Error(`${label}: ${z} grid-cell <img> rendered at height 0 (invisible)`);
+      const cells = _$$("[data-testid='image-grid-cell']");
+      if (cells.length >= 2) {
+        const hs = cells.map((c) => c.getBoundingClientRect().height);
+        const maxH = Math.max(...hs), minH = Math.min(...hs);
+        if (maxH - minH > 2) throw new Error(`${label}: grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)}`);
+      }
+    };
+    // Cases: N=2..5 landscape runs — each must be contained AND visible.
+    for (const N of [2, 3, 4, 5]) {
+      const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
+      _hooks().injectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+      await _wait(160);
+      const o = gridBottomOverflow();
+      if (o == null) throw new Error(`image grid not rendered for N=${N}`);
+      if (o > 2) throw new Error(`N=${N} grid overflows canvas bottom by ${o.toFixed(1)}px`);
+      assertVisibleAndUniform(`N=${N}`);
+    }
+    // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
+    _hooks().injectBlocks([
+      { type: "heading", text: "HEAVY + FOUR IMAGES" },
+      { type: "text", text: "A long paragraph ".repeat(16) },
+      { type: "image", src: land }, { type: "image", src: land },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    let o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for heavy-text+4");
+    if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("heavy-text+4");
+    // Case C: a portrait image among the run must not balloon its row off-canvas —
+    // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
+    _hooks().injectBlocks([
+      { type: "heading", text: "PORTRAIT MIX" },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for portrait mix");
+    if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("portrait-mix");
+  }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Block-item reorder (▲▼ arrows) — v13.19 ──────────────────────────
+// Hovering an item of a multi-item block in edit mode reveals a stacked
+// ▲▼ control (next to the ✕ delete) that swaps the item with its neighbour.
+// Asserts the swap moves the item and that the arrow is disabled at a boundary.
+uiSuite("Block item reorder (▲▼) — v13.19", [
+  { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const ok = _hooks().injectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    const order = () => _$$("[data-testid='slide-viewport'] *")
+      .filter((d) => d.children.length === 0 && /^(ALPHAUT|BRAVOUT|CHARLIEUT)$/.test((d.textContent || "").trim()))
+      .map((d) => d.textContent.trim());
+    await _waitFor(() => order().length === 3, 2000);
+    if (JSON.stringify(order()) !== JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"])) throw new Error("initial order wrong: " + order());
+    // Walk up from the item's text leaf to the ItemChrome wrapper (position:relative).
+    const leafOf = (t) => _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === t);
+    const wrapperOf = (t) => { let el = leafOf(t); while (el && el !== document.body) { if (getComputedStyle(el).position === "relative") return el; el = el.parentElement; } return null; };
+    const hover = (el) => el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    // Move BRAVOUT up → [BRAVOUT, ALPHAUT, CHARLIEUT].
+    const w = wrapperOf("BRAVOUT");
+    if (!w) throw new Error("no wrapper for BRAVOUT");
+    hover(w);
+    const up = await _waitFor(() => _$$("button", w).find((b) => b.title === "Move up" && !b.disabled), 1500);
+    _click(up);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["BRAVOUT", "ALPHAUT", "CHARLIEUT"]), 2000);
+    // BRAVOUT is now first → its Move up must be disabled.
+    const w2 = wrapperOf("BRAVOUT");
+    hover(w2);
+    const up2 = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move up"), 1500);
+    if (!up2.disabled) throw new Error("first item Move up not disabled");
+    // Move it back down to restore original order.
+    const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
+    _click(down);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -1182,13 +1502,16 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
     return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+  { name: "SVG <style> element stripped (document-global CSS disallowed; shapes still render)", fn: async () => {
+    // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
+    // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
   }},
-  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
-    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
+    // Paint-server refs belong on presentation attributes, which remain allowed+validated.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad1)" marker-end="url(#mark)" clip-path="url(#c)"/>');
+    return /fill="url\(#grad1\)"/.test(out) && /marker-end="url\(#mark\)"/.test(out) && /clip-path="url\(#c\)"/.test(out);
   }},
   // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
   // render. image-set/image/cross-fade/src were the residual bypass of the
@@ -1228,9 +1551,50 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
     return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
-    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
+  { name: "SVG url(#fragment) whitespace on presentation attr preserved (no false reject)", fn: async () => {
+    // isSvgStyleSafe still guards url-ref presentation attrs; url( #frag ) must not false-reject.
+    const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
+    return /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
+  { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
+    // The load-bearing regression test for the UI-integrity family: render a
+    // hostile deck SVG the SAME way the app does (sanitize -> innerHTML) and prove
+    // deck CSS cannot reach a real app control (no restyle, no reposition, no hide).
+    const victim = document.createElement("button");
+    victim.setAttribute("title", "Delete slide (Del)");
+    victim.style.background = "rgb(1, 2, 3)";
+    document.body.appendChild(victim);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<style>button[title^="Delete slide"]{position:fixed !important;background:rgb(34,197,94) !important;opacity:0 !important}*{color:red !important}</style><rect width="10" height="10"/>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const noStyle = !host.querySelector("style") && !/<style[\s>]/i.test(host.innerHTML);
+      const cs = getComputedStyle(victim);
+      const bg = (cs.backgroundColor || "").replace(/\s/g, "");
+      const unaffected = bg === "rgb(1,2,3)" && cs.position !== "fixed" && cs.opacity === "1";
+      return noStyle && unaffected;
+    } finally { host.remove(); victim.remove(); }
+  }},
+  { name: "SECURITY: deck SVG inline style cannot overlay app chrome (fixed-position clickjack)", fn: async () => {
+    // R4A vector: the <style> ELEMENT was removed, but an inline style="" on an SVG
+    // element carrying position:fixed/inset/z-index/viewport-sizing escapes the
+    // non-clipped study-notes/teacher diagram sinks and overlays whole-app chrome.
+    // Prove the real sanitizer output produces no viewport-covering fixed/absolute element.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<rect fill="red" style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:auto"/><g style="position:fixed;inset:0;z-index:99999"><rect width="50" height="50"/></g>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const overlay = Array.from(host.querySelectorAll("*")).some((el) => {
+        const p = getComputedStyle(el).position;
+        return p === "fixed" || p === "absolute";
+      });
+      const mid = document.elementFromPoint(Math.floor(innerWidth / 2), Math.floor(innerHeight / 2));
+      const covered = !!(mid && host.contains(mid));
+      const clean = !/position\s*:/i.test(host.innerHTML) && !/z-index/i.test(host.innerHTML) && /fill="red"/.test(host.innerHTML);
+      return !overlay && !covered && clean;
+    } finally { host.remove(); }
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
@@ -1429,13 +1793,14 @@ uiSuite("Gallery View", [
     await _waitFor(() => _$text("G or ESC to close"), 1000);
   }},
   { name: "Click card navigates", fn: async () => {
-    const nums = _$$("span").filter(s => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
-    const card2 = nums.find(n => n.textContent?.trim() === "2");
-    if (card2) {
-      const cardEl = card2.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
-      if (cardEl) _click(cardEl);
-    }
-    await _wait(400);
+    // Click a real gallery card by its stable data-testid (the clickable card div,
+    // part-slides.jsx). Clicking it runs jump() -> SELECT + SET_SLIDE_INDEX + onClose,
+    // so the gallery closes. (Previously this hunted a mono "2" span + a cursor-style
+    // substring, which could match a non-card span and silently no-op.)
+    const cards = _$$("[data-testid='gallery-slide']");
+    if (!cards.length) throw new Error("no gallery-slide cards rendered");
+    _click(cards[0]);
+    await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {});
     return !_$text("GALLERY");
   }},
   { name: "G key toggles gallery off", fn: async () => {
@@ -1497,6 +1862,36 @@ uiSuite("Gallery From Editor", [
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+  { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
+    document.activeElement?.blur();
+    for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
+    const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
+    if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
+    const wasOn = /ON/i.test(tc.title || "");
+    if (!wasOn) { _click(tc); await _waitFor(() => _$$("span").some((s) => /Title card ON/i.test(s.title || "")), 1500); }
+    // Open the gallery from the editor.
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    await _wait(150);
+    // The virtual title card must actually be present (else the total can't be inflated).
+    if (_$$("[data-testid='gallery-title-card']", root).length === 0) throw new Error("no virtual title card rendered — cannot exercise the badge total");
+    const realCards = _$$("[data-testid='gallery-slide']", root);
+    const realCount = realCards.length;
+    // A real thumbnail's page-number badge (NN / NN): its denominator must be the
+    // REAL slide count, NOT inflated by the virtual title card(s) → matches presentation.
+    const badgeTotalOf = (card) => { const el = _$$("*", card).find((e) => e.children.length === 0 && /^\d+\s*\/\s*\d+$/.test((e.textContent || "").trim())); return el ? parseInt((el.textContent || "").trim().split("/")[1], 10) : null; };
+    let total = null;
+    for (const c of realCards) { total = badgeTotalOf(c); if (total != null) break; }
+    if (total == null) throw new Error("no page-number badge found on gallery thumbnails");
+    if (total !== realCount) throw new Error(`gallery badge total ${total} != real slide count ${realCount} (virtual title cards leaked into the total)`);
+    // Cleanup: close gallery + restore the title-card toggle to its prior state.
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+    if (!wasOn) { const t2 = _$$("span").find((s) => /Title card ON/i.test(s.title || "")); if (t2) { _click(t2); await _wait(120); } }
   }},
 ]);
 
@@ -1908,6 +2303,277 @@ uiSuite("Move Picker Search (F6)", [
     if (bd) _click(bd); await _wait(150);
   }},
 ], { setup: _editorSetup });
+
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "D6: dismissed toast does NOT re-arm on reconnecting→failed (only a real save re-arms)", fn: async () => {
+    const toast = () => _$('[data-testid="save-failed-toast"]');
+    const dismiss = () => { const x = _$('[data-testid="save-failed-toast"] [title="Dismiss"]'); if (x) _click(x); };
+    // Start armed from a clean saved state.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    // 1) First failure raises the one-shot toast → dismiss it.
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock" });
+    await _waitFor(() => toast(), 2000);
+    dismiss();
+    await _waitFor(() => !toast(), 1500);
+    // 2) reconnecting → failed AGAIN with NO successful save in between: must stay dismissed.
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock2" });
+    await _wait(300);
+    if (toast()) throw new Error("dismissed toast wrongly re-armed on reconnecting→failed (no save between)");
+    // 3) A genuine successful save re-arms; a subsequent failure MAY show again.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock3" });
+    await _waitFor(() => toast(), 2000);
+    // Cleanup.
+    dismiss();
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(40);
+    window.__velaOnSaveStatus(null);
+    await _wait(40);
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
+
+// ── CR5: Consistent AI-working animation ─────────────────────────────
+// Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
+// magic-reveal contract. No live AI backend needed: we drive the reducer flag
+// directly via the app's test hook (_hooks().setAIWork) and assert the
+// on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
+// isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
+const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Canonicalize a CSS color so an authored hex and a browser rgb() serialization
+// compare equal. --vera-accent is a registered custom property
+// (@property { syntax: "<color>" }) — once registered, getComputedStyle returns
+// the COMPUTED "rgb(r, g, b)" form, not the "#rrggbb" the deck authored. Round
+// tripping both sides through an element's computed `color` normalizes either
+// serialization; if the UA can't parse the value we fall back to a whitespace-
+// stripped lowercase compare (the pre-registration behaviour).
+const _normColor = (v) => {
+  const raw = String(v == null ? "" : v).trim();
+  const flat = raw.toLowerCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  try {
+    const el = document.createElement("span");
+    el.style.color = raw;
+    if (!el.style.color) return flat;      // UA rejected it — nothing to normalize
+    el.style.position = "absolute";
+    el.style.visibility = "hidden";
+    document.body.appendChild(el);
+    const out = getComputedStyle(el).color;
+    el.remove();
+    return out ? out.toLowerCase().replace(/\s+/g, "") : flat;
+  } catch { return flat; }
+};
+// Return the fx-wrapper to a static state (clear the flag, wait out any settle).
+const _settleFx = async () => {
+  if (typeof _hooks().setAIWork === "function") _hooks().setAIWork(null);
+  await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
+};
+// Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
+// a prior suite may leave it in fullscreen / gallery / a modal / a collapsed rail.
+const _cr5Setup = async () => {
+  await _exitFullscreen();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 3; i++) { _key("Escape"); await _wait(90); }
+  // Prefer a TOC slide row — clicking it selects a module that actually HAS a
+  // slide (the first .concept-row can be an empty section → "No slides yet",
+  // which renders no fx-wrapper). Fall back to scanning module rows for one with
+  // slides on screen.
+  const toc = _tocRows()[0];
+  if (toc) { _click(toc); await _wait(200); }
+  if (!_$("[data-testid='slide-viewport']")) {
+    for (const r of _$$(".concept-row")) { _click(r); await _wait(150); if (_$("[data-testid='slide-viewport']")) break; }
+  }
+  await _waitFor(_fxWrap, 3000).catch(() => {});
+};
+// Collect all readable CSS text (same-origin inline <style>; skip cross-origin).
+const _allCssText = () => {
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules; try { rules = sheet.cssRules; } catch { continue; }
+    if (!rules) continue;
+    for (const r of Array.from(rules)) css += r.cssText + "\n";
+  }
+  return css;
+};
+uiSuite("AI-working animation (CR5)", [
+  { name: "test hooks + fx-wrapper present", fn: async () => {
+    if (typeof _hooks().setAIWork !== "function") throw new Error("setAIWork test hook not exposed");
+    if (typeof _hooks().getSelection !== "function") throw new Error("getSelection test hook not exposed");
+    await _cr5Setup();
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: _hooks().getSelection() }));
+  }},
+  { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
+    if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
+    // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
+    // slide carries an accent it must equal it (the sweep matches the slide).
+    const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
+    if (!acc) throw new Error("--vera-accent empty while working");
+    if (sel.accent) {
+      // Serialization-tolerant: --vera-accent may come back as rgb(...) once the
+      // custom property is registered, while the deck authors a hex.
+      const a = _normColor(acc), b = _normColor(sel.accent);
+      if (a !== b) throw new Error(`--vera-accent=${acc} (${a}) != slide accent ${sel.accent} (${b})`);
+    }
+    await _settleFx();
+  }},
+  { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    _hooks().setAIWork(null);
+    // The completion effect swaps the scan for the one-shot magic-reveal.
+    await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
+    // …and the reveal is one-shot — it settles back to static.
+    await _waitFor(() => !_fxWrap()?.classList.contains("magic-reveal"), 3000).catch(() => {});
+  }},
+  { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    // A target that is not the on-screen slide (bogus itemId) must leave it static.
+    _hooks().setAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    await _wait(250);
+    const w = _fxWrap();
+    if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    // Mark THIS slide as the AI target and confirm the working scan is up.
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Navigate to another slide mid-op (either direction is a slideIndex change).
+    const p0 = _slidePos();
+    document.activeElement?.blur?.();
+    _key("ArrowRight"); await _wait(140);
+    if (_slidePos() === p0) { _key("ArrowLeft"); await _wait(140); }
+    if (_slidePos() === p0) { await _settleFx(); return; } // single-slide deck: nothing to navigate
+    // The destination slide must NOT play the completion settle — the op did not
+    // finish here, the view merely moved. Give the effect ample time to (wrongly) fire.
+    await _wait(400);
+    const w = _fxWrap();
+    if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
+    await _settleFx();
+  }},
+  { name: "D7b: cross-module switch at same index does NOT magic-reveal destination (but genuine same-slide DOES)", fn: async () => {
+    await _settleFx();
+    // Map each TOC slide row to its {itemId, slideIdx} by selecting it.
+    const n = _tocRows().length;
+    if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
+    const meta = [];
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(_hooks().getSelection()); }
+    // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
+    let ai = -1, bi = -1;
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i] && meta[i].slideIdx === 0) {
+        if (ai < 0) ai = i;
+        else if (meta[i].itemId !== meta[ai].itemId) { bi = i; break; }
+      }
+    }
+    if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
+    // Select module A slide 0 and start its working scan.
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Single-step switch to module B slide 0 (same index, different module) while
+    // aiWork is still set on A. The untouched destination must NOT settle.
+    _click(_tocRows()[bi]); await _wait(180);
+    const sB = _hooks().getSelection();
+    if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
+    await _wait(420); // give the completion effect ample time to (wrongly) fire
+    const wB = _fxWrap();
+    if (wB && wB.classList.contains("magic-reveal")) throw new Error("cross-module switch wrongly magic-revealed the untouched destination slide (0===0 index collision)");
+    await _settleFx();
+    // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA2 = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    _hooks().setAIWork(null);
+    await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
+    await _settleFx();
+  }},
+  { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
+    const css = _allCssText();
+    if (!/\.vera-thinking/.test(css)) throw new Error(".vera-thinking rule missing");
+    if (!/\.magic-reveal/.test(css)) throw new Error(".magic-reveal rule missing");
+    if (!/--vera-accent/.test(css)) throw new Error(".vera-thinking sweep not parameterized by --vera-accent");
+  }},
+  { name: "CSS: prefers-reduced-motion zeroes the working scan", fn: async () => {
+    let found = false;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules; try { rules = sheet.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        // CSSMediaRule (type 4) — r.cssText carries the full nested block.
+        const txt = r.cssText || "";
+        if (r.type === 4 && /prefers-reduced-motion/i.test(txt) && /\.vera-thinking/.test(txt) && /animation[^;]*none/i.test(txt)) found = true;
+      }
+    }
+    if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
+  }},
+], { setup: _cr5Setup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -303,7 +303,7 @@ def test_security():
     required_in_allowlist = [
         "svg", "g", "defs", "title", "desc", "marker", "clippath", "mask", "pattern",
         "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
-        "text", "tspan", "lineargradient", "radialgradient", "stop", "style",
+        "text", "tspan", "lineargradient", "radialgradient", "stop",
         "fegaussianblur", "fecolormatrix", "feblend", "feoffset", "femerge",
     ]
     missing_allow = [t for t in required_in_allowlist if f'"{t}"' not in allow_lower]
@@ -312,14 +312,18 @@ def test_security():
     else:
         fail("SVG_ALLOWED_TAGS coverage", f"missing legitimate elements: {missing_allow}")
 
-    # 8b. SVG <style> CSS-text filter (v12.51): preserve Mermaid/Vera class CSS + url(#fragment)
-    #     paint-server refs, but block @import / external url() / CSS \XX escape bypasses that
-    #     would fire a zero-click exfil beacon on render.
-    if 'function isSvgStyleSafe' in all_jsx and 'isSvgStyleSafe(child.textContent' in all_jsx:
-        ok("SVG <style> CSS-text filtered by isSvgStyleSafe (called from walk)")
+    # 8b. SVG <style> ELEMENT is NOT allowed. An inline <style> injected via
+    #     dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (not scoped to the SVG),
+    #     so deck selectors could restyle/hide/relocate/re-label the trusted app UI
+    #     (UI-redress / clickjacking of real controls). The element is dropped outright
+    #     by the allowlist; isSvgStyleSafe is retained ONLY for the element-local
+    #     inline style="" attribute + url-ref presentation attrs (exfil beacon guard).
+    if '"style"' not in allow_lower and 'function isSvgStyleSafe' in all_jsx:
+        ok("SVG <style> element excluded from SVG_ALLOWED_TAGS (no document-global CSS injection)")
     else:
-        fail("SVG <style> CSS-text filter",
-             "isSvgStyleSafe must exist AND be invoked on <style>.textContent during the SVG walk")
+        fail("SVG <style> element must be disallowed",
+             "'style' must NOT be in SVG_ALLOWED_TAGS — a <style> element is document-global CSS "
+             "(UI-redress/clickjack); isSvgStyleSafe must remain for inline style/url-ref attrs")
 
     # 9. sanitizeSvgMarkup strips comment/CDATA/PI nodes — mXSS fix (v12.45)
     if 'child.nodeType !== 1 && child.nodeType !== 3' in all_jsx:
@@ -327,29 +331,18 @@ def test_security():
     else:
         fail("sanitizeSvgMarkup CDATA/comment node strip", "mutation-XSS regression risk")
 
-    # 9a. v12.54: walk MUST descend into <style> so the nodeType filter above
-    # actually runs on CDATA children. The v12.45 fix shipped with a
-    # skip-descend `continue;` after the isSvgStyleSafe check, leaving CDATA
-    # in <style> untouched — that's how the mXSS got through.
-    # Use a brace counter (not a nested-alternation regex) to extract the
-    # branch body — avoids catastrophic backtracking flagged by CodeQL.
-    style_open = re.search(r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{', all_jsx)
-    style_branch_body = ""
-    if style_open:
-        i = style_open.end()
-        depth = 1
-        n = len(all_jsx)
-        while i < n and depth > 0:
-            ch = all_jsx[i]
-            if ch == '{': depth += 1
-            elif ch == '}': depth -= 1
-            i += 1
-        style_branch_body = all_jsx[style_open.end():i - 1]
-    if style_open and 'walk(child)' in style_branch_body:
-        ok("sanitizeSvgMarkup <style> branch descends (v12.54 mXSS fix)")
+    # 9a. SECURITY (UI-integrity): there must be NO code path that re-admits a
+    # <style> element. A <style> injected via dangerouslySetInnerHTML is
+    # document-global CSS — deck selectors could restyle/relocate/re-label the
+    # trusted app UI and clickjack a real destructive control. The element is
+    # dropped by the SVG_ALLOWED_TAGS check; assert no `tag === "style"`
+    # retention branch has crept back in (recurrence guard).
+    if not re.search(r'tag\s*===\s*"style"', all_jsx):
+        ok("sanitizeSvgMarkup has no <style>-retention branch (element dropped by allowlist)")
     else:
-        fail("sanitizeSvgMarkup <style> walk-descent",
-             "CDATA inside <style> escapes rawtext via dangerouslySetInnerHTML — must call walk(child)")
+        fail("SVG <style> retention branch must not exist",
+             'a `tag === "style"` branch re-admits document-global CSS (UI-redress/clickjack); '
+             "<style> must be dropped by the SVG_ALLOWED_TAGS allowlist, not filtered")
 
     # 9b. v12.54: isSvgStyleSafe rejects '<' and ']]>' as defense-in-depth.
     if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("<"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx) and \
@@ -548,11 +541,13 @@ def test_security():
         ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+        ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
         ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
         ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
+        ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
@@ -680,8 +675,10 @@ def test_css_color_exfil():
     else:
         fail("sanitizeSlide color scrub", "slide bg/bgGradient/color must be scrubbed")
     sblock = imports[imports.index("function sanitizeBlock("):imports.index("const VALID_COMMENT_STATUSES")] if "function sanitizeBlock(" in imports else ""
-    if "scrubColorFields(clean)" in sblock and "scrubColorFields(it)" in sblock:
-        ok("sanitizeBlock scrubs block + item/cell color scalars")
+    # Block scalars scrubbed directly; sub-objects (items/cells/quadrants/nested
+    # points) are hardened recursively via scrubSubObject.
+    if "scrubColorFields(clean)" in sblock and "scrubSubObject(clean.items)" in sblock:
+        ok("sanitizeBlock scrubs block + item/cell color scalars (recursive scrubSubObject)")
     else:
         fail("sanitizeBlock color scrub", "block + items (grid cell.bg/dotColor/…) must be scrubbed")
 
@@ -1208,22 +1205,129 @@ def test_slide_editor_ux_features():
         fail("F4/F5: help dialog not updated")
 
 
+# ━━━ CR: TOC keyboard tree + collapsed marker + gallery title cards ━━━
+
+def test_toc_nav_and_gallery_titlecards():
+    print("\n── TOC keyboard tree / collapsed marker / gallery title cards ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+
+    # ── CR2 A: collapse state lifted into the reducer ──
+    if "collapsedSections: []" in reducer:
+        ok("CR2: reducer init has collapsedSections view-state")
+    else:
+        fail("CR2: reducer init missing collapsedSections")
+    if 'case "TOGGLE_SECTION_COLLAPSE"' in reducer and 'case "SET_SECTION_COLLAPSED"' in reducer:
+        ok("CR2: reducer has TOGGLE_SECTION_COLLAPSE + SET_SECTION_COLLAPSED actions")
+    else:
+        fail("CR2: reducer missing collapse actions")
+    no_hist = reducer[reducer.index("NO_HISTORY"):reducer.index("MAX_HISTORY")]
+    if '"TOGGLE_SECTION_COLLAPSE"' in no_hist and '"SET_SECTION_COLLAPSED"' in no_hist:
+        ok("CR2: collapse actions excluded from undo history")
+    else:
+        fail("CR2: collapse actions not in NO_HISTORY")
+    # local useState collapse must be gone from ModuleList (single source of truth)
+    if "useState(() => new Set())" not in lst and "collapsedSections" in lst:
+        ok("CR2: ModuleList reads collapsedSections prop (no local collapse useState)")
+    else:
+        fail("CR2: ModuleList still owns local collapse state")
+    if "collapsedSections={state.collapsedSections}" in appjs:
+        ok("CR2: ModuleList wired to state.collapsedSections in part-app")
+    else:
+        fail("CR2: part-app does not thread collapsedSections")
+
+    # ── CR2 B: roving ARIA tree ──
+    if 'role="tree"' in lst and 'role="group"' in lst and 'role="treeitem"' in lst:
+        ok("CR2: ARIA tree/group/treeitem roles present in TOC")
+    else:
+        fail("CR2: TOC ARIA tree roles missing")
+    if "aria-expanded" in lst and "aria-selected" in lst and "tabIndex={isFocused" in lst:
+        ok("CR2: section header exposes aria-expanded/selected + roving tabIndex")
+    else:
+        fail("CR2: header missing aria-expanded/roving tabIndex")
+    if 'data-testid="toc-section-header"' in lst:
+        ok("CR2: section header has stable toc-section-header test-id")
+    else:
+        fail("CR2: toc-section-header test-id missing")
+
+    # ── CR2 C: disclosure keys ──
+    if "onHeaderKeyDown" in lst and 'k === "ArrowRight"' in lst and 'k === "ArrowLeft"' in lst:
+        ok("CR2: header onKeyDown implements Right/Left disclosure")
+    else:
+        fail("CR2: header disclosure keys missing")
+    # Selection-follows-focus: slide-row arrows now DRIVE the real slide selection
+    # (one cursor), not a separate roaming focus ring.
+    if "onSlideRowKeyDown" in lst and "nav.moveSelection" in lst and "e.stopPropagation()" in lst:
+        ok("CR2: slide-row arrows drive the real selection (selection-follows-focus)")
+    else:
+        fail("CR2: slide-row selection-follows-focus nav missing")
+    # Ctrl/Cmd collapse-all mirror
+    if "all: true" in lst and "ids: nav.allIds" in lst:
+        ok("CR2: Ctrl/Cmd+Left/Right mirror collapse/expand all")
+    else:
+        fail("CR2: Ctrl/Cmd collapse-all keyboard mirror missing")
+    # belt-and-suspenders guard in the global handler
+    if 'closest("[role=tree]")' in slides:
+        ok("CR2: global slide-nav handler bails when a treeitem holds focus")
+    else:
+        fail("CR2: global handler missing tree-focus guard")
+
+    # ── CR2 D: collapsed current-slide marker (the core fix) ──
+    if "showMarker" in lst and 'data-testid="toc-collapsed-marker"' in lst:
+        ok("CR2 core: collapsed header renders k/N current-slide marker (toc-collapsed-marker)")
+    else:
+        fail("CR2 core: collapsed-header marker missing")
+    if "collapsed && selected && hasSlides" in lst:
+        ok("CR2 core: marker only shows on the collapsed section holding the active slide")
+    else:
+        fail("CR2 core: marker gating condition missing")
+    if "borderLeft: `2px solid ${showMarker ? T.accent" in lst:
+        ok("CR2 core: accent left-border marks the collapsed active section")
+    else:
+        fail("CR2 core: accent marker border missing")
+
+    # ── CR1: gallery renders section title cards ──
+    gv = slides[slides.index("function GalleryView("):slides.index("function TeacherMessage(")]
+    if "item.presentCard" in gv and "buildTitleCardSlide(item, lane, branding)" in gv:
+        ok("CR1: gallery allSlides prepends buildTitleCardSlide for presentCard sections")
+    else:
+        fail("CR1: gallery does not include section title cards")
+    if "isTitleCard: true" in gv and 'data-testid={s.isTitleCard ? "gallery-title-card"' in gv:
+        ok("CR1: title-card thumbnails tagged + carry gallery-title-card test-id")
+    else:
+        fail("CR1: title-card thumbnails not tagged/test-id'd")
+    if "if (!s.isTitleCard) counts[s.itemId]" in gv:
+        ok("CR1: virtual title cards excluded from the module slide count")
+    else:
+        fail("CR1: title cards inflate module count")
+    if 's.isTitleCard ? null :' in gv and "s.isTitleCard ? undefined :" in gv:
+        ok("CR1: title cards are non-draggable (excluded from drag hit-testing)")
+    else:
+        fail("CR1: title cards not excluded from drag")
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
     print("\n── IP Hygiene Tests ──")
 
-    # 1. Copyright header in every part-file
-    copyright_count = 0
-    for f in os.listdir(PARTS_DIR):
-        if f.endswith(".jsx"):
-            first_line = open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()
-            if "© 2025-present Rui Quintino" in first_line:
-                copyright_count += 1
-    if copyright_count == 13:
-        ok(f"Copyright header in all {copyright_count}/13 part-files")
+    # 1. Copyright header in EVERY part-file (count dynamically — a hardcoded count
+    #    hid part-pptx.jsx's missing header: 13 files had it, the 14th didn't, and the
+    #    check only asserted "13 present" rather than "all present").
+    part_jsx = sorted(f for f in os.listdir(PARTS_DIR) if f.endswith(".jsx"))
+    copyright_count = sum(
+        1 for f in part_jsx
+        if "© 2025-present Rui Quintino" in open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()
+    )
+    if copyright_count == len(part_jsx):
+        ok(f"Copyright header in all {copyright_count}/{len(part_jsx)} part-files")
     else:
-        fail(f"Copyright headers", f"only {copyright_count}/13 files")
+        missing = [f for f in part_jsx
+                   if "© 2025-present Rui Quintino" not in open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()]
+        fail("Copyright headers", f"only {copyright_count}/{len(part_jsx)} files — missing: {missing}")
 
     # 2. Copyright header in build scripts
     script_count = 0
@@ -1666,6 +1770,34 @@ def test_server_hardening():
     serve_src = open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8").read()
     vela_src = open(os.path.join(SCRIPTS, "vela.py"), encoding="utf-8").read()
     skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+
+    # ── Desktop <meta> CSP: img-src/font-src must not permit https: egress ──
+    # Regression guard for the desktop image/font beacon hardening: the Neutralino
+    # shell's meta CSP must match serve.py's tighter posture (no https: in img/font
+    # sinks) so a render-time image/font fetch is CSP-blocked on desktop too.
+    _nl_index = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "index.html")
+    nl_index_src = open(_nl_index, encoding="utf-8").read()
+    import re as _re
+    _csp_m = _re.search(r'Content-Security-Policy"\s+content="([^"]*)"', nl_index_src)
+    if _csp_m:
+        _csp = _csp_m.group(1)
+        _dirs = {}
+        for _seg in _csp.split(";"):
+            _seg = _seg.strip()
+            if not _seg:
+                continue
+            _name, _, _val = _seg.partition(" ")
+            _dirs[_name.strip()] = _val.strip()
+        if "https:" not in _dirs.get("img-src", ""):
+            ok("Desktop CSP img-src does not permit https: egress")
+        else:
+            fail("Desktop CSP img-src permits https:", _dirs.get("img-src", ""))
+        if "https:" not in _dirs.get("font-src", ""):
+            ok("Desktop CSP font-src does not permit https: egress")
+        else:
+            fail("Desktop CSP font-src permits https:", _dirs.get("font-src", ""))
+    else:
+        fail("Desktop CSP meta tag not found in vela-neutralino/resources/index.html")
 
     # ── Arrow keys: Up/Down same as Left/Right ──
     if '"ArrowRight" || e.key === "ArrowDown"' in tpl:
@@ -3200,6 +3332,299 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
+# ━━━ Slide Numeric Layout Fields (imageCols & friends) ━━━━━━━━━━━━
+# The app clamps these at deck ingress (SLIDE_NUMERIC_BOUNDS in
+# part-imports.jsx). validate.py must flag the same bad values at author time so
+# a deck never silently renders with a number the author did not write, and the
+# turbo format must carry imageCols instead of dropping it on round-trip.
+def test_slide_numeric_fields():
+    print("\n── Slide Numeric Layout Fields ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    def deck_with(slide_extra):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Numeric Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "n.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                                  capture_output=True, text=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 1. Valid values are accepted
+    for extra, label in [
+        ({"imageCols": 3}, "imageCols: 3"),
+        ({"imageCols": 1}, "imageCols: 1 (lower bound)"),
+        ({"imageCols": 6}, "imageCols: 6 (upper bound)"),
+        ({"gap": 16, "splitGap": 32, "contentFlex": 3, "imageFlex": 2}, "gap/splitGap/flex ratios"),
+        ({}, "fields absent entirely"),
+    ]:
+        r = run_validate(deck_with(extra))
+        if r.returncode == 0:
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", r.stdout + r.stderr)
+
+    # 2. Invalid values are rejected with a specific message
+    for extra, needle, label in [
+        ({"imageCols": 0}, "out of range", "imageCols: 0 (below range)"),
+        ({"imageCols": 7}, "out of range", "imageCols: 7 (above range)"),
+        ({"imageCols": 2147483647}, "out of range", "imageCols: 2147483647"),
+        ({"imageCols": -1}, "out of range", "imageCols: -1"),
+        ({"imageCols": "3"}, "must be a number", "imageCols: \"3\" (string)"),
+        ({"imageCols": "3; x"}, "must be a number", "imageCols: \"3; x\" (injection-shaped)"),
+        ({"imageCols": True}, "must be a number", "imageCols: true (bool)"),
+        ({"imageCols": None}, "must be a number", "imageCols: null"),
+        ({"imageCols": [3]}, "must be a number", "imageCols: [3]"),
+        ({"imageCols": 2.5}, "whole number", "imageCols: 2.5 (fractional)"),
+        ({"gap": 5000}, "out of range", "gap: 5000"),
+        ({"gap": "16px"}, "must be a number", "gap: \"16px\""),
+        ({"splitGap": -5}, "out of range", "splitGap: -5"),
+        ({"contentFlex": 1e6}, "out of range", "contentFlex: 1e6"),
+        ({"imageFlex": "wide"}, "must be a number", "imageFlex: \"wide\""),
+    ]:
+        r = run_validate(deck_with(extra))
+        out = r.stdout + r.stderr
+        if r.returncode != 0 and needle in out:
+            ok(f"validate.py rejects {label}")
+        else:
+            fail(f"validate.py rejects {label}", f"rc={r.returncode} out={out[:300]}")
+
+    # 3. imageCols survives the compact round-trip (unknown slide keys pass through)
+    deck = deck_with({"imageCols": 4})
+    rt = expand_deck(compact_deck(copy.deepcopy(deck)))
+    if rt["lanes"][0]["items"][0]["slides"][0].get("imageCols") == 4:
+        ok("compact → expand round-trip preserves imageCols")
+    else:
+        fail("compact → expand round-trip imageCols",
+             f"got {rt['lanes'][0]['items'][0]['slides'][0].get('imageCols')!r}")
+
+    # 4. imageCols survives the turbo round-trip (positional — needs registration)
+    turbo = turbo_deck(copy.deepcopy(deck))
+    back = unturbo_deck(copy.deepcopy(turbo))
+    if back["lanes"][0]["items"][0]["slides"][0].get("imageCols") == 4:
+        ok("turbo → unturbo round-trip preserves imageCols")
+    else:
+        fail("turbo → unturbo round-trip imageCols",
+             f"got {back['lanes'][0]['items'][0]['slides'][0].get('imageCols')!r}")
+
+    # A slide with neither studyNotes nor imageCols keeps the length-10 shape
+    plain = turbo_deck(deck_with({}))
+    if len(plain[1][0][1][0][3][0]) == 10:
+        ok("turbo keeps length 10 for slides without studyNotes/imageCols")
+    else:
+        fail("turbo backward-compat length", f"len={len(plain[1][0][1][0][3][0])}")
+
+    # imageCols without studyNotes still decodes (null placeholder at position 10)
+    arr = turbo[1][0][1][0][3][0]
+    if len(arr) == 12 and arr[10] is None and arr[11] == 4:
+        ok("turbo emits a null studyNotes placeholder before imageCols")
+    else:
+        fail("turbo imageCols positional encoding", f"arr tail={arr[10:]!r}")
+
+    # 5. Source-of-truth parity: the JS and Python bound tables must agree
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    m = re.search(r'const SLIDE_NUMERIC_BOUNDS = \{(.*?)\n\};', imports_src, re.S)
+    if not m:
+        fail("SLIDE_NUMERIC_BOUNDS present in part-imports.jsx")
+    else:
+        js_bounds = {k: (lo, hi, flag) for k, lo, hi, flag in
+                     re.findall(r'(\w+):\s*\[([-\d.]+),\s*([-\d.]+),\s*(true|false)\]', m.group(1))}
+        sys.path.insert(0, SCRIPTS)
+        import importlib
+        vmod = importlib.import_module("validate")
+        importlib.reload(vmod)
+        py_bounds = vmod.SLIDE_NUMERIC_BOUNDS
+        mismatches = []
+        if set(js_bounds) != set(py_bounds):
+            mismatches.append(f"key sets differ: js={sorted(js_bounds)} py={sorted(py_bounds)}")
+        for k in set(js_bounds) & set(py_bounds):
+            lo, hi, is_int = py_bounds[k]
+            if (float(js_bounds[k][0]) != float(lo) or float(js_bounds[k][1]) != float(hi)
+                    or (js_bounds[k][2] == "true") != bool(is_int)):
+                mismatches.append(f"{k}: js={js_bounds[k]} py={py_bounds[k]}")
+        if not mismatches:
+            ok("validate.py SLIDE_NUMERIC_BOUNDS matches part-imports.jsx")
+        else:
+            fail("SLIDE_NUMERIC_BOUNDS drift", "; ".join(mismatches))
+
+    # 6. imageCols is documented where slide keys are registered
+    schema = open(os.path.join(SKILL_DIR, "references", "block-schema.md"), encoding="utf-8").read()
+    if "imageCols" in schema:
+        ok("imageCols documented in block-schema.md")
+    else:
+        fail("imageCols missing from block-schema.md")
+    if "imageCols" in imports_src.split("const BLOCK_REFERENCE")[1][:2000]:
+        ok("imageCols listed in the in-app BLOCK_REFERENCE slide schema")
+    else:
+        fail("imageCols missing from BLOCK_REFERENCE")
+
+    # 7. The sink re-clamps too (belt-and-braces at the consumption site)
+    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in blocks_src:
+        ok("imageCols re-clamped at the render sink")
+    else:
+        fail("imageCols sink clamp missing in part-blocks.jsx")
+
+
+# ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
+def test_deck_key_allowlist_structure():
+    print("\n── Deck-Ingress Key Allowlist ──")
+
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+
+    for name in ("SAFE_SLIDE_KEYS", "SAFE_BLOCK_KEYS"):
+        if f"const {name} = new Set([" in imports_src:
+            ok(f"{name} allowlist defined")
+        else:
+            fail(f"{name} allowlist missing")
+
+    # The sanitizers must BUILD from the allowlist, not copy the caller's object.
+    if "const clean = { ...block };" not in imports_src and "for (const k of SAFE_BLOCK_KEYS)" in imports_src:
+        ok("sanitizeBlock builds from SAFE_BLOCK_KEYS (no wholesale spread)")
+    else:
+        fail("sanitizeBlock still spreads the caller's block object")
+    if "const clean = { ...slide };" not in imports_src and "for (const k of SAFE_SLIDE_KEYS)" in imports_src:
+        ok("sanitizeSlide builds from SAFE_SLIDE_KEYS (no wholesale spread)")
+    else:
+        fail("sanitizeSlide still spreads the caller's slide object")
+
+    # `_` is a reserved renderer-private namespace — nothing may allowlist one.
+    for name in ("SAFE_SLIDE_KEYS", "SAFE_BLOCK_KEYS"):
+        m = re.search(r'const ' + name + r' = new Set\(\[(.*?)\]\);', imports_src, re.S)
+        body = re.sub(r'//[^\n]*', '', m.group(1)) if m else ""
+        keys = re.findall(r'"([^"]+)"', body)
+        if keys and not any(k.startswith("_") for k in keys):
+            ok(f"{name} reserves the '_' namespace (no underscore keys, {len(keys)} keys)")
+        else:
+            fail(f"{name} underscore reservation", f"keys={[k for k in keys if k.startswith('_')]}")
+
+    # Recursion cap present and wired with an explicit depth argument (a bare
+    # .map(sanitizeBlock) would pass the array INDEX as the depth).
+    if "const MAX_BLOCK_DEPTH" in imports_src and "if (depth > MAX_BLOCK_DEPTH) return null;" in imports_src:
+        ok("sanitizeBlock enforces MAX_BLOCK_DEPTH")
+    else:
+        fail("sanitizeBlock recursion cap missing")
+    code_only = re.sub(r'//[^\n]*', '', imports_src)  # the pattern is named in comments too
+    if ".map(sanitizeBlock)" not in code_only:
+        ok("no bare .map(sanitizeBlock) (array index cannot leak into depth)")
+    else:
+        fail("bare .map(sanitizeBlock) leaks the array index into the depth param")
+
+    # Reconciliation: the two other slide-key lists derive from the allowlists.
+    engine_src = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
+        ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")
+    else:
+        fail("part-engine SLIDE_ONLY_KEYS still hand-maintained")
+    if re.search(r'SLIDE_KEYS\s*=\s*new Set\([\s\S]{0,400}SAFE_SLIDE_KEYS\.has', slides_src):
+        ok("part-slides SLIDE_KEYS filtered through SAFE_SLIDE_KEYS")
+    else:
+        fail("part-slides SLIDE_KEYS not reconciled with the allowlist")
+
+    # The key-drift lint must run as part of the parts lint.
+    lint_src = open(os.path.join(DEV_SCRIPTS, "lint.py"), encoding="utf-8").read()
+    if "def check_deck_key_drift" in lint_src and "errors += check_deck_key_drift(parts_dir)" in lint_src:
+        ok("lint.py key-drift check defined and wired into lint_parts")
+    else:
+        fail("lint.py key-drift check not wired in")
+    if "SAFE_SLIDE_KEYS" in lint_src and "_parse_set_literal" in lint_src:
+        ok("lint.py parses the allowlists from part-imports.jsx (single source of truth)")
+    else:
+        fail("lint.py does not parse the allowlists from source")
+
+    # And it must actually pass on the current tree.
+    r = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", PARTS_DIR],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        ok("lint.py --parts passes (no deck key drift)")
+    else:
+        fail("lint.py --parts reports drift", r.stdout + r.stderr)
+
+    # The drift check must ALSO catch bracket-notation reads (slide["x"] /
+    # block['x']), not only dotted member access — SECURITY.md now states this
+    # scope. Prove it by injecting a bracket-read of a non-allowlisted key into a
+    # throwaway copy of the parts and asserting the lint fails on it.
+    if "BRACKET_RE" in lint_src and "BRACKET_RE.findall" in lint_src:
+        ok("lint.py wires a bracket-notation read pattern into the drift check")
+    else:
+        fail("lint.py does not scan bracket-notation reads")
+    import tempfile as _tf, shutil as _sh
+    _tmp = _tf.mkdtemp(prefix="vela-drift-")
+    try:
+        for _f in os.listdir(PARTS_DIR):
+            if _f.endswith(".jsx"):
+                _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp, _f))
+        _victim = os.path.join(_tmp, "part-blocks.jsx")
+        with open(_victim, "a", encoding="utf-8") as _fh:
+            _fh.write('\nconst _driftProbe = block["nonAllowlistedBogusKey123"];\n')
+        _r = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", _tmp],
+                            capture_output=True, text=True)
+        if _r.returncode != 0 and "nonAllowlistedBogusKey123" in (_r.stdout + _r.stderr):
+            ok("lint.py catches a bracket-notation read of a non-allowlisted key")
+        else:
+            fail("lint.py missed a bracket-notation drift read", _r.stdout + _r.stderr)
+    finally:
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+    # ── CSS fetch-sink encoder-gate (v13.28) ──────────────────────────
+    # A deck color reaching a URL-auto-loading CSS property (background /
+    # background-image / mask / …) must pass through the cssColor/cssGradient/
+    # cssUrl allowlist encoder (fail-closed). The ingress denylist alone is
+    # fail-open. This lint enforces complete mediation so a missed sink can't
+    # silently reintroduce a CSS auto-load beacon.
+    if "def check_css_fetch_sink_gate" in lint_src and "errors += check_css_fetch_sink_gate(parts_dir)" in lint_src:
+        ok("lint.py CSS fetch-sink encoder-gate defined and wired into lint_parts")
+    else:
+        fail("lint.py CSS fetch-sink encoder-gate not wired in")
+
+    # It must PASS on the current tree (every sink already encoder-gated).
+    if r.returncode == 0:
+        ok("lint.py --parts passes (all CSS fetch-sinks encoder-gated)")
+    else:
+        fail("lint.py --parts reports an ungated CSS fetch-sink", r.stdout + r.stderr)
+
+    # And it must CATCH both regression shapes: a raw deck color field written
+    # straight into a background, and a bare local that holds an un-encoded deck
+    # color reaching a background via a template. Prove both on throwaway copies.
+    for _label, _inject in (
+        ("raw deck color field in a background",
+         '\ncase "beacontest1": return <div style={{ background: block.dotColor }} />;\n'),
+        ("ungated local color reaching a background",
+         '\ncase "beacontest2": { const _bc = item.color || "#000"; return <div style={{ background: `${_bc}08` }} />; }\n'),
+    ):
+        _tmp2 = _tf.mkdtemp(prefix="vela-beacon-")
+        try:
+            for _f in os.listdir(PARTS_DIR):
+                if _f.endswith(".jsx"):
+                    _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp2, _f))
+            with open(os.path.join(_tmp2, "part-blocks.jsx"), "a", encoding="utf-8") as _fh:
+                _fh.write(_inject)
+            _r2 = subprocess.run([sys.executable, os.path.join(DEV_SCRIPTS, "lint.py"), "--parts", _tmp2],
+                                 capture_output=True, text=True)
+            if _r2.returncode != 0 and "fetch-sink not encoder-gated" in (_r2.stdout + _r2.stderr):
+                ok(f"lint.py catches an ungated CSS fetch-sink ({_label})")
+            else:
+                fail(f"lint.py missed an ungated CSS fetch-sink ({_label})", _r2.stdout + _r2.stderr)
+        finally:
+            _sh.rmtree(_tmp2, ignore_errors=True)
+
+
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
@@ -3513,6 +3938,265 @@ def test_block_primitives():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ━━━ Script-Context Injection Parity (Phase 5) ━━━━━━━━━━━━━━━━━━━
+
+def test_script_context_escape_parity():
+    """Phase 5 (script-context injection parity):
+
+    1. The Python helper (assemble.py:escape_for_script_context) and the ONE
+       canonical JS implementation (vela-neutralino/resources/js/script-escape.js)
+       must escape a hostile payload — <, >, &, $', $`, $&, U+2028, U+2029,
+       </script> — identically. The JS file is exercised through BOTH loader
+       shapes it supports: Node `require()` (render-offline.js call sites) and
+       classic-<script> global attachment with no `module`/`require` in scope
+       (the nl-boot.js webview call site).
+    2. Every JS call site that splices STARTUP_PATCH into source text
+       (nl-boot.js, tools/vela-dev/scripts/render-offline.js, and the sibling
+       .hyper-sprint/render-offline.js if present) must use the replacer-
+       FUNCTION form of `.replace()` — a plain-string replacement lets deck
+       content contain $&/$`/$'-style backreferences that splice adjacent
+       template bytes into the injected value.
+    """
+    print("\n── Script-Context Escape Parity (Phase 5) ──")
+
+    script_escape_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "script-escape.js")
+    nl_boot_js = os.path.join(REPO_ROOT, "vela-neutralino", "resources", "js", "nl-boot.js")
+    render_offline_js = os.path.join(DEV_SCRIPTS, "render-offline.js")
+    hyper_sprint_render_offline_js = os.path.join(REPO_ROOT, ".hyper-sprint", "render-offline.js")
+
+    if not os.path.exists(script_escape_js):
+        fail("script-escape.js exists", f"missing: {script_escape_js}")
+        return
+
+    # Payload deliberately includes every char class the escaper must handle,
+    # plus the $-pattern tokens that only the replacer-function form (not the
+    # escaper) neutralizes.
+    payload = "<>&$'$`$&  </script>"
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from assemble import escape_for_script_context
+    except Exception as e:
+        fail("Import assemble.escape_for_script_context", str(e))
+        return
+
+    py_json = json.dumps(payload, ensure_ascii=False)
+    py_escaped = escape_for_script_context(py_json)
+
+    node_probe = r'''
+const fs = require("fs");
+const vm = require("vm");
+const filePath = process.argv[1];
+const jsonStr = process.argv[2];
+
+// (a) Node CommonJS require() path — used by render-offline.js.
+const { escapeForScriptContext: viaRequire } = require(filePath);
+
+// (b) classic-<script> global-attachment path — used by nl-boot.js. Runs the
+// SAME source with no `module`/`require`/`exports` in scope, exactly like a
+// plain non-module <script src> tag in index.html.
+const src = fs.readFileSync(filePath, "utf8");
+const sandbox = {};
+vm.createContext(sandbox);
+vm.runInContext(src, sandbox);
+const viaGlobal = sandbox.escapeForScriptContext;
+
+process.stdout.write(JSON.stringify({
+  viaRequire: viaRequire(jsonStr),
+  viaGlobal: typeof viaGlobal === "function" ? viaGlobal(jsonStr) : null,
+}));
+'''
+    try:
+        r = subprocess.run(
+            ["node", "-e", node_probe, "--", script_escape_js, py_json],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        skip("Script-context escape parity", "node not on PATH")
+        return
+    except subprocess.TimeoutExpired:
+        fail("Script-context escape parity", "node probe timeout after 30s")
+        return
+
+    if r.returncode != 0:
+        fail("script-escape.js loads under Node (both loader shapes)", r.stdout + r.stderr)
+        return
+
+    try:
+        js_out = json.loads(r.stdout)
+    except Exception as e:
+        fail("Parse script-escape.js probe output", f"{e}: {r.stdout!r}")
+        return
+
+    if js_out.get("viaRequire") == py_escaped:
+        ok("JS require() path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS require() path parity", f"py={py_escaped!r} js={js_out.get('viaRequire')!r}")
+
+    if js_out.get("viaGlobal") == py_escaped:
+        ok("JS classic-<script> global path == Python escape_for_script_context() (identical on hostile payload)")
+    else:
+        fail("JS classic-<script> global path parity", f"py={py_escaped!r} js={js_out.get('viaGlobal')!r}")
+
+    # Source-level: every call site must use the replacer-FUNCTION form —
+    # `.replace(marker, () => ...)` — not a plain-string replacement.
+    replacer_fn_re = re.compile(r"\.replace\(\s*marker\s*,\s*\(\s*\)\s*=>")
+
+    sites = [
+        ("nl-boot.js", nl_boot_js),
+        ("tools/vela-dev/scripts/render-offline.js", render_offline_js),
+    ]
+    if os.path.exists(hyper_sprint_render_offline_js):
+        sites.append((".hyper-sprint/render-offline.js", hyper_sprint_render_offline_js))
+    else:
+        skip(".hyper-sprint/render-offline.js replacer-function form", "file not present in this tree")
+
+    for label, filepath in sites:
+        if not os.path.exists(filepath):
+            fail(f"{label} exists", f"missing: {filepath}")
+            continue
+        with open(filepath, "r", encoding="utf-8") as f:
+            src = f.read()
+        if replacer_fn_re.search(src):
+            ok(f"{label} uses replacer-function form for STARTUP_PATCH injection")
+        else:
+            fail(f"{label} replacer-function form",
+                 "expected `.replace(marker, () => ...)` — plain-string replacement "
+                 "lets deck content splice via $&/$`/$' backreferences")
+        # Every call site must delegate to the shared escaper, not a private copy.
+        if "escapeForScriptContext(" in src:
+            ok(f"{label} calls the shared escapeForScriptContext()")
+        else:
+            fail(f"{label} shared escaper usage",
+                 "expected a call to escapeForScriptContext() instead of an inline escape chain")
+
+
+def test_svg_style_recurrence_guards():
+    """The SVG-<style> UI-integrity recurrence guards (lint + runtime) must be
+    load-bearing: reject re-admission / skip-dodge idioms and NOT false-positive on
+    clean code. (Round-3/4 adversarial finding: the guards had no self-test.)"""
+    print("\n🛡️  SVG-<style> recurrence guards")
+    lint = os.path.join(DEV_SCRIPTS, "lint.py")
+
+    def lint_clean(parts_dir):
+        r = subprocess.run([sys.executable, lint, "--parts", parts_dir],
+                           capture_output=True, text=True, timeout=90)
+        return r.returncode == 0
+
+    if lint_clean(PARTS_DIR):
+        ok("recurrence guards: real src/parts lints clean (no false positive)")
+    else:
+        fail("recurrence guards: real src/parts must lint clean")
+
+    # Each idiom is (file, needle_or_None, replacement, label). needle=None => append.
+    idioms = [
+        ("part-imports.jsx", '  "image",  // href/xlink:href pass scheme allowlist',
+         '  "image",  // href/xlink:href pass scheme allowlist\n  "style",', "literal <style> re-admit"),
+        ("part-imports.jsx", 'const SVG_URL_REF_ATTRS',
+         'const _SAT = SVG_ALLOWED_TAGS;\n_SAT.has = (t) => t === "sty" + "le";\nconst SVG_URL_REF_ATTRS',
+         "aliased .has membership override (part-imports)"),
+        # Gap A: the tamper can live in ANY part-file (one module scope in the monolith).
+        ("part-app.jsx", None,
+         '\nconst _XSAT = SVG_ALLOWED_TAGS;\n_XSAT.has = (t) => t === "sty" + "le";\n',
+         "cross-part aliased .has override (part-app)"),
+        ("part-app.jsx", None,
+         '\nSet.prototype.has = function () { return true; };\n', "cross-part Set.prototype patch"),
+        ("part-uitest.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
+         'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", /*fn:*/ requiresAI: true, fn:',
+         "requiresAI skip-dodge on flagship security test"),
+        # Gap B: a vacuous security-named test (no sanitizeSvgMarkup call) neuters the guard.
+        ("part-uitest.jsx", None,
+         '\nconst _bogusSecTest = { name: "SECURITY: bogus <style> vacuous", fn: async () => { return true; } };\n',
+         "vacuous security test (no sanitizeSvgMarkup call)"),
+        # R6B: a built-in prototype override the sanitizer's tag lookup trusts.
+        ("part-app.jsx", None,
+         '\nString.prototype.toLowerCase = function () { return "g"; };\n',
+         "built-in prototype override (toLowerCase)"),
+        ("part-app.jsx", None,
+         '\nObject.defineProperty(Element.prototype, "localName", { get() { return "g"; } });\n',
+         "defineProperty on Element.prototype (localName getter)"),
+        # R6C: tamper in part-pptx.jsx (formerly missing from the scan list).
+        ("part-pptx.jsx", None,
+         '\nconst _PP = SVG_ALLOWED_TAGS; _PP.has = (t) => t === "style";\n',
+         "cross-part tamper in part-pptx.jsx"),
+        # R6B: a chrome-safety test that calls the sanitizer but drops its assertion.
+        ("part-uitest.jsx", None,
+         '\nconst _neuter = { name: "SECURITY: overlay app chrome bogus", fn: async () => { sanitizeSvgMarkup("<rect/>"); return true; } };\n',
+         "neutered chrome-safety test (calls sanitizer, no computed-style assertion)"),
+        # R7B/R7C: keeps the required tokens as DEAD code but hardcodes the result.
+        ("part-uitest.jsx", None,
+         '\nconst _dead = { name: "SECURITY: overlay app chrome deadcode", fn: async () => { const h = document.createElement("div"); sanitizeSvgMarkup("<rect/>"); getComputedStyle(h); return true; } };\n',
+         "dead-code-token neuter (getComputedStyle present but return true)"),
+    ]
+    for fname, needle, repl, label in idioms:
+        tmp = tempfile.mkdtemp()
+        try:
+            dst = os.path.join(tmp, "parts")
+            shutil.copytree(PARTS_DIR, dst)
+            fp = os.path.join(dst, fname)
+            with open(fp, encoding="utf-8") as f:
+                s = f.read()
+            if needle is None:
+                mutated = s + repl
+            elif needle in s:
+                mutated = s.replace(needle, repl, 1)
+            else:
+                fail(f"recurrence guards: fixture needle missing for '{label}'")
+                continue
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(mutated)
+            if not lint_clean(dst):
+                ok(f"recurrence guards: lint rejects {label}")
+            else:
+                fail(f"recurrence guards: lint MUST reject {label}")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    # R7B: a decoy sanitizer (a clean copy — even inside a /* */ comment — so a
+    # first-match extraction tests it while the real one re-admits <style>) must make
+    # the node sanitizer suite FAIL via its exactly-one-definition check.
+    mxss = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
+    tmp = tempfile.mkdtemp()
+    try:
+        with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+            s = f.read()
+        decoy = "/* decoy\nfunction sanitizeSvgMarkup(raw) { return raw; }\n*/\n"
+        fake = os.path.join(tmp, "pi.jsx")
+        with open(fake, "w", encoding="utf-8") as f:
+            f.write(s.replace("function sanitizeSvgMarkup(raw) {", decoy + "function sanitizeSvgMarkup(raw) {", 1))
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""), os.path.join(REPO_ROOT, "node_modules"), "/tmp/node_modules"]))
+        try:
+            # Pass the decoy copy as an explicit CLI arg (not an env var) — the real
+            # CI-gating invocation elsewhere passes no arg and always reads the real file.
+            r = subprocess.run(["node", mxss, fake], capture_output=True, text=True, timeout=60, env=env)
+            if r.returncode == 2:
+                skip("recurrence guards: node decoy check", "jsdom not installed")
+            elif r.returncode != 0:
+                ok("recurrence guards: node sanitizer suite rejects a decoy sanitizer definition")
+            else:
+                fail("recurrence guards: node suite MUST reject a decoy sanitizer (exactly-one check)")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            skip("recurrence guards: node decoy check", "node unavailable")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Runtime / value pieces the lint can't behaviourally test — assert present in source.
+    with open(os.path.join(PARTS_DIR, "part-uitest.jsx"), encoding="utf-8") as f:
+        ut = f.read()
+    if "security test must not be requiresAI-skippable" in ut:
+        ok("recurrence guards: runner fails a requiresAI-skipped security test at runtime")
+    else:
+        fail("recurrence guards: runner must fail a requiresAI-skipped security test")
+    with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+        pi = f.read()
+    if "position|top|left|right|bottom|inset" in pi and "pointer-events" in pi:
+        ok("recurrence guards: SVG inline-style layout/position denylist present")
+    else:
+        fail("recurrence guards: SVG inline-style layout/position denylist missing")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -3529,13 +4213,18 @@ if __name__ == "__main__":
         test_known_bugs()
         test_editor_ux_bugs()
         test_slide_editor_ux_features()
+        test_toc_nav_and_gallery_titlecards()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()
         test_server_hardening()
         test_block_primitives()
         test_study_notes()
+        test_slide_numeric_fields()
+        test_deck_key_allowlist_structure()
         test_pdf_title_cards()
+        test_script_context_escape_parity()
+        test_svg_style_recurrence_guards()
     if run_integration:
         test_integration()
         test_cli_commands()

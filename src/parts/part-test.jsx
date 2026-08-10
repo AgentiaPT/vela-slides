@@ -31,6 +31,29 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
 
+  // ── Multi-image grid placement (image-run grid, gridColsFor) ──
+  { name: "gridColsFor is function", fn: () => typeof gridColsFor === "function" },
+  { name: "gridColsFor full: N=1 → 1 (solo)", fn: () => gridColsFor(1, "full") === 1 },
+  { name: "gridColsFor full: N=2 → 2 (1x2 side-by-side)", fn: () => gridColsFor(2, "full") === 2 },
+  { name: "gridColsFor full: N=3 → 3 (thirds)", fn: () => gridColsFor(3, "full") === 3 },
+  { name: "gridColsFor full: N=4 → 2 (2x2 quad)", fn: () => gridColsFor(4, "full") === 2 },
+  { name: "gridColsFor full: N=5 → 3 (3+2)", fn: () => gridColsFor(5, "full") === 3 },
+  { name: "gridColsFor half: N=1 → 1", fn: () => gridColsFor(1, "half") === 1 },
+  { name: "gridColsFor half: N>=2 → 2", fn: () => gridColsFor(2, "half") === 2 && gridColsFor(3, "half") === 2 && gridColsFor(5, "half") === 2 },
+  { name: "gridColsFor: floors/guards bad n to 1", fn: () => gridColsFor(0, "full") === 1 && gridColsFor(-3, "full") === 1 },
+  // Full-region row math matches the spec table (rows = ceil(n/cols)).
+  { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
+  { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
+  { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+
+  // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
+  { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
+  { name: "pasteImageLayout: content + 2 images → image-right (split grid)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 2) === "image-right" },
+  { name: "pasteImageLayout: content + 3 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 3) === "stack" },
+  { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
+  { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
+  { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
   { name: "imageAspect returns a Promise", fn: () => imageAspect("data:image/png;base64,x") instanceof Promise },
@@ -105,6 +128,55 @@ const VELA_TESTS = [
     let patch; patchItemAt({ items: [{ icon: "Old", text: "Keep" }] }, (p) => { patch = p; }, 0, { icon: "New" });
     return patch.items[0].icon === "New" && patch.items[0].text === "Keep";
   }},
+
+  // ── Deck-ingress key allowlist ──
+  // sanitizeSlide/sanitizeBlock build from SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS
+  // instead of copying the caller's object. Two properties with opposite failure
+  // modes: unknown/`_` keys must be DROPPED, and every live renderer key must
+  // SURVIVE — sanitizeSlide re-runs on every edit, so a lost key never returns.
+  { name: "SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS defined", fn: () => SAFE_SLIDE_KEYS instanceof Set && SAFE_BLOCK_KEYS instanceof Set && SAFE_SLIDE_KEYS.size > 20 && SAFE_BLOCK_KEYS.size > 50 },
+  { name: "allowlists reserve the '_' namespace", fn: () => ![...SAFE_SLIDE_KEYS, ...SAFE_BLOCK_KEYS].some((k) => k.startsWith("_")) },
+  { name: "sanitizeSlide drops an unknown key", fn: () => sanitizeSlide({ duration: 10, blocks: [], nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops an unknown key", fn: () => sanitizeBlock({ type: "text", text: "t", nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops _gridCell from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _gridCell: true })._gridCell === undefined },
+  { name: "sanitizeBlock drops _solo from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _solo: true })._solo === undefined },
+  { name: "sanitizeSlide drops _virtual from deck JSON", fn: () => sanitizeSlide({ duration: 10, blocks: [], _virtual: true })._virtual === undefined },
+  { name: "renderer may still set _gridCell after sanitize", fn: () => ({ ...sanitizeBlock({ type: "image", src: "" }), _gridCell: true })._gridCell === true },
+  { name: "title cards survive save→load (derived from item.presentCard)", fn: () => {
+    const it = sanitizeItem({ title: "Mod", presentCard: true, slides: [{ duration: 20, blocks: [] }] });
+    if (it.presentCard !== true) return false;
+    const card = buildTitleCardSlide(it, { title: "Lane" }, null);
+    return !!card && card._virtual === true && JSON.stringify(card.blocks).includes("Mod");
+  } },
+  { name: "live slide keys survive sanitizeSlide", fn: () => {
+    const s = sanitizeSlide({ duration: 30, blocks: [], layout: "cols", L: [], R: [], mutedColor: "#aaa",
+      notes: "n", speakerNotes: "sn", timeLock: true, imageCols: 3, contentFlex: 2, splitGap: 20, gap: 14 });
+    return s.layout === "cols" && Array.isArray(s.L) && Array.isArray(s.R) && s.mutedColor === "#aaa"
+      && s.notes === "n" && s.speakerNotes === "sn" && s.timeLock === true
+      && s.imageCols === 3 && s.contentFlex === 2 && s.splitGap === 20 && s.gap === 14;
+  } },
+  { name: "live block keys survive sanitizeBlock", fn: () => {
+    const b = sanitizeBlock({ type: "flow", items: [{ label: "a" }], direction: "vertical", loop: true,
+      loopLabel: "again", gateLabel: "G", arrowColor: "#f00", sublabelColor: "#aaa" });
+    return b.direction === "vertical" && b.loop === true && b.loopLabel === "again"
+      && b.gateLabel === "G" && b.arrowColor === "#f00" && b.sublabelColor === "#aaa";
+  } },
+  { name: "imageCols: huge value clamps to 6", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 2147483647 }).imageCols === 6 },
+  { name: "imageCols: '3; x' dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: "3; x" }).imageCols === undefined },
+  { name: "imageCols: 0 clamps to 1", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 0 }).imageCols === 1 },
+  { name: "gap clamps to the 0..200 range", fn: () => sanitizeSlide({ duration: 10, blocks: [], gap: 1e9 }).gap === 200 },
+  { name: "contentFlex garbage dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], contentFlex: "wide" }).contentFlex === undefined },
+  { name: "grid nesting is depth-capped", fn: () => {
+    let node = { type: "heading", text: "BOTTOM" };
+    for (let i = 0; i < 6; i++) node = { type: "grid", cols: 1, items: [{ blocks: [node] }] };
+    let cur = sanitizeBlock(node), n = 0;
+    while (cur && cur.type === "grid") { n++; cur = cur.items?.[0]?.blocks?.[0]; }
+    return n <= MAX_BLOCK_DEPTH + 1 && (!cur || cur.text !== "BOTTOM");
+  } },
+  { name: "slide.blocks index never leaks into recursion depth", fn: () => {
+    const s = sanitizeSlide({ duration: 10, blocks: Array.from({ length: 12 }, (_, i) => ({ type: "heading", text: "B" + i })) });
+    return s.blocks.length === 12;
+  } },
 
   // ── Block Reference & Design Rules ──
   { name: "BLOCK_REFERENCE defined", fn: () => typeof BLOCK_REFERENCE === "string" && BLOCK_REFERENCE.length > 100 },

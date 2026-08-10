@@ -3497,8 +3497,86 @@ function deckToMarkdown(state, opts = {}) {
   const ln = (...a) => lines.push(...a);
   const blank = () => { if (lines.length && lines[lines.length - 1] !== "") lines.push(""); };
 
-  // Inline formatting is already markdown — pass through
-  const txt = (t) => (t || "").replace(/\n/g, "  \n");
+  // SECURITY (CWE-116, output encoding at the sink): deck text is emitted into a
+  // MARKDOWN grammar, so it needs Markdown-context encoding — the HTML-tag strip
+  // in sanitizeString does not cover it. Without this, a deck string could embed
+  // `[x](javascript:…)` or a zero-click image beacon `![](https://attacker/…)`
+  // that survives verbatim into the exported .md (the live renderer already
+  // re-validates such inline links via sanitizeUrl in parseInline; this reaches
+  // parity). Defense-in-depth: (1) allowlist link/image DESTINATION schemes via
+  // the same sanitizeUrl gate used everywhere else, and (2) backslash-escape
+  // Markdown metacharacters in any text placed inside a link label.
+  const mdUrl = (u) => { try { return (typeof sanitizeUrl === "function" ? (sanitizeUrl(u) || "") : ""); } catch { return ""; } };
+  // Encode a scheme-validated URL for the Markdown link-DESTINATION context
+  // `(...)`. sanitizeUrl fixes the SCHEME, but that is an HTML-href validator, not
+  // a Markdown-destination encoder: the WHATWG URL parser leaves `)` (and `(`)
+  // unescaped in a path, and the authority-less (mailto:) branch returns the raw
+  // target — so a `)` closes the destination early (letting the trailing bytes
+  // render as a fresh image/link) and a mailto: newline injects block structure.
+  // Percent-encode exactly the bytes that break out of `(...)` — parens,
+  // whitespace/controls, angle brackets, backslash, backtick — leaving a still-
+  // functional URL. Every URL that lands inside `(...)` MUST go through this.
+  const mdDest = (u) => { const s = mdUrl(u); return s ? s.replace(/[\s()<>\\`]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")) : ""; };
+  // Free BODY text: keep emphasis (**bold**, *italic*, ~~strike~~) but sanitize
+  // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
+  // renderer never auto-loads text images) — a blocked/opaque scheme collapses
+  // the span to its plain label, an allowed one stays a link (never an image).
+  const mdInline = (t, cell) => {
+    if (t == null) return "";
+    const src = String(t);
+    // Walk the string as alternating INLINE-link spans and the gaps between them.
+    // In each gap, escape every `[`/`]` so Markdown reference-style links/images
+    // ([a][ref], ![a][ref], collapsed/shortcut [ref]) AND their definition lines
+    // ([ref]: url) cannot form: those forms contain no literal `(`, so the inline
+    // rewriter and mdDest never see them and their URL would otherwise reach a .md
+    // viewer unchecked. The live renderer (parseInline) supports only inline links,
+    // so escaping is both safe (same literal text) and parity-correct (CWE-116:
+    // cover the whole grammar, not just the `(...)` form). The escaper ALSO covers
+    // `<`/`>`: Markdown permits RAW HTML and autolinks (`<img src=beacon>`,
+    // `<a href=javascript:…>`, `<scheme:…>`), which need neither `(` nor `[` and
+    // would otherwise reach a .md viewer live — the "parity" argument does not hold
+    // here because the live app renders these fields as escaped React text, not as
+    // markup. Each inline span is scheme-checked + destination-encoded (mdDest), the
+    // leading `!` dropped so an image can only downgrade to a link, and a blocked
+    // scheme collapses to the plain label. The label group is `*?` (empty allowed)
+    // so an empty-alt beacon `![](url)` (which the live renderer ignores) is caught
+    // too, and the surviving label is escaped so it cannot carry raw HTML either.
+    // Backslash is escaped FIRST-CLASS (in the same class), not just the target
+    // metachars: a lone `\` before an escaped char would otherwise revive it —
+    // attacker `\<` -> `\\<` renders as a literal `\` + a LIVE `<`. Escaping `\`
+    // too makes every `\[`/`\]`/`\<`/`\>` unrevivable.
+    // In cell mode `|` joins the class so it is escaped in the SAME pass as
+    // backslash (escaped first-class), not by a separate order-dependent replace.
+    const gapRe = cell ? /[\\\[\]<>|]/g : /[\\\[\]<>]/g;
+    const escGap = (g) => g.replace(gapRe, "\\$&");
+    const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+      out += escGap(src.slice(last, m.index));
+      const safe = mdDest(m[2]);
+      out += safe ? `[${escGap(m[1])}](${safe})` : escGap(m[1]);
+      last = m.index + m[0].length;
+    }
+    out += escGap(src.slice(last));
+    return out.replace(/\n/g, "  \n");
+  };
+  // Text used INSIDE a [ … ] link label: strict metachar escape so a crafted
+  // label cannot break out of, or nest inside, the surrounding link syntax.
+  const mdLabel = (t) => String(t == null ? "" : t).replace(/\n/g, " ").replace(/([\\`*_\[\]()~!<>])/g, "\\$1");
+  // Build a link only when the destination passes the scheme allowlist; a blocked
+  // target degrades to the plain (escaped) label rather than emitting a bad URL.
+  const mdLink = (label, target) => { const s = mdDest(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
+  // Table cell: inline-sanitize in CELL mode (escGap escapes `|` alongside
+  // backslash/brackets/angles in one complete pass — no separate, order-dependent
+  // pipe replace), then collapse newlines. A cell cannot inject columns or break
+  // the row grammar, and backslash is not double-escaped.
+  const mdCell = (t) => mdInline(t, true).replace(/\n/g, " ");
+  // Code fence long enough that backtick runs in the content cannot close it.
+  const mdFence = (code) => { const runs = String(code == null ? "" : code).match(/`+/g) || []; const max = runs.reduce((m, r) => Math.max(m, r.length), 0); return "`".repeat(Math.max(3, max + 1)); };
+  // Heading text: inline-sanitize then collapse newlines so a title cannot spill
+  // past its single `#`-prefixed line into injected markdown.
+  const mdHead = (t) => mdInline(t).replace(/\n/g, " ");
+  const txt = mdInline;
 
   const blockToMd = (b, depth = 0) => {
     const indent = "  ".repeat(depth);
@@ -3509,11 +3587,12 @@ function deckToMarkdown(state, opts = {}) {
         ln(`${indent}${"#".repeat(level)} ${txt(b.text)}`);
         break;
       }
-      case "text":
+      case "text": {
         blank();
-        if (b.link) ln(`${indent}${txt(b.text)} — [source](${b.link})`);
-        else ln(`${indent}${txt(b.text)}`);
+        const src = mdDest(b.link);
+        ln(`${indent}${txt(b.text)}${src ? ` — [source](${src})` : ""}`);
         break;
+      }
       case "badge":
         ln(`${indent}**${txt(b.text)}**`);
         break;
@@ -3522,7 +3601,7 @@ function deckToMarkdown(state, opts = {}) {
         for (const item of (b.items || [])) {
           const t = typeof item === "string" ? item : item.text;
           const link = typeof item === "object" ? item.link : null;
-          if (link) ln(`${indent}- [${txt(t)}](${link})`);
+          if (link) ln(`${indent}- ${mdLink(t, link)}`);
           else ln(`${indent}- ${txt(t)}`);
         }
         break;
@@ -3530,8 +3609,8 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         for (const item of (b.items || [])) {
           const title = item.title || "";
-          const sub = item.text ? ` — ${item.text}` : "";
-          if (item.link) ln(`${indent}- [${txt(title)}](${item.link})${sub}`);
+          const sub = item.text ? ` — ${txt(item.text)}` : "";
+          if (item.link) ln(`${indent}- ${mdLink(title, item.link)}${sub}`);
           else ln(`${indent}- ${txt(title)}${sub}`);
         }
         break;
@@ -3539,38 +3618,43 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         ln(`${indent}> ${txt(b.text)}`);
         if (b.author) ln(`${indent}> — ${txt(b.author)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "callout":
         blank();
         if (b.title) ln(`${indent}> **${txt(b.title)}**`);
         ln(`${indent}> ${txt(b.text)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "metric":
         ln(`${indent}**${txt(b.value)}** ${b.label ? `— ${txt(b.label)}` : ""}`);
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
-      case "code":
+      case "code": {
         blank();
         if (b.label) ln(`${indent}*${txt(b.label)}*`);
-        ln(`${indent}\`\`\`${b.lang || ""}`);
+        // Fence longer than any backtick run in the body so `b.text` cannot close
+        // the fence early and inject markdown after it; lang is word-chars only.
+        const fence = mdFence(b.text);
+        const lang = String(b.lang || "").replace(/[^A-Za-z0-9_+.-]/g, "");
+        ln(`${indent}${fence}${lang}`);
         ln(b.text || "");
-        ln(`${indent}\`\`\``);
+        ln(`${indent}${fence}`);
         break;
+      }
       case "table": {
         blank();
         const cols = b.headers || [];
         const rows = b.rows || [];
         if (cols.length) {
-          ln(`${indent}| ${cols.join(" | ")} |`);
+          ln(`${indent}| ${cols.map(mdCell).join(" | ")} |`);
           ln(`${indent}| ${cols.map(() => "---").join(" | ")} |`);
         }
         for (const row of rows) {
           const cells = Array.isArray(row) ? row : (row.cells || []);
-          ln(`${indent}| ${cells.join(" | ")} |`);
+          ln(`${indent}| ${cells.map(mdCell).join(" | ")} |`);
         }
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
       }
       case "grid":
@@ -3599,28 +3683,32 @@ function deckToMarkdown(state, opts = {}) {
       case "timeline":
         blank();
         for (const item of (b.items || [])) {
-          const date = item.date ? `**${item.date}** ` : "";
+          const date = item.date ? `**${txt(item.date)}** ` : "";
           ln(`${indent}- ${date}${txt(item.title || "")}${item.text ? ` — ${txt(item.text)}` : ""}`);
         }
         break;
       case "progress":
         blank();
         for (const item of (b.items || [])) {
-          ln(`${indent}- ${txt(item.label || "")}: ${item.value ?? 0}%`);
+          ln(`${indent}- ${txt(item.label || "")}: ${txt(item.value ?? 0)}%`);
         }
         break;
       case "tag-group":
         blank();
-        ln(`${indent}${(b.items || []).map(item => `\`${typeof item === "string" ? item : item.text || item.label || ""}\``).join("  ")}`);
+        ln(`${indent}${(b.items || []).map(item => { const s = String(typeof item === "string" ? item : (item.text || item.label || "")).replace(/[`\n]/g, " "); return `\`${s}\``; }).join("  ")}`);
         break;
-      case "image":
-        if (b.src && !b.src.startsWith("data:")) {
+      case "image": {
+        // Only emit a markdown image for a scheme-allowlisted external src; alt
+        // text is metachar-escaped. A blocked/opaque src degrades to the caption.
+        const isrc = (b.src && !b.src.startsWith("data:")) ? mdDest(b.src) : "";
+        if (isrc) {
           blank();
-          ln(`${indent}![${b.alt || b.caption || ""}](${b.src})`);
+          ln(`${indent}![${mdLabel(b.alt || b.caption || "")}](${isrc})`);
         } else if (b.caption) {
           ln(`${indent}*${txt(b.caption)}*`);
         }
         break;
+      }
       case "divider":
         blank();
         ln(`${indent}---`);
@@ -3630,7 +3718,7 @@ function deckToMarkdown(state, opts = {}) {
   };
 
   // Title
-  ln(`# ${state.deckTitle || "Untitled Deck"}`);
+  ln(`# ${mdHead(state.deckTitle || "Untitled Deck")}`);
   blank();
 
   let slideNum = 0;
@@ -3639,13 +3727,13 @@ function deckToMarkdown(state, opts = {}) {
     blank();
     ln(`---`);
     blank();
-    ln(`# ${lane.title || "Untitled Section"}`);
+    ln(`# ${mdHead(lane.title || "Untitled Section")}`);
     blank();
 
     for (const item of (lane.items || [])) {
       // Module as sub-section
       blank();
-      ln(`## ${item.title || "Untitled Module"}`);
+      ln(`## ${mdHead(item.title || "Untitled Module")}`);
 
       for (const slide of (item.slides || [])) {
         if (slide && slide.hidden) continue; // hidden slides are not exported

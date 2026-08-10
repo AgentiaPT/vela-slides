@@ -54,8 +54,14 @@ jobs:
         working-directory: vela-neutralino
         run: pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
 
-      - name: Regenerate monolith
-        run: python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
+      - name: Regenerate monolith (release strip)
+        # --release drops the dev-only test-hook fences (window.__velaTestHooks,
+        # the UI-test battery, Ctrl+Alt+T) before sync-vela.py flips
+        # VELA_LOCAL_MODE → true below — without --release that flip would open
+        # the runtime test-surface gate on the SHIPPED desktop binary. Mirrors
+        # vela-neutralino/Dockerfile's concat.py invocation exactly. Verified by
+        # tests/test_release_build.cjs.
+        run: python3 tools/vela-dev/scripts/concat.py --release --out skills/vela-slides/app/vela.jsx src/parts
 
       - name: Preprocess vela.jsx for Neutralino
         run: python3 vela-neutralino/scripts/sync-vela.py

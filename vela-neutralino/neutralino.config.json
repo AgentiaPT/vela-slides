@@ -25,9 +25,13 @@
     "writeToLogFile": true
   },
   "nativeAllowList": [
-    "app.*",
-    "window.*",
-    "debug.log",
+    "app.exit",
+    "window.focus",
+    "window.setFullScreen",
+    "window.exitFullScreen",
+    "window.maximize",
+    "window.unmaximize",
+    "window.isMaximized",
     "os.showFolderDialog",
     "os.getEnv",
     "filesystem.readFile",
@@ -39,9 +43,13 @@
     "filesystem.removeWatcher",
     "filesystem.remove",
     "filesystem.move",
-    "storage.*",
-    "events.*",
-    "extensions.getStats"
+    "storage.getKeys",
+    "storage.getData",
+    "storage.setData",
+    "events.on",
+    "events.off",
+    "extensions.getStats",
+    "debug.log"
   ],
   "modes": {
     "window": {

