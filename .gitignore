@@ -65,6 +65,7 @@ tests/screenshots/
 .claude/*
 !.claude/settings.json
 !.claude/skills
+!.claude/hooks
 
 # Working decks (user-created, not shipped)
 decks/

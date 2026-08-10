@@ -1,5 +1,26 @@
 {
   "enabledPlugins": {
     "security-guidance@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(src/parts/**)",
+            "timeout": 60,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\""
+          },
+          {
+            "type": "command",
+            "if": "Write(src/parts/**)",
+            "timeout": 60,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\""
+          }
+        ]
+      }
+    ]
   }
 }
