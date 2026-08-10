@@ -51,7 +51,7 @@ jobs:
         run: |
           set +e
           python3 tools/vela-dev/scripts/dep-sweep.py \
-            --vet --out sweep-report.md --json-out sweep-report.json
+            --vet --upgrades --out sweep-report.md --json-out sweep-report.json
           code=$?
           set -e
           echo "exit=$code" >> "$GITHUB_OUTPUT"

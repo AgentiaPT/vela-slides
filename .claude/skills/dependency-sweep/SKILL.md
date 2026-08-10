@@ -8,8 +8,13 @@ description: Run a global dependency bump across every ecosystem in this repo (n
 **Run the script first. Do not re-derive by hand what it already computed.**
 
 ```bash
-python3 tools/vela-dev/scripts/dep-sweep.py --vet --base origin/main --json
+python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades --base origin/main --json
 ```
+
+`--upgrades` also scans for newer GitHub Action tags (adds ~15s). Do not skip
+it: without it the report verifies that each pin matches its tag and says
+nothing about whether that tag is still current — an action can be correctly
+pinned to a release upstream has since superseded for security reasons.
 
 That one command replaces roughly 80% of this task: manifest discovery,
 per-tier cooldown maths, Action pin verification, provenance and publisher
@@ -17,8 +22,11 @@ checks, install-hook diffing, new-package detection, lockfile parity and the
 three audits. It takes ~10s. Read its output, then spend your reasoning only
 on what it deliberately leaves open.
 
-Exit codes: `0` clean · `1` findings · `4` a verification FAILED (bad pin or
-parity break — stop and investigate before bumping anything).
+Exit codes: `0` clean · `1` findings · `4` **anything at high/critical
+severity**. That is broader than just integrity failures: a bad Action pin, a
+lockfile parity break, an end-of-life Go toolchain, and live high-severity
+advisories from `npm`/`pnpm audit` all exit 4. Read which finding caused it
+before assuming the tooling misfired.
 
 ## What the script decides, and what you decide
 
@@ -28,6 +36,8 @@ parity break — stop and investigate before bumping anything).
 | That a pin matches its upstream tag | Whether a major is in scope at all |
 | Provenance / publisher / hook deltas | Whether to spend the security exemption |
 | Advisory counts per tree | What a release note means *for this repo's usage* |
+| Newer Action tags (with `--upgrades`) | Whether an Action major changes behaviour you rely on |
+| That the Go toolchain is EOL | Which supported Go line to land on |
 
 ### The judgement calls that recur
 
@@ -61,7 +71,13 @@ parity break — stop and investigate before bumping anything).
   (`npm install pkg@X --package-lock-only`, `pnpm add pkg@X --lockfile-only`);
   a plain install resolves to the newest match and will undo your choice.
 - **`pnpm update` rewrites specs in package.json.** Check the diff and restore
-  any spec you meant to hold back.
+  any spec you meant to hold back. Prefer targeting the packages you actually
+  mean to move (`pnpm update <pkg> --lockfile-only`) over a bare `pnpm update`,
+  which will also drag direct deps past their cooldown.
+- **Never run a bare `pnpm install` inside `vela-neutralino/`.** It walks up to
+  the root `pnpm-workspace.yaml` and silently rewrites the ROOT
+  `pnpm-lock.yaml`. Always use `--ignore-workspace`, exactly as
+  `_build-desktop.yml` does. Check `git status` afterwards regardless.
 - **Version bump:** only needed if `skills/vela-slides/` or `src/parts/` changed.
   A pure dependency sweep touches neither, so no `VELA_VERSION` bump.
 - **Disclosure discipline** (CLAUDE.md): describe security fixes by class and
@@ -77,9 +93,12 @@ parity break — stop and investigate before bumping anything).
   so additions are unreachable unless explicitly added.
 - **Go toolchain** — `go.mod`, `go-version:` in workflows, and the Dockerfile
   base image must move together.
-- **Vendored UMD bundles** (`vela-neutralino/resources/vendor/*.js`) — shipped
-  in the desktop binary, covered by no lockfile. Identify a version by hashing
-  it against upstream tarballs; do not guess from strings inside the bundle.
+- **Vendored UMD bundles** (`vela-neutralino/resources/vendor/*.js`) — react,
+  react-dom, lucide-react and babel, shipped inside the desktop binary and
+  covered by no lockfile. **Bumping the npm versions of these does nothing to
+  the desktop shell**; the vendored copies must be re-vendored and re-hashed by
+  hand or they silently drift. Identify a version by hashing the file against
+  upstream tarballs; do not guess from strings inside the bundle.
 - **pip transitives** — pinning `python-pptx` does not pin Pillow/lxml.
 
 ## Finish
@@ -92,7 +111,7 @@ python3 tests/test_vela.py --integration        # 102
 python3 tests/test_serve.py                     # 124
 python3 -m unittest tests.test_desktop          # 35
 node tests/test_release_build.cjs               # 22
-python3 -m unittest tests.test_dep_sweep        # 34 (this tooling)
+python3 -m unittest tests.test_dep_sweep        # 40 (this tooling)
 python3 tools/vela-dev/scripts/concat.py        # template must stay in sync
 ```
 

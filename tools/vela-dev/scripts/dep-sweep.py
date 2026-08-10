@@ -268,6 +268,79 @@ def _git_ls_remote_tags(repo: str) -> dict[str, str]:
     return tags
 
 
+TAG_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
+
+
+def parse_tag(tag: str) -> tuple[int, int, int] | None:
+    """`v7`, `v7.0`, `v7.0.1` -> a comparable triple. Anything else -> None."""
+    m = TAG_RE.match(tag.strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0))
+
+
+def _clone_cache(repo: str) -> Path | None:
+    """
+    Blobless bare mirror of an action repo, cached for the run.
+
+    `git ls-remote` gives tag->SHA but not dates, and we need a release date to
+    do cooldown arithmetic. A blobless bare clone fetches metadata only (fast,
+    no working tree) and works without an API token, which matters because
+    api.github.com is not always reachable from a build box.
+    """
+    cache = Path(os.environ.get("TMPDIR", "/tmp")) / "vela-dep-sweep-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    dest = cache / (repo.replace("/", "__") + ".git")
+    if dest.exists():
+        return dest
+    r = subprocess.run(
+        ["git", "clone", "--quiet", "--bare", "--filter=blob:none",
+         f"https://github.com/{repo}", str(dest)],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    return dest if r.returncode == 0 else None
+
+
+def action_upgrades(repo: str, current_tag: str, tiers: dict[str, int]) -> list[dict]:
+    """
+    Newer release tags for a pinned action, with cooldown eligibility.
+
+    Verifying that a pin matches its tag says nothing about whether that tag is
+    still the one you want — an action can sit correctly pinned to a version
+    that upstream has since superseded for security reasons. This closes that
+    blind spot.
+    """
+    cur = parse_tag(current_tag)
+    repo_dir = _clone_cache(repo)
+    if not cur or repo_dir is None:
+        return []
+    out = subprocess.run(
+        ["git", "-C", str(repo_dir), "for-each-ref",
+         "--format=%(refname:short)|%(creatordate:short)", "refs/tags"],
+        capture_output=True, text=True, timeout=120, check=False,
+    ).stdout
+    rows = []
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        tag, date = line.split("|", 1)
+        sv = parse_tag(tag)
+        if not sv or sv <= cur:
+            continue
+        age = age_days(date + "T00:00:00+00:00")
+        if age is None:
+            continue
+        utype = ("major" if sv[0] != cur[0] else "minor" if sv[1] != cur[1] else "patch")
+        need = required_days(tiers, utype)
+        rows.append({
+            "tag": tag, "released": date, "age_days": age,
+            "update_type": utype, "required_days": need,
+            "cooldown_ok": age >= need,
+        })
+    rows.sort(key=lambda r: parse_tag(r["tag"]) or (0, 0, 0))
+    return rows
+
+
 def check_actions(offline: bool = False) -> tuple[list[dict], list[dict]]:
     """Verify every pin matches its claimed tag. Returns (findings, verified)."""
     findings: list[dict] = []
@@ -323,6 +396,22 @@ def check_actions(offline: bool = False) -> tuple[list[dict], list[dict]]:
         else:
             verified.append({"action": repo, "tag": tag, "sha": sha})
     return findings, verified
+
+
+def check_action_upgrades(tiers: dict[str, int], verified: list[dict]) -> list[dict]:
+    """Eligible newer tags for each correctly-pinned action."""
+    rows = []
+    for pin in verified:
+        ups = action_upgrades(pin["action"], pin["tag"], tiers)
+        elig = [r for r in ups if r["cooldown_ok"]]
+        if not elig:
+            continue
+        rows.append({
+            "action": pin["action"], "current": pin["tag"],
+            "newest_eligible": elig[-1],
+            "blocked_by_cooldown": [r for r in ups if not r["cooldown_ok"]],
+        })
+    return rows
 
 
 # ── npm: candidate upgrades + cooldown eligibility ───────────────────
@@ -499,6 +588,65 @@ def check_new_packages(base: str) -> list[dict]:
     return findings
 
 
+def latest_go_minors(offline: bool = False) -> list[tuple[int, int]]:
+    """
+    The Go minor versions still receiving security fixes.
+
+    Go supports the two most recent majors, so the support window is derived
+    rather than hardcoded — a static EOL table goes stale silently, which is
+    the exact failure mode this check exists to catch. Falls back to returning
+    nothing (check skipped) rather than guessing.
+    """
+    if offline:
+        return []
+    dest = _clone_cache("golang/go")
+    if dest is None:
+        return []
+    out = subprocess.run(
+        ["git", "-C", str(dest), "for-each-ref", "--format=%(refname:short)", "refs/tags/go*"],
+        capture_output=True, text=True, timeout=120, check=False,
+    ).stdout
+    minors = set()
+    for tag in out.splitlines():
+        m = re.match(r"^go(\d+)\.(\d+)(?:\.\d+)?$", tag.strip())
+        if m:
+            minors.add((int(m.group(1)), int(m.group(2))))
+    return sorted(minors)[-2:] if len(minors) >= 2 else []
+
+
+def check_go_toolchain(offline: bool = False) -> list[dict]:
+    """
+    The `go` directive and the toolchain pins that build the agent gatekeeper.
+
+    A stdlib-only module has no dependencies for a bot to bump, so nothing else
+    in this sweep — or in Dependabot — will ever notice that the compiler
+    producing a security-critical binary went end-of-life.
+    """
+    gomod = ROOT / "vela-neutralino" / "extensions" / "agent" / "go.mod"
+    if not gomod.exists():
+        return []
+    m = re.search(r"^go\s+(\d+)\.(\d+)", gomod.read_text(), re.M)
+    if not m:
+        return []
+    declared = (int(m.group(1)), int(m.group(2)))
+    supported = latest_go_minors(offline)
+    if not supported:
+        return []
+    if declared >= min(supported):
+        return []
+    newest = supported[-1]
+    return [{
+        "check": "go-toolchain", "severity": "high",
+        "issue": (
+            f"go.mod declares go {declared[0]}.{declared[1]}, which is past end of life "
+            f"(Go supports the two newest minors: "
+            f"{', '.join(f'{a}.{b}' for a, b in supported)}). The gatekeeper binary is a "
+            f"security boundary — move go.mod, every workflow `go-version:`, and the "
+            f"Dockerfile base image together, e.g. to {newest[0]}.{newest[1]}."
+        ),
+    }]
+
+
 def _run(cmd: list[str], cwd: Path) -> tuple[int, str]:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd,
@@ -592,15 +740,50 @@ def check_parity() -> list[dict]:
 
 # ── Report assembly ──────────────────────────────────────────────────
 
-def direct_npm_deps() -> list[tuple[str, str, str]]:
-    """(manifest, package, locked-version) for every direct npm dependency."""
-    out = []
-    lock_path = ROOT / "package-lock.json"
+PNPM_IMPORTER_RE = re.compile(
+    r"^\s{6}'?([@\w./-]+)'?:\s*\n\s+specifier:.*\n\s+version:\s*([0-9][^\s(]*)", re.M
+)
+
+
+def _locked_versions_for(manifest_rel: str) -> dict[str, str]:
+    """
+    Resolved versions for ONE manifest, from ITS OWN lockfile.
+
+    Reading the root package-lock for every manifest was a real bug: a package
+    absent from the root lock silently fell back to the manifest's declared
+    MINIMUM (`^4.0.0` -> `4.0.0`) rather than what is actually installed
+    (`4.22.3`). That inflates the apparent jump and — the part that actually
+    bites — can classify the update into the wrong cooldown tier.
+    """
+    d = Path(manifest_rel).parent
     locked: dict[str, str] = {}
-    if lock_path.exists():
-        for name, ver in npm_lock_pairs(lock_path.read_text()):
-            locked.setdefault(name, ver)
-    for rel in ("package.json", "tools/vela-dev/channel/package.json", "vela-neutralino/package.json"):
+
+    npm_lock = ROOT / d / "package-lock.json"
+    if npm_lock.exists():
+        try:
+            for name, ver in npm_lock_pairs(npm_lock.read_text()):
+                locked.setdefault(name, ver)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    pnpm_lock = ROOT / d / "pnpm-lock.yaml"
+    if pnpm_lock.exists():
+        # The `importers:` block maps DIRECT deps to the exact version resolved
+        # for this project. setdefault, NOT assignment: where both lockfiles
+        # exist and disagree, package-lock.json wins because `npm ci` is what
+        # CI actually installs. (The disagreement itself is reported separately
+        # by check_parity as a high-severity finding — it must not also silently
+        # change which version we call "current".)
+        for m in PNPM_IMPORTER_RE.finditer(pnpm_lock.read_text()):
+            locked.setdefault(m.group(1), m.group(2))
+    return locked
+
+
+def direct_npm_deps() -> list[tuple[str, str, str, bool]]:
+    """(manifest, package, current-version, resolved-from-lockfile?)"""
+    out = []
+    for rel in ("package.json", "tools/vela-dev/channel/package.json",
+                "vela-neutralino/package.json"):
         path = ROOT / rel
         if not path.exists():
             continue
@@ -608,11 +791,13 @@ def direct_npm_deps() -> list[tuple[str, str, str]]:
             doc = json.loads(path.read_text())
         except json.JSONDecodeError:
             continue
+        locked = _locked_versions_for(rel)
         for field in ("dependencies", "devDependencies"):
             for name, spec in (doc.get(field) or {}).items():
-                current = locked.get(name) or re.sub(r"^[\^~>=<\s]*", "", str(spec))
+                exact = locked.get(name)
+                current = exact or re.sub(r"^[\^~>=<\s]*", "", str(spec))
                 if parse_semver(current):
-                    out.append((rel, name, current))
+                    out.append((rel, name, current, exact is not None))
     return out
 
 
@@ -651,8 +836,17 @@ def run(args: argparse.Namespace) -> dict:
     if args.base and want("new-packages"):
         report["findings"].extend(check_new_packages(args.base))
 
+    if want("actions") and not args.offline and args.upgrades:
+        report["action_upgrades"] = check_action_upgrades(
+            tiers_by_eco.get("github-actions", tiers_by_eco["*"]),
+            report.get("verified_pins", []),
+        )
+
+    if want("go") and not args.offline:
+        report["findings"].extend(check_go_toolchain(args.offline))
+
     if want("npm") and not args.offline:
-        for manifest, name, current in direct_npm_deps():
+        for manifest, name, current, from_lock in direct_npm_deps():
             rows = candidates(name, current, npm_tiers)
             if not rows:
                 continue
@@ -660,6 +854,10 @@ def run(args: argparse.Namespace) -> dict:
             blocked = [r for r in rows if not r["cooldown_ok"]]
             entry = {
                 "manifest": manifest, "package": name, "current": current,
+                # Flags a "current" inferred from the manifest's declared floor
+                # rather than read from a lockfile — treat those jumps as
+                # approximate until the tree is installed.
+                "current_from_lockfile": from_lock,
                 "newest_eligible": elig,
                 "blocked_by_cooldown": [
                     {k: r[k] for k in ("version", "age_days", "required_days", "update_type")}
@@ -718,7 +916,26 @@ def render(report: dict) -> str:
         L.append(f"## Action pins — {len(report['verified_pins'])} verified against upstream tags")
         for p in report["verified_pins"]:
             L.append(f"- `{p['action']}` {p['tag']} · `{p['sha'][:12]}`")
+        # A pin can be perfectly valid and still point at a superseded release,
+        # so never let "all verified" read as "all current".
+        if "action_upgrades" not in report:
+            L.append("")
+            L.append("> Verified means each pin matches the tag it claims — **not** that the "
+                     "tag is still current. Re-run with `--upgrades` to check for newer releases.")
         L.append("")
+
+    if report.get("action_upgrades"):
+        L.append("## Action upgrades available (cooldown cleared)")
+        L.append("| action | current | eligible target | type | age |")
+        L.append("|---|---|---|---|---|")
+        for a in report["action_upgrades"]:
+            e = a["newest_eligible"]
+            L.append(f"| `{a['action']}` | {a['current']} | **{e['tag']}** | "
+                     f"{e['update_type']} | {e['age_days']}d |")
+        L.append("")
+    elif "action_upgrades" in report:
+        L.append("## Action upgrades available (cooldown cleared)")
+        L.append("None — every pinned action is on its newest cooldown-cleared release.\n")
 
     ups = [u for u in report.get("upgrades", []) if u.get("newest_eligible")]
     L.append("## Upgrade candidates that have cleared cooldown")
@@ -766,7 +983,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="emit the raw report as JSON")
     ap.add_argument("--offline", action="store_true", help="skip every network call")
     ap.add_argument("--base", metavar="GIT_REF", help="diff lockfiles against this ref to find new packages")
-    ap.add_argument("--only", metavar="CHECKS", help="comma-separated subset: coverage,actions,npm,parity,audit,new-packages")
+    ap.add_argument("--only", metavar="CHECKS", help="comma-separated subset: coverage,actions,npm,go,parity,audit,new-packages")
+    ap.add_argument("--upgrades", action="store_true",
+                    help="also scan for newer GitHub Action tags (clones action repos; adds ~15s)")
     ap.add_argument("--vet", action="store_true",
                     help="also run supply-chain vetting (provenance, publisher, hooks) on each eligible target")
     ap.add_argument("--out", metavar="FILE", help="write the report to a file as well as stdout")

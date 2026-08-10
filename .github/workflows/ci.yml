@@ -145,11 +145,15 @@ jobs:
         # sweeper can no longer parse. Fully offline (fixtures, no registry).
         run: python3 -m unittest tests.test_dep_sweep
 
-      - name: Dependency manifest coverage
-        # Fails if a new manifest lands with no Dependabot entry watching it.
-        # This is the check that would have caught tools/vela-dev/channel and
-        # vela-neutralino drifting unmonitored. Offline — no registry calls.
-        run: python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage
+      - name: Dependency manifest coverage + lockfile parity
+        # Two offline invariants, both cheap:
+        #   coverage — fails if a new manifest lands with no Dependabot entry
+        #     watching it (the gap that let tools/vela-dev/channel drift).
+        #   parity   — fails if package-lock.json and pnpm-lock.yaml resolve
+        #     different versions. CI installs via `npm ci`, but contributors are
+        #     pointed at pnpm, so drift means local != CI and nobody notices
+        #     until something breaks in a release.
+        run: python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage,parity
 
       - name: Run non-browser stacks + browser install (concurrent)
         id: phase1

@@ -158,6 +158,60 @@ class TestLockfileParsing(unittest.TestCase):
         self.assertEqual(ds.check_parity(), [])
 
 
+class TestTagParsing(unittest.TestCase):
+    def test_accepts_partial_tags(self):
+        # Actions are pinned with comments like `# v1` and `# v4` as often as
+        # full triples; those must still compare against a newer `v4.1.1`.
+        self.assertEqual(ds.parse_tag("v1"), (1, 0, 0))
+        self.assertEqual(ds.parse_tag("v6.0"), (6, 0, 0))
+        self.assertEqual(ds.parse_tag("v7.0.1"), (7, 0, 1))
+        self.assertEqual(ds.parse_tag("4.2.0"), (4, 2, 0))
+
+    def test_rejects_non_release_tags(self):
+        for tag in ("v6-beta", "predicate@2.0.0", "nightly", "latest"):
+            self.assertIsNone(ds.parse_tag(tag), tag)
+
+    def test_ordering_makes_v1_older_than_v4(self):
+        self.assertLess(ds.parse_tag("v1"), ds.parse_tag("v4.1.1"))
+
+
+class TestLockedVersionResolution(unittest.TestCase):
+    """
+    Regression tests for a real bug: reading the ROOT package-lock for every
+    manifest made a package absent from it fall back to the manifest's declared
+    MINIMUM, which both inflates the apparent jump and can select the wrong
+    cooldown tier.
+    """
+
+    def test_channel_current_is_the_resolved_version_not_the_caret_floor(self):
+        locked = ds._locked_versions_for("tools/vela-dev/channel/package.json")
+        self.assertIn("tsx", locked, "tsx must resolve from the channel's own pnpm-lock")
+        # The channel has no package-lock.json, so before the fix this package
+        # was invisible and fell through to the manifest floor.
+        self.assertIsNotNone(ds.parse_semver(locked["tsx"]))
+        importers = ds.PNPM_IMPORTER_RE.findall(
+            (ROOT / "tools/vela-dev/channel/pnpm-lock.yaml").read_text())
+        self.assertIn(("tsx", locked["tsx"]), importers)
+
+    def test_npm_lock_wins_over_pnpm_when_they_disagree(self):
+        # CI installs via `npm ci`, so package-lock.json is authoritative for
+        # "what is currently installed". A stale pnpm-lock must not override it
+        # — that would silently restate the parity break as a different current.
+        npm_pairs = dict(ds.npm_lock_pairs((ROOT / "package-lock.json").read_text()))
+        resolved = ds._locked_versions_for("package.json")
+        for name in ("playwright", "lucide-react", "@babel/standalone"):
+            if name in npm_pairs:
+                self.assertEqual(resolved.get(name), npm_pairs[name],
+                                 f"{name} must come from package-lock.json")
+
+    def test_flags_when_current_is_only_a_manifest_floor(self):
+        # vela-neutralino has no lockfile, so its versions are inferred. The
+        # report must say so rather than present a guess as a fact.
+        rows = [r for r in ds.direct_npm_deps() if r[0] == "vela-neutralino/package.json"]
+        if rows:
+            self.assertFalse(rows[0][3], "expected current_from_lockfile=False with no lockfile")
+
+
 class TestActionPins(unittest.TestCase):
     def test_regex_accepts_a_sha_pin_with_version_comment(self):
         line = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
