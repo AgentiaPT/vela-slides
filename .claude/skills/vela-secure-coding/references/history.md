@@ -23,6 +23,7 @@ detail.
 | 12 | Test surface shipped | window hooks + both in-app test panels mounted on every boot; release paths missing `--release` | `208dab6`, `9ff304d`, `b2ab661`, `b404761` |
 | 13 | Namespace forgery | deck could forge `_virtual` and other renderer-private flags | `8d005e2` |
 | 14 | `.map(fn)` index-as-arg | `.map(sanitizeBlock)` would have passed the index as recursion depth | palisade sprint, `8d005e2` |
+| 15 | UI redress via deck styling | deck SVG could reach app chrome through a document-global style element and inline layout/positioning CSS | `97fe76c` |
 | — | mutation XSS (SVG↔HTML re-parse) | `<style>` attribute pass skipped; nodes outside the SVG namespace; needed an output-side re-parse backstop | `2e4f653`, `64c2144` |
 | — | Path containment | fs-guard: volume roots, shallow roots, nested OS-critical dirs; archive builder followed symlinks | `2e4f653`, `64c2144`, `5d2bdf9`, `77cff62` |
 | — | CSP asymmetry | desktop `<meta>` CSP allowed `https:` image/font egress that `serve.py` blocked | `8a2295a` |

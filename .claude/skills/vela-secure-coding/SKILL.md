@@ -127,6 +127,12 @@ commit if you want the full story.
     renderer-private flags are set by our code *after* sanitization.
 14. **`.map(fn)` passing the index.** `arr.map(sanitizeBlock)` feeds the array
     index as the depth argument. Always `arr.map((b) => sanitizeBlock(b))`.
+15. **Deck styling reaching app chrome (UI redress).** Deck-supplied CSS must
+    only ever paint *inside the deck's own render subtree*. No document-global
+    style elements from deck content, and no layout/positioning properties in
+    deck inline styles — either can restyle, hide, move, or re-label the app's
+    trusted controls (clickjacking a one-click action). Paint properties are
+    fine; anything that positions is not.
 
 ## 4. Per-surface checklist
 
