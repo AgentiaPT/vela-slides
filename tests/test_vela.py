@@ -303,7 +303,7 @@ def test_security():
     required_in_allowlist = [
         "svg", "g", "defs", "title", "desc", "marker", "clippath", "mask", "pattern",
         "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
-        "text", "tspan", "lineargradient", "radialgradient", "stop", "style",
+        "text", "tspan", "lineargradient", "radialgradient", "stop",
         "fegaussianblur", "fecolormatrix", "feblend", "feoffset", "femerge",
     ]
     missing_allow = [t for t in required_in_allowlist if f'"{t}"' not in allow_lower]
@@ -312,14 +312,18 @@ def test_security():
     else:
         fail("SVG_ALLOWED_TAGS coverage", f"missing legitimate elements: {missing_allow}")
 
-    # 8b. SVG <style> CSS-text filter (v12.51): preserve Mermaid/Vera class CSS + url(#fragment)
-    #     paint-server refs, but block @import / external url() / CSS \XX escape bypasses that
-    #     would fire a zero-click exfil beacon on render.
-    if 'function isSvgStyleSafe' in all_jsx and 'isSvgStyleSafe(child.textContent' in all_jsx:
-        ok("SVG <style> CSS-text filtered by isSvgStyleSafe (called from walk)")
+    # 8b. SVG <style> ELEMENT is NOT allowed. An inline <style> injected via
+    #     dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS (not scoped to the SVG),
+    #     so deck selectors could restyle/hide/relocate/re-label the trusted app UI
+    #     (UI-redress / clickjacking of real controls). The element is dropped outright
+    #     by the allowlist; isSvgStyleSafe is retained ONLY for the element-local
+    #     inline style="" attribute + url-ref presentation attrs (exfil beacon guard).
+    if '"style"' not in allow_lower and 'function isSvgStyleSafe' in all_jsx:
+        ok("SVG <style> element excluded from SVG_ALLOWED_TAGS (no document-global CSS injection)")
     else:
-        fail("SVG <style> CSS-text filter",
-             "isSvgStyleSafe must exist AND be invoked on <style>.textContent during the SVG walk")
+        fail("SVG <style> element must be disallowed",
+             "'style' must NOT be in SVG_ALLOWED_TAGS — a <style> element is document-global CSS "
+             "(UI-redress/clickjack); isSvgStyleSafe must remain for inline style/url-ref attrs")
 
     # 9. sanitizeSvgMarkup strips comment/CDATA/PI nodes — mXSS fix (v12.45)
     if 'child.nodeType !== 1 && child.nodeType !== 3' in all_jsx:
@@ -327,29 +331,18 @@ def test_security():
     else:
         fail("sanitizeSvgMarkup CDATA/comment node strip", "mutation-XSS regression risk")
 
-    # 9a. v12.54: walk MUST descend into <style> so the nodeType filter above
-    # actually runs on CDATA children. The v12.45 fix shipped with a
-    # skip-descend `continue;` after the isSvgStyleSafe check, leaving CDATA
-    # in <style> untouched — that's how the mXSS got through.
-    # Use a brace counter (not a nested-alternation regex) to extract the
-    # branch body — avoids catastrophic backtracking flagged by CodeQL.
-    style_open = re.search(r'if\s*\(\s*tag\s*===\s*"style"\s*\)\s*\{', all_jsx)
-    style_branch_body = ""
-    if style_open:
-        i = style_open.end()
-        depth = 1
-        n = len(all_jsx)
-        while i < n and depth > 0:
-            ch = all_jsx[i]
-            if ch == '{': depth += 1
-            elif ch == '}': depth -= 1
-            i += 1
-        style_branch_body = all_jsx[style_open.end():i - 1]
-    if style_open and 'walk(child)' in style_branch_body:
-        ok("sanitizeSvgMarkup <style> branch descends (v12.54 mXSS fix)")
+    # 9a. SECURITY (UI-integrity): there must be NO code path that re-admits a
+    # <style> element. A <style> injected via dangerouslySetInnerHTML is
+    # document-global CSS — deck selectors could restyle/relocate/re-label the
+    # trusted app UI and clickjack a real destructive control. The element is
+    # dropped by the SVG_ALLOWED_TAGS check; assert no `tag === "style"`
+    # retention branch has crept back in (recurrence guard).
+    if not re.search(r'tag\s*===\s*"style"', all_jsx):
+        ok("sanitizeSvgMarkup has no <style>-retention branch (element dropped by allowlist)")
     else:
-        fail("sanitizeSvgMarkup <style> walk-descent",
-             "CDATA inside <style> escapes rawtext via dangerouslySetInnerHTML — must call walk(child)")
+        fail("SVG <style> retention branch must not exist",
+             'a `tag === "style"` branch re-admits document-global CSS (UI-redress/clickjack); '
+             "<style> must be dropped by the SVG_ALLOWED_TAGS allowlist, not filtered")
 
     # 9b. v12.54: isSvgStyleSafe rejects '<' and ']]>' as defense-in-depth.
     if re.search(r'isSvgStyleSafe[\s\S]*?css\.indexOf\("<"\)\s*!==\s*-1\s*\)\s*return\s+false', all_jsx) and \
@@ -1321,17 +1314,20 @@ def test_toc_nav_and_gallery_titlecards():
 def test_ip_hygiene():
     print("\n── IP Hygiene Tests ──")
 
-    # 1. Copyright header in every part-file
-    copyright_count = 0
-    for f in os.listdir(PARTS_DIR):
-        if f.endswith(".jsx"):
-            first_line = open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()
-            if "© 2025-present Rui Quintino" in first_line:
-                copyright_count += 1
-    if copyright_count == 13:
-        ok(f"Copyright header in all {copyright_count}/13 part-files")
+    # 1. Copyright header in EVERY part-file (count dynamically — a hardcoded count
+    #    hid part-pptx.jsx's missing header: 13 files had it, the 14th didn't, and the
+    #    check only asserted "13 present" rather than "all present").
+    part_jsx = sorted(f for f in os.listdir(PARTS_DIR) if f.endswith(".jsx"))
+    copyright_count = sum(
+        1 for f in part_jsx
+        if "© 2025-present Rui Quintino" in open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()
+    )
+    if copyright_count == len(part_jsx):
+        ok(f"Copyright header in all {copyright_count}/{len(part_jsx)} part-files")
     else:
-        fail(f"Copyright headers", f"only {copyright_count}/13 files")
+        missing = [f for f in part_jsx
+                   if "© 2025-present Rui Quintino" not in open(os.path.join(PARTS_DIR, f), encoding="utf-8").readline()]
+        fail("Copyright headers", f"only {copyright_count}/{len(part_jsx)} files — missing: {missing}")
 
     # 2. Copyright header in build scripts
     script_count = 0
@@ -4075,6 +4071,132 @@ process.stdout.write(JSON.stringify({
                  "expected a call to escapeForScriptContext() instead of an inline escape chain")
 
 
+def test_svg_style_recurrence_guards():
+    """The SVG-<style> UI-integrity recurrence guards (lint + runtime) must be
+    load-bearing: reject re-admission / skip-dodge idioms and NOT false-positive on
+    clean code. (Round-3/4 adversarial finding: the guards had no self-test.)"""
+    print("\n🛡️  SVG-<style> recurrence guards")
+    lint = os.path.join(DEV_SCRIPTS, "lint.py")
+
+    def lint_clean(parts_dir):
+        r = subprocess.run([sys.executable, lint, "--parts", parts_dir],
+                           capture_output=True, text=True, timeout=90)
+        return r.returncode == 0
+
+    if lint_clean(PARTS_DIR):
+        ok("recurrence guards: real src/parts lints clean (no false positive)")
+    else:
+        fail("recurrence guards: real src/parts must lint clean")
+
+    # Each idiom is (file, needle_or_None, replacement, label). needle=None => append.
+    idioms = [
+        ("part-imports.jsx", '  "image",  // href/xlink:href pass scheme allowlist',
+         '  "image",  // href/xlink:href pass scheme allowlist\n  "style",', "literal <style> re-admit"),
+        ("part-imports.jsx", 'const SVG_URL_REF_ATTRS',
+         'const _SAT = SVG_ALLOWED_TAGS;\n_SAT.has = (t) => t === "sty" + "le";\nconst SVG_URL_REF_ATTRS',
+         "aliased .has membership override (part-imports)"),
+        # Gap A: the tamper can live in ANY part-file (one module scope in the monolith).
+        ("part-app.jsx", None,
+         '\nconst _XSAT = SVG_ALLOWED_TAGS;\n_XSAT.has = (t) => t === "sty" + "le";\n',
+         "cross-part aliased .has override (part-app)"),
+        ("part-app.jsx", None,
+         '\nSet.prototype.has = function () { return true; };\n', "cross-part Set.prototype patch"),
+        ("part-uitest.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
+         'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", /*fn:*/ requiresAI: true, fn:',
+         "requiresAI skip-dodge on flagship security test"),
+        # Gap B: a vacuous security-named test (no sanitizeSvgMarkup call) neuters the guard.
+        ("part-uitest.jsx", None,
+         '\nconst _bogusSecTest = { name: "SECURITY: bogus <style> vacuous", fn: async () => { return true; } };\n',
+         "vacuous security test (no sanitizeSvgMarkup call)"),
+        # R6B: a built-in prototype override the sanitizer's tag lookup trusts.
+        ("part-app.jsx", None,
+         '\nString.prototype.toLowerCase = function () { return "g"; };\n',
+         "built-in prototype override (toLowerCase)"),
+        ("part-app.jsx", None,
+         '\nObject.defineProperty(Element.prototype, "localName", { get() { return "g"; } });\n',
+         "defineProperty on Element.prototype (localName getter)"),
+        # R6C: tamper in part-pptx.jsx (formerly missing from the scan list).
+        ("part-pptx.jsx", None,
+         '\nconst _PP = SVG_ALLOWED_TAGS; _PP.has = (t) => t === "style";\n',
+         "cross-part tamper in part-pptx.jsx"),
+        # R6B: a chrome-safety test that calls the sanitizer but drops its assertion.
+        ("part-uitest.jsx", None,
+         '\nconst _neuter = { name: "SECURITY: overlay app chrome bogus", fn: async () => { sanitizeSvgMarkup("<rect/>"); return true; } };\n',
+         "neutered chrome-safety test (calls sanitizer, no computed-style assertion)"),
+        # R7B/R7C: keeps the required tokens as DEAD code but hardcodes the result.
+        ("part-uitest.jsx", None,
+         '\nconst _dead = { name: "SECURITY: overlay app chrome deadcode", fn: async () => { const h = document.createElement("div"); sanitizeSvgMarkup("<rect/>"); getComputedStyle(h); return true; } };\n',
+         "dead-code-token neuter (getComputedStyle present but return true)"),
+    ]
+    for fname, needle, repl, label in idioms:
+        tmp = tempfile.mkdtemp()
+        try:
+            dst = os.path.join(tmp, "parts")
+            shutil.copytree(PARTS_DIR, dst)
+            fp = os.path.join(dst, fname)
+            with open(fp, encoding="utf-8") as f:
+                s = f.read()
+            if needle is None:
+                mutated = s + repl
+            elif needle in s:
+                mutated = s.replace(needle, repl, 1)
+            else:
+                fail(f"recurrence guards: fixture needle missing for '{label}'")
+                continue
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(mutated)
+            if not lint_clean(dst):
+                ok(f"recurrence guards: lint rejects {label}")
+            else:
+                fail(f"recurrence guards: lint MUST reject {label}")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    # R7B: a decoy sanitizer (a clean copy — even inside a /* */ comment — so a
+    # first-match extraction tests it while the real one re-admits <style>) must make
+    # the node sanitizer suite FAIL via its exactly-one-definition check.
+    mxss = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
+    tmp = tempfile.mkdtemp()
+    try:
+        with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+            s = f.read()
+        decoy = "/* decoy\nfunction sanitizeSvgMarkup(raw) { return raw; }\n*/\n"
+        fake = os.path.join(tmp, "pi.jsx")
+        with open(fake, "w", encoding="utf-8") as f:
+            f.write(s.replace("function sanitizeSvgMarkup(raw) {", decoy + "function sanitizeSvgMarkup(raw) {", 1))
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [
+            env.get("NODE_PATH", ""), os.path.join(REPO_ROOT, "node_modules"), "/tmp/node_modules"]))
+        try:
+            # Pass the decoy copy as an explicit CLI arg (not an env var) — the real
+            # CI-gating invocation elsewhere passes no arg and always reads the real file.
+            r = subprocess.run(["node", mxss, fake], capture_output=True, text=True, timeout=60, env=env)
+            if r.returncode == 2:
+                skip("recurrence guards: node decoy check", "jsdom not installed")
+            elif r.returncode != 0:
+                ok("recurrence guards: node sanitizer suite rejects a decoy sanitizer definition")
+            else:
+                fail("recurrence guards: node suite MUST reject a decoy sanitizer (exactly-one check)")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            skip("recurrence guards: node decoy check", "node unavailable")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Runtime / value pieces the lint can't behaviourally test — assert present in source.
+    with open(os.path.join(PARTS_DIR, "part-uitest.jsx"), encoding="utf-8") as f:
+        ut = f.read()
+    if "security test must not be requiresAI-skippable" in ut:
+        ok("recurrence guards: runner fails a requiresAI-skipped security test at runtime")
+    else:
+        fail("recurrence guards: runner must fail a requiresAI-skipped security test")
+    with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+        pi = f.read()
+    if "position|top|left|right|bottom|inset" in pi and "pointer-events" in pi:
+        ok("recurrence guards: SVG inline-style layout/position denylist present")
+    else:
+        fail("recurrence guards: SVG inline-style layout/position denylist missing")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -4102,6 +4224,7 @@ if __name__ == "__main__":
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
         test_script_context_escape_parity()
+        test_svg_style_recurrence_guards()
     if run_integration:
         test_integration()
         test_cli_commands()

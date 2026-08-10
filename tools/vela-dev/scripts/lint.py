@@ -16,7 +16,7 @@ PART_ORDER = [
     "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
     "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
     "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-    "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-app.jsx",
+    "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-pptx.jsx", "part-app.jsx",
 ]
 
 COPYRIGHT_HEADER = "© 2025-present Rui Quintino"
@@ -358,6 +358,283 @@ def check_css_fetch_sink_gate(parts_dir):
     return errors
 
 
+def _strip_js_comments(src):
+    """Remove // and /* */ comments while preserving string/template literals
+    verbatim (so a `//` inside "http://…" or a `]` inside a comment can't distort
+    later bracket-matching). Not a full JS parser — good enough for the allowlist
+    region, and it treats string bodies as opaque."""
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c in "\"'`":
+            q = c
+            out.append(c)
+            i += 1
+            while i < n:
+                out.append(src[i])
+                if src[i] == "\\" and i + 1 < n:
+                    out.append(src[i + 1]); i += 2; continue
+                if src[i] == q:
+                    i += 1; break
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and src[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (src[i] == "*" and src[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(c); i += 1
+    return "".join(out)
+
+
+def check_svg_style_element_disallowed(parts_dir):
+    """UI-integrity guard: the SVG <style> ELEMENT must never be allowed. A
+    <style> injected via dangerouslySetInnerHTML applies DOCUMENT-GLOBAL CSS
+    (not scoped to the SVG), letting deck selectors restyle/relocate/re-label the
+    trusted app UI and clickjack a real destructive control. Deck paint uses
+    presentation attributes (fill="url(#id)"), not a stylesheet.
+
+    Fail-closed at RUNTIME semantics, not source bytes: it strips comments first
+    (so a `]` hidden in a comment can't truncate the match), requires
+    SVG_ALLOWED_TAGS to be `new Set([ ...quoted string literals only... ])` with the
+    array as the SOLE argument (no `].concat(...)`), and rejects any backslash in the
+    body (so an escaped `"styl\\u0065"` that DECODES to "style" at runtime can't hide
+    from a byte-level check). Any spread / concatenation / template / bare identifier /
+    .add() / escape makes the guard FAIL rather than pass. The authoritative guard is
+    still behavioral — the real-sanitizer test in tests/test_svg_mxss.cjs and the
+    in-browser UI-battery redress test both execute the actual code — this lint is the
+    fast static backstop, now honest about verifying runtime meaning."""
+    errors = []
+    fpath = os.path.join(parts_dir, "part-imports.jsx")
+    if not os.path.exists(fpath):
+        return errors
+    with open(fpath, 'r', encoding="utf-8") as f:
+        raw = f.read()
+    # Work on a comment-free, string-preserving copy so comments can neither hide a
+    # `]`/`style` nor trip the static-list checks.
+    src = _strip_js_comments(raw)
+
+    anchor = re.search(r'SVG_ALLOWED_TAGS\s*=\s*new Set\(\s*\[', src)
+    if not anchor:
+        errors.append(
+            "SVG_ALLOWED_TAGS must be a literal `new Set([...])` of string literals so the "
+            "UI-integrity guard can statically verify <style> is excluded — not found in the "
+            "expected form (a non-literal construction could silently re-admit <style>)."
+        )
+        return errors
+    i, depth, n = anchor.end(), 1, len(src)
+    while i < n and depth > 0:
+        c = src[i]
+        if c == '[':
+            depth += 1
+        elif c == ']':
+            depth -= 1
+        i += 1
+    body = src[anchor.end(): i - 1]
+    # The array literal must be the SOLE argument to Set(): the next non-space char
+    # after the closing ']' must be ')'. Anything else (`.concat(...)`, `,`, another
+    # arg) is a dynamic construction that could inject "style" past this check.
+    j = i
+    while j < n and src[j] in " \t\r\n":
+        j += 1
+    if j >= n or src[j] != ')':
+        errors.append(
+            "SVG_ALLOWED_TAGS's array must be the sole argument to new Set() — found extra "
+            "tokens after the closing ']' (e.g. .concat(...)). A dynamic tail can re-admit a "
+            "document-global <style> element (redress / clickjack)."
+        )
+    # STATIC list only: no spread/concat/template, no backslash escapes (which decode
+    # to a different value at runtime), no bare identifiers — every entry a quoted literal.
+    if '...' in body or '`' in body or '+' in body:
+        errors.append(
+            "SVG_ALLOWED_TAGS must be a STATIC list of quoted string literals "
+            "(no spread / concatenation / template) so the UI-integrity guard can "
+            "verify <style> is excluded — a dynamic allowlist can silently re-admit "
+            "a document-global <style> element (redress / clickjack)."
+        )
+    if '\\' in body:
+        errors.append(
+            "SVG_ALLOWED_TAGS entries must be plain (no backslash escape): an escaped tag "
+            'like "styl\\u0065" decodes to "style" at runtime and would hide from a static '
+            "check while genuinely re-admitting a document-global <style> element."
+        )
+    residue = re.sub(r'"[^"]*"|\'[^\']*\'', '', body)
+    if re.search(r'[A-Za-z_$]', residue):
+        errors.append(
+            "SVG_ALLOWED_TAGS contains a non-string-literal entry — it must be a "
+            "static list of quoted tag names so the guard can verify <style> is excluded."
+        )
+    allowed = set(re.findall(r'["\']([^"\']+)["\']', body))
+    if 'style' in allowed:
+        errors.append(
+            'SVG_ALLOWED_TAGS must NOT include "style": a <style> element is '
+            'document-global CSS (UI-redress / clickjack of real controls). Drop '
+            'it and use presentation attributes (fill="url(#id)") for deck paint.'
+        )
+    # Block dynamic re-admission after construction and any filter-and-keep branch
+    # (both loose and strict equality, either operand order).
+    if re.search(r'SVG_ALLOWED_TAGS\s*\.\s*add\s*\(', src):
+        errors.append(
+            "SVG_ALLOWED_TAGS must not be mutated with .add() — the allowlist has to "
+            "stay a static Set so <style> cannot be dynamically re-admitted."
+        )
+    if re.search(r'tag\s*===?\s*["\']style["\']', src) or re.search(r'["\']style["\']\s*===?\s*tag', src):
+        errors.append(
+            'part-imports.jsx has a `tag === "style"` retention branch — a <style> '
+            'element must be dropped by the SVG_ALLOWED_TAGS allowlist, never '
+            'filtered-and-kept (document-global CSS UI-redress / clickjack).'
+        )
+    # The literal allowlist being clean is not enough: the Set's membership can be
+    # swapped at RUNTIME (e.g. `SVG_ALLOWED_TAGS.has = t => t==="sty"+"le" || ...`),
+    # which re-admits <style> while the literal stays byte-clean and the node suites
+    # (which extract fragments) miss the module-scope seam. Crucially the monolith is
+    # ONE module scope, so a tamper statement can live in ANY part-file (an aliased Set
+    # in part-app.jsx re-admits just as well) — scan the WHOLE concatenated, comment-
+    # stripped source, not only part-imports.jsx.
+    part_files = sorted(
+        os.path.join(parts_dir, f) for f in os.listdir(parts_dir)
+        if f.startswith("part-") and f.endswith(".jsx")
+    )
+    all_src = _strip_js_comments("\n".join(
+        open(fp, 'r', encoding="utf-8").read() for fp in part_files
+    ))
+    for pat, label in (
+        (r'SVG_ALLOWED_TAGS\s*\.\s*(?:has|add|delete|clear)\s*=(?!=)', 'reassigns SVG_ALLOWED_TAGS.has/add/delete'),
+        (r'SVG_ALLOWED_TAGS\s*\[[^\]]*\]\s*=(?!=)', 'assigns into SVG_ALLOWED_TAGS[...]'),
+        (r'(?:Object\.defineProperty|Object\.assign|Reflect\.\w+|new\s+Proxy)\s*\(\s*SVG_ALLOWED_TAGS', 'defines/wraps SVG_ALLOWED_TAGS'),
+        # Patching Set.prototype (dot or bracket) reaches every Set incl. the allowlist.
+        (r'Set\s*\.\s*prototype\s*\.\s*(?:has|add|delete|clear)\s*=(?!=)', 'patches Set.prototype.has/add/delete'),
+        (r'Set\s*\.\s*prototype\s*\[[^\]]*\]\s*=(?!=)', 'patches Set.prototype[...]'),
+        # Swapping the prototype swaps the membership methods just as effectively.
+        (r'Object\.setPrototypeOf\s*\(\s*(?:SVG_ALLOWED_TAGS|Set\s*\.\s*prototype)', 'setPrototypeOf on the allowlist / Set.prototype'),
+        (r'\.\s*__proto__\s*=(?!=)', 'reassigns a __proto__ (prototype swap)'),
+        # Reassigning ANY .has/.add/.delete/.clear reaches the allowlist through an
+        # alias (`const x = SVG_ALLOWED_TAGS; x.has = ...`). No part legitimately
+        # reassigns these (they are only ever called), so flag any such assignment.
+        (r'\.\s*(?:has|add|delete|clear)\s*=(?!=)', 'reassigns a Set membership method (aliased allowlist)'),
+        # The walk decides membership via `SVG_ALLOWED_TAGS.has(child.localName.toLowerCase())`,
+        # so overriding a BUILT-IN prototype method/getter it relies on (e.g.
+        # `String.prototype.toLowerCase = ...` mapping "style"->an allowed tag, or an
+        # `Element.prototype.localName` getter) re-admits <style> without touching the Set.
+        # This app never monkey-patches a built-in prototype; forbid it outright.
+        (r'\b[A-Za-z_$][\w$]*\s*\.\s*prototype\s*\.\s*[\w$]+\s*=(?!=)', 'patches a built-in prototype method'),
+        (r'\b[A-Za-z_$][\w$]*\s*\.\s*prototype\s*\[[^\]]*\]\s*=(?!=)', 'patches a prototype via [...]'),
+        (r'Object\.definePropert(?:y|ies)\s*\(\s*[A-Za-z_$][\w$]*\s*\.\s*prototype', 'defineProperty on a prototype'),
+        (r'Object\.definePropert(?:y|ies)\s*\(\s*(?:Element|Node|HTMLElement|String|Array|Object|Set|Map|Function)\b', 'defineProperty on a built-in'),
+        (r'(?:Object|Reflect)\.setPrototypeOf\s*\(', 'setPrototypeOf (prototype swap)'),
+    ):
+        if re.search(pat, all_src):
+            errors.append(
+                "SVG_ALLOWED_TAGS membership must not be tampered with anywhere in the app (" + label +
+                "): a runtime override in any part-file re-admits a document-global <style> element "
+                "(redress / clickjack) while the literal allowlist stays clean and fragment-extracting "
+                "tests miss it."
+            )
+    # SVG_ALLOWED_TAGS assigned exactly once (its const declaration) across the whole app.
+    if len(re.findall(r'(?<![=!<>+\-*/%&|^])\bSVG_ALLOWED_TAGS\s*=(?!=)', all_src)) > 1:
+        errors.append(
+            "SVG_ALLOWED_TAGS is assigned more than once — it must be a single immutable const "
+            "Set so its membership can't be swapped at runtime to re-admit <style>."
+        )
+    return errors
+
+
+def check_security_tests_not_skippable(parts_dir):
+    """The SVG-<style> UI-integrity regression tests must ALWAYS run in the UI
+    battery. CI treats a skipped test (pass:"skip") as non-failing, so if a security
+    test could be marked requiresAI, an attacker could re-admit <style> and skip the
+    real-runtime tests that catch it — reaching green CI with the vuln live. Forbid
+    requiresAI on security-named tests, and assert the flagship redress test exists
+    (the battery is the ground-truth guard: it runs the real module, unlike the
+    fragment-extracting node suites)."""
+    errors = []
+    fpath = os.path.join(parts_dir, "part-uitest.jsx")
+    if not os.path.exists(fpath):
+        return errors
+    with open(fpath, 'r', encoding="utf-8") as f:
+        raw = f.read()
+    # Comment-strip first so a `/*fn:*/`-style padding comment can't fool the scan.
+    src = _strip_js_comments(raw)
+    if 'cannot restyle/relocate app chrome' not in src:
+        errors.append(
+            'the SVG-<style> redress regression test ("SECURITY: deck SVG <style> cannot '
+            'restyle/relocate app chrome") is missing from part-uitest.jsx — it is the '
+            'real-runtime guard against the UI-redress / clickjack class and must stay.'
+        )
+    # Bound each test object by the NEXT test's `name:` (not a fixed char window or a
+    # split on the first `fn:`), so requiresAI can't hide past a truncation point.
+    names = list(re.finditer(r'name:\s*"([^"]*)"', src))
+    for idx, m in enumerate(names):
+        name = m.group(1)
+        end = names[idx + 1].start() if idx + 1 < len(names) else len(src)
+        obj = src[m.end():end]
+        name_security = bool(re.search(r'SECURITY:|<style>|redress|clickjack', name))
+        is_security = name_security or 'sanitizeSvgMarkup' in obj
+        if is_security and 'requiresAI' in obj:
+            errors.append(
+                'security UI test ' + repr(name) + ' must not be requiresAI — it must always run '
+                'in the battery (a skip is treated as non-failing, so requiresAI would let a sanitizer '
+                'regression pass CI). Note the runner also fails such a skip at runtime (part-uitest.jsx).'
+            )
+        # A named security test must EXERCISE the real sanitizer — a vacuous body
+        # (e.g. `return true`) keeps the required name but neuters the ground-truth
+        # guard lint-invisibly. Require the call so the assertion stays load-bearing.
+        if name_security and 'sanitizeSvgMarkup(' not in obj:
+            errors.append(
+                'security UI test ' + repr(name) + ' must call sanitizeSvgMarkup(...) — a body that '
+                'does not exercise the real sanitizer (a vacuous `return true`) would neuter the '
+                'redress/overlay guard while keeping its name. Keep the assertion load-bearing.'
+            )
+        # The chrome-safety flagship/overlay tests must keep their computed-style /
+        # hit-test assertion — calling sanitizeSvgMarkup then just `return true` would
+        # neuter them while passing the call-substring check above.
+        if re.search(r'restyle/relocate app chrome|overlay app chrome', name) and \
+           not re.search(r'getComputedStyle|elementFromPoint', obj):
+            errors.append(
+                'security UI test ' + repr(name) + ' must keep its computed-style / hit-test '
+                'assertion (getComputedStyle / elementFromPoint) — a body that only calls '
+                'sanitizeSvgMarkup and returns a constant would neuter the redress/overlay guard.'
+            )
+        # A security test must return a COMPUTED result, not a constant. Requiring the
+        # assertion tokens above is not enough — they can be kept as dead code beside a
+        # hardcoded `return true;`. A bare constant return neuters the test; forbid it.
+        if name_security and re.search(r'\breturn\s+(?:true|false)\s*;', obj):
+            errors.append(
+                'security UI test ' + repr(name) + ' must not return a constant (`return true/false;`) '
+                '— its pass/fail must be a computed assertion. A constant return neuters the guard '
+                'while keeping the required name and token(s).'
+            )
+    return errors
+
+
+def check_part_order_complete(parts_dir):
+    """PART_ORDER must list every part-*.jsx file. A missing entry (e.g. part-pptx.jsx
+    once was) silently drops that part from every PART_ORDER-driven check — including
+    the security allowlist-tamper scan — so a tamper statement hidden in the unlisted
+    part evades the static guard. Keep the list in sync with the actual files."""
+    errors = []
+    if not os.path.isdir(parts_dir):
+        return errors
+    actual = sorted(f for f in os.listdir(parts_dir)
+                    if f.startswith("part-") and f.endswith(".jsx"))
+    missing = [f for f in actual if f not in PART_ORDER]
+    extra = [f for f in PART_ORDER if f not in actual]
+    if missing:
+        errors.append(
+            f"PART_ORDER is missing part-file(s): {missing} — add them so every part is "
+            "linted and scanned by the security allowlist-tamper guard."
+        )
+    if extra:
+        errors.append(f"PART_ORDER lists part-file(s) that don't exist: {extra} — remove them.")
+    return errors
+
+
 # ── Main runners ─────────────────────────────────────────────────────
 
 def lint_monolith(filepath):
@@ -410,6 +687,9 @@ def lint_parts(parts_dir):
     errors += check_version_constants(combined, "combined parts")
     errors += check_deck_key_drift(parts_dir)
     errors += check_css_fetch_sink_gate(parts_dir)
+    errors += check_svg_style_element_disallowed(parts_dir)
+    errors += check_security_tests_not_skippable(parts_dir)
+    errors += check_part_order_complete(parts_dir)
 
     return errors, warnings
 
