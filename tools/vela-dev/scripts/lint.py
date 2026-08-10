@@ -10,14 +10,18 @@ Usage:
 
 import sys, os, re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vela_manifest import load_manifest, MANIFEST_NAME
+
 # ── Constants ────────────────────────────────────────────────────────
 
-PART_ORDER = [
-    "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-    "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-    "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-    "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-pptx.jsx", "part-app.jsx",
-]
+# The part list and its fixed order come from <parts_dir>/MANIFEST.txt —
+# the single source of truth parsed by vela_manifest.load_manifest().
+
+# Size guard threshold: parts larger than this get a WARNING (not an error —
+# current parts are far larger; a hard fail would break CI today). The goal of
+# the refactoring sprint is to shrink parts under this line, then harden it.
+PART_SIZE_WARN_LINES = 700
 
 COPYRIGHT_HEADER = "© 2025-present Rui Quintino"
 
@@ -613,25 +617,27 @@ def check_security_tests_not_skippable(parts_dir):
     return errors
 
 
-def check_part_order_complete(parts_dir):
-    """PART_ORDER must list every part-*.jsx file. A missing entry (e.g. part-pptx.jsx
-    once was) silently drops that part from every PART_ORDER-driven check — including
-    the security allowlist-tamper scan — so a tamper statement hidden in the unlisted
-    part evades the static guard. Keep the list in sync with the actual files."""
+def check_part_order_complete(parts_dir, part_order):
+    """The manifest (src/parts/MANIFEST.txt) must list every part-*.jsx file on
+    disk, and every manifest entry must exist on disk. A missing entry (e.g.
+    part-pptx.jsx once was, in two of three hardcoded copies of this list)
+    silently drops that part from every manifest-driven check — including the
+    security allowlist-tamper scan — so a tamper statement hidden in the
+    unlisted part evades the static guard. Both directions are hard errors."""
     errors = []
     if not os.path.isdir(parts_dir):
         return errors
     actual = sorted(f for f in os.listdir(parts_dir)
                     if f.startswith("part-") and f.endswith(".jsx"))
-    missing = [f for f in actual if f not in PART_ORDER]
-    extra = [f for f in PART_ORDER if f not in actual]
+    missing = [f for f in actual if f not in part_order]
+    extra = [f for f in part_order if f not in actual]
     if missing:
         errors.append(
-            f"PART_ORDER is missing part-file(s): {missing} — add them so every part is "
-            "linted and scanned by the security allowlist-tamper guard."
+            f"{MANIFEST_NAME} is missing part-file(s) present on disk: {missing} — add them "
+            "so every part is built, linted and scanned by the security allowlist-tamper guard."
         )
     if extra:
-        errors.append(f"PART_ORDER lists part-file(s) that don't exist: {extra} — remove them.")
+        errors.append(f"{MANIFEST_NAME} lists part-file(s) that don't exist on disk: {extra} — remove them.")
     return errors
 
 
@@ -656,12 +662,15 @@ def lint_monolith(filepath):
 
 
 def lint_parts(parts_dir):
-    """Lint all part-files in a directory."""
+    """Lint all part-files in a directory (list/order from MANIFEST.txt)."""
     errors = []
     warnings = []
 
+    # load_manifest fails closed (exit 1) if the manifest is missing/malformed.
+    part_order = load_manifest(parts_dir)
+
     # Check all expected parts exist
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if not os.path.exists(part_path):
             errors.append(f"Missing part file: {part_name}")
@@ -674,9 +683,17 @@ def lint_parts(parts_dir):
         errors += check_conflict_markers(source, part_name)
         warnings += check_balanced_braces(source, part_name)
 
+        # Size guard — warning only for now (see PART_SIZE_WARN_LINES).
+        line_count = source.count("\n") + (0 if source.endswith("\n") else 1)
+        if line_count > PART_SIZE_WARN_LINES:
+            warnings.append(
+                f"{part_name}: {line_count} lines exceeds the {PART_SIZE_WARN_LINES}-line "
+                "size target (warning only — split candidate)"
+            )
+
     # Check duplicates across all parts combined
     combined = ""
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if os.path.exists(part_path):
             with open(part_path, 'r', encoding="utf-8") as f:
@@ -689,7 +706,7 @@ def lint_parts(parts_dir):
     errors += check_css_fetch_sink_gate(parts_dir)
     errors += check_svg_style_element_disallowed(parts_dir)
     errors += check_security_tests_not_skippable(parts_dir)
-    errors += check_part_order_complete(parts_dir)
+    errors += check_part_order_complete(parts_dir, part_order)
 
     return errors, warnings
 

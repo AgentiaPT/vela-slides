@@ -49,18 +49,23 @@ def skip(name, reason=""):
 def test_unit():
     print("\n── Unit Tests ──")
 
-    # 1. All 11 part-files exist
-    expected_parts = [
-        "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-        "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-        "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-        "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-app.jsx"
-    ]
-    missing = [p for p in expected_parts if not os.path.exists(os.path.join(PARTS_DIR, p))]
-    if not missing:
-        ok(f"All {len(expected_parts)} part-files present")
+    # 1. All part-files listed in src/parts/MANIFEST.txt exist (the manifest is
+    #    the single source of truth for the part list/order — see concat.py/lint.py)
+    manifest_path = os.path.join(PARTS_DIR, "MANIFEST.txt")
+    expected_parts = []
+    if os.path.exists(manifest_path):
+        for line in open(manifest_path, encoding="utf-8"):
+            entry = line.split("#", 1)[0].strip()
+            if entry:
+                expected_parts.append(entry)
+    if not expected_parts:
+        fail("Part manifest", f"missing or empty: {manifest_path}")
     else:
-        fail(f"Part-files present", f"missing: {missing}")
+        missing = [p for p in expected_parts if not os.path.exists(os.path.join(PARTS_DIR, p))]
+        if not missing:
+            ok(f"All {len(expected_parts)} part-files present")
+        else:
+            fail(f"Part-files present", f"missing: {missing}")
 
     # 2. SKILL.md exists and has valid frontmatter
     skill_md = os.path.join(SKILL_DIR, "SKILL.md")
@@ -3568,7 +3573,7 @@ def test_deck_key_allowlist_structure():
     _tmp = _tf.mkdtemp(prefix="vela-drift-")
     try:
         for _f in os.listdir(PARTS_DIR):
-            if _f.endswith(".jsx"):
+            if _f.endswith(".jsx") or _f == "MANIFEST.txt":
                 _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp, _f))
         _victim = os.path.join(_tmp, "part-blocks.jsx")
         with open(_victim, "a", encoding="utf-8") as _fh:
@@ -3611,7 +3616,7 @@ def test_deck_key_allowlist_structure():
         _tmp2 = _tf.mkdtemp(prefix="vela-beacon-")
         try:
             for _f in os.listdir(PARTS_DIR):
-                if _f.endswith(".jsx"):
+                if _f.endswith(".jsx") or _f == "MANIFEST.txt":
                     _sh.copyfile(os.path.join(PARTS_DIR, _f), os.path.join(_tmp2, _f))
             with open(os.path.join(_tmp2, "part-blocks.jsx"), "a", encoding="utf-8") as _fh:
                 _fh.write(_inject)

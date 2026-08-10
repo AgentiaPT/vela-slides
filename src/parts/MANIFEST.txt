@@ -1,0 +1,20 @@
+# Vela Slides — part-file concatenation order (SINGLE SOURCE OF TRUTH).
+# Read by tools/vela-dev/scripts/concat.py + lint.py (via vela_manifest.py)
+# and by tests/test_vela.py. One filename per line, in fixed dependency
+# order; text after `#` on a line is a comment (the part's routing purpose).
+# Changing this order changes the build — the order matches the dependency
+# graph and must not be reordered casually.
+part-imports.jsx   # constants, sanitizers, helpers, storage API, startup patch system
+part-icons.jsx     # 270+ Lucide icon resolver
+part-blocks.jsx    # 27 block renderers (heading, flow, grid, metric, timeline, etc.)
+part-reducer.jsx   # useReducer state + dispatch actions
+part-engine.jsx    # Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop
+part-slides.jsx    # SlidePanel rendering, fullscreen, thumbnails
+part-list.jsx      # lane/module list, drag-and-drop
+part-chat.jsx      # ChatPanel, tool traces
+part-test.jsx      # battery render tests
+part-uitest.jsx    # 185 UI tests in 33 suites
+part-demo.jsx      # cinematic demo mode (18 scenes)
+part-pdf.jsx       # canvas PDF export, markdown export
+part-pptx.jsx      # native editable PowerPoint (.pptx) export
+part-app.jsx       # root VelaApp, modals, keyboard handlers

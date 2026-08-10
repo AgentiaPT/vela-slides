@@ -12,7 +12,8 @@ Two modes:
      Reads from specified directory
      Outputs to specified file or ./vela-built.jsx
 
-Concatenation order is fixed (matches dependency graph):
+Concatenation order is fixed (matches dependency graph) and read from
+src/parts/MANIFEST.txt (single source of truth):
   imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 
 RELEASE builds (--release):
@@ -33,6 +34,9 @@ RELEASE builds (--release):
 """
 
 import sys, os, re, tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vela_manifest import load_manifest
 
 # Naming convention for test-only globals, enforced by the release check in
 # concat(). Matching one hardcoded literal proved too narrow — it missed the UI
@@ -96,22 +100,8 @@ def strip_dev_only(content, part_name, release):
         sys.exit(1)
     return "\n".join(out), stripped
 
-PART_ORDER = [
-    "part-imports.jsx",
-    "part-icons.jsx",
-    "part-blocks.jsx",
-    "part-reducer.jsx",
-    "part-engine.jsx",
-    "part-slides.jsx",
-    "part-list.jsx",
-    "part-chat.jsx",
-    "part-test.jsx",
-    "part-uitest.jsx",
-    "part-demo.jsx",
-    "part-pdf.jsx",
-    "part-pptx.jsx",
-    "part-app.jsx",
-]
+# The part list and its fixed order come from <parts_dir>/MANIFEST.txt —
+# the single source of truth parsed by vela_manifest.load_manifest().
 
 # concat.py (dev tooling) lives at tools/vela-dev/scripts/, reads the app source
 # part-files from src/parts/, and writes the built monolith into the lean shipped
@@ -122,11 +112,12 @@ SKILL_PARTS = os.path.join(REPO_ROOT, "src", "parts")
 SKILL_TEMPLATE = os.path.join(REPO_ROOT, "skills", "vela-slides", "app", "vela.jsx")
 
 def concat(parts_dir, output_path, release=False):
+    part_order = load_manifest(parts_dir)
     chunks = []
     total_lines = 0
     total_stripped = 0
 
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         if release and part_name in RELEASE_EXCLUDED_PARTS:
             print(f"  {part_name}: skipped (test-only part, release build)")
             continue

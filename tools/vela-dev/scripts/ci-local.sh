@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci-local.sh — run the same test stacks CI runs and report TOTAL WALL TIME.
 #
-# Dev-only (never shipped). Mirrors the 8 gating stacks in .github/workflows/ci.yml
+# Dev-only (never shipped). Mirrors the 9 gating stacks in .github/workflows/ci.yml
 # so you can see, locally, what each costs and what the whole run costs — the
 # figure CI bills against (per minute).
 #
@@ -48,6 +48,7 @@ if [ "$PAR" -eq 0 ]; then
   echo "▶ Serial run (CI ordering)"
   run unit    "Unit"                python3 tests/test_vela.py --unit
   run integ   "Integration"        python3 tests/test_vela.py --integration
+  run lint    "Parts lint"         python3 tools/vela-dev/scripts/lint.py --parts src/parts
   run server  "Server"             python3 -m unittest tests.test_serve
   run desktop "Desktop gatekeeper" python3 -m unittest tests.test_desktop
   run go      "Go gatekeeper"      gotest
@@ -60,6 +61,7 @@ else
   # Group A: independent non-browser stacks, concurrently.
   run unit    "Unit"                python3 tests/test_vela.py --unit &
   run integ   "Integration"        python3 tests/test_vela.py --integration &
+  run lint    "Parts lint"         python3 tools/vela-dev/scripts/lint.py --parts src/parts &
   run server  "Server"             python3 -m unittest tests.test_serve &
   run desktop "Desktop gatekeeper" python3 -m unittest tests.test_desktop &
   run go      "Go gatekeeper"      gotest &
