@@ -68,7 +68,7 @@ All in `src/parts/part-imports.jsx` unless noted.
 | PDF literal string / URI | `pdfStringEncode` (`part-pdf.jsx`) | an inline escape |
 | PPTX / OOXML text | `pptxEsc` (`part-pptx.jsx`) | manual `&`/`<` replaces |
 | Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-pdf.jsx`) | writing a deck field into `.md` raw |
-| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`) | a per-site escape |
+| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-pdf.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
 | Marker substitution in a template | `String.replace(marker, () => value)` (replacer **function**) | a string replacement (`$&`/`$1` splicing) |
 | Local HTTP auth compare | `hmac.compare_digest` | `==` |
 | Desktop filesystem path | go through `fs-guard` (`vela-neutralino/resources/js/fs-guard.js`) | a direct `Neutralino.filesystem.*` call |
