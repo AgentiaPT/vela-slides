@@ -6,7 +6,11 @@
 # graph and must not be reordered casually.
 part-imports.jsx   # constants, sanitizers, helpers, storage API, startup patch system
 part-icons.jsx     # 270+ Lucide icon resolver
-part-blocks.jsx    # 27 block renderers (heading, flow, grid, metric, timeline, etc.)
+part-blocks-inline.jsx # error boundary, EditableText, inline **md** formatting, glossary links
+part-blocks-item.jsx   # per-item machinery — hover chrome, link/delete/reorder, item sub-components
+part-blocks.jsx    # RenderBlock — the 27-type block renderer switch
+part-blocks-branding.jsx # BrandingOverlay (logo, footer, slide numbers)
+part-blocks-layout.jsx # SlideContent layout composer, inline comment card, split-image layout
 part-reducer.jsx   # useReducer state + dispatch actions
 part-engine.jsx    # Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop
 part-slides.jsx    # SlidePanel rendering, fullscreen, thumbnails
@@ -15,6 +19,8 @@ part-chat.jsx      # ChatPanel, tool traces
 part-test.jsx      # battery render tests
 part-uitest.jsx    # 185 UI tests in 33 suites
 part-demo.jsx      # cinematic demo mode (18 scenes)
-part-pdf.jsx       # canvas PDF export, markdown export
+part-pdf.jsx       # canvas PDF export, DOM→canvas capture, vector extraction
+part-pdf-fonts.jsx # embedded PDF fonts — zlib-compressed base64 TTF blobs (~242KB)
+part-pdf-vector.jsx # vector PDF build, font pipeline, markdown + standalone HTML export
 part-pptx.jsx      # native editable PowerPoint (.pptx) export
 part-app.jsx       # root VelaApp, modals, keyboard handlers
