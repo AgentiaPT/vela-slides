@@ -14,12 +14,14 @@ Comprehensive test suite covering:
 import http.client
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from urllib.parse import quote
 
 # ── Path setup ────────────────────────────────────────────────────────
 # serve.py / agent_backend.py / local.html are dev-only tooling under
@@ -1565,6 +1567,102 @@ class TestBackendParity(unittest.TestCase):
         self.assertIn("--system-prompt-file", self.py)
         self.assertNotIn("--system-prompt", self.py)  # value form never on argv
         self.assertIn('"--system-prompt"', self.go)
+
+
+class TestDeckNameCodeDataSeparation(FolderServerTestBase):
+    """Deck filenames are attacker-influenced (decks are shared artifacts), so
+    a name must never reach a code context.
+
+    The server-side guard (names validated before listing) is covered by
+    TestSecurity. These cover the second layer: the browser page must not mix
+    code and data at all, so the guard being the *only* thing standing between
+    a filename and execution is not a state this page can return to.
+
+    They pin the INVARIANT rather than any one payload — a test that only
+    pinned one quoting trick would pass against the next one.
+    """
+
+    _extra_files = {
+        "apostrophe'.vela": SAMPLE_DECK,
+        'double".vela': SAMPLE_DECK,
+        "angle<>.vela": SAMPLE_DECK,
+        "backtick`.vela": SAMPLE_DECK,
+        "clean-name.vela": SAMPLE_DECK,
+        # A name whose percent-encoded form contains a query delimiter: it is
+        # listed, so it must also serve. Decoding before stripping the query
+        # would truncate it and break the listing/serving agreement.
+        "question?mark.vela": SAMPLE_DECK,
+    }
+
+    def test_listing_only_exposes_servable_names(self):
+        """Every listed name must pass the guard the serving routes enforce."""
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("clean-name.vela", names)  # the listing still works
+        for name in names:
+            self.assertTrue(
+                VelaHTTPHandler._validate_deck_name(name),
+                f"listing exposed a name the serving routes would reject: {name!r}",
+            )
+
+    @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
+    def test_listed_names_are_actually_servable(self):
+        """Every listed row serves when clicked — listing and serving agree.
+
+        Asserts 200 rather than 'not 400': a rejection is a rejection whatever
+        its status code, so a weaker assertion would let listing/serving drift
+        back apart unnoticed.
+        """
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("question?mark.vela", names)  # the drift case is covered
+        for name in names:
+            status, _, _ = fetch(self._port, "GET", "/deck/" + quote(name))
+            self.assertEqual(status, 200, f"listed but not servable: {name!r}")
+
+    def test_browser_page_has_no_inline_event_handlers(self):
+        """No inline on*= attribute — data can never land in a code context."""
+        _, _, body = fetch(self._port, "GET", "/")
+        html = body.decode("utf-8")
+        self.assertNotRegex(html, r"(?i)\son[a-z]+\s*=",
+                            "browser page must bind behaviour via addEventListener")
+
+    def test_browser_page_has_no_inline_script(self):
+        """Client code is external, so the page can run without 'unsafe-inline'."""
+        _, _, body = fetch(self._port, "GET", "/")
+        html = body.decode("utf-8")
+        self.assertNotRegex(html, r"(?is)<script(?![^>]*\ssrc=)[^>]*>\s*\S",
+                            "browser page must not contain an inline <script> body")
+        self.assertIn('src="/browser.js"', html)
+
+    def test_browser_csp_forbids_inline_script(self):
+        """The strict policy is what makes the above structural, not stylistic."""
+        for path in ("/", "/browser.js"):
+            _, hdrs, _ = fetch(self._port, "GET", path)
+            csp = hdrs["content-security-policy"]
+            self.assertIn("script-src 'self'", csp)
+            self.assertNotIn("unsafe-inline", csp.split("style-src")[0])
+            self.assertNotIn("unsafe-eval", csp)
+
+    @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
+    def test_app_page_keeps_its_own_policy(self):
+        """The stricter browser policy must not leak onto the app page."""
+        _, hdrs, _ = fetch(self._port, "GET", "/deck/sample.vela")
+        self.assertIn("unsafe-eval", hdrs["content-security-policy"])
+
+    def test_client_never_builds_markup_from_deck_data(self):
+        """Rendering goes through nodes, not string-concatenated HTML."""
+        with open(os.path.join(os.path.dirname(SCRIPTS_DIR), "browser.js"),
+                  encoding="utf-8") as f:
+            js = f.read()
+        # Strip comments first — the file's own docs name these sinks to
+        # explain why they are avoided, which would otherwise self-trip.
+        code = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+        code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+        for sink in ("innerHTML", "outerHTML", "document.write", "insertAdjacentHTML", "eval("):
+            self.assertNotIn(sink, code, f"browser.js must not use {sink}")
+        self.assertIn("addEventListener", code)
+        self.assertIn("textContent", code)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
 LOCAL_HTML_PATH = os.path.join(DEV_DIR, "local.html")            # dev preview shell
+BROWSER_JS_PATH = os.path.join(DEV_DIR, "browser.js")            # folder-browser client code
 
 # Content-Security-Policy for the local dev server. The hosted Claude.ai
 # artifact runs inside a sandboxed iframe whose CSP already blocks outbound
@@ -82,6 +83,24 @@ CSP_POLICY = "; ".join([
     "img-src 'self' data:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "connect-src 'self' https://api.anthropic.com https://esm.sh http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+])
+
+# The folder browser is a separate, self-contained page: static markup plus a
+# single same-origin script. It needs none of the app's in-browser toolchain,
+# so it does not inherit the app's permissive policy — it gets a strict one.
+# Without 'unsafe-inline' in script-src, an injected event-handler attribute
+# cannot execute even if markup-building were ever reintroduced here; that is
+# the point of keeping this policy separate rather than reusing CSP_POLICY.
+BROWSER_CSP = "; ".join([
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",  # the page's own <style> block; cannot execute JS
+    "img-src 'self' data:",              # inline SVG favicon
+    "connect-src 'self'",                # only /api/decks
     "base-uri 'none'",
     "object-src 'none'",
     "form-action 'none'",
@@ -131,6 +150,16 @@ class DeckVersionTracker:
 
 
 # ── File browser HTML ─────────────────────────────────────────────────
+def build_browser_js():
+    """Return the folder-browser client code, served as an external script.
+
+    Kept out of the HTML so the browser page can run under BROWSER_CSP with no
+    'unsafe-inline' in script-src.
+    """
+    with open(BROWSER_JS_PATH, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def build_browser_html():
     """Return the HTML for the Jupyter-style deck file browser."""
     return r"""<!DOCTYPE html>
@@ -199,131 +228,16 @@ def build_browser_html():
     </div>
   </div>
   <div class="toolbar">
-    <input type="text" class="search-box" id="search-input" placeholder="Search decks…" oninput="filterList()" />
+    <input type="text" class="search-box" id="search-input" placeholder="Search decks…" />
     <span class="deck-count" id="deck-count"></span>
   </div>
   <div id="deck-list" class="deck-list">
     <div class="loading">Loading decks…</div>
   </div>
 
-  <script>
-    var listEl = document.getElementById('deck-list');
-    var countEl = document.getElementById('deck-count');
-    var folderEl = document.getElementById('folder-path');
-    var searchEl = document.getElementById('search-input');
-    var allDecks = [];
-    var sortCol = 'modified';
-    var sortAsc = false;
-
-    function formatSize(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / 1048576).toFixed(1) + ' MB';
-    }
-
-    function formatDate(iso) {
-      var d = new Date(iso);
-      var now = new Date();
-      var diff = (now - d) / 1000;
-      if (diff < 60) return 'just now';
-      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-      if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-      return d.toLocaleDateString();
-    }
-
-    function sortDecks(decks) {
-      var col = sortCol;
-      return decks.slice().sort(function(a, b) {
-        var va, vb;
-        if (col === 'title') { va = (a.title || a.name).toLowerCase(); vb = (b.title || b.name).toLowerCase(); }
-        else if (col === 'name') { va = a.name.toLowerCase(); vb = b.name.toLowerCase(); }
-        else if (col === 'slides') { va = a.slides; vb = b.slides; }
-        else if (col === 'size') { va = a.size; vb = b.size; }
-        else { va = a.modified; vb = b.modified; }
-        if (va < vb) return sortAsc ? -1 : 1;
-        if (va > vb) return sortAsc ? 1 : -1;
-        return 0;
-      });
-    }
-
-    function setSort(col) {
-      if (sortCol === col) { sortAsc = !sortAsc; }
-      else { sortCol = col; sortAsc = col === 'title' || col === 'name'; }
-      renderList();
-    }
-
-    function arrow(col) {
-      if (sortCol !== col) return '<span class="sort-arrow">⇅</span>';
-      return '<span class="sort-arrow">' + (sortAsc ? '▲' : '▼') + '</span>';
-    }
-
-    function esc(s) { if (!s) return ''; var el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
-
-    function filterList() { renderList(); }
-
-    function renderList() {
-      var q = searchEl.value.toLowerCase().trim();
-      var filtered = allDecks;
-      if (q) {
-        filtered = allDecks.filter(function(d) {
-          return (d.title || '').toLowerCase().indexOf(q) !== -1 || d.name.toLowerCase().indexOf(q) !== -1;
-        });
-      }
-      var sorted = sortDecks(filtered);
-      countEl.textContent = (q ? sorted.length + '/' : '') + allDecks.length + ' deck' + (allDecks.length !== 1 ? 's' : '');
-
-      if (sorted.length === 0) {
-        listEl.innerHTML = '<div class="empty-state"><div class="icon">' + (q ? '🔍' : '📂') + '</div><div class="msg">' + (q ? 'No decks match "' + q.replace(/</g,'&lt;') + '"' : 'No .vela deck files found in this folder.') + '</div></div>';
-        return;
-      }
-
-      var cls = function(c) { return sortCol === c ? ' class="sorted"' : ''; };
-      var html = '<table><thead><tr>';
-      html += '<th' + cls('title') + ' onclick="setSort(\'title\')">Title ' + arrow('title') + '</th>';
-      html += '<th' + cls('name') + ' onclick="setSort(\'name\')">File ' + arrow('name') + '</th>';
-      html += '<th' + cls('slides') + ' onclick="setSort(\'slides\')" style="text-align:right">Slides ' + arrow('slides') + '</th>';
-      html += '<th' + cls('size') + ' onclick="setSort(\'size\')" style="text-align:right">Size ' + arrow('size') + '</th>';
-      html += '<th' + cls('modified') + ' onclick="setSort(\'modified\')">Modified ' + arrow('modified') + '</th>';
-      html += '<th style="width:60px"></th>';
-      html += '</tr></thead><tbody>';
-      sorted.forEach(function(d) {
-        var url = '/deck/' + encodeURIComponent(d.name);
-        html += '<tr class="deck-row" onclick="window.location=\'' + url + '\'">';
-        html += '<td class="col-title"><a href="' + url + '">' + esc(d.title || d.name) + '</a></td>';
-        html += '<td class="col-file">' + esc(d.name) + '</td>';
-        html += '<td class="col-slides">' + d.slides + '</td>';
-        html += '<td class="col-size">' + formatSize(d.size) + '</td>';
-        html += '<td class="col-modified" title="' + d.modified + '">' + formatDate(d.modified) + '</td>';
-        html += '<td class="col-badge">' + (d.compact ? '<span class="deck-badge">compact</span>' : '') + '</td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table>';
-      listEl.innerHTML = html;
-    }
-
-    // Focus search on Ctrl+F / Cmd+F
-    document.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); searchEl.focus(); searchEl.select(); }
-      if (e.key === 'Escape' && document.activeElement === searchEl) { searchEl.value = ''; filterList(); searchEl.blur(); }
-    });
-
-    // Load decks on startup + auto-refresh every 3s
-    function fetchDecks() {
-      fetch('/api/decks')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          folderEl.textContent = data.folder;
-          allDecks = data.decks;
-          renderList();
-        })
-        .catch(function(e) {
-          listEl.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="msg">Error loading decks: ' + e.message + '</div></div>';
-        });
-    }
-    fetchDecks();
-    setInterval(fetchDecks, 3000);
-  </script>
+  <!-- Client code lives in an external same-origin file (tools/vela-dev/browser.js)
+       so this page can run with no 'unsafe-inline' in script-src. Do not inline it. -->
+  <script src="/browser.js" defer></script>
 </body>
 </html>"""
 
@@ -377,6 +291,22 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
                 and bool(name.strip()))
+
+    def _deck_name_from_path(self, prefix):
+        """Decode the deck name out of a request path beginning with `prefix`.
+
+        SINGLE PARSING POINT for the three name-taking routes, so they cannot
+        disagree with each other or with the listing.
+
+        The query string is stripped from the RAW path *before* percent-decoding.
+        Only a literal '?' delimits a query, so an encoded one belongs to the
+        filename and must survive; decoding first would truncate such a name and
+        make an entry the listing legitimately exposes unservable.
+        """
+        raw = self.path[len(prefix):]
+        if "?" in raw:
+            raw = raw.split("?", 1)[0]
+        return unquote(raw)
 
     @staticmethod
     def _safe_deck_path(folder, name):
@@ -485,16 +415,22 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return default
 
+    # Per-response CSP override. Defaults to the app policy; the folder-browser
+    # routes opt into the stricter BROWSER_CSP. Reset at the top of every
+    # request because handler instances are reused across keep-alive requests.
+    _csp = None
+
     def end_headers(self):
         """Override to inject security headers into all responses."""
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", CSP_POLICY)
+        self.send_header("Content-Security-Policy", self._csp or CSP_POLICY)
         super().end_headers()
 
     # ── Routing ────────────────────────────────────────────────────
 
     def do_GET(self):
+        self._csp = None  # handler instances are reused across keep-alive requests
         if not self._check_host():
             return
         if not self._check_auth():
@@ -502,6 +438,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._route_folder_get()
 
     def do_POST(self):
+        self._csp = None  # handler instances are reused across keep-alive requests
         if not self._check_host():
             return
         if not self._check_auth():
@@ -514,8 +451,13 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _route_folder_get(self):
         if self.path == "/" or self.path == "/index.html":
+            self._csp = BROWSER_CSP
             content = build_browser_html().encode("utf-8")
             self._serve(content, "text/html; charset=utf-8")
+        elif self.path == "/browser.js":
+            self._csp = BROWSER_CSP
+            self._serve(build_browser_js().encode("utf-8"),
+                        "text/javascript; charset=utf-8")
         elif self.path == "/api/decks":
             self._handle_list_decks()
         elif self.path.startswith("/deck/"):
@@ -611,11 +553,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_serve_deck(self):
         """GET /deck/<name> — serve Vela app with this deck loaded."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/deck/"):])
-
-        # Strip query string
-        if "?" in deck_name:
-            deck_name = deck_name.split("?", 1)[0]
+        deck_name = self._deck_name_from_path("/deck/")
 
         # Security: no path traversal, enforce .vela extension
         if not self._validate_deck_name(deck_name):
@@ -645,11 +583,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_poll(self):
         """GET /poll/<name>?v=N — long-poll for a specific deck."""
         srv = self.server_ref
-        rest = self.path[len("/poll/"):]
-        if "?" in rest:
-            deck_name = unquote(rest.split("?", 1)[0])
-        else:
-            deck_name = unquote(rest)
+        deck_name = self._deck_name_from_path("/poll/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
@@ -668,7 +602,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_save(self):
         """POST /save/<name> — browser sends deck updates for a specific deck."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/save/"):])
+        deck_name = self._deck_name_from_path("/save/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
