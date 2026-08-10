@@ -3521,7 +3521,7 @@ function deckToMarkdown(state, opts = {}) {
   // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
   // renderer never auto-loads text images) — a blocked/opaque scheme collapses
   // the span to its plain label, an allowed one stays a link (never an image).
-  const mdInline = (t) => {
+  const mdInline = (t, cell) => {
     if (t == null) return "";
     const src = String(t);
     // Walk the string as alternating INLINE-link spans and the gaps between them.
@@ -3545,7 +3545,10 @@ function deckToMarkdown(state, opts = {}) {
     // metachars: a lone `\` before an escaped char would otherwise revive it —
     // attacker `\<` -> `\\<` renders as a literal `\` + a LIVE `<`. Escaping `\`
     // too makes every `\[`/`\]`/`\<`/`\>` unrevivable.
-    const escGap = (g) => g.replace(/[\\\[\]<>]/g, "\\$&");
+    // In cell mode `|` joins the class so it is escaped in the SAME pass as
+    // backslash (escaped first-class), not by a separate order-dependent replace.
+    const gapRe = cell ? /[\\\[\]<>|]/g : /[\\\[\]<>]/g;
+    const escGap = (g) => g.replace(gapRe, "\\$&");
     const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
     let out = "", last = 0, m;
     while ((m = re.exec(src)) !== null) {
@@ -3563,9 +3566,11 @@ function deckToMarkdown(state, opts = {}) {
   // Build a link only when the destination passes the scheme allowlist; a blocked
   // target degrades to the plain (escaped) label rather than emitting a bad URL.
   const mdLink = (label, target) => { const s = mdDest(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
-  // Table cell: inline-sanitize, then collapse newlines and escape pipes so a
-  // cell cannot inject extra columns or break the row grammar.
-  const mdCell = (t) => mdInline(t).replace(/\n/g, " ").replace(/\|/g, "\\|");
+  // Table cell: inline-sanitize in CELL mode (escGap escapes `|` alongside
+  // backslash/brackets/angles in one complete pass — no separate, order-dependent
+  // pipe replace), then collapse newlines. A cell cannot inject columns or break
+  // the row grammar, and backslash is not double-escaped.
+  const mdCell = (t) => mdInline(t, true).replace(/\n/g, " ");
   // Code fence long enough that backtick runs in the content cannot close it.
   const mdFence = (code) => { const runs = String(code == null ? "" : code).match(/`+/g) || []; const max = runs.reduce((m, r) => Math.max(m, r.length), 0); return "`".repeat(Math.max(3, max + 1)); };
   // Heading text: inline-sanitize then collapse newlines so a title cannot spill

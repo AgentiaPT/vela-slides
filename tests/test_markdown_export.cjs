@@ -431,6 +431,12 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   // is neutralized at the export encoder (and additionally HTML-stripped at import).
   const snExport = deckToMarkdown({ deckTitle: "D", lanes: [{ title: "S", items: [{ title: "M", slides: [{ blocks: [{ type: "text", text: "x" }], speakerNotes: "\\<img src=https://attacker.example/nu.png\\>" }] }] }] });
   noRawTag(snExport, "speakerNotes: backslash-revive neutralized in export");
+
+  // (14) CodeQL regression: a table cell escapes backslash AND pipe in one pass —
+  // backslash exactly once (no double-escape), pipe escaped so it can't add a column.
+  const cellbs = md1([{ type: "table", headers: ["a\\b|c"], rows: [["p|q"]] }]);
+  hasSub(cellbs, "a\\\\b\\|c", "table cell: backslash escaped once + pipe escaped");
+  noSub(cellbs, "a\\\\\\\\b", "table cell: backslash NOT double-escaped");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

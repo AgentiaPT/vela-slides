@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.30";
+const VELA_VERSION = "13.31";
 const VELA_CHANGELOG = [
+  { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
   { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
   { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
   { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
@@ -17060,7 +17061,7 @@ function deckToMarkdown(state, opts = {}) {
   // inline [label](target) link targets and NEUTRALIZE image auto-load (the live
   // renderer never auto-loads text images) — a blocked/opaque scheme collapses
   // the span to its plain label, an allowed one stays a link (never an image).
-  const mdInline = (t) => {
+  const mdInline = (t, cell) => {
     if (t == null) return "";
     const src = String(t);
     // Walk the string as alternating INLINE-link spans and the gaps between them.
@@ -17084,7 +17085,10 @@ function deckToMarkdown(state, opts = {}) {
     // metachars: a lone `\` before an escaped char would otherwise revive it —
     // attacker `\<` -> `\\<` renders as a literal `\` + a LIVE `<`. Escaping `\`
     // too makes every `\[`/`\]`/`\<`/`\>` unrevivable.
-    const escGap = (g) => g.replace(/[\\\[\]<>]/g, "\\$&");
+    // In cell mode `|` joins the class so it is escaped in the SAME pass as
+    // backslash (escaped first-class), not by a separate order-dependent replace.
+    const gapRe = cell ? /[\\\[\]<>|]/g : /[\\\[\]<>]/g;
+    const escGap = (g) => g.replace(gapRe, "\\$&");
     const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
     let out = "", last = 0, m;
     while ((m = re.exec(src)) !== null) {
@@ -17102,9 +17106,11 @@ function deckToMarkdown(state, opts = {}) {
   // Build a link only when the destination passes the scheme allowlist; a blocked
   // target degrades to the plain (escaped) label rather than emitting a bad URL.
   const mdLink = (label, target) => { const s = mdDest(target); return s ? `[${mdLabel(label)}](${s})` : mdLabel(label); };
-  // Table cell: inline-sanitize, then collapse newlines and escape pipes so a
-  // cell cannot inject extra columns or break the row grammar.
-  const mdCell = (t) => mdInline(t).replace(/\n/g, " ").replace(/\|/g, "\\|");
+  // Table cell: inline-sanitize in CELL mode (escGap escapes `|` alongside
+  // backslash/brackets/angles in one complete pass — no separate, order-dependent
+  // pipe replace), then collapse newlines. A cell cannot inject columns or break
+  // the row grammar, and backslash is not double-escaped.
+  const mdCell = (t) => mdInline(t, true).replace(/\n/g, " ");
   // Code fence long enough that backtick runs in the content cannot close it.
   const mdFence = (code) => { const runs = String(code == null ? "" : code).match(/`+/g) || []; const max = runs.reduce((m, r) => Math.max(m, r.length), 0); return "`".repeat(Math.max(3, max + 1)); };
   // Heading text: inline-sanitize then collapse newlines so a title cannot spill

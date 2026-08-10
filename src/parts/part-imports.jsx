@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.30";
+const VELA_VERSION = "13.31";
 const VELA_CHANGELOG = [
+  { v: "13.31", d: "Security (defense-in-depth): unified table-cell Markdown escaping into one complete pass (backslash escaped alongside pipe), resolving a static-analysis incomplete-escaping finding; no behavior change." },
   { v: "13.30", d: ["Security (defense-in-depth): adversarial review hardened the 13.29 fixes to rock-solid. The dev-server deck listing now refuses to follow a symlinked entry at open time, closing a check/use race rather than relying on a prior path check. Markdown export now applies complete Markdown-context output encoding to every deck-text field at the sink — link/image destinations, reference-style syntax, raw HTML and autolinks, code fences and tables — with matching HTML-stripping of the contributing text fields at import.", "Extensive regression tests added."] },
   { v: "13.29", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
   { v: "13.28", d: ["Security (defense-in-depth): every deck color that reaches a URL-auto-loading CSS sink now passes through the allowlist color encoder (fail-closed), closing a CSS auto-load beacon gap where the ingress denylist was the only guard on a few render sinks.", "CI: a new lint enforces this encoder-gating at every such sink so the pattern can't regress.", "Regression tests added."] },
