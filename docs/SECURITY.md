@@ -135,7 +135,16 @@ Node.js dependencies are managed with strict supply chain protections:
 | No install scripts | `.npmrc: ignore-scripts=true` | Blocks malicious `postinstall` scripts |
 | No native builds | `pnpm-workspace.yaml: onlyBuiltDependencies: []` | Blocks native binary compilation |
 | 7-day release cooldown | `pnpm-workspace.yaml: minimumReleaseAge: 10080` | New releases must age before install |
-| Lockfile integrity | `pnpm-lock.yaml` with SHA-512 hashes | Pins exact versions + verifies content |
+| …in the MCP channel too | `tools/vela-dev/channel/pnpm-workspace.yaml` | That directory installs standalone, so the root floor does not reach it |
+| Tiered bump cooldown | `.github/dependabot.yml: cooldown:` | 7d patch / 14d minor / 30d major before a bump is even proposed. Security fixes are exempt |
+| Lockfile integrity | `pnpm-lock.yaml` / `package-lock.json` with SHA-512 hashes | Pins exact versions + verifies content |
+| Actions pinned by SHA | `.github/workflows/*.yml` | A moved tag cannot change what CI executes; the `# vN` comment is the human-readable label |
+| Runtime binaries pinned | `vela-neutralino/checksums/*.sha256` | Per-binary SHA256 for the Neutralino runtime + client, verified after every `neu update` |
+| Pinned test requirements | `tests/requirements-test.txt` (exact `==`) | CI installs pip deps without a lockfile, so an open range would admit a same-day upload |
+
+Coverage is enforced by Dependabot across every manifest that feeds a build:
+the repo root (npm + Actions), `tools/vela-dev/channel`, `vela-neutralino`,
+`tests/` (pip) and the desktop `Dockerfile` (docker).
 
 **Release-artifact packaging** — the shipped skill ZIP is built by `tools/vela-dev/scripts/package-skill.py` (dev toolchain, never shipped; also used by the release workflows). The archive builder skips file and directory symlinks and requires every member's canonical realpath to stay under the skill root, so a link planted in the tree cannot pull outside-of-root bytes into the ZIP under an in-root name. It also excludes `__pycache__` / `*.pyc` / `*.pyo` so no build-time bytecode is shipped. Regression-tested.
 
