@@ -116,6 +116,34 @@ threat model, the canonical sanitizer/encoder helpers you must reuse instead of
 re-implementing, the recurring failure classes this codebase has actually shipped
 and fixed, and the proof/CI gates a change must pass.
 
+## Dependency bumps — start with the sweeper, not by hand
+
+```bash
+python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage,parity   # <1s structural
+python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades                   # ~25s full sweep
+python3 tools/vela-dev/scripts/dep-sweep.py --json --vet --upgrades            # machine-readable
+```
+
+`dep-sweep.py` (dev-only, stdlib-only) does the deterministic half of a bump:
+discovers every manifest and flags any Dependabot is not watching, computes
+cooldown eligibility per tier from `.github/dependabot.yml`, verifies every
+SHA-pinned Action against its upstream tag *and* (with `--upgrades`) whether
+that tag is still current, checks npm provenance / publisher changes / new
+install hooks, flags an end-of-life Go toolchain, diffs lockfiles for
+newly-introduced packages, and runs each tree's audit. Exit `4` means something
+at high/critical severity — a bad pin, a lockfile parity break, an EOL
+toolchain, or a live advisory. Investigate before bumping anything.
+
+`--only` selects subsets (`coverage,actions,npm,go,parity,audit,new-packages`)
+so it can be driven in stages rather than all at once.
+
+It decides nothing. Which eligible version to take, whether a major is in
+scope, and whether to spend the security exemption stay human calls — see the
+**`dependency-sweep`** skill, which drives this script and owns the judgement.
+
+Deliberately not wired into CI: a scheduled job cannot be exercised before it
+is merged, and this is a tool you run when you are actually doing a bump.
+
 ## Build Commands
 
 ```bash
@@ -158,7 +186,7 @@ src/                     ← APP SOURCE (edit these; built into vela.jsx, never 
 tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
   local.html             ← local-preview shell
   scripts/               ← concat.py, serve.py, agent_backend.py, render-offline.js,
-                            vela-drive.js, lint.py, sync-skill-docs.py
+                            vela-drive.js, lint.py, sync-skill-docs.py, dep-sweep.py
   channel/               ← Node/pnpm MCP bridge
   evals/, references/    ← evals.json, app-editing.md
 examples/                ← vela-demo.vela, themed example decks

@@ -1,3 +1,9 @@
+# This directory installs standalone (it is NOT part of the repo-root pnpm
+# workspace), so the root pnpm-workspace.yaml settings do not reach it — the
+# cooldown has to be repeated here or the channel's resolver runs unguarded.
+#
+# minimumReleaseAge is in MINUTES. 10080 = 7 days: a release younger than this
+# cannot be resolved into the lockfile, so a freshly published (or freshly
+# compromised) version has to survive a week of public exposure first. Mirrors
+# the root workspace and the semver-patch tier in .github/dependabot.yml.
 minimumReleaseAge: 10080
-minimumReleaseAgeExclude:
-  - '@modelcontextprotocol/sdk'

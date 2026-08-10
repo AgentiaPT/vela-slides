@@ -10,6 +10,6 @@
     "build": "bash scripts/build.sh"
   },
   "devDependencies": {
-    "@neutralinojs/neu": "11.7.1"
+    "@neutralinojs/neu": "11.7.2"
   }
 }
