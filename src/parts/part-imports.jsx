@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.30";
+const VELA_VERSION = "13.31";
 const VELA_CHANGELOG = [
+  { v: "13.31", d: ["Security (defense-in-depth): Markdown export now also neutralizes raw-HTML and autolink syntax in deck text, and a few remaining text fields are HTML-stripped at import — closing the last markdown-export injection avenue (raw <img>/autolink beacons) at both the sink and the source.", "Regression tests added."] },
   { v: "13.30", d: ["Security (defense-in-depth): Markdown export now also neutralizes reference-style link/image syntax and its definition lines in deck text, so a link target that never passes through the inline sanitizer cannot reach the exported file. Completes the export output-encoding hardening.", "Regression tests added."] },
   { v: "13.29", d: ["Security (defense-in-depth): adversarial review hardened the 13.28 fixes — Markdown export now output-encodes link/image destinations so a validated URL cannot break out of the link grammar, and the dev-server deck listing now refuses to follow a symlinked entry at open time (closing a check/use race), not just by a prior path check.", "Regression tests added for both."] },
   { v: "13.28", d: ["Security (Medium, defense-in-depth): the local dev-server deck listing now enforces the same folder-containment check as every other file endpoint, closing a symlink-escape information disclosure.", "Security (Medium): the local AI channel now requires an authentication token unconditionally and no longer treats a request's Origin as an access boundary, closing an opaque-origin cross-origin access class.", "Security (Low, defense-in-depth): Markdown export now routes deck text through the shared URL-scheme allowlist and Markdown-context output encoding, reaching parity with the live renderer and closing a link/image injection class.", "Regression tests added across all three."] },
@@ -1170,6 +1171,14 @@ function sanitizeBlock(block, depth = 0) {
   if (clean.author) clean.author = sanitizeString(clean.author, 200);
   if (clean.value) clean.value = sanitizeString(String(clean.value), 100);
   if (clean.title) clean.title = sanitizeString(clean.title, 500);
+  // Text-ish block fields that also reach the Markdown exporter — strip HTML at
+  // ingress so no field relies on the export encoder alone (defense-in-depth,
+  // complete mediation): a `<img>`/autolink in these must never survive import.
+  if (clean.loopLabel) clean.loopLabel = sanitizeString(clean.loopLabel, 200);
+  if (clean.alt) clean.alt = sanitizeString(clean.alt, 500);
+  if (clean.centerLabel) clean.centerLabel = sanitizeString(clean.centerLabel, 200);
+  if (clean.centerSub) clean.centerSub = sanitizeString(clean.centerSub, 200);
+  if (clean.annotation) clean.annotation = sanitizeString(clean.annotation, 500);
   if (clean.link) clean.link = sanitizeUrl(clean.link);
   // Image block <img src> auto-fetches on render. Vela decks load nothing
   // external, so restrict to inline data:image/* (no network, no data:text/html).
@@ -1201,6 +1210,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.text) c.text = sanitizeString(c.text, 500);
         if (c.label) c.label = sanitizeString(c.label, 200);
+        if (c.title) c.title = sanitizeString(c.title, 500);
         if (c.value) c.value = sanitizeString(String(c.value), 100);
         if (c.link) c.link = sanitizeUrl(c.link);
         return c;
@@ -1212,6 +1222,7 @@ function sanitizeBlock(block, depth = 0) {
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
         if (c.title) c.title = sanitizeString(c.title, 500);
+        if (c.sublabel) c.sublabel = sanitizeString(c.sublabel, 200);
         if (c.text) c.text = sanitizeString(c.text, 1000);
         if (c.date) c.date = sanitizeString(c.date, 50);
         if (c.link) c.link = sanitizeUrl(c.link);

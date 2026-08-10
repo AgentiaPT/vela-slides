@@ -3531,18 +3531,23 @@ function deckToMarkdown(state, opts = {}) {
     // rewriter and mdDest never see them and their URL would otherwise reach a .md
     // viewer unchecked. The live renderer (parseInline) supports only inline links,
     // so escaping is both safe (same literal text) and parity-correct (CWE-116:
-    // cover the whole grammar, not just the `(...)` form). Each inline span is
-    // scheme-checked + destination-encoded (mdDest), the leading `!` dropped so an
-    // image can only downgrade to a link, and a blocked scheme collapses to the
-    // plain label. The label group is `*?` (empty allowed) so an empty-alt beacon
-    // `![](url)` (which the live renderer ignores) is caught too.
-    const escGap = (g) => g.replace(/[\[\]]/g, "\\$&");
+    // cover the whole grammar, not just the `(...)` form). The escaper ALSO covers
+    // `<`/`>`: Markdown permits RAW HTML and autolinks (`<img src=beacon>`,
+    // `<a href=javascript:…>`, `<scheme:…>`), which need neither `(` nor `[` and
+    // would otherwise reach a .md viewer live — the "parity" argument does not hold
+    // here because the live app renders these fields as escaped React text, not as
+    // markup. Each inline span is scheme-checked + destination-encoded (mdDest), the
+    // leading `!` dropped so an image can only downgrade to a link, and a blocked
+    // scheme collapses to the plain label. The label group is `*?` (empty allowed)
+    // so an empty-alt beacon `![](url)` (which the live renderer ignores) is caught
+    // too, and the surviving label is escaped so it cannot carry raw HTML either.
+    const escGap = (g) => g.replace(/[\[\]<>]/g, "\\$&");
     const re = /!?\[([^\[\]\n]*?)\]\(([^\s)\n]+?)\)/g;
     let out = "", last = 0, m;
     while ((m = re.exec(src)) !== null) {
       out += escGap(src.slice(last, m.index));
       const safe = mdDest(m[2]);
-      out += safe ? `[${m[1]}](${safe})` : escGap(m[1]);
+      out += safe ? `[${escGap(m[1])}](${safe})` : escGap(m[1]);
       last = m.index + m[0].length;
     }
     out += escGap(src.slice(last));

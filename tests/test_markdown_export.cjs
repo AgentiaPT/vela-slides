@@ -59,6 +59,13 @@ const noSub = (md, sub, name) => {
   if (!md.includes(sub)) ok(name);
   else bad(name, "unexpected substring: " + JSON.stringify(sub));
 };
+// A `<` is only dangerous (raw HTML tag / autolink) when UNescaped. `\<` renders
+// as a literal `<`, so assert there is no `<` (that isn't backslash-escaped)
+// immediately followed by a tag/comment/autolink start.
+const noRawTag = (md, name) => {
+  if (/(^|[^\\])<[a-zA-Z/!]/.test(md)) bad(name, "unescaped tag/autolink open present");
+  else ok(name);
+};
 
 // Build a minimal deck wrapping a single slide's block list.
 const deckWith = (blocks, slideExtra = {}, deckExtra = {}) => ({
@@ -396,6 +403,23 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   // inline links must still survive the bracket-escaping intact
   const keep = md1([{ type: "text", text: "see [docs](https://ok.example/x) now" }]);
   hasSub(keep, "[docs](https://ok.example/x)", "legit inline link preserved through escaping");
+
+  // (12) RED-TEAM regression #4: Markdown permits RAW HTML and autolinks
+  // (`<img src>`, `<a href=javascript:>`, `<scheme:...>`) which need neither `(`
+  // nor `[`. Every field routed through mdInline/mdLabel now escapes `<`/`>` so
+  // none render as live markup in the exported .md.
+  noRawTag(md1([{ type: "text", text: "x <img src=https://attacker.example/x.png> y" }]), "text: raw <img> beacon escaped");
+  noRawTag(md1([{ type: "text", text: "a <https://attacker.example/auto.png> b" }]), "text: autolink escaped");
+  noRawTag(md1([{ type: "text", text: "z <a href=\"javascript:alert(1)\">c</a>" }]), "text: raw <a>/<script> escaped");
+  // the specific fields the red-team found un-backstopped at import — all route
+  // through mdInline/mdLabel in export, so all are neutralized there
+  noRawTag(md1([{ type: "flow", items: [{ label: "S", sublabel: "<img src=https://attacker.example/sub.png>" }] }]), "flow sublabel: raw <img> escaped");
+  noRawTag(md1([{ type: "steps", items: [{ label: "x" }], loop: true, loopLabel: "<img src=https://attacker.example/loop.png>" }]), "loopLabel: raw <img> escaped");
+  noRawTag(md1([{ type: "icon-row", items: [{ title: "<img src=https://attacker.example/t.png>" }] }]), "icon-row unlinked title: raw <img> escaped");
+  // raw HTML smuggled inside an inline-link LABEL is escaped too
+  noRawTag(md1([{ type: "text", text: "[<img src=https://attacker.example/l.png>](https://ok.example/y)" }]), "inline-link label: raw <img> escaped");
+  // and confirm the escaped form is actually emitted (fix present, not just absent)
+  hasSub(md1([{ type: "text", text: "<img x>" }]), "\\<img x\\>", "raw < and > are backslash-escaped");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
