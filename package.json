@@ -7,7 +7,7 @@
     "@babel/standalone": "^7.29.8",
     "jsdom": "^30.0.1",
     "lucide-react": "^1.27.0",
-    "playwright": "^1.61.1",
+    "playwright": "^1.62.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   }
