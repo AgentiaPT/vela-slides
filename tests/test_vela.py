@@ -787,7 +787,7 @@ def test_audit_2025_05_fixes():
     ci_path = os.path.join(workflows, "ci.yml")
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     imports = read_part_family("part-imports")
-    engine  = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    engine  = read_part_family("part-engine")
 
     # ── C1: release-preview.yml must not interpolate inputs.pr_ref into a
     #        `run:` shell command. The branch name is attacker-controlled
@@ -980,7 +980,7 @@ def test_known_bugs():
     print("\n── Known Bug Tests ──")
 
     slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
-    engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    engine_jsx = read_part_family("part-engine")
     imports_jsx = read_part_family("part-imports")
     chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
 
@@ -3544,7 +3544,7 @@ def test_deck_key_allowlist_structure():
         fail("bare .map(sanitizeBlock) leaks the array index into the depth param")
 
     # Reconciliation: the two other slide-key lists derive from the allowlists.
-    engine_src = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    engine_src = read_part_family("part-engine")
     slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
     if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
         ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")

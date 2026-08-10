@@ -4712,6 +4712,7 @@ function replacePastedImage(slideObj, base64DataUrl) {
   walk(slideObj.blocks);
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Tool Execution Engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function executeTool(name, input, ws, attachedImages) {
   const findLane = (title) => ws.lanes.find((l) => l.title.toLowerCase() === title.toLowerCase());
@@ -5091,6 +5092,7 @@ function extractSlideImages(lanes, selectedId, slideIndex) {
   return [];
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vera Teacher Mode ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function buildTeacherPrompt(lanes, selectedId, slideIndex) {
   let slideJson = null, conceptTitle = "", totalSlides = 0, slideNum = 0, deckTitle = "";
@@ -18464,6 +18466,7 @@ function buildPptx(pages, opts) {
   return new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ── DOM extraction ──────────────────────────────────────────────────────────
 // NEW element-grouped text extractor (vs. part-pdf.jsx's per-visual-line
 // extractTextRuns). Emits ONE box per text-bearing element so PowerPoint reflows

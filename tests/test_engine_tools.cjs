@@ -12,7 +12,6 @@
 const fs = require("fs");
 const path = require("path");
 
-const engSrc = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-engine.jsx"), "utf8");
 // part-file families are split (MANIFEST.txt order) — concat for extraction.
 const readPartFamily = (prefix) => {
   const partsDir = path.join(__dirname, "..", "src", "parts");
@@ -23,6 +22,7 @@ const readPartFamily = (prefix) => {
     .map((n) => fs.readFileSync(path.join(partsDir, n), "utf8"))
     .join("\n");
 };
+const engSrc = readPartFamily("part-engine");
 const impSrc = readPartFamily("part-imports");
 
 // Extract a top-level `function NAME(...) {...}` by capturing from its declaration

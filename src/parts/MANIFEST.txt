@@ -15,7 +15,9 @@ part-blocks.jsx    # RenderBlock — the 27-type block renderer switch
 part-blocks-branding.jsx # BrandingOverlay (logo, footer, slide numbers)
 part-blocks-layout.jsx # SlideContent layout composer, inline comment card, split-image layout
 part-reducer.jsx   # useReducer state + dispatch actions
-part-engine.jsx    # Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop
+part-engine.jsx    # Vera AI engine core — callClaudeAPI(), shared API helpers
+part-engine-tools.jsx # tool execution engine (22 tools) + system prompts
+part-engine-modes.jsx # teacher mode, slide design API, timing estimation, chat step, SSE recovery, TOC slide generator
 part-slides.jsx    # SlidePanel rendering, fullscreen, thumbnails
 part-list.jsx      # lane/module list, drag-and-drop
 part-chat.jsx      # ChatPanel, tool traces
@@ -25,5 +27,6 @@ part-demo.jsx      # cinematic demo mode (18 scenes)
 part-pdf.jsx       # canvas PDF export, DOM→canvas capture, vector extraction
 part-pdf-fonts.jsx # embedded PDF fonts — zlib-compressed base64 TTF blobs (~242KB)
 part-pdf-vector.jsx # vector PDF build, font pipeline, markdown + standalone HTML export
-part-pptx.jsx      # native editable PowerPoint (.pptx) export
+part-pptx.jsx      # native editable PowerPoint (.pptx) export — DrawingML builders, ZIP writer, public entry
+part-pptx-extract.jsx # PPTX DOM extraction — text/SVG/table/image capture from rendered slides
 part-app.jsx       # root VelaApp, modals, keyboard handlers
