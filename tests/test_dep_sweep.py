@@ -70,13 +70,39 @@ class TestCooldownTiers(unittest.TestCase):
         self.assertEqual(ds.required_days(tiers, "minor"), 14)
         self.assertEqual(ds.required_days(tiers, "patch"), 7)
 
-    def test_parses_this_repo_config(self):
+    def test_parses_this_repo_config_per_block(self):
+        # One entry PER dependabot block. Collapsing the three npm blocks into
+        # a single "npm" key was last-parsed-wins the moment any directory's
+        # policy diverged from the others.
         tiers = ds.load_cooldown()
-        self.assertIn("npm", tiers)
-        self.assertEqual(ds.required_days(tiers["npm"], "minor"), 14)
-        self.assertEqual(ds.required_days(tiers["npm"], "major"), 30)
+        for key in ("npm@/", "npm@/tools/vela-dev/channel",
+                    "npm@/vela-neutralino", "pip@/tests",
+                    "docker@/vela-neutralino", "github-actions@/"):
+            self.assertIn(key, tiers, key)
+        self.assertEqual(ds.required_days(tiers["npm@/"], "minor"), 14)
+        self.assertEqual(ds.required_days(tiers["npm@/"], "major"), 30)
         # Actions intentionally run a single flat window.
-        self.assertEqual(ds.required_days(tiers["github-actions"], "major"), 7)
+        self.assertEqual(ds.required_days(tiers["github-actions@/"], "major"), 7)
+
+    def test_tiers_for_prefers_the_exact_block(self):
+        all_t = {"npm@/": {"default": 7, "minor": 14},
+                 "npm@/sub": {"default": 3, "minor": 5},
+                 "*": {"default": 7}}
+        self.assertEqual(ds.tiers_for(all_t, "npm", "/sub"), {"default": 3, "minor": 5})
+
+    def test_tiers_for_unwatched_dir_takes_the_strictest_same_eco_values(self):
+        # A manifest with no block of its own must not inherit the LOOSEST
+        # policy — a cooldown is a floor, so ambiguity resolves to the longest
+        # wait per tier.
+        all_t = {"npm@/": {"default": 7, "minor": 14},
+                 "npm@/other": {"default": 10, "minor": 5},
+                 "*": {"default": 7}}
+        merged = ds.tiers_for(all_t, "npm", "/nowhere")
+        self.assertEqual(merged, {"default": 10, "minor": 14})
+
+    def test_tiers_for_unknown_eco_falls_back_to_global_default(self):
+        self.assertEqual(ds.tiers_for({"*": {"default": 9}}, "cargo", "/"),
+                         {"default": 9})
 
 
 class TestEligibility(unittest.TestCase):
@@ -204,6 +230,15 @@ class TestLockedVersionResolution(unittest.TestCase):
                 self.assertEqual(resolved.get(name), npm_pairs[name],
                                  f"{name} must come from package-lock.json")
 
+    def test_duplicate_nested_copy_never_randomises_current(self):
+        # whatwg-url exists twice in the root lock (17.1.0 top-level, 16.0.1
+        # nested under data-urls). Iterating the unordered pair-set made
+        # "current" nondeterministic across runs — and the cooldown tier with
+        # it. Only the top-level entry is a direct dep's resolution.
+        for _ in range(20):
+            locked = ds._locked_versions_for("package.json")
+            self.assertEqual(locked.get("whatwg-url"), "17.1.0")
+
     def test_flags_when_current_is_only_a_manifest_floor(self):
         # vela-neutralino has no lockfile, so its versions are inferred. The
         # report must say so rather than present a guess as a fact.
@@ -256,20 +291,20 @@ class TestVetting(unittest.TestCase):
 
     def test_flags_provenance_regression(self):
         self._inject(
-            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": []},
-             "2.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": []}},
-            {"1.0.0": {"has_provenance": True, "source_repo": "https://github.com/o/r"},
-             "2.0.0": {"has_provenance": False, "source_repo": None}},
+            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": [], "fetched": True},
+             "2.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": [], "fetched": True}},
+            {"1.0.0": {"has_provenance": True, "source_repo": "https://github.com/o/r", "fetched": True},
+             "2.0.0": {"has_provenance": False, "source_repo": None, "fetched": True}},
         )
         flags = ds.vet_candidate("p", "1.0.0", "2.0.0")["flags"]
         self.assertTrue(any(f["severity"] == "critical" and "REGRESSION" in f["detail"] for f in flags))
 
     def test_flags_provenance_built_from_a_foreign_repo(self):
         self._inject(
-            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": "https://github.com/real/pkg", "deps": []},
-             "2.0.0": {"publisher": "a", "hooks": [], "declared_repo": "https://github.com/real/pkg", "deps": []}},
-            {"1.0.0": {"has_provenance": False, "source_repo": None},
-             "2.0.0": {"has_provenance": True, "source_repo": "https://github.com/attacker/pkg"}},
+            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": "https://github.com/real/pkg", "deps": [], "fetched": True},
+             "2.0.0": {"publisher": "a", "hooks": [], "declared_repo": "https://github.com/real/pkg", "deps": [], "fetched": True}},
+            {"1.0.0": {"has_provenance": False, "source_repo": None, "fetched": True},
+             "2.0.0": {"has_provenance": True, "source_repo": "https://github.com/attacker/pkg", "fetched": True}},
         )
         flags = ds.vet_candidate("p", "1.0.0", "2.0.0")["flags"]
         self.assertTrue(any(f["severity"] == "critical" and "!=" in f["detail"] for f in flags))
@@ -278,10 +313,10 @@ class TestVetting(unittest.TestCase):
         # uuid 8.3.2 -> 14.0.1 moved from a human to GitHub Actions. That is a
         # posture IMPROVEMENT and must not be reported as a takeover.
         self._inject(
-            {"8.3.2": {"publisher": "ctavan", "hooks": [], "declared_repo": None, "deps": []},
-             "14.0.1": {"publisher": "GitHub Actions", "hooks": [], "declared_repo": None, "deps": []}},
-            {"8.3.2": {"has_provenance": False, "source_repo": None},
-             "14.0.1": {"has_provenance": True, "source_repo": "https://github.com/uuidjs/uuid"}},
+            {"8.3.2": {"publisher": "ctavan", "hooks": [], "declared_repo": None, "deps": [], "fetched": True},
+             "14.0.1": {"publisher": "GitHub Actions", "hooks": [], "declared_repo": None, "deps": [], "fetched": True}},
+            {"8.3.2": {"has_provenance": False, "source_repo": None, "fetched": True},
+             "14.0.1": {"has_provenance": True, "source_repo": "https://github.com/uuidjs/uuid", "fetched": True}},
         )
         flags = ds.vet_candidate("uuid", "8.3.2", "14.0.1")["flags"]
         pub = [f for f in flags if "publisher changed" in f["detail"]]
@@ -290,20 +325,20 @@ class TestVetting(unittest.TestCase):
 
     def test_flags_a_human_publisher_swap(self):
         self._inject(
-            {"1.0.0": {"publisher": "maintainer", "hooks": [], "declared_repo": None, "deps": []},
-             "1.0.1": {"publisher": "stranger", "hooks": [], "declared_repo": None, "deps": []}},
-            {"1.0.0": {"has_provenance": False, "source_repo": None},
-             "1.0.1": {"has_provenance": False, "source_repo": None}},
+            {"1.0.0": {"publisher": "maintainer", "hooks": [], "declared_repo": None, "deps": [], "fetched": True},
+             "1.0.1": {"publisher": "stranger", "hooks": [], "declared_repo": None, "deps": [], "fetched": True}},
+            {"1.0.0": {"has_provenance": False, "source_repo": None, "fetched": True},
+             "1.0.1": {"has_provenance": False, "source_repo": None, "fetched": True}},
         )
         flags = ds.vet_candidate("p", "1.0.0", "1.0.1")["flags"]
         self.assertTrue(any(f["severity"] == "warn" and "publisher changed" in f["detail"] for f in flags))
 
     def test_flags_a_newly_introduced_install_hook(self):
         self._inject(
-            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": []},
-             "1.0.1": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": []}},
-            {"1.0.0": {"has_provenance": False, "source_repo": None},
-             "1.0.1": {"has_provenance": False, "source_repo": None}},
+            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": [], "fetched": True},
+             "1.0.1": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": [], "fetched": True}},
+            {"1.0.0": {"has_provenance": False, "source_repo": None, "fetched": True},
+             "1.0.1": {"has_provenance": False, "source_repo": None, "fetched": True}},
         )
         flags = ds.vet_candidate("p", "1.0.0", "1.0.1")["flags"]
         self.assertTrue(any("lifecycle hook" in f["detail"] for f in flags))
@@ -311,22 +346,121 @@ class TestVetting(unittest.TestCase):
     def test_does_not_flag_a_preexisting_hook(self):
         # esbuild has always had a postinstall. Steady state is not a signal.
         self._inject(
-            {"0.28.0": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": []},
-             "0.28.1": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": []}},
-            {"0.28.0": {"has_provenance": True, "source_repo": None},
-             "0.28.1": {"has_provenance": True, "source_repo": None}},
+            {"0.28.0": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": [], "fetched": True},
+             "0.28.1": {"publisher": "a", "hooks": ["postinstall"], "declared_repo": None, "deps": [], "fetched": True}},
+            {"0.28.0": {"has_provenance": True, "source_repo": None, "fetched": True},
+             "0.28.1": {"has_provenance": True, "source_repo": None, "fetched": True}},
         )
         self.assertEqual(ds.vet_candidate("esbuild", "0.28.0", "0.28.1")["flags"], [])
 
     def test_flags_new_runtime_dependencies(self):
         self._inject(
-            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": []},
-             "1.1.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": ["left-pad"]}},
-            {"1.0.0": {"has_provenance": True, "source_repo": None},
-             "1.1.0": {"has_provenance": True, "source_repo": None}},
+            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": [], "fetched": True},
+             "1.1.0": {"publisher": "a", "hooks": [], "declared_repo": None, "deps": ["left-pad"], "fetched": True}},
+            {"1.0.0": {"has_provenance": True, "source_repo": None, "fetched": True},
+             "1.1.0": {"has_provenance": True, "source_repo": None, "fetched": True}},
         )
         flags = ds.vet_candidate("p", "1.0.0", "1.1.0")["flags"]
         self.assertTrue(any("left-pad" in f["detail"] for f in flags))
+
+
+class TestVettingUnknowns(unittest.TestCase):
+    """A failed registry fetch is not evidence — of anything."""
+
+    def setUp(self):
+        self._vf, self._pv = ds.version_facts, ds.provenance
+
+    def tearDown(self):
+        ds.version_facts, ds.provenance = self._vf, self._pv
+
+    def _inject(self, facts, prov):
+        ds.version_facts = lambda n, v: facts[v]
+        ds.provenance = lambda n, v: prov[v]
+
+    def test_failed_attestation_fetch_does_not_fabricate_a_regression(self):
+        # The exact false-critical both reviews reproduced: current has
+        # provenance, the CANDIDATE's attestation lookup fails -> the old code
+        # reported "provenance REGRESSION" (exit 4) out of a network blip.
+        self._inject(
+            {"1.0.0": {"publisher": "a", "hooks": [], "declared_repo": None,
+                       "deps": [], "fetched": True},
+             "2.0.0": {"publisher": "a", "hooks": [], "declared_repo": None,
+                       "deps": [], "fetched": True}},
+            {"1.0.0": {"has_provenance": True, "source_repo": None, "fetched": True},
+             "2.0.0": {"has_provenance": False, "source_repo": None, "fetched": False}},
+        )
+        flags = ds.vet_candidate("p", "1.0.0", "2.0.0")["flags"]
+        self.assertFalse(any("REGRESSION" in f["detail"] for f in flags))
+        self.assertTrue(any("INCOMPLETE" in f["detail"] for f in flags))
+
+    def test_total_outage_reports_incomplete_not_all_clear(self):
+        # The mirror failure: every fetch fails. Zero flags would read as a
+        # clean vetting — a real regression during an outage sails through.
+        self._inject(
+            {"1.0.0": {"publisher": None, "hooks": [], "declared_repo": None,
+                       "deps": [], "fetched": False},
+             "2.0.0": {"publisher": None, "hooks": [], "declared_repo": None,
+                       "deps": [], "fetched": False}},
+            {"1.0.0": {"has_provenance": False, "source_repo": None, "fetched": False},
+             "2.0.0": {"has_provenance": False, "source_repo": None, "fetched": False}},
+        )
+        flags = ds.vet_candidate("p", "1.0.0", "2.0.0")["flags"]
+        self.assertTrue(any("INCOMPLETE" in f["detail"] for f in flags))
+
+
+class TestGoToolchain(unittest.TestCase):
+    def test_pins_are_parsed_from_workflows_and_dockerfile(self):
+        # The pins COMPILE the shipped gatekeeper; go.mod is only a floor. A
+        # reverted workflow pin must be visible here, not hidden behind go.mod.
+        pins = ds.go_toolchain_pins()
+        self.assertIn("vela-neutralino/Dockerfile", pins)
+        self.assertTrue(any(k.startswith(".github/workflows/") for k in pins))
+        for v in pins.values():
+            self.assertIsInstance(v, tuple)
+
+    def test_eol_floor_alone_is_a_warn_not_a_high(self):
+        # go.mod 1.25 with pins on 1.26: when Go 1.27 ships, the old check
+        # exited 4 on every default run over a FLOOR that still builds fine
+        # with a current toolchain. Only an EOL *pin* is a high.
+        orig = ds.latest_go_minors
+        ds.latest_go_minors = lambda offline=False: [(1, 26), (1, 27)]
+        try:
+            findings = ds.check_go_toolchain()
+            highs = [f for f in findings if f["severity"] == "high"]
+            self.assertEqual(highs, [], f"pins are 1.26 (supported) — no high expected: {highs}")
+            warns = [f for f in findings if "go.mod" in f["issue"]]
+            self.assertEqual(len(warns), 1, "the 1.25 floor should warn, not page")
+        finally:
+            ds.latest_go_minors = orig
+
+    def test_eol_pin_is_a_high(self):
+        orig = ds.latest_go_minors
+        ds.latest_go_minors = lambda offline=False: [(1, 27), (1, 28)]
+        try:
+            findings = ds.check_go_toolchain()
+            self.assertTrue(any(f["severity"] == "high" and "past end of life" in f["issue"]
+                                for f in findings))
+        finally:
+            ds.latest_go_minors = orig
+
+
+class TestOnlyValidation(unittest.TestCase):
+    @staticmethod
+    def _main(argv):
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            return ds.main(argv)
+
+    def test_typo_in_only_is_a_usage_error_not_a_clean_pass(self):
+        # `--only parrity` used to run zero checks and print "Nothing needs
+        # attention" with exit 0 — a misspelled gate silently passing.
+        self.assertEqual(self._main(["--offline", "--only", "parrity"]), ds.EXIT_USAGE)
+        self.assertEqual(self._main(["--offline", "--only", "coverage,bogus"]), ds.EXIT_USAGE)
+
+    def test_valid_only_still_runs(self):
+        self.assertIn(self._main(["--offline", "--only", "coverage,parity"]),
+                      (ds.EXIT_OK, ds.EXIT_FINDINGS))
 
 
 class TestAuditParsing(unittest.TestCase):
@@ -367,6 +501,53 @@ class TestAuditParsing(unittest.TestCase):
         self.assertEqual(ds.parse_audit("root", "not json")["severity"], "info")
         self.assertEqual(ds.parse_audit("root", "")["severity"], "info")
 
+    def test_npm_total_bucket_is_not_double_counted(self):
+        # npm v7+ puts a "total" key INSIDE metadata.vulnerabilities. Summing
+        # every int key reported "2 advisory finding(s)" for a single high.
+        payload = json.dumps({
+            "auditReportVersion": 2,
+            "metadata": {"vulnerabilities": {"info": 0, "low": 0, "moderate": 0,
+                                             "high": 1, "critical": 0, "total": 1}},
+            "vulnerabilities": {"undici": {"name": "undici", "severity": "high"}},
+        })
+        f = ds.parse_audit("root", payload)
+        self.assertIn("1 advisory finding(s)", f["issue"])
+        self.assertNotIn("total", f["issue"])
+
+    def test_npm_v7_module_names_are_read_from_vulnerabilities(self):
+        # npm dropped the legacy `advisories` key in v7; module names live in
+        # the per-package `vulnerabilities` map. Reading only `advisories`
+        # made `modules` permanently empty for the root npm tree.
+        payload = json.dumps({
+            "auditReportVersion": 2,
+            "metadata": {"vulnerabilities": {"high": 1, "total": 1}},
+            "vulnerabilities": {"undici": {"name": "undici", "severity": "high"}},
+        })
+        self.assertEqual(ds.parse_audit("root", payload)["modules"], ["undici (high)"])
+
+    def test_npm_info_only_with_total_is_not_a_finding(self):
+        # The old sum included "total", so an info-only npm report (info: 3,
+        # total: 3) raised a warn out of nothing.
+        payload = json.dumps({
+            "metadata": {"vulnerabilities": {"info": 3, "low": 0, "moderate": 0,
+                                             "high": 0, "critical": 0, "total": 3}}})
+        self.assertIsNone(ds.parse_audit("root", payload))
+
+    def test_pnpm_no_lockfile_error_is_an_honest_info_finding(self):
+        # Without --ignore-workspace pnpm walked up and audited the ROOT tree
+        # under this tree's name. With it, a lockfile-less dir errors — which
+        # must surface as "audit unavailable", never as a clean result.
+        payload = json.dumps({"error": {"code": "ERR_PNPM_AUDIT_NO_LOCKFILE",
+                                        "message": "No pnpm-lock.yaml found"}})
+        f = ds.parse_audit("vela-neutralino", payload)
+        self.assertEqual(f["severity"], "info")
+        self.assertIn("NOT covered", f["issue"])
+
+    def test_neutralino_audit_command_carries_ignore_workspace(self):
+        cmds = {label: cmd for label, _, cmd in ds.AUDIT_TREES}
+        self.assertIn("--ignore-workspace", cmds["vela-neutralino"])
+        self.assertNotIn("--ignore-workspace", cmds["channel"])
+
 
 class TestCoverage(unittest.TestCase):
     def test_finds_every_manifest_in_this_repo(self):
@@ -384,6 +565,25 @@ class TestCoverage(unittest.TestCase):
     def test_this_repo_has_no_unmonitored_manifest(self):
         # If someone adds a new manifest without a dependabot entry, this fails.
         self.assertEqual(ds.check_coverage(), [])
+
+    def test_workflows_count_as_an_actions_manifest(self):
+        # Deleting the github-actions block from dependabot.yml must show up
+        # as an unmonitored manifest — previously the actions->github-actions
+        # mapping in check_coverage was unreachable because discovery never
+        # emitted an "actions" entry.
+        manifests = ds.discover_manifests()
+        actions = [m for m in manifests if m["ecosystem"] == "actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["directory"], "/")
+        without_block = {(e, d) for e, d in ds.dependabot_coverage()
+                         if e != "github-actions"}
+        orig = ds.dependabot_coverage
+        ds.dependabot_coverage = lambda: without_block
+        try:
+            gaps = [f for f in ds.check_coverage() if f["ecosystem"] == "actions"]
+            self.assertEqual(len(gaps), 1, "removing the github-actions block must be flagged")
+        finally:
+            ds.dependabot_coverage = orig
 
 
 if __name__ == "__main__":

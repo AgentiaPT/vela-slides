@@ -67,14 +67,25 @@ NOW = datetime.now(timezone.utc)
 # ── HTTP (stdlib only — repo policy is zero external Python deps) ─────
 
 def _fetch_json(url: str, timeout: int = 60) -> dict | None:
-    """GET a JSON document. Returns None on any failure — callers degrade."""
+    """
+    GET a JSON document.
+
+    Returns the document, `{}` for HTTP 404 (the endpoint answered and the data
+    genuinely does not exist — e.g. a package version with no attestations), or
+    `None` for a FAILED fetch (network down, timeout, garbage). Callers that
+    make comparative judgements must treat None as "unknown", never as
+    "absent": inventing a provenance regression out of a transient network
+    error would page someone over nothing, and the mirror case would wave a
+    real regression through during an outage.
+    """
     if url in _DOC_CACHE:
         return _DOC_CACHE[url]
-    doc = None
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             doc = json.load(resp)
+    except urllib.error.HTTPError as e:
+        doc = {} if e.code == 404 else None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
         doc = None
     _DOC_CACHE[url] = doc
@@ -135,8 +146,15 @@ def load_cooldown() -> dict[str, dict[str, int]]:
     default = {"default": 7, "major": 30, "minor": 14, "patch": 7}
     if not path.exists():
         return {"*": default}
-    per_eco: dict[str, dict[str, int]] = {}
+    # Keyed by "<ecosystem>@<directory>", one entry per update block. The
+    # config has THREE separate npm blocks (/, channel, vela-neutralino);
+    # collapsing them into one "npm" entry would mean last-parsed-wins the
+    # moment any directory's policy diverges from the others. (Assumes
+    # `directory:` precedes `cooldown:` within a block, as dependabot's
+    # documented layout and this repo's config both do.)
+    per_block: dict[str, dict[str, int]] = {}
     eco = None
+    directory = "/"
     in_cooldown = False
     for raw in path.read_text().splitlines():
         line = raw.split("#", 1)[0].rstrip()
@@ -144,13 +162,16 @@ def load_cooldown() -> dict[str, dict[str, int]]:
             continue
         m = re.search(r"package-ecosystem:\s*[\"']?([\w-]+)", line)
         if m:
-            eco, in_cooldown = m.group(1), False
-            # Start EMPTY, not from the global default. An ecosystem that only
-            # declares `default-days` (as github-actions does) must fall back to
-            # that single number for every update type — seeding the semver
-            # tiers here would invent a 30-day major window the config never
-            # set, and would wrongly hold back an Action major.
-            per_eco.setdefault(eco, {})
+            eco, directory, in_cooldown = m.group(1), "/", False
+            continue
+        m = re.search(r"^\s+directory:\s*[\"']?([^\"'\s]+)", line)
+        if m and eco and not in_cooldown:
+            directory = m.group(1)
+            # Start EMPTY, not from the global default. A block that only
+            # declares `default-days` (as github-actions does) must fall back
+            # to that single number for every update type — seeding the semver
+            # tiers would invent a 30-day major window the config never set.
+            per_block.setdefault(f"{eco}@{directory}", {})
             continue
         if re.search(r"^\s*cooldown:\s*$", line):
             in_cooldown = True
@@ -159,11 +180,33 @@ def load_cooldown() -> dict[str, dict[str, int]]:
             m = re.search(r"^\s+(default|semver-major|semver-minor|semver-patch)-days:\s*(\d+)", line)
             if m and eco:
                 key = m.group(1).replace("semver-", "")
-                per_eco[eco][key] = int(m.group(2))
+                per_block.setdefault(f"{eco}@{directory}", {})[key] = int(m.group(2))
             elif re.match(r"^\s{0,4}\S", line):
                 in_cooldown = False
-    per_eco.setdefault("*", default)
-    return per_eco
+    per_block.setdefault("*", default)
+    return per_block
+
+
+def tiers_for(all_tiers: dict[str, dict[str, int]], eco: str, directory: str = "/") -> dict[str, int]:
+    """
+    The cooldown tiers governing one manifest.
+
+    Exact block first. A manifest with no block of its own (which the coverage
+    check reports separately) falls back to the STRICTEST value per tier across
+    that ecosystem's blocks — a cooldown is a floor, so when the config is
+    ambiguous the safe reading is the longest wait, never the shortest.
+    """
+    exact = all_tiers.get(f"{eco}@{directory}")
+    if exact:
+        return exact
+    same_eco = [v for k, v in all_tiers.items() if k.startswith(f"{eco}@") and v]
+    if same_eco:
+        merged: dict[str, int] = {}
+        for block in same_eco:
+            for k, v in block.items():
+                merged[k] = max(merged.get(k, 0), v)
+        return merged
+    return all_tiers.get("*", {"default": 7})
 
 
 def required_days(tiers: dict[str, int], utype: str) -> int:
@@ -199,6 +242,19 @@ def discover_manifests() -> list[dict]:
             "path": str(rel),
             "ecosystem": eco,
             "directory": "/" + str(rel.parent) if str(rel.parent) != "." else "/",
+        })
+    # Workflows using third-party actions are a dependency surface too —
+    # dependabot's `github-actions` ecosystem watches them at directory "/".
+    # Without this entry, deleting that block from dependabot.yml would pass
+    # the coverage check silently.
+    wf_dir = ROOT / ".github" / "workflows"
+    if wf_dir.is_dir() and any(
+        "uses:" in p.read_text() for p in wf_dir.glob("*.yml")
+    ):
+        found.append({
+            "path": ".github/workflows",
+            "ecosystem": "actions",
+            "directory": "/",
         })
     return sorted(found, key=lambda f: f["path"])
 
@@ -291,14 +347,26 @@ def _clone_cache(repo: str) -> Path | None:
     cache = Path(os.environ.get("TMPDIR", "/tmp")) / "vela-dep-sweep-cache"
     cache.mkdir(parents=True, exist_ok=True)
     dest = cache / (repo.replace("/", "__") + ".git")
-    if dest.exists():
-        return dest
-    r = subprocess.run(
-        ["git", "clone", "--quiet", "--bare", "--filter=blob:none",
-         f"https://github.com/{repo}", str(dest)],
-        capture_output=True, text=True, timeout=180, check=False,
-    )
-    return dest if r.returncode == 0 else None
+    try:
+        if dest.exists():
+            # A cached clone is frozen at whatever tags existed when it was
+            # made — reusing it without a fetch would report "on the newest
+            # release" against a stale tag list, and would clear an EOL Go
+            # line that a new release just created. Refresh, and if the fetch
+            # fails treat the cache as unusable rather than silently stale.
+            r = subprocess.run(
+                ["git", "-C", str(dest), "fetch", "--quiet", "--tags", "--force", "origin"],
+                capture_output=True, text=True, timeout=120, check=False,
+            )
+            return dest if r.returncode == 0 else None
+        r = subprocess.run(
+            ["git", "clone", "--quiet", "--bare", "--filter=blob:none",
+             f"https://github.com/{repo}", str(dest)],
+            capture_output=True, text=True, timeout=180, check=False,
+        )
+        return dest if r.returncode == 0 else None
+    except (subprocess.SubprocessError, OSError):
+        return None
 
 
 def action_upgrades(repo: str, current_tag: str, tiers: dict[str, int]) -> list[dict]:
@@ -314,11 +382,14 @@ def action_upgrades(repo: str, current_tag: str, tiers: dict[str, int]) -> list[
     repo_dir = _clone_cache(repo)
     if not cur or repo_dir is None:
         return []
-    out = subprocess.run(
-        ["git", "-C", str(repo_dir), "for-each-ref",
-         "--format=%(refname:short)|%(creatordate:short)", "refs/tags"],
-        capture_output=True, text=True, timeout=120, check=False,
-    ).stdout
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_dir), "for-each-ref",
+             "--format=%(refname:short)|%(creatordate:short)", "refs/tags"],
+            capture_output=True, text=True, timeout=120, check=False,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
     rows = []
     for line in out.splitlines():
         if "|" not in line:
@@ -456,10 +527,17 @@ def newest_eligible(rows: list[dict]) -> dict | None:
 # ── Provenance, publisher identity, install hooks ────────────────────
 
 def provenance(name: str, version: str) -> dict:
-    """SLSA provenance for one version: present? built from which repo?"""
+    """
+    SLSA provenance for one version: present? built from which repo?
+
+    `fetched` distinguishes "the registry answered" (including a 404 — this
+    version simply has no attestations) from "the request failed". Comparative
+    checks must not treat a failed fetch as evidence of anything.
+    """
     esc = name.replace("/", "%2f")
     doc = _fetch_json(f"{ATTESTATION_URL}/{esc}@{version}")
-    out = {"has_provenance": False, "source_repo": None, "source_workflow": None}
+    out = {"has_provenance": False, "source_repo": None, "source_workflow": None,
+           "fetched": doc is not None}
     for att in (doc or {}).get("attestations", []) or []:
         if att.get("predicateType") != SLSA_PREDICATE:
             continue
@@ -484,7 +562,9 @@ LIFECYCLE = ("preinstall", "install", "postinstall", "prepare", "prepublish")
 
 
 def version_facts(name: str, version: str) -> dict:
-    doc = _fetch_json(_pkg_url(name, version)) or {}
+    doc = _fetch_json(_pkg_url(name, version))
+    fetched = doc is not None
+    doc = doc or {}
     scripts = doc.get("scripts") or {}
     repo = doc.get("repository")
     repo_url = repo.get("url") if isinstance(repo, dict) else repo
@@ -493,6 +573,7 @@ def version_facts(name: str, version: str) -> dict:
         "hooks": sorted(k for k in scripts if k in LIFECYCLE),
         "declared_repo": repo_url,
         "deps": sorted((doc.get("dependencies") or {}).keys()),
+        "fetched": fetched,
     }
 
 
@@ -513,20 +594,31 @@ def vet_candidate(name: str, current: str, target: str) -> dict:
     cur_p, new_p = provenance(name, current), provenance(name, target)
 
     flags = []
-    if cur_p["has_provenance"] and not new_p["has_provenance"]:
+    # Every comparative signal needs BOTH sides actually fetched. A failed
+    # request is not evidence: flagging a "regression" because the candidate's
+    # attestation lookup timed out fabricates a critical out of thin air, and
+    # the mirror case (current side failed) would hide a real one. Say
+    # "unknown" and let the human decide whether to retry.
+    prov_known = cur_p["fetched"] and new_p["fetched"]
+    facts_known = cur_f["fetched"] and new_f["fetched"]
+    if not (prov_known and facts_known):
+        flags.append(("info", "supply-chain vetting INCOMPLETE — registry fetch failed; "
+                              "re-run before trusting this candidate"))
+    if prov_known and cur_p["has_provenance"] and not new_p["has_provenance"]:
         flags.append(("critical", "provenance REGRESSION: had SLSA provenance, candidate does not"))
     if new_p["has_provenance"]:
         claimed = _repo_slug(new_f.get("declared_repo"))
         built = _repo_slug(new_p.get("source_repo"))
         if claimed and built and claimed != built:
             flags.append(("critical", f"provenance source {built} != declared repo {claimed}"))
-    if cur_f["publisher"] and new_f["publisher"] and cur_f["publisher"] != new_f["publisher"]:
-        sev = "info" if new_f["publisher"] in ("GitHub Actions",) else "warn"
-        flags.append((sev, f"publisher changed: {cur_f['publisher']} -> {new_f['publisher']}"))
-    gained = sorted(set(new_f["hooks"]) - set(cur_f["hooks"]))
-    if gained:
-        flags.append(("warn", f"introduces install lifecycle hook(s): {', '.join(gained)}"))
-    new_deps = sorted(set(new_f["deps"]) - set(cur_f["deps"]))
+    if facts_known:
+        if cur_f["publisher"] and new_f["publisher"] and cur_f["publisher"] != new_f["publisher"]:
+            sev = "info" if new_f["publisher"] in ("GitHub Actions",) else "warn"
+            flags.append((sev, f"publisher changed: {cur_f['publisher']} -> {new_f['publisher']}"))
+        gained = sorted(set(new_f["hooks"]) - set(cur_f["hooks"]))
+        if gained:
+            flags.append(("warn", f"introduces install lifecycle hook(s): {', '.join(gained)}"))
+    new_deps = sorted(set(new_f["deps"]) - set(cur_f["deps"])) if facts_known else []
     if new_deps:
         flags.append(("warn", f"adds new runtime dependencies: {', '.join(new_deps)}"))
 
@@ -602,10 +694,13 @@ def latest_go_minors(offline: bool = False) -> list[tuple[int, int]]:
     dest = _clone_cache("golang/go")
     if dest is None:
         return []
-    out = subprocess.run(
-        ["git", "-C", str(dest), "for-each-ref", "--format=%(refname:short)", "refs/tags/go*"],
-        capture_output=True, text=True, timeout=120, check=False,
-    ).stdout
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(dest), "for-each-ref", "--format=%(refname:short)", "refs/tags/go*"],
+            capture_output=True, text=True, timeout=120, check=False,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
     minors = set()
     for tag in out.splitlines():
         m = re.match(r"^go(\d+)\.(\d+)(?:\.\d+)?$", tag.strip())
@@ -614,46 +709,96 @@ def latest_go_minors(offline: bool = False) -> list[tuple[int, int]]:
     return sorted(minors)[-2:] if len(minors) >= 2 else []
 
 
+def go_toolchain_pins() -> dict[str, tuple[int, int]]:
+    """
+    Every place a Go toolchain version is pinned, source -> (major, minor).
+
+    The workflow `go-version:` fields and the Dockerfile `golang:` base image
+    are what actually COMPILE the shipped gatekeeper, so they are the
+    authoritative pins. go.mod's `go` directive is only a language-version
+    floor — reported separately, because an EOL floor merely *permits* an
+    unpatched compiler while an EOL pin *guarantees* one.
+    """
+    pins: dict[str, tuple[int, int]] = {}
+    wf_dir = ROOT / ".github" / "workflows"
+    if wf_dir.is_dir():
+        for path in sorted(wf_dir.glob("*.yml")):
+            for m in re.finditer(r"go-version:\s*[\"']?(\d+)\.(\d+)", path.read_text()):
+                pins[f".github/workflows/{path.name}"] = (int(m.group(1)), int(m.group(2)))
+    dockerfile = ROOT / "vela-neutralino" / "Dockerfile"
+    if dockerfile.exists():
+        m = re.search(r"FROM\s+golang:(\d+)\.(\d+)", dockerfile.read_text())
+        if m:
+            pins["vela-neutralino/Dockerfile"] = (int(m.group(1)), int(m.group(2)))
+    return pins
+
+
 def check_go_toolchain(offline: bool = False) -> list[dict]:
     """
-    The `go` directive and the toolchain pins that build the agent gatekeeper.
+    The toolchain pins that build the agent gatekeeper, plus go.mod's floor.
 
     A stdlib-only module has no dependencies for a bot to bump, so nothing else
     in this sweep — or in Dependabot — will ever notice that the compiler
     producing a security-critical binary went end-of-life.
     """
-    gomod = ROOT / "vela-neutralino" / "extensions" / "agent" / "go.mod"
-    if not gomod.exists():
-        return []
-    m = re.search(r"^go\s+(\d+)\.(\d+)", gomod.read_text(), re.M)
-    if not m:
-        return []
-    declared = (int(m.group(1)), int(m.group(2)))
     supported = latest_go_minors(offline)
     if not supported:
         return []
-    if declared >= min(supported):
-        return []
-    newest = supported[-1]
-    return [{
-        "check": "go-toolchain", "severity": "high",
-        "issue": (
-            f"go.mod declares go {declared[0]}.{declared[1]}, which is past end of life "
-            f"(Go supports the two newest minors: "
-            f"{', '.join(f'{a}.{b}' for a, b in supported)}). The gatekeeper binary is a "
-            f"security boundary — move go.mod, every workflow `go-version:`, and the "
-            f"Dockerfile base image together, e.g. to {newest[0]}.{newest[1]}."
-        ),
-    }]
+    oldest, newest = min(supported), supported[-1]
+    window = ", ".join(f"{a}.{b}" for a, b in supported)
+    findings: list[dict] = []
+
+    pins = go_toolchain_pins()
+    eol_pins = {src: v for src, v in pins.items() if v < oldest}
+    if eol_pins:
+        detail = ", ".join(f"{src} pins {a}.{b}" for src, (a, b) in sorted(eol_pins.items()))
+        findings.append({
+            "check": "go-toolchain", "severity": "high",
+            "issue": (
+                f"Go toolchain pin(s) past end of life ({detail}; Go supports "
+                f"{window}). The gatekeeper binary is a security boundary — move "
+                f"every workflow `go-version:` and the Dockerfile base image "
+                f"together, e.g. to {newest[0]}.{newest[1]}."
+            ),
+        })
+    elif len(set(pins.values())) > 1:
+        detail = ", ".join(f"{src}={a}.{b}" for src, (a, b) in sorted(pins.items()))
+        findings.append({
+            "check": "go-toolchain", "severity": "warn",
+            "issue": f"Go toolchain pins disagree ({detail}) — CI, copilot and the "
+                     f"Docker build should compile with the same toolchain.",
+        })
+
+    gomod = ROOT / "vela-neutralino" / "extensions" / "agent" / "go.mod"
+    if gomod.exists():
+        m = re.search(r"^go\s+(\d+)\.(\d+)", gomod.read_text(), re.M)
+        if m and (int(m.group(1)), int(m.group(2))) < oldest:
+            findings.append({
+                "check": "go-toolchain", "severity": "warn",
+                "issue": (
+                    f"go.mod's floor (go {m.group(1)}.{m.group(2)}) is below the supported "
+                    f"window ({window}) — it still builds fine with a current toolchain, "
+                    f"but raise it at the next touch so an EOL compiler cannot satisfy it."
+                ),
+            })
+    return findings
 
 
 def _run(cmd: list[str], cwd: Path) -> tuple[int, str]:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd,
                            timeout=300, check=False)
-        return p.returncode, p.stdout
+        # pnpm writes its structured error document ({"error": {...}}) to
+        # stderr; surface it so parse_audit can classify the failure instead
+        # of reporting an empty result.
+        return p.returncode, p.stdout if p.stdout.strip() else p.stderr
     except (subprocess.SubprocessError, OSError, FileNotFoundError):
         return -1, ""
+
+
+# Only these buckets are advisory severities. npm v7+ also puts a "total" key
+# inside metadata.vulnerabilities — summing every int key double-counts.
+AUDIT_SEVERITIES = ("low", "moderate", "high", "critical")
 
 
 def parse_audit(label: str, output: str) -> dict | None:
@@ -661,6 +806,9 @@ def parse_audit(label: str, output: str) -> dict | None:
     Turn one `npm audit --json` / `pnpm audit --json` document into a finding,
     or None when the tree is clean. Kept separate from process execution so it
     is testable without a node_modules tree or a network.
+
+    Handles both report shapes: pnpm's legacy `advisories` map, and npm v7+'s
+    per-package `vulnerabilities` map (npm dropped `advisories` in v7).
     """
     if not output.strip():
         return {"check": "audit", "severity": "info", "tree": label,
@@ -671,28 +819,46 @@ def parse_audit(label: str, output: str) -> dict | None:
         return {"check": "audit", "severity": "info", "tree": label,
                 "issue": "audit output was not JSON"}
 
+    err = doc.get("error")
+    if isinstance(err, dict):
+        if err.get("code") == "ERR_PNPM_AUDIT_NO_LOCKFILE":
+            return {"check": "audit", "severity": "info", "tree": label,
+                    "issue": "no lockfile — audit unavailable for this tree; "
+                             "its dependencies are NOT covered by any audit"}
+        return {"check": "audit", "severity": "info", "tree": label,
+                "issue": f"audit failed: {err.get('code') or err.get('message') or 'unknown error'}"}
+
     counts = (doc.get("metadata") or {}).get("vulnerabilities") or {}
-    # npm and pnpm both expose the same severity buckets here.
-    total = sum(v for k, v in counts.items() if isinstance(v, int) and k != "info")
+    total = sum(int(counts.get(k) or 0) for k in AUDIT_SEVERITIES)
     if not total:
         return None
     worst = "critical" if counts.get("critical") else ("high" if counts.get("high") else "warn")
-    detail = ", ".join(f"{k}: {v}" for k, v in counts.items() if v)
-    advisories = sorted({
+    detail = ", ".join(f"{k}: {counts[k]}" for k in AUDIT_SEVERITIES if counts.get(k))
+    modules = {
         (a.get("module_name"), a.get("severity"))
-        for a in (doc.get("advisories") or {}).values()
-    })
+        for a in (doc.get("advisories") or {}).values()          # pnpm shape
+    }
+    vulns = doc.get("vulnerabilities")
+    if isinstance(vulns, dict):                                   # npm v7+ shape
+        for name, v in vulns.items():
+            if isinstance(v, dict):
+                modules.add((v.get("name") or name, v.get("severity")))
     return {
         "check": "audit", "severity": worst, "tree": label,
         "issue": f"{total} advisory finding(s) — {detail}",
-        "modules": [f"{m} ({s})" for m, s in advisories if m],
+        "modules": sorted(f"{m} ({s})" for m, s in modules if m),
     }
 
 
 AUDIT_TREES = [
     ("root", "", ["npm", "audit", "--json"]),
     ("channel", "tools/vela-dev/channel", ["pnpm", "audit", "--json"]),
-    ("vela-neutralino", "vela-neutralino", ["pnpm", "audit", "--json"]),
+    # --ignore-workspace is load-bearing: without it pnpm walks up to the repo
+    # root's pnpm-workspace.yaml and audits the ROOT tree, then reports that
+    # result under this tree's name. This directory has no committed lockfile,
+    # so the flag makes pnpm say so honestly (ERR_PNPM_AUDIT_NO_LOCKFILE,
+    # surfaced as an info finding) instead of auditing the wrong tree.
+    ("vela-neutralino", "vela-neutralino", ["pnpm", "audit", "--ignore-workspace", "--json"]),
 ]
 
 
@@ -761,9 +927,18 @@ def _locked_versions_for(manifest_rel: str) -> dict[str, str]:
     npm_lock = ROOT / d / "package-lock.json"
     if npm_lock.exists():
         try:
-            for name, ver in npm_lock_pairs(npm_lock.read_text()):
-                locked.setdefault(name, ver)
-        except (json.JSONDecodeError, ValueError):
+            pkgs = json.loads(npm_lock.read_text()).get("packages", {})
+            # Only the TOP-LEVEL entry (`node_modules/<name>`, no nesting) is
+            # the version a direct dependency resolves to. Iterating the whole
+            # package set was nondeterministic: a package with a nested
+            # duplicate (whatwg-url 17.1.0 top-level vs 16.0.1 under
+            # data-urls) picked whichever the set yielded first, which
+            # randomised "current" — and therefore the cooldown tier.
+            for key, v in pkgs.items():
+                if key.startswith("node_modules/") and key.count("node_modules/") == 1 \
+                        and "version" in v:
+                    locked[key[len("node_modules/"):]] = v["version"]
+        except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
     pnpm_lock = ROOT / d / "pnpm-lock.yaml"
@@ -801,12 +976,14 @@ def direct_npm_deps() -> list[tuple[str, str, str, bool]]:
     return out
 
 
+VALID_CHECKS = ("coverage", "actions", "npm", "go", "parity", "audit", "new-packages")
+
+
 def run(args: argparse.Namespace) -> dict:
-    tiers_by_eco = load_cooldown()
-    npm_tiers = tiers_by_eco.get("npm", tiers_by_eco["*"])
+    all_tiers = load_cooldown()
     report: dict = {
         "generated_utc": NOW.isoformat(timespec="seconds"),
-        "cooldown_tiers": tiers_by_eco,
+        "cooldown_tiers": all_tiers,
         "findings": [],
         "upgrades": [],
         "verified_pins": [],
@@ -838,7 +1015,7 @@ def run(args: argparse.Namespace) -> dict:
 
     if want("actions") and not args.offline and args.upgrades:
         report["action_upgrades"] = check_action_upgrades(
-            tiers_by_eco.get("github-actions", tiers_by_eco["*"]),
+            tiers_for(all_tiers, "github-actions", "/"),
             report.get("verified_pins", []),
         )
 
@@ -847,7 +1024,11 @@ def run(args: argparse.Namespace) -> dict:
 
     if want("npm") and not args.offline:
         for manifest, name, current, from_lock in direct_npm_deps():
-            rows = candidates(name, current, npm_tiers)
+            # Tiers resolve per manifest directory — three separate npm blocks
+            # exist in dependabot.yml, and their policies may diverge.
+            mdir = str(Path(manifest).parent)
+            mdir = "/" if mdir == "." else "/" + mdir
+            rows = candidates(name, current, tiers_for(all_tiers, "npm", mdir))
             if not rows:
                 continue
             elig = newest_eligible(rows)
@@ -993,6 +1174,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="also write the raw JSON report here, whatever --out's format is "
                          "(so one run can produce both without re-querying the registry)")
     args = ap.parse_args(argv)
+
+    if args.only:
+        # A typo'd check name must not run zero checks and then print
+        # "Nothing needs attention" with exit 0 — the skill reads that as a
+        # passed gate, which turns a misspelling into a silent skip.
+        unknown = sorted(set(args.only.split(",")) - set(VALID_CHECKS))
+        if unknown:
+            print(f"dep-sweep: unknown check(s) in --only: {', '.join(unknown)}\n"
+                  f"           valid: {', '.join(VALID_CHECKS)}", file=sys.stderr)
+            return EXIT_USAGE
 
     try:
         report = run(args)

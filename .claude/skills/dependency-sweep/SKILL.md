@@ -147,7 +147,7 @@ python3 tests/test_vela.py --integration        # 102
 python3 tests/test_serve.py                     # 124
 python3 -m unittest tests.test_desktop          # 35
 node tests/test_release_build.cjs               # 22
-python3 -m unittest tests.test_dep_sweep        # 40 (this tooling)
+python3 -m unittest tests.test_dep_sweep        # 57 (this tooling)
 python3 tools/vela-dev/scripts/concat.py        # template must stay in sync
 ```
 
