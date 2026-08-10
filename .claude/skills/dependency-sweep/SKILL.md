@@ -5,22 +5,58 @@ description: Run a global dependency bump across every ecosystem in this repo (n
 
 # Dependency sweep
 
-**Run the script first. Do not re-derive by hand what it already computed.**
+You are in control. `dep-sweep.py` is an instrument you point at things — it
+gathers evidence and computes eligibility, it never edits a file and never
+decides. Run it in stages, read each result, then choose the next move.
+
+**Never re-derive by hand what the script already computed.** Registry dates,
+cooldown arithmetic, pin verification and provenance are exactly the work it
+exists to remove.
+
+### Stage 1 — cheap, offline, no excuses (< 1s)
 
 ```bash
-python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades --base origin/main --json
+python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage,parity
 ```
 
-`--upgrades` also scans for newer GitHub Action tags (adds ~15s). Do not skip
-it: without it the report verifies that each pin matches its tag and says
-nothing about whether that tag is still current — an action can be correctly
-pinned to a release upstream has since superseded for security reasons.
+Is a manifest unwatched? Have the two root lockfiles drifted? Both are
+structural problems that make everything downstream untrustworthy. Fix these
+before looking at versions.
 
-That one command replaces roughly 80% of this task: manifest discovery,
-per-tier cooldown maths, Action pin verification, provenance and publisher
-checks, install-hook diffing, new-package detection, lockfile parity and the
-three audits. It takes ~10s. Read its output, then spend your reasoning only
-on what it deliberately leaves open.
+### Stage 2 — what is actually available (~10s, network)
+
+```bash
+python3 tools/vela-dev/scripts/dep-sweep.py --only npm,go,audit
+```
+
+Cooldown-eligible npm targets, an end-of-life Go toolchain, and live advisories
+per tree. **Install the trees first** (`npm ci`, `pnpm install --frozen-lockfile`
+in `tools/vela-dev/channel`) or the audit half reports nothing — an uninstalled
+tree is silence, not a clean bill of health.
+
+### Stage 3 — Actions and supply-chain vetting (~15s more)
+
+```bash
+python3 tools/vela-dev/scripts/dep-sweep.py --upgrades --vet
+```
+
+`--upgrades` is not optional when Actions are in scope. Without it the report
+confirms each pin matches the tag it claims and says nothing about whether that
+tag is still current — an action can be correctly pinned to a release upstream
+has since superseded for security reasons, and the report will look clean.
+
+`--vet` adds provenance, publisher-identity and install-hook deltas for each
+eligible target.
+
+### Everything at once
+
+```bash
+python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades --base <ref> --json
+```
+
+`--json` when you want to reason over the data rather than read prose; `--base`
+diffs lockfiles against a ref to surface newly-introduced package *names*
+(use the branch point, not the branch you are on, or it compares to itself).
 
 Exit codes: `0` clean · `1` findings · `4` **anything at high/critical
 severity**. That is broader than just integrity failures: a bad Action pin, a
@@ -115,4 +151,9 @@ python3 -m unittest tests.test_dep_sweep        # 40 (this tooling)
 python3 tools/vela-dev/scripts/concat.py        # template must stay in sync
 ```
 
-Then re-run `dep-sweep.py` and confirm it reports clean.
+Then re-run stages 1-3 and confirm they report clean.
+
+This tooling is deliberately **not** wired into CI or a scheduled workflow: a
+job you cannot exercise before merging is not a guard you can trust, and this
+is a tool you reach for when you are actually doing a bump. Running it is your
+job, which is why stage 1 is fast enough to have no excuse for skipping.

@@ -107,22 +107,30 @@ All checks must pass before committing.
 ## Dependency bumps — start with the sweeper, not by hand
 
 ```bash
-python3 tools/vela-dev/scripts/dep-sweep.py --vet            # ~10s, read this first
-python3 tools/vela-dev/scripts/dep-sweep.py --json --vet     # machine-readable
+python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage,parity   # <1s structural
+python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades                   # ~25s full sweep
+python3 tools/vela-dev/scripts/dep-sweep.py --json --vet --upgrades            # machine-readable
 ```
 
 `dep-sweep.py` (dev-only, stdlib-only) does the deterministic half of a bump:
 discovers every manifest and flags any Dependabot is not watching, computes
 cooldown eligibility per tier from `.github/dependabot.yml`, verifies every
-SHA-pinned Action against its upstream tag, checks npm provenance / publisher
-changes / new install hooks, diffs lockfiles for newly-introduced packages, and
-runs each tree's audit. Exit `4` means a **verification failed** (bad pin or
-lockfile parity break) — investigate before bumping anything.
+SHA-pinned Action against its upstream tag *and* (with `--upgrades`) whether
+that tag is still current, checks npm provenance / publisher changes / new
+install hooks, flags an end-of-life Go toolchain, diffs lockfiles for
+newly-introduced packages, and runs each tree's audit. Exit `4` means something
+at high/critical severity — a bad pin, a lockfile parity break, an EOL
+toolchain, or a live advisory. Investigate before bumping anything.
+
+`--only` selects subsets (`coverage,actions,npm,go,parity,audit,new-packages`)
+so it can be driven in stages rather than all at once.
 
 It decides nothing. Which eligible version to take, whether a major is in
 scope, and whether to spend the security exemption stay human calls — see the
-**`dependency-sweep`** skill. A weekly report also runs via
-`.github/workflows/dep-sweep.yml`.
+**`dependency-sweep`** skill, which drives this script and owns the judgement.
+
+Deliberately not wired into CI: a scheduled job cannot be exercised before it
+is merged, and this is a tool you run when you are actually doing a bump.
 
 ## Build Commands
 
