@@ -1,6 +1,6 @@
 ---
 name: vela-secure-coding
-description: Vela's secure-coding rules — READ BEFORE writing or changing ANY code in this repo (src/parts/*.jsx, skills/vela-slides/scripts/*.py, tools/vela-dev/**, vela-neutralino/**, tests, CI). Encodes the repo's threat model, the canonical sanitizer/encoder helpers you must reuse instead of re-implementing, the recurring vulnerability classes this codebase has actually shipped and fixed, and the proof/CI/version-bump gates a change must pass. Use it for feature work, bug fixes, refactors, and exports — not only for work labelled "security".
+description: Vela's secure-coding rules — READ BEFORE writing, changing, or REVIEWING ANY code in this repo (src/parts/*.jsx, skills/vela-slides/scripts/*.py, tools/vela-dev/**, vela-neutralino/**, tests, CI). Encodes the repo's threat model, the canonical sanitizer/encoder helpers you must reuse instead of re-implementing, the recurring vulnerability classes this codebase has actually shipped and fixed, and the proof/CI/version-bump gates a change must pass. Use it for feature work, bug fixes, refactors, exports — and as the checklist for code reviews and security reviews (/code-review, /security-review, PR review, vulnerability hunts) — not only for work labelled "security".
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(python3 tests/test_vela.py*), Bash(python3 tools/vela-dev/scripts/*), Bash(node tests/*), Bash(node tools/vela-dev/scripts/*), Bash(git *)
 ---
 
@@ -9,7 +9,13 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash(python3 tests/test_vela.py*),
 Vela renders **untrusted deck JSON** in runtimes that have real filesystem and
 network capability. Almost every security bug in this repo's history came from
 ordinary feature code — an export path, a new block renderer, a colour field —
-not from "security work". So these rules apply to **every** change.
+not from "security work". So these rules apply to **every** change — and they
+are equally the rubric for **reviewing** code: when running a code review,
+security review, or PR review in this repo, check the diff against §3's failure
+modes and §4's per-surface checklist, verify §2's canonical helpers were reused
+rather than re-implemented, and hold findings to §5's proof standard (a claimed
+vulnerability or fix is demonstrated at the real sink, not asserted from source
+reading). Review comments follow §6's disclosure discipline.
 
 ## 0. The five non-negotiables
 
