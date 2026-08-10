@@ -84,8 +84,9 @@ commit if you want the full story.
 1. **Validate-then-return-raw.** If you parse a value to check it, emit *the
    parsed/canonical form* — never hand back the raw bytes a later sink re-parses.
 2. **Fail-open on type.** A non-string on a CSS/colour key must be **deleted**,
-   not skipped. `String(v)` before an allowlist test is a bypass: `["red"]` and a
-   `{toString}` gadget both satisfy a colour regex. **Type-check first, coerce never.**
+   not skipped. Coercing with `String(v)` before an allowlist test defeats the
+   test — a coercible shape (array, object with a custom `toString`) can satisfy
+   a string allowlist. **Type-check first, coerce never.**
 3. **Depth/breadth guard that returns instead of dropping.** At the cap, delete
    the subtree (`obj.length = 0` / `delete obj[k]`). A guard that `return`s hands
    the attacker an opt-out: nest one level deeper and the scrubbers never ran.
@@ -96,9 +97,9 @@ commit if you want the full story.
    caller (`STYLE_VALUE_REJECT`, `pdfStringEncode`, `escapeForScriptContext`).
    If you find a second copy, unify it in the same change.
 6. **Incomplete escaping.** Escape the whole grammar of the target format, not
-   the one form you thought of — and **escape the escape character first**, or an
-   attacker's `\<` revives a live `<`. Markdown alone needed: inline links,
-   reference-style links/definitions, raw HTML, autolinks, table pipes, backslash.
+   the one form you thought of — and **escape the escape character itself**, or
+   an escaped metacharacter can be revived as live syntax. Markdown alone has
+   several link/markup forms beyond the obvious inline one; encode them all.
    Do it in **one pass** over one character class; a second `.replace` double-escapes.
 7. **Regex that needs a well-formed match.** Reject on **token presence**, not on
    a complete match: a malformed `url(` with no closing paren still fetches.
