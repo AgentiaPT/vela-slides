@@ -1,7 +1,7 @@
 ---
 name: vela-secure-coding
 description: Vela's secure-coding rules — READ BEFORE writing, changing, or REVIEWING ANY code in this repo (src/parts/*.jsx, skills/vela-slides/scripts/*.py, tools/vela-dev/**, vela-neutralino/**, tests, CI). Encodes the repo's threat model, the canonical sanitizer/encoder helpers you must reuse instead of re-implementing, the recurring vulnerability classes this codebase has actually shipped and fixed, and the proof/CI/version-bump gates a change must pass. Use it for feature work, bug fixes, refactors, exports — and as the checklist for code reviews and security reviews (/code-review, /security-review, PR review, vulnerability hunts) — not only for work labelled "security".
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash(python3 tests/test_vela.py*), Bash(python3 tools/vela-dev/scripts/*), Bash(node tests/*), Bash(node tools/vela-dev/scripts/*), Bash(git *)
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash(python3 tests/test_vela.py*), Bash(python3 tools/vela-dev/scripts/*), Bash(node tests/*), Bash(node tools/vela-dev/scripts/*), Bash(tools/vela-dev/scripts/ci-local.sh*), Bash(git status*), Bash(git diff*), Bash(git log*), Bash(git show*)
 ---
 
 # Vela secure coding
@@ -44,13 +44,17 @@ user's host:
 | Local `serve.py` | zero-click outbound exfil of deck/host data | HTTP CSP, origin/CSRF/Host checks, token auth, realpath containment |
 | Claude.ai artifact | contained DOM XSS | Anthropic sandbox CSP |
 
-**The invariant to protect, everywhere:** *no deck-supplied value may reach a
-sink that auto-fetches an external resource on render, executes script, or
-reaches the native bridge.* Every image-loading CSS/SVG/HTML construct is
-regulated surface. The host CSPs are defense-in-depth — **the sanitizers are the
-primary control.**
+**The invariant to protect, everywhere** — `docs/SECURITY.md` is the source of
+truth; this is its four-clause summary: *no deck-supplied value may (a) reach a
+sink that auto-fetches an external resource on render, (b) execute script, (c)
+reach the native bridge, or (d) restyle / relocate / re-label the trusted
+application chrome (UI redress).* Every image-loading CSS/SVG/HTML construct is
+regulated surface, and so is any styling that can escape the deck's own render
+subtree. The host CSPs are defense-in-depth — **the sanitizers are the primary
+control.**
 
-Full detail: `docs/SECURITY.md`, `vela-neutralino/SECURITY.md`.
+Full detail (and the authoritative blast-radius table this summarizes):
+`docs/SECURITY.md`, `vela-neutralino/SECURITY.md`.
 
 ## 2. Canonical helpers — reuse these, do not write new ones
 
@@ -196,34 +200,38 @@ node tests/test_release_build.cjs               # test surface stripped on relea
 tools/vela-dev/scripts/ci-local.sh              # all 8 CI stacks
 ```
 
-A PostToolUse hook (`.claude/hooks/post-edit-lint.py`) auto-runs the ~150 ms
-lint after every Edit/Write under `src/parts/` and feeds failures back into
-the turn — treat that feedback as a failing gate, not a suggestion. In
-environments where hooks are disabled, run the lint manually after every
-part-file edit.
+A PostToolUse hook (`.claude/hooks/post-edit-lint.py`) auto-runs the lint
+(~0.7 s) after every Edit/Write/MultiEdit under `src/parts/` and feeds failures
+back into the turn — treat that feedback as a failing gate, not a suggestion.
+The hook fails open (CI stays authoritative) but prints a one-line `NOTE` when
+it skips, so a skip is visible. In environments where hooks are disabled, run
+the lint manually after every part-file edit.
 
-Relevant existing suites to extend rather than duplicate: `test_css_exfil.cjs`,
-`test_svg_mxss.cjs`, `test_deck_key_allowlist.cjs`, `test_markdown_export.cjs`,
-`test_fs_guard.cjs`, `test_data_image_uri.cjs`, `test_pdf_export.cjs`,
-`test_pptx_export.cjs`, `test_standalone_html.cjs`, `test_serve.py`,
-`test_desktop.py`, `test_release_build.cjs`.
+Extend an existing suite rather than duplicating one — `ls tests/test_*` is the
+live list; the security-relevant ones are the `test_css_exfil` / `test_svg_mxss`
+/ `test_deck_key_allowlist` / `test_markdown_export` / `test_fs_guard` /
+`test_data_image_uri` / `test_*_export` / `test_standalone_html` / `test_serve`
+/ `test_desktop` / `test_release_build` families.
 
 **Browser/real-sink proof** is required for any claim about rendering, CSS, SVG,
 or exfil — use the `vela-browser-test` skill (real sanitizers + real Chromium) or
 `playwright-cli-setup` for interactive checks. "The regex looks right" is not a
 result.
 
-## 6. Ship discipline
+CLAUDE.md is the source of truth for these; the operative points for a change:
 
 - **Version bump**: any change under `skills/vela-slides/` or `src/parts/` needs
   `VELA_VERSION` + `VELA_CHANGELOG` in `part-imports.jsx` and a matching
-  `SKILL.md` version. CI blocks otherwise.
-- **Disclosure discipline** (CLAUDE.md, permanent): changelog, commit messages,
-  PR titles/bodies, and review comments state only the *class* of issue, the
-  affected area, what the fix does, and that tests were added. **No payloads, no
-  bypass tokens, no reproduction steps, no "where the gap was" maps.** Precise
-  mechanics belong in in-code comments (maintainer-facing) or a private thread.
-- **Public repo**: no session URLs, keys, tokens, or personal data in anything
-  committed.
+  `SKILL.md` version (CI blocks otherwise). Changelog entries are concise bullets
+  — see CLAUDE.md for the exact format.
+- **Disclosure discipline** (CLAUDE.md *Security-Fix Disclosure Discipline*,
+  permanent): in any public-facing text — changelog, commit messages, PR
+  titles/bodies, review comments — state only the *class* of issue, the affected
+  area, what the fix does, and that tests were added. **No payloads, bypass
+  tokens, reproduction steps, or "where the gap was" maps.** Precise mechanics
+  belong in in-code comments (maintainer-facing) or a private thread. When in
+  doubt, write less.
+- **Public repo** (CLAUDE.md *No Sensitive Information*): no session URLs, keys,
+  tokens, or personal data in anything committed.
 - Comment the *why* next to every guard — the invariant it protects and what
   breaks if it's removed. That's how this codebase keeps the rules from eroding.

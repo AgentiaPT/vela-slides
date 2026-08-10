@@ -65,7 +65,12 @@ tests/screenshots/
 .claude/*
 !.claude/settings.json
 !.claude/skills
-!.claude/hooks
+# Track only the committed security hook, not the whole hooks dir — keeps
+# local/experimental hooks (which may hold machine paths or tokens) out of this
+# public repo by default.
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/post-edit-lint.py
 
 # Working decks (user-created, not shipped)
 decks/
