@@ -53,26 +53,26 @@ the symbol for its line, or run `partsize.py <part>` for the section map, then
 Read just that range (offset/limit) — only fall back to whole-file reads for
 files under ~300 lines.
 
+**No row matches? Grep `src/parts/CODEMAP.md`** — the generated, CI-kept-fresh
+complete index: every top-level symbol grouped by part/section, every reducer
+action with the parts that dispatch it (orphan actions are flagged — check
+before assuming a UI exists), every Vera tool, every UI-test suite. One grep
+there replaces a tree scan for any change this table doesn't cover.
+
 | Change | Open first | Grep for |
 |---|---|---|
 | Add / change a **block renderer** (new block type, block layout) | `src/parts/part-blocks.jsx` | `RenderBlock` — the `switch (block.type)`; new-item defaults `newItemFor` / `blankItemFor` / `PLACEHOLDER_FIELDS`. A new deck field also needs `SAFE_BLOCK_KEYS`, `skills/vela-slides/scripts/validate.py` and `references/block-schema.md` |
 | **Sanitization / allowlists / a new slide or block field** | `src/parts/part-imports.jsx` | `SAFE_SLIDE_KEYS`, `SAFE_BLOCK_KEYS`, `sanitizeBlock`, `sanitizeSlide`, `validateAndSanitizeDeck`, `cssColor` / `cssGradient` / `cssUrl`, `sanitizeStyle`; storage-reload path `resanitizeLoadedLanes` / `resanitizeLoadedBranding`. Read `.claude/skills/vela-secure-coding/SKILL.md` first |
 | **Slide chrome** — accent bar, footer, slide numbers, logo | `src/parts/part-branding.jsx` | `BrandingOverlay` (renders accent bar, footer strip, `NN / NN` slide number, logo) |
-| **Slide background / slide palette** | `src/parts/part-canvas.jsx`, `src/parts/part-slides.jsx` (thumbnails) | `bgStyle` in `SlideContent` (`slide.bg` / `bgGradient` / `bgImage`); thumbnail/fullscreen bg in `VirtualSlide`. App-chrome tokens are `themes` / `T` in `part-imports.jsx` — a different thing from deck palettes |
-| **Branding settings UI** | `src/parts/part-slides.jsx` | `BrandingPanel`; defaults `defaultBranding` and re-scrub in `part-imports.jsx`, action `SET_BRANDING` in `part-reducer.jsx` |
 | **Lane / module / slide list (TOC)**, incl. per-row action controls | `src/parts/part-list.jsx` | `ModuleList` → `ConceptRow` (module row: collapse caret, ▲/▼ move glyphs, `REORDER`) → `SlideListWithAdder` (slide rows); menus `ContextMenu` / `CtxItem` / `AddMenu`; inline AI add `AiSlideAdder` |
-| **TOC drag & drop** | `src/parts/part-list.jsx` | `handleSlideDragStart` / `handleSlideDrop` / `handleContainerDrop`, module-level `_velaDrag` |
 | **Block toolbar & in-slide editing UX** | `src/parts/part-canvas.jsx` | `renderBlockItem` (per-block hover toolbar + block AI-prompt popup) inside `SlideContent`; inline text `EditableText`/`ItemChrome` stay in `part-blocks.jsx`. The AI driver `runBlockEdit` lives in `part-slides.jsx` |
 | **Fullscreen / presenter / gallery** | `src/parts/part-slides.jsx` | `SlidePanel` (arrow/space nav, wheel nav, Fullscreen-API sync), `PresenterView`, Presenter TOC, Gallery View, `StudentPanel`; state via `SET_FULLSCREEN` in `part-reducer.jsx` |
 | **PDF export** | `src/parts/part-pdf.jsx` | vector path `buildVectorPdf` + its export modal; canvas path `PdfExportModal` / `buildPdfFromImages`; every string through `pdfStringEncode`; DOM extraction `extractBoxes` / `extractCircles` / `extractLinks` |
 | **PPTX export** | `src/parts/part-pptx.jsx` | `buildPptx`, `pptxEsc`, `pptxExtractTextBoxes` (reuses part-pdf's extractors); the modal `PptxExportModal` is in `part-app.jsx` |
 | **Markdown export** | `src/parts/part-pdf.jsx` | `deckToMarkdown`, encoders `mdInline` / `mdCell` / `escGap`. Standalone-HTML export sits in the same file (its own section) |
 | **Vera AI engine tools** | `src/parts/part-engine.jsx` | `executeTool` — the `switch (name)` — AND the tool contract prose inside the system prompt in the same file. Both must change together or the model calls a tool that doesn't exist |
-| **Chat panel / tool traces** | `src/parts/part-chat.jsx` | `ChatPanel`, `ToolTraceCard`, `TOOL_META` (per-tool label/icon), `ChatMarkdown` |
 | **Reducer action / undo-redo** | `src/parts/part-reducer.jsx` | `innerReducer` (the action switch), `NO_HISTORY` (actions that must NOT create an undo step), `reducer` (history wrapper), `MAX_HISTORY` |
-| **Keyboard shortcuts & modals** | `src/parts/part-app.jsx` | global `window.addEventListener("keydown", …)` in `VelaApp` (undo/redo, `?`, `r`); the user-visible list is `ShortcutHelp`; modals `ModalBackdrop`, `NewDeckDialog`, `StatsDialog`, `ChangelogDialog`, `MergePatchDialog`. In-slide/presenter keys live in `part-slides.jsx` |
 | **UI test battery** | `src/parts/part-uitest.jsx` | `uiSuite("<name>", [...])` to add a suite, `runUITests`, headless entry `window.__velaRunUITests` (dev builds only — keep new hooks inside a `VELA:DEV-ONLY` fence) |
-| **Storage / persistence** | `src/parts/part-app.jsx` | the `Storage: Load` and `Storage: Save` effects (debounced, `extractSave`); `saveKV` / `MASTER_KEY` (`"vela-deck"`) in `part-imports.jsx`; startup-patch merge in the same load effect |
 
 ## Deck Format
 
