@@ -53,7 +53,7 @@ TEST_GLOBAL_RE = re.compile(r"__vela\w*(?:Test|Mock|Stub|Fixture|Spy)\w*")
 # references (the two test panels mounted in part-app.jsx) sit inside a DEV-ONLY
 # fence and are stripped in the same pass, so nothing else can name them.
 # Verified by tests/test_release_build.cjs, which also Babel-parses the result.
-RELEASE_EXCLUDED_PARTS = {"part-test.jsx", "part-uitest.jsx"}
+RELEASE_EXCLUDED_PARTS = {"part-test.jsx", "part-uitest.jsx", "part-uitest2.jsx"}
 
 # Fence markers for build-time-strippable dev-only code. Both must appear on
 # their own line (leading whitespace allowed); blocks must not nest.

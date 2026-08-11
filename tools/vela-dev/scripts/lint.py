@@ -560,18 +560,26 @@ def check_security_tests_not_skippable(parts_dir):
     (the battery is the ground-truth guard: it runs the real module, unlike the
     fragment-extracting node suites)."""
     errors = []
-    fpath = os.path.join(parts_dir, "part-uitest.jsx")
-    if not os.path.exists(fpath):
+    # The battery spans part-uitest.jsx (registry/runner + most suites) and
+    # part-uitest2.jsx (later suites, including the SVG/deck-sanitization security
+    # suites) — read every part-uitest*.jsx in manifest (concat) order so this
+    # guard sees the whole battery regardless of which file a given test lives in.
+    uitest_files = [n for n in load_part_order(parts_dir) if n.startswith("part-uitest")]
+    if not any(os.path.exists(os.path.join(parts_dir, n)) for n in uitest_files):
         return errors
-    with open(fpath, 'r', encoding="utf-8") as f:
-        raw = f.read()
+    raw = ""
+    for fname in uitest_files:
+        fpath = os.path.join(parts_dir, fname)
+        if os.path.exists(fpath):
+            with open(fpath, 'r', encoding="utf-8") as f:
+                raw += f.read()
     # Comment-strip first so a `/*fn:*/`-style padding comment can't fool the scan.
     src = _strip_js_comments(raw)
     if 'cannot restyle/relocate app chrome' not in src:
         errors.append(
             'the SVG-<style> redress regression test ("SECURITY: deck SVG <style> cannot '
-            'restyle/relocate app chrome") is missing from part-uitest.jsx — it is the '
-            'real-runtime guard against the UI-redress / clickjack class and must stay.'
+            'restyle/relocate app chrome") is missing from the part-uitest*.jsx battery — it is '
+            'the real-runtime guard against the UI-redress / clickjack class and must stay.'
         )
     # Bound each test object by the NEXT test's `name:` (not a fixed char window or a
     # split on the first `fn:`), so requiresAI can't hide past a truncation point.
@@ -586,7 +594,7 @@ def check_security_tests_not_skippable(parts_dir):
             errors.append(
                 'security UI test ' + repr(name) + ' must not be requiresAI — it must always run '
                 'in the battery (a skip is treated as non-failing, so requiresAI would let a sanitizer '
-                'regression pass CI). Note the runner also fails such a skip at runtime (part-uitest.jsx).'
+                'regression pass CI). Note the runner also fails such a skip at runtime (part-uitest*.jsx).'
             )
         # A named security test must EXERCISE the real sanitizer — a vacuous body
         # (e.g. `return true`) keeps the required name but neuters the ground-truth

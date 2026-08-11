@@ -76,7 +76,7 @@ there replaces a tree scan for any change this table doesn't cover.
 | **Markdown export** | `src/parts/part-export-md.jsx` | `deckToMarkdown`, encoders `mdInline` / `mdCell` / `escGap`. Standalone-HTML export sits in the same file (its own section) |
 | **Vera AI engine tools** | `src/parts/part-engine.jsx` | `executeTool` — the `switch (name)` — AND the tool contract prose inside the system prompt in the same file. Both must change together or the model calls a tool that doesn't exist |
 | **Reducer action / undo-redo** | `src/parts/part-reducer.jsx` | `innerReducer` (the action switch), `NO_HISTORY` (actions that must NOT create an undo step), `reducer` (history wrapper), `MAX_HISTORY` |
-| **UI test battery** | `src/parts/part-uitest.jsx` | `uiSuite("<name>", [...])` to add a suite, `runUITests`, headless entry `window.__velaRunUITests` (dev builds only — keep new hooks inside a `VELA:DEV-ONLY` fence) |
+| **UI test battery** | `src/parts/part-uitest.jsx` (registry/runner + suites through v13.19 block-reorder), `src/parts/part-uitest2.jsx` (later suites, incl. SVG/deck-sanitization security suites, and the `VelaUITestRunner`/`VelaBatteryTest` component) | `uiSuite("<name>", [...])` to add a suite, `runUITests`, headless entry `window.__velaRunUITests` (dev builds only — keep new hooks inside a `VELA:DEV-ONLY` fence) |
 
 ## Deck Format
 

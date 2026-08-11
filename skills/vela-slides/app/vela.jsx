@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.43";
+const VELA_VERSION = "13.44";
 const VELA_CHANGELOG = [
+  { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
   { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },
   { v: "13.42", d: "internal: split PDF/export part-files for maintainability, no functional change" },
   { v: "13.41", d: "internal: generated code map (CODEMAP.md) + CI freshness gate, no functional change" },
@@ -11442,6 +11443,7 @@ uiSuite("Block item reorder (▲▼) — v13.19", [
   }},
 ], { setup: _selectFirstModule });
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
 // The svg block previously used a regex chain that let unquoted and
 // whitespace-obfuscated javascript: URIs through. These assert the

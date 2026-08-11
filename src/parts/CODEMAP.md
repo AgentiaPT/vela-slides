@@ -110,6 +110,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Test Runner: UI_TEST_SUITES uiSuite runUITests
 - TOC Collapse / Keyboard-Tree Suite (CR2): _tocHeaders _tocToggle _tocCollapsed _tocDriveState _tocEnsureExpanded _tocEnsureCollapsed _focusTocHeader _selectTocHeader
 - Vera AI Integration Suite (live API calls): _veraChat
+
+### part-uitest2.jsx
 - Review / Comments Suite: _reviewPanelOpen _reviewToggleBtn _setReviewMode
 - Sprint 7-1 UX batch: _headerSlideCount
 - Multi-select / Context menu / Move picker (Features 4–6): _clickMod _rightClick _tocRows _exitFullscreen _editorSetup _savePill _saveState
@@ -297,28 +299,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - Study Notes
 - Editor UX (CR1–CR3)
 - Block item reorder (▲▼) — v13.19
-- SVG Sanitizer (XSS)
-- Deck Sanitization (XSS)
-- Gallery View
-- Gallery From Editor
-- Presenter View
-- Slide Transitions
-- Review
-- Header & Stats (7-1)
-- Hide slides (7-1)
-- Add menu (7-1)
-- Section drag reorder (7-1)
-- Section collapse-all (Ctrl-click) — v13.15
-- Presenter Ctrl+E (7-1)
-- Slide Multi-select (F4)
-- Slide Context Menu (F5)
-- Move Picker Search (F6)
-- Desktop save-status pill (CR3)
-- AI-working animation (CR5)
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 605-line unbannered stretch after line 473
+- part-imports.jsx: 605-line unbannered stretch after line 474
 - part-blocks.jsx: 748-line unbannered stretch after line 769
 - part-slidepanel.jsx: 405-line unbannered stretch after line 175
 - part-slidepanel.jsx: 378-line unbannered stretch after line 860

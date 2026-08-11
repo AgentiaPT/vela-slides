@@ -4137,11 +4137,11 @@ def test_svg_style_recurrence_guards():
          "cross-part aliased .has override (part-app)"),
         ("part-app.jsx", None,
          '\nSet.prototype.has = function () { return true; };\n', "cross-part Set.prototype patch"),
-        ("part-uitest.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
+        ("part-uitest2.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
          'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", /*fn:*/ requiresAI: true, fn:',
          "requiresAI skip-dodge on flagship security test"),
         # Gap B: a vacuous security-named test (no sanitizeSvgMarkup call) neuters the guard.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _bogusSecTest = { name: "SECURITY: bogus <style> vacuous", fn: async () => { return true; } };\n',
          "vacuous security test (no sanitizeSvgMarkup call)"),
         # R6B: a built-in prototype override the sanitizer's tag lookup trusts.
@@ -4156,11 +4156,11 @@ def test_svg_style_recurrence_guards():
          '\nconst _PP = SVG_ALLOWED_TAGS; _PP.has = (t) => t === "style";\n',
          "cross-part tamper in part-pptx.jsx"),
         # R6B: a chrome-safety test that calls the sanitizer but drops its assertion.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _neuter = { name: "SECURITY: overlay app chrome bogus", fn: async () => { sanitizeSvgMarkup("<rect/>"); return true; } };\n',
          "neutered chrome-safety test (calls sanitizer, no computed-style assertion)"),
         # R7B/R7C: keeps the required tokens as DEAD code but hardcodes the result.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _dead = { name: "SECURITY: overlay app chrome deadcode", fn: async () => { const h = document.createElement("div"); sanitizeSvgMarkup("<rect/>"); getComputedStyle(h); return true; } };\n',
          "dead-code-token neuter (getComputedStyle present but return true)"),
     ]
