@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.38";
+const VELA_VERSION = "13.39";
 const VELA_CHANGELOG = [
+  { v: "13.39", d: "internal: document the editor-chrome positioning model in the canvas part, no functional change" },
   { v: "13.38", d: "internal: part-file splits for maintainability, no functional change" },
   { v: "13.37", d: "internal: part-file manifest + routing docs, no functional change" },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },

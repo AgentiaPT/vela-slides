@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.38";
+const VELA_VERSION = "13.39";
 const VELA_CHANGELOG = [
+  { v: "13.39", d: "internal: document the editor-chrome positioning model in the canvas part, no functional change" },
   { v: "13.38", d: "internal: part-file splits for maintainability, no functional change" },
   { v: "13.37", d: "internal: part-file manifest + routing docs, no functional change" },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
@@ -3748,6 +3749,27 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+//
+// ── Design note: slide canvas & editor-chrome positioning model ──
+// This part renders the slide canvas (SlideContent), the per-slide chrome
+// (BrandingOverlay: accent bar, footer, slide number, logo) and the per-block
+// EDITOR chrome (renderBlockItem: hover toolbar, AI-edit/link/comment popups,
+// badges, selection outlines). Two positioning regimes coexist:
+//   1. Normal blocks sit inset from the slide edge by the slide's padding, so
+//      block chrome deliberately "escapes" OUTWARD with small negative
+//      top/right/left/inset offsets, landing in that padding gutter.
+//   2. Any block rendered flush with the slide edge has no gutter to escape
+//      into: the slide wrapper (VirtualSlide, part-slides.jsx) is
+//      overflow:hidden at the 960×540 boundary, so outward-escaping chrome on
+//      a flush block gets clipped and becomes unreachable. A full-bleed solo
+//      image (isSoloImage → block._solo, pad "0px") is the canonical flush
+//      case. Chrome for flush blocks must clamp INWARD (positive offsets)
+//      instead — see COL_TOOLBAR_PAD for the sibling technique used to keep
+//      column-layout toolbars inside their clip box.
+// If you add or move any absolutely-positioned chrome element here, decide
+// which regime it is in; an outward offset is only safe when a padding gutter
+// is guaranteed to exist.
+//
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
   if (!branding?.enabled) return null;
