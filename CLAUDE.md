@@ -70,39 +70,13 @@ symbol, or use `partsize.py` for the section map.
 
 ## Deck Format
 
-JSON with three interchangeable formats (auto-expand on load via `_load_full()`):
-- **Full** — human-readable, named keys
-- **Compact** (~32% smaller) — short keys: `_`=type, `x`=text, `s`=size, `C`=palette, `S`=slides, `T`=themes
-- **Turbo** (~47% smaller) — positional arrays for LLM context passing
-
-Virtual canvas: **960×540px** (16:9).
-
-### Deck Structure
-```json
-{
-  "deckTitle": "...",
-  "lanes": [{
-    "title": "Section",
-    "items": [{
-      "title": "Module",
-      "status": "todo|done",
-      "slides": [{
-        "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
-        "duration": 60,
-        "blocks": [{ "type": "heading", "text": "..." }]
-      }]
-    }]
-  }]
-}
-```
-
-### Block Types (27)
-Text: heading, text, quote, badge, callout
-Lists: bullets, icon-row, tag-group, checklist
-Data: grid, table, metric, progress, timeline, number-row, matrix
-Flow: flow (gates & loops), steps, comparison, funnel, cycle
-Media: image, code, svg, icon
-Layout: spacer, divider
+Virtual canvas **960×540px** (16:9). Deck JSON has three interchangeable
+formats — Full (named keys), Compact (~32% smaller), Turbo (~47% smaller,
+positional) — auto-expanded on load. 27 block types across text, lists, data,
+flow, media, and layout groups.
+**Reference (read on demand, do not memorize here):**
+`skills/vela-slides/references/formats.md` (formats + key maps),
+`references/block-schema.md` (per-block fields), `references/themes.md`.
 
 ## CLI — `vela.py`
 
@@ -110,13 +84,9 @@ Layout: spacer, divider
 vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
 vela slide view|edit|remove|move|duplicate|insert|remove-block
 ```
-
-The shipped skill authors and ships decks only. The local-preview server, offline
-render harness, and AI backend live in `tools/vela-dev/` (see below) and are never
-part of the installed skill.
-
-Exit codes: 0=success, 1=fail, 2=usage, 3=not-found, 4=validation, 5=conflict.
-Supports `--json` for structured output and `--dry-run` for previews.
+Author→ship only (the shipped skill has no preview/AI backend — that lives in
+`tools/vela-dev/`). Exit codes: 0 ok, 1 fail, 2 usage, 3 not-found,
+4 validation, 5 conflict. Supports `--json` and `--dry-run`.
 
 ## Mandatory: Run CI Checks After Every Change
 
@@ -130,6 +100,14 @@ python3 tools/vela-dev/scripts/concat.py
 
 All checks must pass before committing.
 
+## Minimal-diff policy
+
+Make the smallest change that fully solves the request. No drive-by
+refactors, renames, restructures, or adjacent fixes in the same change; no
+speculative polish. If you found something else worth fixing, note it for a
+separate change instead of bundling it. (Measured: unscoped changes cost
+~10% more agent time/tokens and are harder to review.)
+
 ## Mandatory: Read the secure-coding skill before writing or reviewing code
 
 **Before writing, changing, or reviewing ANY code in this repo — feature work,
@@ -137,38 +115,18 @@ bug fixes, refactors, exports, tooling, code reviews, security reviews —
 read `.claude/skills/vela-secure-coding/SKILL.md`.**
 Vela renders untrusted deck JSON in runtimes with real filesystem and network
 capability, and nearly every vulnerability in this repo's history came from
-ordinary feature code, not from work labelled "security". The skill carries the
-threat model, the canonical sanitizer/encoder helpers you must reuse instead of
-re-implementing, the recurring failure classes this codebase has actually shipped
-and fixed, and the proof/CI gates a change must pass.
+ordinary feature code, not from work labelled "security". Start with the
+skill's **Triage** section: it defines when its §0 essentials plus the helper
+table suffice (static app-chrome/editor-UI changes) and when the full read is
+mandatory (anything touching deck values, sanitizers, exporters, server or
+native code). When in doubt, full read.
 
 ## Dependency bumps — start with the sweeper, not by hand
 
-```bash
-python3 tools/vela-dev/scripts/dep-sweep.py --offline --only coverage,parity   # <1s structural
-python3 tools/vela-dev/scripts/dep-sweep.py --vet --upgrades                   # ~25s full sweep
-python3 tools/vela-dev/scripts/dep-sweep.py --json --vet --upgrades            # machine-readable
-```
-
-`dep-sweep.py` (dev-only, stdlib-only) does the deterministic half of a bump:
-discovers every manifest and flags any Dependabot is not watching, computes
-cooldown eligibility per tier from `.github/dependabot.yml`, verifies every
-SHA-pinned Action against its upstream tag *and* (with `--upgrades`) whether
-that tag is still current, checks npm provenance / publisher changes / new
-install hooks, flags an end-of-life Go toolchain, diffs lockfiles for
-newly-introduced packages, and runs each tree's audit. Exit `4` means something
-at high/critical severity — a bad pin, a lockfile parity break, an EOL
-toolchain, or a live advisory. Investigate before bumping anything.
-
-`--only` selects subsets (`coverage,actions,npm,go,parity,audit,new-packages`)
-so it can be driven in stages rather than all at once.
-
-It decides nothing. Which eligible version to take, whether a major is in
-scope, and whether to spend the security exemption stay human calls — see the
-**`dependency-sweep`** skill, which drives this script and owns the judgement.
-
-Deliberately not wired into CI: a scheduled job cannot be exercised before it
-is merged, and this is a tool you run when you are actually doing a bump.
+Use the **`dependency-sweep`** skill — it drives
+`tools/vela-dev/scripts/dep-sweep.py` (deterministic discovery/cooldown/
+provenance/audit checks, exit 4 = high/critical finding) and owns the
+judgement calls. Not wired into CI by design.
 
 ## Build Commands
 
@@ -189,14 +147,10 @@ python3 tests/test_vela.py
 
 ## Neutralino Desktop Build (Docker)
 
-Reproducible cross-OS binaries via `vela-neutralino/Dockerfile` (context = repo root):
-
-```bash
-DOCKER_BUILDKIT=1 docker build -f vela-neutralino/Dockerfile \
-  -o type=local,dest=vela-neutralino/dist .
-```
-
-Single Linux build emits all win/linux/mac binaries (`neu build` bundles prebuilt runtimes). Runs `concat.py` → `neu update` → `verify-runtime.py` (SHA256 pins) → `sync-vela.py` → `neu build --embed-resources`. Output lands in `dist/vela/` (gitignored — never commit binaries). CI does **not** use Docker; this is a local convenience only.
+`DOCKER_BUILDKIT=1 docker build -f vela-neutralino/Dockerfile -o type=local,dest=vela-neutralino/dist .`
+(context = repo root; one Linux build emits win/linux/mac; output gitignored —
+never commit binaries; CI does not use Docker). Details: `vela-neutralino/`
+and its `SECURITY.md`.
 
 ## Key Directories
 
@@ -226,10 +180,9 @@ tests/                   ← test_vela.py, test_serve.py
 
 ## AI Features (Vera Engine)
 
-- Direct HTTP to Anthropic API from artifact (no client key — uses artifact proxy)
-- ReAct loop with 22 tools (set_slides, edit_slide, add_slide, batch ops, etc.)
-- Model: claude-sonnet-4-20250514, temp=0, max 16K tokens
-- Session cost tracking built-in
+Direct HTTP to the Anthropic API via the artifact proxy (no client key).
+ReAct loop, 22 tools, model `claude-sonnet-4-20250514`, temp 0, 16K max
+tokens, session cost tracking. All in `src/parts/part-engine.jsx`.
 
 ## IMPORTANT: Version Bump Required for Skill Changes
 
@@ -287,81 +240,33 @@ This discipline is permanent and applies to **every** future change, not just th
 
 ## Eval / Benchmarking
 
-Full eval runbook: **`docs/EVAL-RUNBOOK.md`** — covers running A/B comparisons, blind LLM judging, analysis scripts, and the complete scenario list. Read that doc instead of re-exploring `evals/` each time.
-
-Quick reference:
-```bash
-# Copy current skill to eval versioned dir
-mkdir -p evals/skills/v<VER> && cp skills/vela-slides/SKILL.md evals/skills/v<VER>/
-
-# Run eval (n=1 quick, n=3+ for stats)
-REPS=1 MODEL=sonnet TIMEOUT=300 bash evals/run-isolated.sh <version>
-
-# Compare results
-python3 evals/scripts/report.py evals/results/
-```
+Skill-version benchmarking lives in `evals/` — read **`docs/EVAL-RUNBOOK.md`**
+for the full workflow (A/B runs, blind judging, analysis) instead of
+re-exploring `evals/` each time.
 
 ## Running the app live in a browser (offline / demo videos / visual QA)
 
-> **Pick the right tool first.** Doing a **one-off / interactive** thing — explore
-> the app, screenshot a state, reproduce a bug, verify a UX change, poke a selector,
-> drive presenter/gallery? → **Playwright CLI** (skill **`playwright-cli-setup`**, see
-> next section). The `vela-drive.js` commands below are **code-based scripts for
-> REPEATABLE, committed automation only** (CI, the interaction benchmark, recorded
-> demo videos) — reach for them when the harness itself is the deliverable, not for
-> ad-hoc exploration. When in doubt for a manual task, use the CLI.
-
-The remote container **blocks the React/lucide CDNs (esm.sh) and the Playwright
-browser CDN**, so `serve.py`'s default importmap HTML never boots here. Do NOT
-try to reach esm.sh or run `npx playwright install`. Both paths use the offline
-render (skill: **`vela-live-render`**) which reuses the Neutralino shell's
-vendored-UMD recipe (Node-transpiled external script). The committed `vela-drive.js`
-scripts (repeatable automation only):
-
-```bash
-python3 tools/vela-dev/scripts/concat.py                                   # after editing parts
-node tools/vela-dev/scripts/render-offline.js <deck.vela> /tmp/vout        # build offline render
-node tools/vela-dev/scripts/vela-drive.js shot     /tmp/vout/render.html /tmp/s.png   # screenshot
-node tools/vela-dev/scripts/vela-drive.js uitests  /tmp/vout/render.html --json /tmp/ui.json  # run UI battery headless
-node tools/vela-dev/scripts/vela-drive.js video    /tmp/vout/render.html /tmp/vid --script scenario.js  # demo video
-node tools/vela-dev/scripts/vela-drive.js ai       examples/vela-demo.vela --json /tmp/ai.json         # test AI vs local `claude` CLI
-```
-
-**AI integration testing:** the `ai` mode drives real Vera/AI features against
-the local `claude` CLI. It starts `agent_backend.py` — a loopback channel that
-spawns `claude -p` locked to a pure text completion (`--tools "" --strict-mcp-config
---setting-sources ""`: no tools, MCP, or hooks) — builds an agent-mode render,
-and asserts deck mutations. That lockdown is the security contract shared with
-the Neutralino gatekeeper (`vela-neutralino/extensions/agent/main.go`), enforced
-by a parity test in `tests/test_serve.py`. **AI is OFF by default** — it spawns
-the user's `claude` (their credentials/spend), so it is strictly opt-in:
-`python3 tools/vela-dev/scripts/serve.py <folder> --ai` (loopback-only,
-token-gated), or the `ai` harness mode / `render-offline.js --channel-port …`
-for dev/testing.
-
-Key facts: Chromium is pinned at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
-(newer than npm playwright expects); ffmpeg at `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`;
-`npm i jsdom` once for the two Node security suites; `ERR_INVALID_URL`/`ERR_CONNECTION_CLOSED`
-console errors are harmless font fetches. In-app UI battery is invokable headless via
-`window.__velaRunUITests()`. Never inline the 1.3MB monolith as `text/babel` (its XSS-test
-strings contain `</script>` and truncate the block) — the harness loads an external `app.js`.
+The container blocks the React/lucide CDNs and Playwright downloads — never
+fetch esm.sh or run `npx playwright install`. Chromium is pinned at
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, ffmpeg at
+`/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`.
+- **One-off / interactive** work (explore, screenshot, reproduce, verify UX):
+  use the **`playwright-cli-setup`** skill (persistent CLI browser, one
+  command at a time). Default choice for manual tasks.
+- **Repeatable, committed automation** (CI, benchmark, demo videos, headless
+  UI battery, opt-in AI harness): use the **`vela-live-render`** skill
+  (`render-offline.js` + `vela-drive.js`). AI mode is strictly opt-in — it
+  spawns the user's `claude` under the lockdown flags shared with the
+  Neutralino gatekeeper (parity-tested in `tests/test_serve.py`).
+- Browser-truth security checks (does a payload actually fire?): skill
+  **`vela-browser-test`**.
 
 ## Ad-hoc testing & exploration: use the Playwright CLI, not throwaway code files
 
-For **ad-hoc / exploratory** browser work — poking a state, reproducing a bug,
-checking a selector, driving presenter/gallery flows, taking a quick screenshot —
-drive the app with the **Playwright CLI** (`@playwright/cli`, skill:
-**`playwright-cli-setup`**) rather than writing a one-off Playwright `.js` file. The
-CLI keeps a persistent browser session (`-s=<name>`) and you run one command at a
-time (`open`, `snapshot`, `click e15`, `press ArrowRight`, `eval "…"`), **inspecting
-page state and command output between every step** — so you reason and adapt in real
-time instead of running a script blind and re-editing it whenever a step fails.
-`window` globals persist across calls, and output goes to `.playwright-cli/`
-(gitignored) so nothing bloats the conversation. Reserve written `.js` harnesses
-(`vela-drive.js`, etc.) for **repeatable, committed** automation (CI, the interaction
-benchmark). Supply-chain note: `@playwright/cli` is installed **isolated and
-script-blocked, never committed** to `package-lock.json` (it pulls a fresh alpha
-`playwright`) — see the `playwright-cli-setup` skill.
+Covered by the `playwright-cli-setup` skill (see section above): persistent
+session, inspect between steps, output under `.playwright-cli/` (gitignored).
+Never install `@playwright/cli` into `package-lock.json` — isolated and
+script-blocked only.
 
 ## License
 
