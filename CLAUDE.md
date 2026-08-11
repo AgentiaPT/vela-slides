@@ -42,7 +42,11 @@ python3 tools/vela-dev/scripts/partsize.py --totals-only     # every part, summa
 
 ## Where does X live
 
-Open the named file(s) FIRST and grep the named symbol — don't scan the tree.
+**Before your first code edit**, do the mandatory secure-coding read (see the
+*Mandatory* section below — Triage tells you how much; static chrome edits
+need only §0 + the helper table). The post-edit hook reminds you once if you
+skip it. Then: open the named file(s) FIRST and grep the named symbol — don't
+scan the tree.
 Every row below was verified against the code (CI-enforced by `check-routing.py`);
 if you find one wrong, fix the row in the same change. Line numbers are
 deliberately omitted (they rot) — grep the symbol, or use `partsize.py` for the

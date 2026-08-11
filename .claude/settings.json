@@ -9,7 +9,6 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Edit(src/parts/**)|Write(src/parts/**)|MultiEdit(src/parts/**)",
             "timeout": 60,
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\""
           }

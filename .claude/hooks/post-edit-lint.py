@@ -1,21 +1,43 @@
 #!/usr/bin/env python3
 # © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
-"""PostToolUse hook: run the security lints the moment a part-file is edited.
+"""PostToolUse hook: run the security lints the moment a part-file is edited,
+and surface the mandatory secure-coding read at the exact moment it matters.
 
 Harness enforcement (mechanism, not prompt): the deck-ingress key-drift check
 and the CSS fetch-sink encoder gate (plus the other part-file structural
 checks) already run in CI, but CI feedback arrives minutes after the mistake.
-This hook runs the same lint.py (~0.7s) right after an Edit/Write touches THIS
-repo's src/parts/, so a violation is surfaced to the agent in the turn that
+This hook runs the same lint.py (~0.7s) right after an Edit/Write touches a
+src/parts/ tree of THIS repo — the main checkout OR one of its linked git
+worktrees — so a violation is surfaced to the agent in the turn that
 introduced it rather than minutes later in CI.
 
-Two-layer path scoping, on purpose:
-  1. settings.json `if: "Edit(src/parts/**)|Write(src/parts/**)"` is a cheap
-     pre-filter so the hook process is not even spawned for non-part edits.
-  2. This script re-checks that the edited file's REAL path is inside THIS
-     repo's src/parts/ before linting — the authoritative gate, so a same-named
-     path in another checkout / worktree / scratchpad clone can never trigger a
-     lint of (or a misattributed failure against) this repo's tree.
+Why worktrees are in scope (measured, not hypothetical): parallel agents work
+in `git worktree` copies of this repo. An earlier version of this hook only
+accepted the main checkout's src/parts, which meant worktree agents got zero
+edit-time security feedback — and measurably skipped the mandatory
+secure-coding read far more often than main-checkout agents. Coverage here is
+a compliance mechanism, not a convenience.
+
+Scoping is still authoritative and closed:
+  1. settings.json spawns the hook for every Edit/Write/MultiEdit (no path
+     pre-filter — a glob there could not express "any worktree of this repo"
+     reliably); this script exits 0 immediately for out-of-scope paths.
+  2. The edited file's REAL path must live under `<root>/src/parts` where
+     <root> is (a) this repo's main checkout, or (b) a linked worktree whose
+     `.git` file's `gitdir:` pointer realpath-resolves inside this repo's own
+     `.git` directory. A same-named tree anywhere else on disk (scratchpad
+     clone, foreign repo) is rejected — we never execute a lint.py from a
+     tree that isn't a commit of this repository.
+  3. The lint executed is the accepted checkout's OWN lint.py, so a worktree
+     pinned to an older commit is checked by that commit's rules — no
+     cross-version misattribution.
+
+One-time reminder: on the first in-scope edit per checkout (marker file in
+the system temp dir, never inside the repo — the tree must stay clean), the
+hook returns exit 2 with an informational pointer to
+.claude/skills/vela-secure-coding/SKILL.md and its Triage section, even when
+the lint passes. Every agent that edits app code therefore sees the mandate
+exactly once, at edit time, regardless of whether it read CLAUDE.md.
 
 Contract: exit 2 feeds stderr back to Claude as actionable feedback; every
 other path exits 0 — the hook must never break editing (fail-open: the
@@ -24,10 +46,21 @@ branches that skip the lint (missing script, timeout, subprocess error) emit a
 one-line stderr NOTE with exit 0, so a silent no-op stays visible instead of
 looking identical to "lint passed".
 """
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
+
+SKILL_REMINDER = (
+    "SECURITY REMINDER (one-time per checkout; your edit was applied): every "
+    "code change in this repo requires .claude/skills/vela-secure-coding/"
+    "SKILL.md — start with its Triage section (static app-chrome/editor-UI "
+    "edits: §0 + the helper table is enough; anything touching deck values, "
+    "sanitizers, exporters, server or native code: full read). If you already "
+    "did this, continue — nothing is blocked."
+)
 
 
 def _repo_root():
@@ -43,6 +76,57 @@ def _note(msg):
     sys.stderr.write("NOTE (post-edit-lint skipped — CI still gates): " + msg + "\n")
 
 
+def _checkout_root_for(edited, repo_root):
+    """Return the accepted checkout root containing `edited`, or None.
+
+    Accepted roots: the main checkout itself, or a linked worktree of it
+    (verified via the worktree's `.git` file gitdir pointer — the unforgeable
+    link back to this repo; a path or name resemblance is not enough).
+    """
+    d = os.path.dirname(edited)
+    for _ in range(30):  # bounded walk — no unbounded traversal toward /
+        if os.path.isdir(os.path.join(d, "src", "parts")):
+            if d == repo_root:
+                return d
+            gitfile = os.path.join(d, ".git")
+            if os.path.isfile(gitfile):
+                try:
+                    with open(gitfile, "r", encoding="utf-8") as f:
+                        first = f.readline().strip()
+                except OSError:
+                    return None
+                if first.startswith("gitdir:"):
+                    gitdir = os.path.realpath(
+                        os.path.join(d, first[len("gitdir:"):].strip()))
+                    main_git = os.path.realpath(os.path.join(repo_root, ".git"))
+                    try:
+                        if os.path.commonpath([gitdir, main_git]) == main_git:
+                            return d
+                    except ValueError:
+                        return None
+            return None
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+    return None
+
+
+def _reminder_pending(root):
+    """True once per checkout: marker lives in the temp dir, keyed by the
+    checkout path, so the repo tree itself is never dirtied."""
+    key = hashlib.sha1(root.encode("utf-8")).hexdigest()[:16]
+    marker = os.path.join(tempfile.gettempdir(), "vela-secskill-note-" + key)
+    if os.path.exists(marker):
+        return False
+    try:
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(root + "\n")
+    except OSError:
+        return False  # can't persist → stay quiet rather than nag every edit
+    return True
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -50,18 +134,19 @@ def main():
         if not isinstance(file_path, str) or not file_path:
             return 0
         repo_root = _repo_root()
-        parts = os.path.realpath(os.path.join(repo_root, "src", "parts"))
-        # Authoritative scope check: the edited file must resolve to inside THIS
-        # repo's src/parts. realpath collapses ./, //, .. and symlinks; the
-        # commonpath test refuses a same-named tree elsewhere on disk.
         edited = os.path.realpath(file_path)
+        root = _checkout_root_for(edited, repo_root)
+        if root is None:
+            return 0
+        parts = os.path.realpath(os.path.join(root, "src", "parts"))
         try:
             in_scope = os.path.commonpath([edited, parts]) == parts
         except ValueError:  # different drive on Windows, etc.
             return 0
         if not in_scope:
             return 0
-        lint = os.path.join(repo_root, "tools", "vela-dev", "scripts", "lint.py")
+        remind = _reminder_pending(root)
+        lint = os.path.join(root, "tools", "vela-dev", "scripts", "lint.py")
         if not os.path.exists(lint):
             _note("lint.py not found at " + lint)
             return 0
@@ -84,6 +169,9 @@ def main():
                 "below, then .claude/skills/vela-secure-coding/SKILL.md:\n"
                 + (r.stdout or "") + (r.stderr or "")
             )
+            return 2
+        if remind:
+            sys.stderr.write(SKILL_REMINDER + "\n")
             return 2
         return 0
     except Exception:
