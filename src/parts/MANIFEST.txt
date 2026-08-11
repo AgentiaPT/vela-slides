@@ -20,7 +20,8 @@
 
 part-imports.jsx  # VELA_VERSION/VELA_CHANGELOG, deck ingress + every sanitizer (validateAndSanitizeDeck, sanitizeSlide/Block, SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS, cssColor/cssGradient/cssUrl, sanitizeSvgMarkup, sanitizeImageDataUri), storage API (saveKV/MASTER_KEY), startup-patch system, themes/T tokens, cost tracker, shared prompt constants
 part-icons.jsx    # Lucide icon resolver — resolveIcon/getIcon/IconSlot, ICON_ALIASES, ICON_EMOJI, lazy ensureIcons loader
-part-blocks.jsx   # the 27 block renderers (RenderBlock's switch on block.type), SlideContent (slide background + block layout), BrandingOverlay (accent bar, footer, slide number, logo), renderBlockItem (per-block hover toolbar + AI prompt), EditableText/ItemChrome inline editing
+part-blocks.jsx   # 27 block-type renderers (RenderBlock's switch on block.type), plus EditableText/ItemChrome inline editing and per-block-type helper sub-components
+part-canvas.jsx   # SlideContent (slide background + block layout, slide canvas), per-block editing chrome/toolbars (renderBlockItem — hover toolbar + AI prompt popup), BrandingOverlay (accent bar, footer, slide number, logo), InlineCommentCard (review mode)
 part-reducer.jsx  # innerReducer action switch, undo/redo history wrapper (reducer, NO_HISTORY, MAX_HISTORY), initial state shape
 part-engine.jsx   # Vera AI engine — callClaudeAPI, executeTool (tool switch), the system prompts that declare the tool contract, teacher mode, slide-design/timing APIs, ReAct loop
 part-slides.jsx   # SlidePanel (editor slide view + keyboard/wheel nav), VirtualSlide, BrandingPanel, fullscreen/presenter (PresenterView, Presenter TOC, Gallery), StudentPanel, per-slide AI actions (runBlockEdit, quick edit, alternatives)

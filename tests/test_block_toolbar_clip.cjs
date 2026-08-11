@@ -22,8 +22,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const SRC_PATH = path.join(__dirname, "..", "src/parts/part-blocks.jsx");
-const src = fs.readFileSync(SRC_PATH, "utf8");
+// The table/code block renderers stay in part-blocks.jsx; the isCols L/R
+// column wrappers and the block-level hover toolbar live in SlideContent /
+// renderBlockItem, part of the slide-canvas split into part-canvas.jsx.
+const BLOCKS_PATH = path.join(__dirname, "..", "src/parts/part-blocks.jsx");
+const CANVAS_PATH = path.join(__dirname, "..", "src/parts/part-canvas.jsx");
+const src = fs.readFileSync(BLOCKS_PATH, "utf8") + fs.readFileSync(CANVAS_PATH, "utf8");
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };

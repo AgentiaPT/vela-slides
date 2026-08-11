@@ -3746,6 +3746,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   }
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
   if (!branding?.enabled) return null;

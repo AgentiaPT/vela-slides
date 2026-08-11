@@ -3474,12 +3474,13 @@ def test_slide_numeric_fields():
     else:
         fail("imageCols missing from BLOCK_REFERENCE")
 
-    # 7. The sink re-clamps too (belt-and-braces at the consumption site)
-    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
-    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in blocks_src:
+    # 7. The sink re-clamps too (belt-and-braces at the consumption site).
+    #    Lives in SlideContent (part-canvas.jsx), split out of part-blocks.jsx.
+    canvas_src = open(os.path.join(PARTS_DIR, "part-canvas.jsx"), encoding="utf-8").read()
+    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in canvas_src:
         ok("imageCols re-clamped at the render sink")
     else:
-        fail("imageCols sink clamp missing in part-blocks.jsx")
+        fail("imageCols sink clamp missing in part-canvas.jsx")
 
 
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
