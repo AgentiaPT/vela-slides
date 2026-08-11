@@ -31,7 +31,8 @@ The dependency graph is fixed and acyclic. Concatenation is the simplest correct
 part-imports    → Constants, sanitizers, helpers, storage
 part-icons      → Icon resolution system (270+ icons)
 part-blocks     → 27 block-type renderers (RenderBlock switch)
-part-canvas     → SlideContent slide canvas, per-block editing chrome, BrandingOverlay
+part-branding   → BrandingOverlay slide chrome (accent bar, footer, slide number, logo)
+part-canvas     → SlideContent slide canvas, per-block editing chrome
 part-reducer    → State management, dispatch actions
 part-engine     → Vera AI engine, system prompts, API calls
 part-slides     → Slide panel, fullscreen, branding overlay
@@ -65,7 +66,8 @@ imports → icons → blocks → canvas → reducer → engine → slides → li
 | `part-imports.jsx` | ~1,940 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
 | `part-icons.jsx` | ~290 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
 | `part-blocks.jsx` | ~1,520 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon, icon-row, tag-group, progress, code, image, comparison, funnel, cycle, number-row, matrix, checklist, divider, spacer. Plus `EditableText`/`ItemChrome` for WYSIWYG. |
-| `part-canvas.jsx` | ~390 | `SlideContent` (slide canvas + block layout), `renderBlockItem` (per-block hover toolbar/AI-prompt popup), `BrandingOverlay` (accent bar, footer, slide number, logo), `InlineCommentCard` (review mode) — split out of part-blocks.jsx |
+| `part-branding.jsx` | ~50 | `BrandingOverlay` (accent bar, footer, slide number, logo) — split out of part-canvas.jsx |
+| `part-canvas.jsx` | ~370 | `SlideContent` (slide canvas + block layout), `renderBlockItem` (per-block hover toolbar/AI-prompt popup), `InlineCommentCard` (review mode) — split out of part-blocks.jsx |
 | `part-reducer.jsx` | ~390 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
 | `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
 | `part-slides.jsx` | ~2,580 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |

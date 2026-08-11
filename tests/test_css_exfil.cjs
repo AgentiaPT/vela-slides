@@ -773,10 +773,11 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 // Wiring guards: the render sink and the storage-load boot path actually call
 // the new gates, not just the extracted-slice tests above.
 {
-  // BrandingOverlay (accentColor/footerBg) lives in part-canvas.jsx.
+  // BrandingOverlay (accentColor/footerBg) lives in part-branding.jsx.
   const BLOCKS2 = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
   const CANVAS2 = path.join(__dirname, "..", "src", "parts", "part-canvas.jsx");
-  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8") + fs.readFileSync(CANVAS2, "utf8");
+  const BRANDING2 = path.join(__dirname, "..", "src", "parts", "part-branding.jsx");
+  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8") + fs.readFileSync(CANVAS2, "utf8") + fs.readFileSync(BRANDING2, "utf8");
   if (/background: cssColor\(b\.accentColor\)/.test(bsrc3)) ok("branding accentColor render sink uses cssColor()");
   else bad("branding accentColor sink not routed through cssColor (wiring missing)");
   if (/cssColor\(b\.footerBg\)/.test(bsrc3)) ok("branding footerBg render sink uses cssColor()");

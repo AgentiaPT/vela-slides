@@ -44,7 +44,7 @@ CONFLICT_RE = re.compile(r'^[<>=]{7}', re.MULTILINE)
 # that drift. The allowlists are parsed from part-imports.jsx so there is exactly
 # one source of truth.
 KEY_SOURCE_FILE = "part-imports.jsx"
-KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx", "part-canvas.jsx", "part-branding.jsx"]
 
 SET_LITERAL_RE_TPL = r'const\s+{name}\s*=\s*new\s+Set\(\[(.*?)\]\)'
 QUOTED_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
@@ -236,7 +236,7 @@ def check_deck_key_drift(parts_dir):
 # any such sink in the renderer files receives a raw deck color field, or a local
 # variable whose own definition holds one un-encoded. One missed sink is all a
 # beacon needs, so the invariant is verified mechanically, not by review.
-CSS_FETCH_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+CSS_FETCH_FILES = ["part-blocks.jsx", "part-slides.jsx", "part-canvas.jsx", "part-branding.jsx"]
 FETCH_PROP_RE = re.compile(
     r'\b(background|backgroundImage|maskImage|WebkitMaskImage|borderImage'
     r'|listStyleImage|cursor)\s*:')

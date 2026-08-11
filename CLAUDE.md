@@ -43,15 +43,21 @@ python3 tools/vela-dev/scripts/partsize.py --totals-only     # every part, summa
 ## Where does X live
 
 Open the named file(s) FIRST and grep the named symbol — don't scan the tree.
-Every row below was verified against the code; if you find one wrong, fix the row
-in the same change. Line numbers are deliberately omitted (they rot) — grep the
-symbol, or use `partsize.py` for the section map.
+Every row below was verified against the code (CI-enforced by `check-routing.py`);
+if you find one wrong, fix the row in the same change. Line numbers are
+deliberately omitted (they rot) — grep the symbol, or use `partsize.py` for the
+section map.
+
+**Read sections, not files.** Most changes fit inside one banner section. Grep
+the symbol for its line, or run `partsize.py <part>` for the section map, then
+Read just that range (offset/limit) — only fall back to whole-file reads for
+files under ~300 lines.
 
 | Change | Open first | Grep for |
 |---|---|---|
 | Add / change a **block renderer** (new block type, block layout) | `src/parts/part-blocks.jsx` | `RenderBlock` — the `switch (block.type)`; new-item defaults `newItemFor` / `blankItemFor` / `PLACEHOLDER_FIELDS`. A new deck field also needs `SAFE_BLOCK_KEYS`, `skills/vela-slides/scripts/validate.py` and `references/block-schema.md` |
 | **Sanitization / allowlists / a new slide or block field** | `src/parts/part-imports.jsx` | `SAFE_SLIDE_KEYS`, `SAFE_BLOCK_KEYS`, `sanitizeBlock`, `sanitizeSlide`, `validateAndSanitizeDeck`, `cssColor` / `cssGradient` / `cssUrl`, `sanitizeStyle`; storage-reload path `resanitizeLoadedLanes` / `resanitizeLoadedBranding`. Read `.claude/skills/vela-secure-coding/SKILL.md` first |
-| **Slide chrome** — accent bar, footer, slide numbers, logo | `src/parts/part-canvas.jsx` | `BrandingOverlay` (renders accent bar, footer strip, `NN / NN` slide number, logo) |
+| **Slide chrome** — accent bar, footer, slide numbers, logo | `src/parts/part-branding.jsx` | `BrandingOverlay` (renders accent bar, footer strip, `NN / NN` slide number, logo) |
 | **Slide background / slide palette** | `src/parts/part-canvas.jsx`, `src/parts/part-slides.jsx` (thumbnails) | `bgStyle` in `SlideContent` (`slide.bg` / `bgGradient` / `bgImage`); thumbnail/fullscreen bg in `VirtualSlide`. App-chrome tokens are `themes` / `T` in `part-imports.jsx` — a different thing from deck palettes |
 | **Branding settings UI** | `src/parts/part-slides.jsx` | `BrandingPanel`; defaults `defaultBranding` and re-scrub in `part-imports.jsx`, action `SET_BRANDING` in `part-reducer.jsx` |
 | **Lane / module / slide list (TOC)**, incl. per-row action controls | `src/parts/part-list.jsx` | `ModuleList` → `ConceptRow` (module row: collapse caret, ▲/▼ move glyphs, `REORDER`) → `SlideListWithAdder` (slide rows); menus `ContextMenu` / `CtxItem` / `AddMenu`; inline AI add `AiSlideAdder` |

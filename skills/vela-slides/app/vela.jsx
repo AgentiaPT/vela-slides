@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.39";
+const VELA_VERSION = "13.40";
 const VELA_CHANGELOG = [
+  { v: "13.40", d: "internal: finer part granularity (slide chrome part) + section banners, no functional change" },
   { v: "13.39", d: "internal: document the editor-chrome positioning model in the canvas part, no functional change" },
   { v: "13.38", d: "internal: part-file splits for maintainability, no functional change" },
   { v: "13.37", d: "internal: part-file manifest + routing docs, no functional change" },
@@ -3749,27 +3750,6 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
-//
-// ── Design note: slide canvas & editor-chrome positioning model ──
-// This part renders the slide canvas (SlideContent), the per-slide chrome
-// (BrandingOverlay: accent bar, footer, slide number, logo) and the per-block
-// EDITOR chrome (renderBlockItem: hover toolbar, AI-edit/link/comment popups,
-// badges, selection outlines). Two positioning regimes coexist:
-//   1. Normal blocks sit inset from the slide edge by the slide's padding, so
-//      block chrome deliberately "escapes" OUTWARD with small negative
-//      top/right/left/inset offsets, landing in that padding gutter.
-//   2. Any block rendered flush with the slide edge has no gutter to escape
-//      into: the slide wrapper (VirtualSlide, part-slides.jsx) is
-//      overflow:hidden at the 960×540 boundary, so outward-escaping chrome on
-//      a flush block gets clipped and becomes unreachable. A full-bleed solo
-//      image (isSoloImage → block._solo, pad "0px") is the canonical flush
-//      case. Chrome for flush blocks must clamp INWARD (positive offsets)
-//      instead — see COL_TOOLBAR_PAD for the sibling technique used to keep
-//      column-layout toolbars inside their clip box.
-// If you add or move any absolutely-positioned chrome element here, decide
-// which regime it is in; an outward offset is only safe when a padding gutter
-// is guaranteed to exist.
-//
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
   if (!branding?.enabled) return null;
@@ -3818,6 +3798,28 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   </>;
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+//
+// ── Design note: slide canvas & editor-chrome positioning model ──
+// This part renders the slide canvas (SlideContent), the per-slide chrome
+// (BrandingOverlay: accent bar, footer, slide number, logo) and the per-block
+// EDITOR chrome (renderBlockItem: hover toolbar, AI-edit/link/comment popups,
+// badges, selection outlines). Two positioning regimes coexist:
+//   1. Normal blocks sit inset from the slide edge by the slide's padding, so
+//      block chrome deliberately "escapes" OUTWARD with small negative
+//      top/right/left/inset offsets, landing in that padding gutter.
+//   2. Any block rendered flush with the slide edge has no gutter to escape
+//      into: the slide wrapper (VirtualSlide, part-slides.jsx) is
+//      overflow:hidden at the 960×540 boundary, so outward-escaping chrome on
+//      a flush block gets clipped and becomes unreachable. A full-bleed solo
+//      image (isSoloImage → block._solo, pad "0px") is the canonical flush
+//      case. Chrome for flush blocks must clamp INWARD (positive offsets)
+//      instead — see COL_TOOLBAR_PAD for the sibling technique used to keep
+//      column-layout toolbars inside their clip box.
+// If you add or move any absolutely-positioned chrome element here, decide
+// which regime it is in; an outward offset is only safe when a padding gutter
+// is guaranteed to exist.
+//
 // ━━━ Slide Content ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Comment Card (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
@@ -3943,6 +3945,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const pad = isSoloImage ? "0px" : String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24) + "px").join(" ");
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
+  // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => editable && onEdit ? (
     <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
