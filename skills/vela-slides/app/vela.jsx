@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.36";
+const VELA_VERSION = "13.37";
 const VELA_CHANGELOG = [
+  { v: "13.37", d: ["Branding controls now open as a polished right-side inspector and the top accent can be disabled or set to a true 0px.", "Presentation controls use a consistent high-contrast toolbar; Overview remains directly available from the editor.", "TOC slide rows expose a hover/focus delete action, full-bleed block controls stay inside the slide, and text link badges sit beside their content."] },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
   { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
   { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
@@ -1777,7 +1778,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.82;transition:opacity .2s,background .2s;cursor:pointer;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(15,23,42,.72);box-shadow:0 2px 10px rgba(0,0,0,.28);backdrop-filter:blur(8px)} .slide-nav-btn:hover,.slide-nav-btn:focus-visible{opacity:1;background:rgba(30,41,59,.94)}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
@@ -3773,13 +3774,13 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
+    {b.accentBar && <div data-testid="branding-accent-bar" style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight ?? 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
       const isTop = pos.startsWith("top");
       const isLeft = pos.endsWith("left");
-      const vOffset = isTop ? (b.accentBar ? (b.accentHeight || 4) + 8 : 10) : 36;
+      const vOffset = isTop ? (b.accentBar ? (b.accentHeight ?? 4) + 8 : 10) : 36;
       const style = { position: "absolute", height: sz, objectFit: "contain", zIndex: 1, opacity: 0.9 };
       if (isTop) style.top = vOffset; else style.bottom = vOffset;
       if (isLeft) style.left = 16; else style.right = 16;
@@ -3919,7 +3920,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+    <div key={i} data-block-type={b.type} style={{ position: "relative", ...((b.type === "text" || b.type === "badge") && b.link ? { width: "fit-content", maxWidth: "100%" } : {}), ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
@@ -3927,7 +3928,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-toolbar" style={{ position: "absolute", top: 4, right: 4, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -3964,7 +3965,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <div data-testid="block-link-badge" onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: 2, right: 2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
       {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
@@ -4136,8 +4137,6 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     </SlideErrorBoundary>
   );
 }
-
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // collapsedSections: array of item ids whose TOC section is folded. View state only —
@@ -5988,7 +5987,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -6014,18 +6013,20 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+    <aside data-testid="branding-inspector" style={{ width: isMobile ? "min(92vw, 360px)" : 320, height: "100%", padding: "16px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel, boxShadow: "-12px 0 32px rgba(0,0,0,.28)", overflowY: "auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
         <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <button aria-label="Close branding inspector" onClick={onClose} style={{ ...S.btn({ padding: 4, fontSize: 14 }), marginLeft: 6 }}>✕</button>
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
+          <button onClick={() => set({ accentBar: !b.accentBar })} aria-pressed={!!b.accentBar} style={S.btn({ padding: "2px 7px", fontSize: 9, color: b.accentBar ? T.accent : T.textDim })}>{b.accentBar ? "On" : "Off"}</button>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <input aria-label="Brand accent height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
           <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
         </div>
         <div style={row}>
@@ -6116,7 +6117,7 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
           </div>
         </>}
       </div>
-    </div>
+    </aside>
   );
 }
 
@@ -8065,13 +8066,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {!isMobile && <button data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" aria-label="Gallery view" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "55" : "rgba(15,23,42,.72)", color: "#fff" }}>{getIcon("layout-grid", { size: 18, color: "#fff" })}</button>}
+        {!isMobile && <button data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} aria-label="Presenter view" style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "55" : "rgba(15,23,42,.72)", color: "#fff" }}>{getIcon("monitor", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <button data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} aria-label="Edit while presenting" style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "55" : "rgba(15,23,42,.72)", color: "#fff" }}>{getIcon("edit", { size: 18, color: "#fff" })}</button>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
@@ -8103,12 +8104,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0, position: "relative" }}>
       {measureHarness}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
-      {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
+      {showBranding && <div style={{ position: "absolute", inset: "0 0 0 auto", zIndex: 40 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} /></div>}
       {showImproveInput && <div style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
@@ -8344,8 +8345,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   );
 }
-
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 
 // Drag payload lives in a module-level variable, NOT only in dataTransfer.
@@ -8807,6 +8806,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            <button data-testid="toc-delete-slide" onClick={(e) => { e.stopPropagation(); ctxDelete(si); }} aria-label={`Delete slide ${si + 1}`} title="Delete slide" style={{ flexShrink: 0, marginLeft: 2, padding: "0 2px", border: 0, background: "transparent", color: T.red, cursor: "pointer", opacity: hovered || isRowFocused ? .75 : .18, transition: "opacity .15s" }}>🗑</button>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
         </React.Fragment>;
@@ -9129,7 +9129,6 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
   );
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Chat Markdown Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ctx (optional): passes through to parseInline — used by StudentPanel to
@@ -17463,6 +17462,11 @@ function escapeForScriptContext(jsonStr) {
 // slide with zero edit chrome.
 function stripEsmImportsForStandalone(jsx) {
   return jsx
+    // Neutralino's generated source already has this shim in place. Export can
+    // acquire that source at runtime, so remove the complete generated block
+    // before buildStandaloneHtml adds its own shim below. Otherwise Babel sees
+    // two top-level hook declarations and aborts the exported presentation.
+    .replace(/^\/\/ --- Neutralino UMD shim \(generated by sync-vela\.py\) -+\n[\s\S]*?^\/\/ -+\n\n?/m, "")
     .replace(/^import\s+\{[^}]+\}\s+from\s+"react";\s*$/m, "")
     .replace(/^import\s+\{[^}]+\}\s+from\s+"lucide-react";\s*$/m, "")
     .replace(/^import\s+\*\s+as\s+\w+\s+from\s+"lucide-react";\s*$/m, "")
@@ -17689,7 +17693,6 @@ function StandaloneHtmlModal({ state, onClose }) {
     </div>
   );
 }
-
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // part-pptx.jsx — native, editable PowerPoint (.pptx) exporter

@@ -16,6 +16,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -147,9 +148,34 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         window_entries = {e for e in allow if e.startswith("window.")}
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
-            "window.unmaximize", "window.isMaximized", "window.focus",
+            "window.unmaximize", "window.isMaximized", "window.focus", "window.setTitle",
         }
         self.assertEqual(window_entries, expected)
+
+    def test_native_title_and_activation_hooks(self):
+        boot = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        self.assertIn('Neutralino.window.setTitle(title)', boot)
+        self.assertIn('Neutralino.events.on("windowFocus", activated)', boot)
+        self.assertIn('window.addEventListener("focus", activated)', boot)
+        self.assertIn('document.visibilityState === "visible"', boot)
+        self.assertIn('active !== document.body', boot)
+
+    def test_native_title_retries_after_async_rejection(self):
+        result = subprocess.run(
+            ["node", os.path.join(ROOT, "tests", "test_nl_boot.cjs")],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_release_versions_match_app_skill_and_update_manifest(self):
+        app = read("src", "parts", "part-imports.jsx")
+        skill = read("skills", "vela-slides", "SKILL.md")
+        manifest = json.loads(read("vela-neutralino", "update-manifest.json"))
+        app_version = re.search(r'const VELA_VERSION = "([0-9]+\.[0-9]+)";', app).group(1)
+        skill_version = re.search(r'^version:\s*([0-9]+\.[0-9]+)\s*$', skill, re.MULTILINE).group(1)
+        self.assertEqual(skill_version, app_version)
+        self.assertEqual(manifest["latest"], app_version + ".0")
+        self.assertIsNotNone(re.search(r'^updated:\s*\d{4}-\d{2}-\d{2}\s*$', skill, re.MULTILINE))
 
 
 class WebviewNeverSpawns(unittest.TestCase):

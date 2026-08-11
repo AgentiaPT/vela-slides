@@ -459,6 +459,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            <button data-testid="toc-delete-slide" onClick={(e) => { e.stopPropagation(); ctxDelete(si); }} aria-label={`Delete slide ${si + 1}`} title="Delete slide" style={{ flexShrink: 0, marginLeft: 2, padding: "0 2px", border: 0, background: "transparent", color: T.red, cursor: "pointer", opacity: hovered || isRowFocused ? .75 : .18, transition: "opacity .15s" }}>🗑</button>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
         </React.Fragment>;
@@ -781,4 +782,3 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
   );
 }
-

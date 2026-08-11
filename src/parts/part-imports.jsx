@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.36";
+const VELA_VERSION = "13.37";
 const VELA_CHANGELOG = [
+  { v: "13.37", d: ["Branding controls now open as a polished right-side inspector and the top accent can be disabled or set to a true 0px.", "Presentation controls use a consistent high-contrast toolbar; Overview remains directly available from the editor.", "TOC slide rows expose a hover/focus delete action, full-bleed block controls stay inside the slide, and text link badges sit beside their content."] },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
   { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
   { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
@@ -1777,7 +1778,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.82;transition:opacity .2s,background .2s;cursor:pointer;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(15,23,42,.72);box-shadow:0 2px 10px rgba(0,0,0,.28);backdrop-filter:blur(8px)} .slide-nav-btn:hover,.slide-nav-btn:focus-visible{opacity:1;background:rgba(30,41,59,.94)}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}

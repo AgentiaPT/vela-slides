@@ -108,11 +108,11 @@ function extractCase(name) {
   }
 }
 
-// ── 4. Sanity: the block-level hover toolbar keeps its intentional escape offset ─
+// ── 4. Full-bleed safety: toolbar flips inside the block instead of escaping ─
 {
-  const hasToolbarOffset = /top:\s*-8,\s*right:\s*-8/.test(src);
-  if (hasToolbarOffset) ok("block-level hover toolbar keeps its top:-8/right:-8 escape offset");
-  else bad("block-level hover toolbar keeps its top:-8/right:-8 escape offset");
+  const hasToolbarInset = /data-testid="block-toolbar"[\s\S]{0,180}top:\s*4,\s*right:\s*4/.test(src);
+  if (hasToolbarInset) ok("block-level hover toolbar stays inside full-bleed blocks");
+  else bad("block-level hover toolbar stays inside full-bleed blocks");
 }
 
 console.log(`\n${pass} passed, ${fail} failed, ${pass + fail} total`);

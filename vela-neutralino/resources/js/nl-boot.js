@@ -67,6 +67,68 @@ function focusWindow() {
   setTimeout(tryFocus, 400);
 }
 
+const APP_TITLE = "Vela Slides";
+
+// Keep the native title useful when several decks are open. React owns the
+// document title; this observer mirrors it to the OS chrome while normalizing
+// either historical "Deck — Vela Slides" or preferred "Vela Slides — Deck"
+// order and preventing the brand from being repeated.
+function formatNativeTitle(documentTitle) {
+  const raw = String(documentTitle || "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  if (!raw || raw.toLowerCase() === APP_TITLE.toLowerCase()) return APP_TITLE;
+  const escaped = APP_TITLE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const deck = raw
+    .replace(new RegExp(`^(?:${escaped}\\s*[—-]\\s*)+`, "i"), "")
+    .replace(new RegExp(`(?:\\s*[—-]\\s*${escaped})+$`, "i"), "")
+    .trim();
+  return deck && deck.toLowerCase() !== "untitled" ? `${APP_TITLE} — ${deck}` : APP_TITLE;
+}
+
+let lastNativeTitle = "";
+let pendingNativeTitle = "";
+function syncNativeTitle() {
+  const title = formatNativeTitle(document.title);
+  if (title === lastNativeTitle || title === pendingNativeTitle) return Promise.resolve();
+  pendingNativeTitle = title;
+  let request;
+  try { request = Neutralino.window.setTitle(title); }
+  catch { request = Promise.reject(new Error("setTitle unavailable")); }
+  return Promise.resolve(request)
+    .then(() => { lastNativeTitle = title; })
+    .catch(() => { /* early boot/transient native failure: leave uncached for retry */ })
+    .finally(() => { if (pendingNativeTitle === title) pendingNativeTitle = ""; });
+}
+
+// On OS activation, restore a keyboard target without stealing focus from a
+// text field/contenteditable control that was active before Alt+Tab.
+function restoreWebviewKeyboardFocus() {
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) return;
+  const target = document.querySelector(
+    '[data-testid="presenter-view"], [data-teacher-panel], .fade-in[tabindex], [tabindex="0"]'
+  );
+  if (!target) return;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+}
+
+function installWindowActivationHooks() {
+  const activated = () => { syncNativeTitle(); setTimeout(restoreWebviewKeyboardFocus, 0); };
+  window.addEventListener("focus", activated);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") activated();
+  });
+  try { Neutralino.events.on("windowFocus", activated); } catch { /* older runtime */ }
+
+  syncNativeTitle();
+  const titleNode = document.querySelector("title");
+  if (titleNode) new MutationObserver(syncNativeTitle).observe(titleNode, { childList: true, characterData: true, subtree: true });
+}
+
 async function boot() {
   setMsg("Starting Neutralino…");
   try {
@@ -75,6 +137,7 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
+  installWindowActivationHooks();
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
