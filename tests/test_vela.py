@@ -962,7 +962,12 @@ def test_audit_2025_05_fixes():
 def test_known_bugs():
     print("\n── Known Bug Tests ──")
 
-    slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # these checks span both, so concatenate in build order to search across them.
+    slides_jsx = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
     imports_jsx = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
@@ -1036,7 +1041,12 @@ def test_editor_ux_bugs():
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     blocks  = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # CR3 checks span both, so concatenate in build order to search across them.
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
 
     # ── CR1: opening a deck must default to the first slide of the first
     #        non-empty module in EDITOR mode too — not only presentation mode.
@@ -1093,7 +1103,13 @@ def test_slide_editor_ux_features():
 
     imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # these checks span both (incl. the SectionPicker..SlidePanel slice below),
+    # so concatenate in build order to search across them.
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
     appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
@@ -1212,7 +1228,14 @@ def test_toc_nav_and_gallery_titlecards():
     print("\n── TOC keyboard tree / collapsed marker / gallery title cards ──")
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # the CR2 global-handler guard check spans both, so concatenate in build
+    # order to search across them (the GalleryView..TeacherMessage slice below
+    # stays fully inside part-slides.jsx either way).
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
     appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
@@ -3529,7 +3552,12 @@ def test_deck_key_allowlist_structure():
 
     # Reconciliation: the two other slide-key lists derive from the allowlists.
     engine_src = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
-    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (the SLIDE_KEYS paste-detection heuristic now
+    # lives in part-slidepanel.jsx); concatenate in build order to search across both.
+    slides_src = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
         ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")
     else:

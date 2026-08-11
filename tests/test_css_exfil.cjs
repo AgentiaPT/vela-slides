@@ -307,7 +307,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 }
 
 // ── Phase 2: --vera-accent CSS custom property (accent → setProperty sink) ──
-// The "Vera is working" sweep (part-slides.jsx wrapper) sets --vera-accent from
+// The "Vera is working" sweep (part-slidepanel.jsx wrapper) sets --vera-accent from
 // the slide's `accent` field; two rules (part-imports.jsx .vera-thinking::before/
 // ::after) consume it via color-mix(in srgb, var(--vera-accent,#3b82f6) N%,
 // transparent). This walks hostile accent values through the REAL sanitizeSlide

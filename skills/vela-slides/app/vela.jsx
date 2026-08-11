@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.42";
+const VELA_VERSION = "13.43";
 const VELA_CHANGELOG = [
+  { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },
   { v: "13.42", d: "internal: split PDF/export part-files for maintainability, no functional change" },
   { v: "13.41", d: "internal: generated code map (CODEMAP.md) + CI freshness gate, no functional change" },
   { v: "13.40", d: "internal: finer part granularity (slide chrome part) + section banners, no functional change" },
@@ -7141,6 +7142,8 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
   );
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
+// ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);

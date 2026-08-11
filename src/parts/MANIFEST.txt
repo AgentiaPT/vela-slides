@@ -25,7 +25,8 @@ part-branding.jsx # BrandingOverlay slide chrome: accent bar, footer strip, slid
 part-canvas.jsx   # SlideContent (slide background + block layout, slide canvas), per-block editing chrome/toolbars (renderBlockItem — hover toolbar + AI prompt popup), InlineCommentCard (review mode)
 part-reducer.jsx  # innerReducer action switch, undo/redo history wrapper (reducer, NO_HISTORY, MAX_HISTORY), initial state shape
 part-engine.jsx   # Vera AI engine — callClaudeAPI, executeTool (tool switch), the system prompts that declare the tool contract, teacher mode, slide-design/timing APIs, ReAct loop
-part-slides.jsx   # SlidePanel (editor slide view + keyboard/wheel nav), VirtualSlide, BrandingPanel, fullscreen/presenter (PresenterView, Presenter TOC, Gallery), StudentPanel, per-slide AI actions (runBlockEdit, quick edit, alternatives)
+part-slides.jsx   # VirtualSlide/FullscreenSlide, ScopeSelector, BrandingPanel, CinemaTip, PresenterTOC, GalleryThumb, CommentPopover, PresenterView, GalleryView, TeacherMessage, StaticStudyPanel, StudentPanel, TeacherPanel, SectionPicker
+part-slidepanel.jsx # SlidePanel (editor slide view + keyboard/wheel nav, fullscreen/presenter orchestration, per-slide AI actions: runBlockEdit, quick edit, alternatives) — split out of part-slides.jsx; references components declared there, so must stay immediately after it
 part-list.jsx     # lane/module/slide list (TOC): ModuleList → ConceptRow → SlideListWithAdder, ContextMenu/AddMenu, AiSlideAdder, drag-and-drop handlers
 part-chat.jsx     # ChatPanel, ChatMarkdown, ToolTraceCard + TOOL_META, JSON clipboard modal
 part-test.jsx     # dev-only battery render tests (excluded from --release builds)

@@ -164,7 +164,7 @@ commit if you want the full story.
 
 ## 4. Per-surface checklist
 
-**New/changed block renderer (`part-blocks.jsx`, `part-slides.jsx`)**
+**New/changed block renderer (`part-blocks.jsx`, `part-slides.jsx`, `part-slidepanel.jsx`)**
 - Every deck field you read is in `SAFE_BLOCK_KEYS` / `SAFE_SLIDE_KEYS` (the
   key-drift lint enforces this) and is sanitized at ingress.
 - Every colour/paint value reaching `background`, `backgroundImage`, `mask`,

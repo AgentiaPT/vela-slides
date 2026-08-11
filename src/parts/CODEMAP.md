@@ -80,7 +80,10 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - PresenterView — CR-08: single-screen speaker dashboard shown from: fmtElapsed PresenterView GALLERY_MODULE_COLORS GalleryView
 - Vera Teacher Panel — student mode companion in fullscreen: TeacherMessage
 - Offline Study Notes — static panel that renders slide.studyNotes: StaticStudyPanel
-- StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker SlidePanel
+- StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
+
+### part-slidepanel.jsx
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -196,31 +199,31 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - ADD_ITEM: part-list.jsx
 - ADD_LANE: (no direct dispatch site)
 - ADD_MSG: part-chat.jsx
-- ADD_SLIDE: part-slides.jsx
+- ADD_SLIDE: part-slidepanel.jsx
 - BATCH_ADD: (no direct dispatch site)
 - CLEAR_BOOTSTRAP: part-chat.jsx
 - CLEAR_RESOLVED_COMMENTS: part-app.jsx
 - CYCLE_STATUS: (no direct dispatch site)
 - DESELECT: part-app.jsx
 - DRAG_REORDER: part-list.jsx
-- DUPLICATE_SLIDE: part-list.jsx part-slides.jsx
+- DUPLICATE_SLIDE: part-list.jsx part-slidepanel.jsx
 - FINALIZE_STREAM: part-chat.jsx
 - IMPORT_CONCEPTS: part-chat.jsx
 - INSERT_ITEM: part-app.jsx
 - INSERT_SLIDE: part-list.jsx
-- INSERT_SLIDES: part-slides.jsx
+- INSERT_SLIDES: part-slidepanel.jsx
 - LOAD: part-app.jsx part-chat.jsx part-imports.jsx
 - LOAD_LANES: part-chat.jsx
 - MOVE_ITEM: (no direct dispatch site)
 - MOVE_SLIDE: (no direct dispatch site)
 - MOVE_SLIDES_TO_MODULE: part-list.jsx
-- MOVE_SLIDE_TO_MODULE: part-list.jsx part-slides.jsx
+- MOVE_SLIDE_TO_MODULE: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - NEW_DECK: part-app.jsx
 - REDO: part-app.jsx
 - REMOVE_COMMENT: part-app.jsx part-canvas.jsx part-list.jsx part-slides.jsx
 - REMOVE_ITEM: part-list.jsx
 - REMOVE_LANE: (no direct dispatch site)
-- REMOVE_SLIDE: part-slides.jsx
+- REMOVE_SLIDE: part-slidepanel.jsx part-slides.jsx
 - REMOVE_SLIDES: part-list.jsx
 - RENAME_ITEM: part-list.jsx
 - RENAME_LANE: (no direct dispatch site)
@@ -231,26 +234,26 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - RESET_CHAT: part-chat.jsx
 - RESOLVE_ALL_COMMENTS: part-app.jsx
 - RESOLVE_COMMENT: part-app.jsx part-list.jsx part-slides.jsx
-- SELECT: part-app.jsx part-chat.jsx part-list.jsx part-slides.jsx
-- SET_AI_WORK: part-app.jsx part-chat.jsx part-slides.jsx
+- SELECT: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
+- SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
 - SET_BRANDING: part-chat.jsx part-slides.jsx
 - SET_CHAT: part-app.jsx part-chat.jsx
-- SET_COMMENTS_PANEL: part-app.jsx part-slides.jsx
+- SET_COMMENTS_PANEL: part-app.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
-- SET_FONT_SCALE: part-slides.jsx
-- SET_FULLSCREEN: part-app.jsx part-slides.jsx
+- SET_FONT_SCALE: part-slidepanel.jsx
+- SET_FULLSCREEN: part-app.jsx part-slidepanel.jsx
 - SET_GUIDELINES: part-slides.jsx
 - SET_IMPORTANCE: part-list.jsx
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
-- SET_REVIEW_MODE: part-app.jsx part-slides.jsx
+- SET_REVIEW_MODE: part-app.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-list.jsx
-- SET_SLIDES: part-slides.jsx
-- SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slides.jsx
+- SET_SLIDES: part-slidepanel.jsx
+- SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_SLIDE_SELECTION: part-list.jsx
 - SET_STATUS: (no direct dispatch site)
 - SET_TITLE: part-app.jsx
-- SET_VERA_MODE: part-slides.jsx
+- SET_VERA_MODE: part-slidepanel.jsx part-slides.jsx
 - SPLIT_ITEM_AT: part-list.jsx
 - STREAM_TOOL: part-chat.jsx
 - TEACHER_CLEAR: part-slides.jsx
@@ -262,7 +265,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_SLIDE_HIDDEN: part-list.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
-- UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slides.jsx
+- UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
 
 ## Vera engine tools (executeTool switch, part-engine.jsx)
 
@@ -315,11 +318,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 605-line unbannered stretch after line 472
+- part-imports.jsx: 605-line unbannered stretch after line 473
 - part-blocks.jsx: 748-line unbannered stretch after line 769
-- part-slides.jsx: 391-line unbannered stretch after line 1120
-- part-slides.jsx: 405-line unbannered stretch after line 1517
-- part-slides.jsx: 378-line unbannered stretch after line 2202
+- part-slidepanel.jsx: 405-line unbannered stretch after line 175
+- part-slidepanel.jsx: 378-line unbannered stretch after line 860
 - part-demo.jsx: 577-line unbannered stretch after line 194
 - part-pdf.jsx: 390-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
