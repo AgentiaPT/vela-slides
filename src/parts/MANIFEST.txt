@@ -29,6 +29,7 @@ part-chat.jsx     # ChatPanel, ChatMarkdown, ToolTraceCard + TOOL_META, JSON cli
 part-test.jsx     # dev-only battery render tests (excluded from --release builds)
 part-uitest.jsx   # dev-only in-app UI test battery — uiSuite registry, runUITests, window.__velaRunUITests (excluded from --release builds)
 part-demo.jsx     # cinematic demo mode — scripted scenes over the live app
+part-pdf-fonts.jsx # COMPRESSED_FONTS — offline font fallback data (compressed TTF blobs), rarely changes; declared before part-pdf.jsx's loadFonts() reads it
 part-pdf.jsx      # exporters: vector PDF (buildVectorPdf + DOM extractors + font parsing), canvas PDF (PdfExportModal), markdown (deckToMarkdown, mdInline/mdCell), standalone HTML — plus pdfStringEncode
 part-pptx.jsx     # native editable PowerPoint export — buildPptx (OOXML+ZIP writer), pptxExtractTextBoxes, pptxEsc; reuses part-pdf.jsx extractors
 part-app.jsx      # root VelaApp: top-level layout, storage load/save effects, deck import/export, global keyboard handlers, modals (ShortcutHelp, NewDeckDialog, StatsDialog, ChangelogDialog, PptxExportModal, MergePatchDialog), local/desktop sync
