@@ -52,6 +52,7 @@ if [ "$PAR" -eq 0 ]; then
   run desktop "Desktop gatekeeper" python3 -m unittest tests.test_desktop
   run go      "Go gatekeeper"      gotest
   run concat  "Template sync"      concat_check
+  run routing "Routing freshness"  python3 tools/vela-dev/scripts/check-routing.py
   run e2e     "E2E review UI"      node tests/test_review_ui.cjs
   run pptx    "PPTX export e2e"    pptx
   run uib     "In-app UI battery"  uibattery
@@ -64,6 +65,7 @@ else
   run desktop "Desktop gatekeeper" python3 -m unittest tests.test_desktop &
   run go      "Go gatekeeper"      gotest &
   run concat  "Template sync"      concat_check &
+  run routing "Routing freshness"  python3 tools/vela-dev/scripts/check-routing.py &
   wait
   # Group B: browser stacks, concurrently (each launches its own Chromium).
   run e2e     "E2E review UI"      node tests/test_review_ui.cjs &
