@@ -6,6 +6,26 @@
 // locally, in-browser". The stable data-testids (editor-gallery-toggle,
 // data-hidden-overlay, ...) are the app's published driver contract.
 
+// SAFE waitForFunction — GOTCHA crystallized from a readiness smoke: in this container,
+// page.waitForFunction's OWN `timeout` option does not reliably fire when the predicate
+// never becomes true (confirmed: `() => false` with timeout:2000 still consumed the
+// FULL ~20s server job budget instead of rejecting at 2000ms, while page.waitForSelector
+// timed out correctly at its own timeout). Every verb below that waits on a DOM predicate
+// goes through this wrapper — an external Node-side setTimeout race — so a wrong
+// prediction fails CHEAP and NAMED (per the skill's design) instead of eating the whole
+// job budget. Job authors: prefer this (or page.waitForSelector) over a bare
+// page.waitForFunction call in ad-hoc bursts too.
+function wf(page, fn, argOrOpts, maybeOpts) {
+  const hasArg = maybeOpts !== undefined;
+  const opts = (hasArg ? maybeOpts : argOrOpts) || {};
+  const timeout = opts.timeout || 4000;
+  const inner = hasArg ? page.waitForFunction(fn, argOrOpts, { timeout: timeout + 3000 }) : page.waitForFunction(fn, { timeout: timeout + 3000 });
+  return Promise.race([
+    inner,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`wf: predicate did not become true within ${timeout}ms`)), timeout)),
+  ]);
+}
+
 const clickLeafText = (page, txt, last = false) => page.evaluate(({ txt, last }) => {
   const els = [...document.querySelectorAll("*")].filter(e => e.children.length === 0 && e.textContent.trim() === txt);
   const el = last ? els[els.length - 1] : els[0]; if (!el) return false; el.click(); return true;
@@ -23,15 +43,15 @@ export async function selectModule(page, name) {
 export async function present(page) {
   const ok = await page.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => /Present/.test(x.textContent)); if (!b) return false; b.click(); return true; });
   if (!ok) throw new Error("present: no Present button");
-  await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !!fs; }, { timeout: 5000 });
+  await wf(page, () => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !!fs; }, { timeout: 5000 });
 }
 export async function openTOC(page) {
   await page.keyboard.press("Control+e");
-  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='earch']"), { timeout: 4000 });
+  await wf(page, () => !!document.querySelector("input[placeholder*='earch']"), { timeout: 4000 });
 }
 export async function jumpTo(page, title) {
   if (!await clickLeafText(page, title, true)) throw new Error(`jumpTo: no TOC row "${title}"`);
-  await page.waitForFunction((t) => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return fs && [...fs.querySelectorAll("[data-block-type=heading]")].some(h => h.textContent.trim() === t); }, title, { timeout: 4000 });
+  await wf(page, (t) => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return fs && [...fs.querySelectorAll("[data-block-type=heading]")].some(h => h.textContent.trim() === t); }, title, { timeout: 4000 });
   // CAVEAT: jumpTo confirms the JUMP landed; it does NOT restore keyboard focus to the
   // deck. After a synthetic TOC-row click, focus stays on the search input, so arrow
   // keys route there, not to the presenter (a headless artifact — a real mouse click on
@@ -68,11 +88,11 @@ export async function editIcon(page, index = 0) {
   const box = await page.evaluate((i) => { const el = [...document.querySelectorAll("[data-block-type=heading]")][i]; const svg = el && el.querySelector("svg"); if (!svg) return null; const b = svg.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, index);
   if (!box) throw new Error(`editIcon: no icon on heading[${index}]`);
   await page.mouse.click(box.x, box.y);
-  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent), { timeout: 3000 }).catch(() => {});
+  await wf(page, () => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent), { timeout: 3000 }).catch(() => {});
   return page.evaluate(() => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent));
 }
-export async function exitPresent(page) { await page.keyboard.press("f"); await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !fs || !!document.querySelector("header"); }, { timeout: 4000 }).catch(() => {}); }
-export async function openGallery(page) { if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=editor-gallery-toggle]"); if (!b) return false; b.click(); return true; })) throw new Error("openGallery: no editor-gallery-toggle (must be in editor mode, not presenting)"); await page.waitForFunction(() => /GALLERY/.test(document.body.textContent), { timeout: 4000 }); }
+export async function exitPresent(page) { await page.keyboard.press("f"); await wf(page, () => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !fs || !!document.querySelector("header"); }, { timeout: 4000 }).catch(() => {}); }
+export async function openGallery(page) { if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=editor-gallery-toggle]"); if (!b) return false; b.click(); return true; })) throw new Error("openGallery: no editor-gallery-toggle (must be in editor mode, not presenting)"); await wf(page, () => /GALLERY/.test(document.body.textContent), { timeout: 4000 }); }
 export async function galleryState(page) { return page.evaluate(() => ({ open: /GALLERY/.test(document.body.textContent), hiddenOverlays: document.querySelectorAll("[data-hidden-overlay]").length, hiddenBadges: document.querySelectorAll("[data-hidden-badge]").length })); }
 // Save-status pill: value is 'dirty'|'saving'|'saved'|'error'. After an edit it stays
 // 'dirty' during the ~1.5s autosave debounce, then 'saving' -> 'saved'. Poll ~3s.
@@ -96,7 +116,7 @@ export async function openExportMenu(page) {
   if (await page.evaluate(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"))) return;
   if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-menu-toggle]"); if (!b) return false; b.click(); return true; }))
     throw new Error("openExportMenu: no export-menu-toggle (desktop header not mounted?)");
-  await page.waitForFunction(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"), { timeout: 4000 });
+  await wf(page, () => !!document.querySelector("[data-testid=export-pptx-menu-item]"), { timeout: 4000 });
 }
 
 // Drive the whole PowerPoint export: open menu → click entry → start → wait for
@@ -108,14 +128,14 @@ export async function exportPptx(page, opts = {}) {
   await openExportMenu(page);
   if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-pptx-menu-item]"); if (!b) return false; b.click(); return true; }))
     throw new Error("exportPptx: export-pptx-menu-item vanished before click");
-  await page.waitForFunction(() => !!document.querySelector("[data-testid=pptx-export-modal]"), { timeout: 4000 });
+  await wf(page, () => !!document.querySelector("[data-testid=pptx-export-modal]"), { timeout: 4000 });
   if (opts.branding) {
     await page.evaluate(() => { const t = document.querySelector("[data-testid=pptx-export-branding-toggle]"); if (t) t.click(); });
   }
   if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=pptx-export-start]"); if (!b) return false; b.click(); return true; }))
     throw new Error("exportPptx: no pptx-export-start button (modal stuck on choose?)");
   // Off-screen render loop (~350ms/slide) → done phase. Fail early on the error phase.
-  await page.waitForFunction(() => {
+  await wf(page, () => {
     if (document.querySelector("[data-testid=pptx-export-error]")) return true;
     return !!document.querySelector("[data-testid=pptx-export-download]");
   }, { timeout: 60000 });
@@ -154,7 +174,7 @@ export async function navKey(page, key, mods = {}) {
 // waits for the fixed full-viewport presenter container to appear.
 export async function presentKey(page) {
   await navKey(page, "f");
-  await page.waitForFunction(() => [...document.querySelectorAll("*")].some(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }), { timeout: 5000 });
+  await wf(page, () => [...document.querySelectorAll("*")].some(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }), { timeout: 5000 });
 }
 // CDP touch swipe: dir<0 (finger right→left) = forward/next; dir>0 (left→right) = back/prev.
 export async function swipe(page, dir = -1) {
