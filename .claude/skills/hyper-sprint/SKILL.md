@@ -287,7 +287,18 @@ count), which is only honest if the plan wasn't reconstructed afterward.
 
 **Phase 3 — Delegate & integrate.** Dispatch each cluster to a **worker sub-agent** (routed
 model/effort) with its objective, edit map, its **acceptance Verify verbatim**, and exclusive
-file set; disjoint clusters run in parallel **worktrees**. Worker does edits + unit/e2e tests and
+file set; disjoint clusters run in parallel **worktrees**. **Base-ref guard (hard rule —
+NEVER assume any checkout is on the intended ref: the harness may start the MAIN session on
+the default branch or any arbitrary branch, and worktree isolation may base new worktrees on
+the repo's DEFAULT branch, not the sprint branch — a stale ref silently hands every agent the
+wrong code):** in Phase 0 the orchestrator confirms its own working tree is on the designated
+sprint branch (`git rev-parse --abbrev-ref HEAD`; check out / create it from the designated
+base if not) before recording the sprint HEAD SHA everything pins to; then it pins that SHA
+in every worktree-agent prompt (workers AND validators), and the agent's step 0 — before
+reading or editing anything — is
+`git rev-parse HEAD` == that SHA, else `git reset --hard <SHA>` and re-check; a worker that
+edited before passing the guard redoes its work on the correct base. The orchestrator verifies
+each returned commit's merge-base against sprint HEAD before merging. Worker does edits + unit/e2e tests and
 returns a compact result — never its raw diff (*hub hygiene*, principle 3). **New UI a worker
 adds must be drivable by the repo's burst verb library**: emit the stable test-ids those verbs
 expect (or update the verbs in the same change) — otherwise the blind gate can't drive the feature
