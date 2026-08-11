@@ -1,0 +1,34 @@
+# Vela part-file manifest — THE build order and the routing table.
+#
+# One `part-<name>.jsx  # purpose` per line, in CONCAT ORDER. This file is the
+# single source of truth for the part list: tools/vela-dev/scripts/concat.py
+# (build), tools/vela-dev/scripts/lint.py (static checks) and tests/test_vela.py
+# all read it — none of them keeps its own copy.
+#
+# ORDER IS LOAD-BEARING. The monolith is a plain concatenation with no module
+# system, so every `const`/`let` is in one shared temporal dead zone: a part may
+# only reference top-level bindings declared in an EARLIER part (or inside a
+# function body that runs after mount). Reordering these lines reorders the
+# bundle and can break the app at runtime with a TDZ ReferenceError. Do not
+# reorder; append new parts at the position their dependencies require.
+#
+# Adding a part-file? Add it here in the same change — lint.py errors on any
+# src/parts/part-*.jsx that is missing from this manifest.
+#
+# Lines starting with `#` and blank lines are ignored; text after `#` on a part
+# line is the purpose comment.
+
+part-imports.jsx  # constants, deck sanitizers/allowlists, helpers, storage API, startup patch
+part-icons.jsx    # Lucide icon resolver (270+ icons) and icon picker data
+part-blocks.jsx   # the 27 block renderers + block editing chrome
+part-reducer.jsx  # useReducer state shape, actions, undo/redo
+part-engine.jsx   # Vera AI engine — callClaudeAPI(), tool schemas, ReAct loop
+part-slides.jsx   # SlidePanel, slide chrome, thumbnails, fullscreen/presenter
+part-list.jsx     # lane/module/slide list (TOC) and drag-and-drop
+part-chat.jsx     # ChatPanel, message rendering, tool traces
+part-test.jsx     # dev-only battery render tests (stripped by --release)
+part-uitest.jsx   # dev-only in-app UI test battery (stripped by --release)
+part-demo.jsx     # cinematic demo mode scenes
+part-pdf.jsx      # canvas PDF export + markdown/standalone-HTML export
+part-pptx.jsx     # native editable PowerPoint (.pptx) export
+part-app.jsx      # root VelaApp, modals, keyboard handlers, top-level layout

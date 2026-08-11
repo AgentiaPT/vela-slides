@@ -24,6 +24,9 @@ DEV_SCRIPTS = os.path.join(DEV_DIR, "scripts")         # concat.py, serve.py, sy
 PARTS_DIR = os.path.join(REPO_ROOT, "src", "parts")    # app source part-files (first-class)
 LOCAL_HTML = os.path.join(DEV_DIR, "local.html")       # dev preview shell (served by serve.py)
 
+sys.path.insert(0, DEV_SCRIPTS)
+from parts_manifest import load_part_order              # src/parts/MANIFEST.txt (single source of truth)
+
 passes = 0
 fails = 0
 skips = 0
@@ -49,13 +52,11 @@ def skip(name, reason=""):
 def test_unit():
     print("\n── Unit Tests ──")
 
-    # 1. All 11 part-files exist
-    expected_parts = [
-        "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-        "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-        "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-        "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-app.jsx"
-    ]
+    # 1. Every part-file the manifest lists exists. The list is NOT duplicated
+    #    here: src/parts/MANIFEST.txt is the single source of truth shared with
+    #    concat.py and lint.py (a hardcoded copy here had silently gone stale,
+    #    omitting part-pptx.jsx).
+    expected_parts = load_part_order()
     missing = [p for p in expected_parts if not os.path.exists(os.path.join(PARTS_DIR, p))]
     if not missing:
         ok(f"All {len(expected_parts)} part-files present")

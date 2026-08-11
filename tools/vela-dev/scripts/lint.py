@@ -10,16 +10,22 @@ Usage:
 
 import sys, os, re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from parts_manifest import load_part_order, manifest_path  # noqa: E402
+
 # ── Constants ────────────────────────────────────────────────────────
 
-PART_ORDER = [
-    "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-    "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-    "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-    "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-pptx.jsx", "part-app.jsx",
-]
+# The part list + build order come from src/parts/MANIFEST.txt (one source of
+# truth, shared with concat.py and tests/test_vela.py). A hardcoded copy here is
+# what once let part-pptx.jsx drop out of every PART_ORDER-driven check while
+# still being built into the bundle.
 
 COPYRIGHT_HEADER = "© 2025-present Rui Quintino"
+
+# Part-file size guard. Big part-files are the main cost a reader pays to make a
+# small change, so oversized ones get flagged — WARNING for now because several
+# existing parts are over the line; this becomes a hard error once they are split.
+PART_MAX_LINES = 900
 
 # Top-level declaration pattern (const/let/function at column 0)
 DECL_RE = re.compile(r'^(?:const|let|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)', re.MULTILINE)
@@ -614,25 +620,42 @@ def check_security_tests_not_skippable(parts_dir):
 
 
 def check_part_order_complete(parts_dir):
-    """PART_ORDER must list every part-*.jsx file. A missing entry (e.g. part-pptx.jsx
-    once was) silently drops that part from every PART_ORDER-driven check — including
-    the security allowlist-tamper scan — so a tamper statement hidden in the unlisted
-    part evades the static guard. Keep the list in sync with the actual files."""
+    """MANIFEST.txt must list every part-*.jsx file. A missing entry (e.g.
+    part-pptx.jsx once was) silently drops that part from the build AND from every
+    manifest-driven check — including the security allowlist-tamper scan — so a
+    tamper statement hidden in the unlisted part evades the static guard. Keep the
+    manifest in sync with the actual files."""
     errors = []
     if not os.path.isdir(parts_dir):
         return errors
+    part_order = load_part_order(parts_dir)
+    manifest = manifest_path(parts_dir)
     actual = sorted(f for f in os.listdir(parts_dir)
                     if f.startswith("part-") and f.endswith(".jsx"))
-    missing = [f for f in actual if f not in PART_ORDER]
-    extra = [f for f in PART_ORDER if f not in actual]
+    missing = [f for f in actual if f not in part_order]
+    extra = [f for f in part_order if f not in actual]
     if missing:
         errors.append(
-            f"PART_ORDER is missing part-file(s): {missing} — add them so every part is "
-            "linted and scanned by the security allowlist-tamper guard."
+            f"{manifest} is missing part-file(s): {missing} — add them so every part is "
+            "built, linted and scanned by the security allowlist-tamper guard."
         )
     if extra:
-        errors.append(f"PART_ORDER lists part-file(s) that don't exist: {extra} — remove them.")
+        errors.append(f"{manifest} lists part-file(s) that don't exist: {extra} — remove them.")
     return errors
+
+
+def check_part_size(source, part_name):
+    """Warn on oversized part-files.
+
+    Every reader of a part-file pays for its whole length, and an oversized part is
+    also where unrelated concerns quietly accumulate. Warning-only today (several
+    parts exceed the cap); it becomes a hard gate once they are split.
+    """
+    lines = source.count("\n") + (0 if source.endswith("\n") else 1)
+    if lines > PART_MAX_LINES:
+        return [f"{part_name}: {lines} lines exceeds the {PART_MAX_LINES}-line "
+                f"part-file size guide — consider splitting it"]
+    return []
 
 
 # ── Main runners ─────────────────────────────────────────────────────
@@ -660,8 +683,10 @@ def lint_parts(parts_dir):
     errors = []
     warnings = []
 
+    part_order = load_part_order(parts_dir)
+
     # Check all expected parts exist
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if not os.path.exists(part_path):
             errors.append(f"Missing part file: {part_name}")
@@ -673,10 +698,11 @@ def lint_parts(parts_dir):
         errors += check_copyright_header(source, part_name)
         errors += check_conflict_markers(source, part_name)
         warnings += check_balanced_braces(source, part_name)
+        warnings += check_part_size(source, part_name)
 
     # Check duplicates across all parts combined
     combined = ""
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if os.path.exists(part_path):
             with open(part_path, 'r', encoding="utf-8") as f:
