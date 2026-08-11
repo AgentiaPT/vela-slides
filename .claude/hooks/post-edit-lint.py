@@ -58,6 +58,22 @@ import subprocess
 import sys
 import tempfile
 
+# Files above this line count get the one-time ranged-read nudge. Chosen well
+# under the Read tool's own 2000-line silent-truncation threshold, so the gate
+# fires before an agent can unknowingly work from partial file content.
+READ_GATE_LINES = 800
+
+READ_GATE_MSG = (
+    "LARGE-FILE READ GATE (one-time per file — this read was NOT executed): "
+    "{path} is {n} lines. Whole-file reads of large files are costly, and "
+    "reads beyond 2000 lines are silently truncated — you could be working "
+    "from incomplete content without knowing. Prefer a ranged read "
+    "(offset/limit): grep the symbol you need for its line, or run "
+    "`python3 tools/vela-dev/scripts/partsize.py <part-file>` for the "
+    "section map. If you genuinely need the whole file, re-run this exact "
+    "Read — it will go through."
+)
+
 SKILL_GATE_MSG = (
     "SECURITY GATE (one-time per checkout — this edit was NOT applied): every "
     "code change in this repo requires .claude/skills/vela-secure-coding/"
@@ -118,19 +134,23 @@ def _checkout_root_for(edited, repo_root):
     return None
 
 
-def _reminder_pending(root):
-    """True once per checkout: marker lives in the temp dir, keyed by the
-    checkout path, so the repo tree itself is never dirtied."""
-    key = hashlib.sha1(root.encode("utf-8")).hexdigest()[:16]
-    marker = os.path.join(tempfile.gettempdir(), "vela-secskill-note-" + key)
+def _marker_pending(name, seed):
+    """Generic once-only marker in the temp dir (never inside the repo — the
+    tree must stay clean). True exactly once per seed."""
+    key = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+    marker = os.path.join(tempfile.gettempdir(), name + key)
     if os.path.exists(marker):
         return False
     try:
         with open(marker, "w", encoding="utf-8") as f:
-            f.write(root + "\n")
+            f.write(seed + "\n")
     except OSError:
-        return False  # can't persist → stay quiet rather than nag every edit
+        return False  # can't persist → stay quiet rather than nag every call
     return True
+
+
+def _reminder_pending(root):
+    return _marker_pending("vela-secskill-note-", root)
 
 
 def main():
@@ -143,6 +163,26 @@ def main():
         edited = os.path.realpath(file_path)
         root = _checkout_root_for(edited, repo_root)
         if root is None:
+            return 0
+        if "--pre-read" in sys.argv:
+            # PreToolUse gate on Read: nudge offset-less reads of large files
+            # toward ranged reads, ONCE per (checkout, file). A read that
+            # already carries offset/limit is intentional targeted reading and
+            # always passes; the identical retry after the nudge also passes.
+            ti = payload.get("tool_input") or {}
+            if ti.get("offset") is not None or ti.get("limit") is not None:
+                return 0
+            try:
+                with open(edited, "rb") as f:
+                    n = sum(1 for _ in f)
+            except OSError:
+                return 0
+            if n <= READ_GATE_LINES:
+                return 0
+            if _marker_pending("vela-readgate-", root + "\0" + edited):
+                sys.stderr.write(
+                    READ_GATE_MSG.format(path=os.path.basename(edited), n=n) + "\n")
+                return 2
             return 0
         parts = os.path.realpath(os.path.join(root, "src", "parts"))
         try:
