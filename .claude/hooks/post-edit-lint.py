@@ -32,12 +32,17 @@ Scoping is still authoritative and closed:
      pinned to an older commit is checked by that commit's rules — no
      cross-version misattribution.
 
-One-time reminder: on the first in-scope edit per checkout (marker file in
-the system temp dir, never inside the repo — the tree must stay clean), the
-hook returns exit 2 with an informational pointer to
-.claude/skills/vela-secure-coding/SKILL.md and its Triage section, even when
-the lint passes. Every agent that edits app code therefore sees the mandate
-exactly once, at edit time, regardless of whether it read CLAUDE.md.
+One-time pre-edit gate (`--pre`, wired as a PreToolUse hook): the FIRST
+in-scope edit per checkout (marker file in the system temp dir, never inside
+the repo — the tree must stay clean) is blocked with exit 2 and a pointer to
+.claude/skills/vela-secure-coding/SKILL.md and its Triage section; the agent
+reads the skill (or confirms it already has) and re-runs the edit, which then
+passes. Delivery matters here: a PostToolUse exit-2 stderr is not reliably
+surfaced to subagents (measured — reminders fired but never reached any
+worktree agent's context), while a blocked tool call MUST be read for the
+agent to proceed, and it arrives BEFORE code is written. Every agent that
+edits app code therefore receives the mandate exactly once, deterministically,
+regardless of whether it read CLAUDE.md.
 
 Contract: exit 2 feeds stderr back to Claude as actionable feedback; every
 other path exits 0 — the hook must never break editing (fail-open: the
@@ -53,13 +58,14 @@ import subprocess
 import sys
 import tempfile
 
-SKILL_REMINDER = (
-    "SECURITY REMINDER (one-time per checkout; your edit was applied): every "
+SKILL_GATE_MSG = (
+    "SECURITY GATE (one-time per checkout — this edit was NOT applied): every "
     "code change in this repo requires .claude/skills/vela-secure-coding/"
     "SKILL.md — start with its Triage section (static app-chrome/editor-UI "
     "edits: §0 + the helper table is enough; anything touching deck values, "
-    "sanitizers, exporters, server or native code: full read). If you already "
-    "did this, continue — nothing is blocked."
+    "sanitizers, exporters, server or native code: full read). Read it now if "
+    "you haven't in this session, then re-run this exact edit — it will go "
+    "through."
 )
 
 
@@ -145,7 +151,15 @@ def main():
             return 0
         if not in_scope:
             return 0
-        remind = _reminder_pending(root)
+        if "--pre" in sys.argv:
+            # PreToolUse gate: block the FIRST in-scope edit per checkout with
+            # the mandatory-read instruction; every later edit passes straight
+            # through. Blocking (not informing after the fact) is deliberate:
+            # a blocked call's message is guaranteed to reach the agent.
+            if _reminder_pending(root):
+                sys.stderr.write(SKILL_GATE_MSG + "\n")
+                return 2
+            return 0
         lint = os.path.join(root, "tools", "vela-dev", "scripts", "lint.py")
         if not os.path.exists(lint):
             _note("lint.py not found at " + lint)
@@ -169,9 +183,6 @@ def main():
                 "below, then .claude/skills/vela-secure-coding/SKILL.md:\n"
                 + (r.stdout or "") + (r.stderr or "")
             )
-            return 2
-        if remind:
-            sys.stderr.write(SKILL_REMINDER + "\n")
             return 2
         return 0
     except Exception:
