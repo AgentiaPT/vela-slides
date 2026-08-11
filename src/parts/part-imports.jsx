@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.36";
+const VELA_VERSION = "13.37";
 const VELA_CHANGELOG = [
+  { v: "13.37", d: "internal: part-file manifest + routing docs, no functional change" },
   { v: "13.36", d: ["CI hardening: the SVG-<style> recurrence guard now scans every part-file (not a hardcoded list that had drifted), forbids built-in prototype tampering that the sanitizer's tag lookup relies on, requires the redress/overlay tests to keep their real assertions, and fails (never skips) if the sanitizer source can't be located. Added a PART_ORDER-completeness guard.", "Housekeeping: added the missing license header to the PPTX export part-file."] },
   { v: "13.35", d: ["Security (High): the SVG inline style filter now also rejects CSS layout/positioning (position/inset/z-index/pointer-events/viewport-sizing), closing a UI-integrity gap where a positioned SVG element could overlay or clickjack app chrome from a non-clipped diagram panel — the same redress/clickjack class, via the inline-style path rather than the <style> element. SVG paint styling is unaffected.", "CI hardening: security sanitizer regression tests are now un-skippable at runtime (a skip is failed), and the allowlist-tamper guard also catches aliased membership overrides — closing seams where a regression could reach green CI."] },
   { v: "13.34", d: ["CI hardening: the SVG-<style> exclusion lint now also rejects runtime tampering with the tag allowlist (membership-method override / reassignment), and requires the real-runtime redress regression test to always run (security UI tests can't be marked skippable) — closing two seams where the element could be re-admitted with green CI.", "Test fix: the student-mode teacher-panel tests now navigate to a notes-free slide instead of being AI-gated, restoring real coverage of the panel shell."] },
