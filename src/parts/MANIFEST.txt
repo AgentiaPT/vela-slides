@@ -39,4 +39,5 @@ part-pdf-extract.jsx # PDF/PPTX shared plumbing: color/gradient parsing, pdfStri
 part-pdf-vector.jsx # vector PDF builder: SVG icon extraction, buildVectorPdf, TrueType font parsing/loading, VectorPdfExportModal
 part-export-md.jsx # markdown export (deckToMarkdown, mdInline/mdCell) and standalone HTML export
 part-pptx.jsx     # native editable PowerPoint export — buildPptx (OOXML+ZIP writer), pptxExtractTextBoxes, pptxEsc; reuses part-pdf-extract.jsx extractors
-part-app.jsx      # root VelaApp: top-level layout, storage load/save effects, deck import/export, global keyboard handlers, modals (ShortcutHelp, NewDeckDialog, StatsDialog, ChangelogDialog, PptxExportModal, MergePatchDialog), local/desktop sync
+part-app-modals.jsx # standalone modal/dialog components the root App only renders: ModalBackdrop, PptxExportModal, StatsDialog, ChangelogDialog, CommentsPanel, NewDeckDialog, ShortcutHelp, CostBadge, AgentStatusChip, AgentSettingsDialog, itemFingerprint, MergePatchDialog — split out of part-app.jsx; must stay immediately before it (App references these; nothing here references App back)
+part-app.jsx      # root App (export default function App): top-level layout, storage load/save effects, deck import/export, global keyboard handlers, local/desktop sync; renders the modals declared in part-app-modals.jsx

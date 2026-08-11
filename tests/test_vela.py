@@ -1111,7 +1111,13 @@ def test_slide_editor_ux_features():
         for f in ("part-slides.jsx", "part-slidepanel.jsx")
     )
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
-    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    # part-app.jsx was split (modal/dialog components now live in
+    # part-app-modals.jsx, incl. ShortcutHelp's help text checked below);
+    # concatenate in build order to search across both.
+    appjs   = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-app-modals.jsx", "part-app.jsx")
+    )
 
     # ── Feature 4: multi-slide clipboard ────────────────────────────
     if "velaClipboardWriteSlides" in imports and "velaClipboardReadSlides" in imports:

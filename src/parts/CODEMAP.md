@@ -179,7 +179,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - native table extraction: pptxExtractTables
 - image-block extraction: pptxExtractImages pptxCaptureSlideRaster pptxExtractSlidePage
 
-### part-app.jsx
+### part-app-modals.jsx
 - Modal Backdrop (shared): ModalBackdrop
 - PowerPoint (.pptx) Export Modal: PptxExportModal
 - Deck Stats Dialog: StatsDialog
@@ -190,21 +190,24 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session Cost Badge: fmtCost fmtTokens CostBadge
 - Agent status chip (Neutralino desktop only): AgentStatusChip AgentSettingsDialog
 - Item Fingerprint (for merge detection): itemFingerprint
-- Merge Patch Dialog: MergePatchDialog App
+- Merge Patch Dialog: MergePatchDialog
+
+### part-app.jsx
+- (file preamble): App
 
 ## Reducer actions → parts that dispatch them
 
 Actions with no entry are reached only indirectly (Vera engine workspace,
 keyboard ternaries) or are currently unused — check before assuming a UI exists.
 
-- ADD_COMMENT: part-app.jsx part-list.jsx part-slides.jsx
+- ADD_COMMENT: part-app-modals.jsx part-list.jsx part-slides.jsx
 - ADD_ITEM: part-list.jsx
 - ADD_LANE: (no direct dispatch site)
 - ADD_MSG: part-chat.jsx
 - ADD_SLIDE: part-slidepanel.jsx
 - BATCH_ADD: (no direct dispatch site)
 - CLEAR_BOOTSTRAP: part-chat.jsx
-- CLEAR_RESOLVED_COMMENTS: part-app.jsx
+- CLEAR_RESOLVED_COMMENTS: part-app-modals.jsx
 - CYCLE_STATUS: (no direct dispatch site)
 - DESELECT: part-app.jsx
 - DRAG_REORDER: part-list.jsx
@@ -222,7 +225,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - MOVE_SLIDE_TO_MODULE: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - NEW_DECK: part-app.jsx
 - REDO: part-app.jsx
-- REMOVE_COMMENT: part-app.jsx part-canvas.jsx part-list.jsx part-slides.jsx
+- REMOVE_COMMENT: part-app-modals.jsx part-canvas.jsx part-list.jsx part-slides.jsx
 - REMOVE_ITEM: part-list.jsx
 - REMOVE_LANE: (no direct dispatch site)
 - REMOVE_SLIDE: part-slidepanel.jsx part-slides.jsx
@@ -234,13 +237,13 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - REORDER_SLIDE: part-list.jsx part-slides.jsx
 - RESET: (no direct dispatch site)
 - RESET_CHAT: part-chat.jsx
-- RESOLVE_ALL_COMMENTS: part-app.jsx
-- RESOLVE_COMMENT: part-app.jsx part-list.jsx part-slides.jsx
-- SELECT: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
+- RESOLVE_ALL_COMMENTS: part-app-modals.jsx
+- RESOLVE_COMMENT: part-app-modals.jsx part-list.jsx part-slides.jsx
+- SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
 - SET_BRANDING: part-chat.jsx part-slides.jsx
 - SET_CHAT: part-app.jsx part-chat.jsx
-- SET_COMMENTS_PANEL: part-app.jsx part-slidepanel.jsx
+- SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
 - SET_FONT_SCALE: part-slidepanel.jsx
 - SET_FULLSCREEN: part-app.jsx part-slidepanel.jsx
@@ -248,7 +251,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_IMPORTANCE: part-list.jsx
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
-- SET_REVIEW_MODE: part-app.jsx part-slidepanel.jsx
+- SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-list.jsx
 - SET_SLIDES: part-slidepanel.jsx
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
@@ -302,7 +305,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 605-line unbannered stretch after line 474
+- part-imports.jsx: 605-line unbannered stretch after line 475
 - part-blocks.jsx: 748-line unbannered stretch after line 769
 - part-slidepanel.jsx: 405-line unbannered stretch after line 175
 - part-slidepanel.jsx: 378-line unbannered stretch after line 860
