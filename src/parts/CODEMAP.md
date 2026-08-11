@@ -131,6 +131,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - PDF Link Collection & Icon Drawing: collectSlideLinks drawPdfLinkIcon
 - Vela PDF Watermark: drawVelaWatermark
 - PDF Export Modal: PdfExportModal
+
+### part-pdf-extract.jsx
 - Constants: VECTOR_RATIOS
 - Check if slide has image blocks: slideHasImages
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
@@ -140,6 +142,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
 - Circles/dots extraction (bullets, timeline dots): extractCircles
+
+### part-pdf-vector.jsx
 - SVG icon extraction: extractSVGs svgPathToPdf arcToBezier inflateFont FONT_CDN_URLS
 - Font file mapping (F1-F8): FONT_FILES
 - Build vector PDF: buildVectorPdf
@@ -149,6 +153,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Font selection: pickFont
 - Image capture fallback (from existing pdf-export): vectorDomToCanvas
 - Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides
+
+### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
 - Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
 - Standalone HTML Export Modal: StandaloneHtmlModal
@@ -309,14 +315,14 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 605-line unbannered stretch after line 471
+- part-imports.jsx: 605-line unbannered stretch after line 472
 - part-blocks.jsx: 748-line unbannered stretch after line 769
 - part-slides.jsx: 391-line unbannered stretch after line 1120
 - part-slides.jsx: 405-line unbannered stretch after line 1517
 - part-slides.jsx: 378-line unbannered stretch after line 2202
 - part-demo.jsx: 577-line unbannered stretch after line 194
 - part-pdf.jsx: 390-line unbannered stretch after line 582
-- part-pdf.jsx: 441-line unbannered stretch after line 1754
-- part-pdf.jsx: 479-line unbannered stretch after line 2211
-- part-pdf.jsx: 524-line unbannered stretch after line 2961
+- part-pdf-vector.jsx: 441-line unbannered stretch after line 2
+- part-pdf-vector.jsx: 479-line unbannered stretch after line 459
+- part-pdf-vector.jsx: 524-line unbannered stretch after line 1209
 - part-pptx.jsx: no level-1 banners (1188 lines)

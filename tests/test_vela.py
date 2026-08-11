@@ -3633,7 +3633,13 @@ def test_pdf_title_cards():
 
     imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
-    pdf_src     = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    # part-pdf.jsx was split (canvas / extract / vector / markdown+html paths);
+    # these checks span the canvas modal and the vector modal, so concatenate
+    # the split files back in build order to search across all of them.
+    pdf_src     = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-pdf.jsx", "part-pdf-extract.jsx", "part-pdf-vector.jsx", "part-export-md.jsx")
+    )
     app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
     # 1. Shared helper exists and tags its output as a virtual slide

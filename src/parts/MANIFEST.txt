@@ -31,7 +31,10 @@ part-chat.jsx     # ChatPanel, ChatMarkdown, ToolTraceCard + TOOL_META, JSON cli
 part-test.jsx     # dev-only battery render tests (excluded from --release builds)
 part-uitest.jsx   # dev-only in-app UI test battery — uiSuite registry, runUITests, window.__velaRunUITests (excluded from --release builds)
 part-demo.jsx     # cinematic demo mode — scripted scenes over the live app
-part-pdf-fonts.jsx # COMPRESSED_FONTS — offline font fallback data (compressed TTF blobs), rarely changes; declared before part-pdf.jsx's loadFonts() reads it
-part-pdf.jsx      # exporters: vector PDF (buildVectorPdf + DOM extractors + font parsing), canvas PDF (PdfExportModal), markdown (deckToMarkdown, mdInline/mdCell), standalone HTML — plus pdfStringEncode
-part-pptx.jsx     # native editable PowerPoint export — buildPptx (OOXML+ZIP writer), pptxExtractTextBoxes, pptxEsc; reuses part-pdf.jsx extractors
+part-pdf-fonts.jsx # COMPRESSED_FONTS — offline font fallback data (compressed TTF blobs), rarely changes; declared before part-pdf-vector.jsx's loadFonts() reads it
+part-pdf.jsx      # canvas PDF export: PdfExportModal, domToCanvas/buildPdfFromImages raster pipeline, slide reflow, link-icon drawing, watermark
+part-pdf-extract.jsx # PDF/PPTX shared plumbing: color/gradient parsing, pdfStringEncode, emoji rendering, font metrics, DOM extractors (extractBoxes/extractCircles/extractLinks) — must precede part-pptx.jsx (reuses the extractors)
+part-pdf-vector.jsx # vector PDF builder: SVG icon extraction, buildVectorPdf, TrueType font parsing/loading, VectorPdfExportModal
+part-export-md.jsx # markdown export (deckToMarkdown, mdInline/mdCell) and standalone HTML export
+part-pptx.jsx     # native editable PowerPoint export — buildPptx (OOXML+ZIP writer), pptxExtractTextBoxes, pptxEsc; reuses part-pdf-extract.jsx extractors
 part-app.jsx      # root VelaApp: top-level layout, storage load/save effects, deck import/export, global keyboard handlers, modals (ShortcutHelp, NewDeckDialog, StatsDialog, ChangelogDialog, PptxExportModal, MergePatchDialog), local/desktop sync

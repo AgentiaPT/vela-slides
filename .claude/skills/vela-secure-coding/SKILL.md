@@ -24,7 +24,8 @@ reading). Review comments follow §6's disclosure discipline.
 **Full read required** (§1–§6) if your change does ANY of: reads a new or
 existing deck-supplied field anywhere; touches a sanitizer, encoder, allowlist,
 or `SAFE_*` key set; touches an exporter (PDF/PPTX/Markdown/standalone HTML);
-touches `part-imports.jsx`, `part-pdf.jsx`, `part-pptx.jsx`, `serve.py`,
+touches `part-imports.jsx`, `part-pdf.jsx`, `part-pdf-extract.jsx`,
+`part-pdf-vector.jsx`, `part-export-md.jsx`, `part-pptx.jsx`, `serve.py`,
 `assemble.py`, `agent_backend.py`, or anything under `vela-neutralino/`;
 touches storage/reload paths, the startup patch, CI/release/build scripts, or
 any `dangerouslySetInnerHTML`/`<style>`/CSS-sink/native-bridge code.
@@ -98,10 +99,10 @@ All in `src/parts/part-imports.jsx` unless noted.
 | Image data URI | `sanitizeImageDataUri` (`SAFE_RASTER_DATA_IMAGE`, SVG re-encoded) | passing `data:` through |
 | New slide/block field | add it to `SAFE_SLIDE_KEYS` / `SAFE_BLOCK_KEYS` (+ `validate.py`, `block-schema.md`, compact/turbo maps) | reading a key that isn't allowlisted (CI lint fails) |
 | Numeric layout field | `clampDeckNumber` + `SLIDE_NUMERIC_BOUNDS` | trusting the number |
-| PDF literal string / URI | `pdfStringEncode` (`part-pdf.jsx`) | an inline escape |
+| PDF literal string / URI | `pdfStringEncode` (`part-pdf-extract.jsx`) | an inline escape |
 | PPTX / OOXML text | `pptxEsc` (`part-pptx.jsx`) | manual `&`/`<` replaces |
-| Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-pdf.jsx`) | writing a deck field into `.md` raw |
-| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-pdf.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
+| Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-export-md.jsx`) | writing a deck field into `.md` raw |
+| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-export-md.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
 | Marker substitution in a template | `String.replace(marker, () => value)` (replacer **function**) | a string replacement (`$&`/`$1` splicing) |
 | Local HTTP auth compare | `hmac.compare_digest` | `==` |
 | Desktop filesystem path | go through `fs-guard` (`vela-neutralino/resources/js/fs-guard.js`) | a direct `Neutralino.filesystem.*` call |

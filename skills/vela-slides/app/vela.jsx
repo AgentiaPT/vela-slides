@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.41";
+const VELA_VERSION = "13.42";
 const VELA_CHANGELOG = [
+  { v: "13.42", d: "internal: split PDF/export part-files for maintainability, no functional change" },
   { v: "13.41", d: "internal: generated code map (CODEMAP.md) + CI freshness gate, no functional change" },
   { v: "13.40", d: "internal: finer part granularity (slide chrome part) + section banners, no functional change" },
   { v: "13.39", d: "internal: document the editor-chrome positioning model in the canvas part, no functional change" },
@@ -14657,6 +14658,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
 }
 
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vector PDF Export (additional) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Constants ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const VECTOR_RATIOS = [
@@ -15439,6 +15441,7 @@ function extractCircles(container, containerRect) {
   return circles;
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ SVG icon extraction ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Walks all <svg> elements and converts their children to PDF path ops
 function extractSVGs(container, containerRect) {
@@ -17170,6 +17173,7 @@ function collectAllSlides(lanes, branding) {
   return all;
 }
 
+// © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Markdown Export ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function deckToMarkdown(state, opts = {}) {
   const { includeNotes = true } = opts;
