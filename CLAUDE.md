@@ -20,27 +20,53 @@ plus the author→ship scripts (`vela.py`, `validate.py`, `assemble.py`).
 **No bundler.** Python stdlib concatenation in fixed dependency order (~10ms).
 
 ### Part-File Order (fixed, never changes)
+
+**`src/parts/MANIFEST.txt` is the single source of truth** for the part list, the
+build order, and each part's purpose — `concat.py`, `lint.py` and
+`tests/test_vela.py` all read it, none keeps its own copy. Order is TDZ-sensitive
+(one shared scope, no modules): never reorder it. Add a new part there in the
+same change, or the lint fails.
+
 ```
 imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 ```
 
-### Key Parts
-| Part | Purpose |
-|------|---------|
-| `part-imports.jsx` | Constants, sanitizers, helpers, storage API, startup patch system |
-| `part-icons.jsx` | 270+ Lucide icon resolver |
-| `part-blocks.jsx` | 27 block renderers (heading, flow, grid, metric, timeline, etc.) |
-| `part-reducer.jsx` | useReducer state + dispatch actions |
-| `part-engine.jsx` | Vera AI engine — callClaudeAPI(), 22 tools, ReAct loop |
-| `part-slides.jsx` | SlidePanel rendering, fullscreen, thumbnails |
-| `part-list.jsx` | Lane/module list, drag-and-drop |
-| `part-chat.jsx` | ChatPanel, tool traces |
-| `part-test.jsx` | Battery render tests |
-| `part-demo.jsx` | Cinematic demo mode (18 scenes) |
-| `part-uitest.jsx` | 185 UI tests in 33 suites |
-| `part-pdf.jsx` | Canvas PDF export, markdown export |
-| `part-pptx.jsx` | Native editable PowerPoint (.pptx) export |
-| `part-app.jsx` | Root VelaApp, modals, keyboard handlers |
+Read `src/parts/MANIFEST.txt` for the per-part purpose line. For a size/section
+map of any part (banner sections with line, byte and token counts — how to find
+a region inside a big file without reading it all):
+
+```bash
+python3 tools/vela-dev/scripts/partsize.py part-slides.jsx   # sections of one part
+python3 tools/vela-dev/scripts/partsize.py --totals-only     # every part, summary
+```
+
+## Where does X live
+
+Open the named file(s) FIRST and grep the named symbol — don't scan the tree.
+Every row below was verified against the code; if you find one wrong, fix the row
+in the same change. Line numbers are deliberately omitted (they rot) — grep the
+symbol, or use `partsize.py` for the section map.
+
+| Change | Open first | Grep for |
+|---|---|---|
+| Add / change a **block renderer** (new block type, block layout) | `src/parts/part-blocks.jsx` | `RenderBlock` — the `switch (block.type)`; new-item defaults `newItemFor` / `blankItemFor` / `PLACEHOLDER_FIELDS`. A new deck field also needs `SAFE_BLOCK_KEYS`, `skills/vela-slides/scripts/validate.py` and `references/block-schema.md` |
+| **Sanitization / allowlists / a new slide or block field** | `src/parts/part-imports.jsx` | `SAFE_SLIDE_KEYS`, `SAFE_BLOCK_KEYS`, `sanitizeBlock`, `sanitizeSlide`, `validateAndSanitizeDeck`, `cssColor` / `cssGradient` / `cssUrl`, `sanitizeStyle`; storage-reload path `resanitizeLoadedLanes` / `resanitizeLoadedBranding`. Read `.claude/skills/vela-secure-coding/SKILL.md` first |
+| **Slide chrome** — accent bar, footer, slide numbers, logo | `src/parts/part-blocks.jsx` | `BrandingOverlay` (renders accent bar, footer strip, `NN / NN` slide number, logo) |
+| **Slide background / slide palette** | `src/parts/part-blocks.jsx`, `src/parts/part-slides.jsx` (thumbnails) | `bgStyle` in `SlideContent` (`slide.bg` / `bgGradient` / `bgImage`); thumbnail/fullscreen bg in `VirtualSlide`. App-chrome tokens are `themes` / `T` in `part-imports.jsx` — a different thing from deck palettes |
+| **Branding settings UI** | `src/parts/part-slides.jsx` | `BrandingPanel`; defaults `defaultBranding` and re-scrub in `part-imports.jsx`, action `SET_BRANDING` in `part-reducer.jsx` |
+| **Lane / module / slide list (TOC)**, incl. per-row action controls | `src/parts/part-list.jsx` | `ModuleList` → `ConceptRow` (module row: collapse caret, ▲/▼ move glyphs, `REORDER`) → `SlideListWithAdder` (slide rows); menus `ContextMenu` / `CtxItem` / `AddMenu`; inline AI add `AiSlideAdder` |
+| **TOC drag & drop** | `src/parts/part-list.jsx` | `handleSlideDragStart` / `handleSlideDrop` / `handleContainerDrop`, module-level `_velaDrag` |
+| **Block toolbar & in-slide editing UX** | `src/parts/part-blocks.jsx` | `renderBlockItem` (per-block hover toolbar + block AI-prompt popup) inside `SlideContent`; inline text `EditableText`; per-item chrome `ItemChrome` / `itemReorder`. The AI driver `runBlockEdit` lives in `part-slides.jsx` |
+| **Fullscreen / presenter / gallery** | `src/parts/part-slides.jsx` | `SlidePanel` (arrow/space nav, wheel nav, Fullscreen-API sync), `PresenterView`, Presenter TOC, Gallery View, `StudentPanel`; state via `SET_FULLSCREEN` in `part-reducer.jsx` |
+| **PDF export** | `src/parts/part-pdf.jsx` | vector path `buildVectorPdf` + its export modal; canvas path `PdfExportModal` / `buildPdfFromImages`; every string through `pdfStringEncode`; DOM extraction `extractBoxes` / `extractCircles` / `extractLinks` |
+| **PPTX export** | `src/parts/part-pptx.jsx` | `buildPptx`, `pptxEsc`, `pptxExtractTextBoxes` (reuses part-pdf's extractors); the modal `PptxExportModal` is in `part-app.jsx` |
+| **Markdown export** | `src/parts/part-pdf.jsx` | `deckToMarkdown`, encoders `mdInline` / `mdCell` / `escGap`. Standalone-HTML export sits in the same file (its own section) |
+| **Vera AI engine tools** | `src/parts/part-engine.jsx` | `executeTool` — the `switch (name)` — AND the tool contract prose inside the system prompt in the same file. Both must change together or the model calls a tool that doesn't exist |
+| **Chat panel / tool traces** | `src/parts/part-chat.jsx` | `ChatPanel`, `ToolTraceCard`, `TOOL_META` (per-tool label/icon), `ChatMarkdown` |
+| **Reducer action / undo-redo** | `src/parts/part-reducer.jsx` | `innerReducer` (the action switch), `NO_HISTORY` (actions that must NOT create an undo step), `reducer` (history wrapper), `MAX_HISTORY` |
+| **Keyboard shortcuts & modals** | `src/parts/part-app.jsx` | global `window.addEventListener("keydown", …)` in `VelaApp` (undo/redo, `?`, `r`); the user-visible list is `ShortcutHelp`; modals `ModalBackdrop`, `NewDeckDialog`, `StatsDialog`, `ChangelogDialog`, `MergePatchDialog`. In-slide/presenter keys live in `part-slides.jsx` |
+| **UI test battery** | `src/parts/part-uitest.jsx` | `uiSuite("<name>", [...])` to add a suite, `runUITests`, headless entry `window.__velaRunUITests` (dev builds only — keep new hooks inside a `VELA:DEV-ONLY` fence) |
+| **Storage / persistence** | `src/parts/part-app.jsx` | the `Storage: Load` and `Storage: Save` effects (debounced, `extractSave`); `saveKV` / `MASTER_KEY` (`"vela-deck"`) in `part-imports.jsx`; startup-patch merge in the same load effect |
 
 ## Deck Format
 
@@ -183,10 +209,12 @@ skills/vela-slides/      ← LEAN PAYLOAD (what installs / ships)
   SKILL.md               ← skill prompt
 src/                     ← APP SOURCE (edit these; built into vela.jsx, never shipped raw)
   parts/                 ← part-*.jsx source part-files
+    MANIFEST.txt         ← build order + per-part purpose (single source of truth)
 tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
   local.html             ← local-preview shell
-  scripts/               ← concat.py, serve.py, agent_backend.py, render-offline.js,
-                            vela-drive.js, lint.py, sync-skill-docs.py, dep-sweep.py
+  scripts/               ← concat.py, parts_manifest.py, partsize.py, serve.py,
+                            agent_backend.py, render-offline.js, vela-drive.js,
+                            lint.py, sync-skill-docs.py, dep-sweep.py
   channel/               ← Node/pnpm MCP bridge
   evals/, references/    ← evals.json, app-editing.md
 examples/                ← vela-demo.vela, themed example decks
