@@ -1,0 +1,35 @@
+{
+  "n": "Incident #4471 — Payment Gateway Outage",
+  "C": {"A": "#1D4ED8", "B": "#7C3AED", "C": "#DC2626"},
+  "S": [
+    {
+      "n": "Incident Summary",
+      "d": 60,
+      "bg": "#FFFFFF",
+      "B": [
+        {"_": "badge", "x": "P1 — ACTIVE", "c": "#FFFFFF", "b": "$C", "i": "AlertTriangle"},
+        {"_": "heading", "x": "Payment Gateway Outage", "s": "2xl", "c": "$A", "w": 700},
+        {"_": "text", "x": "Checkout API returning 5xx for ~18% of requests since 02:14 UTC. Root cause under investigation.", "s": "md", "c": "#334155"},
+        {"_": "icon-row", "I": [
+          {"i": "ServerCrash", "title": "API Errors", "x": "5xx rate at 18%, rising", "ic": "$B"},
+          {"i": "Clock", "title": "Detected", "x": "02:14 UTC by automated alert", "ic": "$C"},
+          {"i": "Users", "title": "Impact", "x": "~40,000 checkout attempts affected", "ic": "$A"}
+        ]}
+      ]
+    },
+    {
+      "n": "Response Timeline",
+      "d": 60,
+      "bg": "#FFFFFF",
+      "B": [
+        {"_": "heading", "x": "Response Timeline", "s": "xl", "c": "$A", "i": "Activity", "ic": "$B"},
+        {"_": "icon-row", "I": [
+          {"i": "Siren", "title": "02:14", "x": "Alert fired, on-call paged", "ic": "$C"},
+          {"i": "Search", "title": "02:20", "x": "Root cause narrowed to DB pool exhaustion", "ic": "$B"},
+          {"i": "CheckCircle", "title": "02:41", "x": "Mitigation deployed, errors dropping", "ic": "$A"}
+        ]},
+        {"_": "callout", "x": "Postmortem scheduled for 2026-08-13 10:00 UTC.", "c": "#334155", "b": "#F1F5F9", "i": "FileText"}
+      ]
+    }
+  ]
+}

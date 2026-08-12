@@ -1,0 +1,8 @@
+📊 Deck Stats: 2 slides | 7 blocks | 2m 0s
+   Block types: heading(2), icon-row(2), badge(1), text(1), callout(1)
+
+⚠️  2 warnings:
+   • L1/I1/S1: No 'color' set — will use default
+   • L1/I1/S2: No 'color' set — will use default
+
+✅ Deck is valid
