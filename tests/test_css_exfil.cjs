@@ -256,8 +256,12 @@ if (/function scrubSubObject\(/.test(src) &&
   ok("scrubSubObject applies color+layout scrubbers and drops the `_` namespace");
 else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 {
+  // SlideContent (bgImage) lives in part-canvas.jsx; the matrix block renderer
+  // (qd.color) stays in part-blocks.jsx — read both (see part-blocks.jsx's
+  // SlideContent/BrandingOverlay/renderBlockItem split, part-canvas.jsx).
   const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc = fs.readFileSync(BLOCKS, "utf8");
+  const CANVAS = path.join(__dirname, "..", "src", "parts", "part-canvas.jsx");
+  const bsrc = fs.readFileSync(BLOCKS, "utf8") + fs.readFileSync(CANVAS, "utf8");
   if (/backgroundImage = cssUrl\(slide\.bgImage\)/.test(bsrc)) ok("bgImage render sink uses cssUrl()");
   else bad("bgImage sink not routed through cssUrl (wiring missing)");
   if (/cssColor\(qd\.color\)/.test(bsrc)) ok("matrix quadrant color sink uses cssColor()");
@@ -303,7 +307,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 }
 
 // ── Phase 2: --vera-accent CSS custom property (accent → setProperty sink) ──
-// The "Vera is working" sweep (part-slides.jsx wrapper) sets --vera-accent from
+// The "Vera is working" sweep (part-slidepanel.jsx wrapper) sets --vera-accent from
 // the slide's `accent` field; two rules (part-imports.jsx .vera-thinking::before/
 // ::after) consume it via color-mix(in srgb, var(--vera-accent,#3b82f6) N%,
 // transparent). This walks hostile accent values through the REAL sanitizeSlide
@@ -605,8 +609,11 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 // ── Wiring guards: render sinks route bg/bgGradient/cell.bg/headerBg through
 //    the encoders (part-blocks.jsx main render + part-slides.jsx thumbnail). ──
 {
+  // slide.bg/bgGradient and the grid/table/IconBubble sinks below span both
+  // part-blocks.jsx (RenderBlock switch) and part-canvas.jsx (SlideContent).
   const BLOCKS = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc2 = fs.readFileSync(BLOCKS, "utf8");
+  const CANVAS = path.join(__dirname, "..", "src", "parts", "part-canvas.jsx");
+  const bsrc2 = fs.readFileSync(BLOCKS, "utf8") + fs.readFileSync(CANVAS, "utf8");
   if (/bgStyle\.background = c;/.test(bsrc2) && /cssColor\(slide\.bg\)/.test(bsrc2)) ok("slide.bg render sink uses cssColor()");
   else bad("slide.bg sink not routed through cssColor (wiring missing)");
   if (/cssGradient\(slide\.bgGradient\)/.test(bsrc2)) ok("slide.bgGradient render sink uses cssGradient()");
@@ -766,8 +773,11 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 // Wiring guards: the render sink and the storage-load boot path actually call
 // the new gates, not just the extracted-slice tests above.
 {
+  // BrandingOverlay (accentColor/footerBg) lives in part-branding.jsx.
   const BLOCKS2 = path.join(__dirname, "..", "src", "parts", "part-blocks.jsx");
-  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8");
+  const CANVAS2 = path.join(__dirname, "..", "src", "parts", "part-canvas.jsx");
+  const BRANDING2 = path.join(__dirname, "..", "src", "parts", "part-branding.jsx");
+  const bsrc3 = fs.readFileSync(BLOCKS2, "utf8") + fs.readFileSync(CANVAS2, "utf8") + fs.readFileSync(BRANDING2, "utf8");
   if (/background: cssColor\(b\.accentColor\)/.test(bsrc3)) ok("branding accentColor render sink uses cssColor()");
   else bad("branding accentColor sink not routed through cssColor (wiring missing)");
   if (/cssColor\(b\.footerBg\)/.test(bsrc3)) ok("branding footerBg render sink uses cssColor()");

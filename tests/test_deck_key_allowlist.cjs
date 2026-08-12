@@ -292,7 +292,9 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
 // ═══════════════════════════════════════════════════════════════════
 {
   const engineSrc = fs.readFileSync(P("part-engine.jsx"), "utf8");
-  const slidesSrc = fs.readFileSync(P("part-slides.jsx"), "utf8");
+  // part-slides.jsx was split (the SLIDE_KEYS paste-detection heuristic now
+  // lives in part-slidepanel.jsx); concatenate in build order to search across both.
+  const slidesSrc = fs.readFileSync(P("part-slides.jsx"), "utf8") + fs.readFileSync(P("part-slidepanel.jsx"), "utf8");
   assert("part-engine SLIDE_ONLY_KEYS is derived from the allowlists",
     /SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,120}SAFE_BLOCK_KEYS/.test(engineSrc));
   assert("part-slides SLIDE_KEYS is filtered through SAFE_SLIDE_KEYS",

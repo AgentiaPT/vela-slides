@@ -1,0 +1,43 @@
+# Vela part-file manifest — THE build order and the routing table.
+#
+# One `part-<name>.jsx  # purpose` per line, in CONCAT ORDER. This file is the
+# single source of truth for the part list: tools/vela-dev/scripts/concat.py
+# (build), tools/vela-dev/scripts/lint.py (static checks) and tests/test_vela.py
+# all read it — none of them keeps its own copy.
+#
+# ORDER IS LOAD-BEARING. The monolith is a plain concatenation with no module
+# system, so every `const`/`let` is in one shared temporal dead zone: a part may
+# only reference top-level bindings declared in an EARLIER part (or inside a
+# function body that runs after mount). Reordering these lines reorders the
+# bundle and can break the app at runtime with a TDZ ReferenceError. Do not
+# reorder; append new parts at the position their dependencies require.
+#
+# Adding a part-file? Add it here in the same change — lint.py errors on any
+# src/parts/part-*.jsx that is missing from this manifest.
+#
+# Lines starting with `#` and blank lines are ignored; text after `#` on a part
+# line is the purpose comment.
+
+part-imports.jsx  # VELA_VERSION/VELA_CHANGELOG, deck ingress + every sanitizer (validateAndSanitizeDeck, sanitizeSlide/Block, SAFE_SLIDE_KEYS/SAFE_BLOCK_KEYS, cssColor/cssGradient/cssUrl, sanitizeSvgMarkup, sanitizeImageDataUri), storage API (saveKV/MASTER_KEY), startup-patch system, themes/T tokens, cost tracker, shared prompt constants
+part-icons.jsx    # Lucide icon resolver — resolveIcon/getIcon/IconSlot, ICON_ALIASES, ICON_EMOJI, lazy ensureIcons loader
+part-blocks.jsx   # 27 block-type renderers (RenderBlock's switch on block.type), plus EditableText/ItemChrome inline editing and per-block-type helper sub-components
+part-branding.jsx # BrandingOverlay slide chrome: accent bar, footer strip, slide number, logo
+part-canvas.jsx   # SlideContent (slide background + block layout, slide canvas), per-block editing chrome/toolbars (renderBlockItem — hover toolbar + AI prompt popup), InlineCommentCard (review mode)
+part-reducer.jsx  # innerReducer action switch, undo/redo history wrapper (reducer, NO_HISTORY, MAX_HISTORY), initial state shape
+part-engine.jsx   # Vera AI engine — callClaudeAPI, executeTool (tool switch), the system prompts that declare the tool contract, teacher mode, slide-design/timing APIs, ReAct loop
+part-slides.jsx   # VirtualSlide/FullscreenSlide, ScopeSelector, BrandingPanel, CinemaTip, PresenterTOC, GalleryThumb, CommentPopover, PresenterView, GalleryView, TeacherMessage, StaticStudyPanel, StudentPanel, TeacherPanel, SectionPicker
+part-slidepanel.jsx # SlidePanel (editor slide view + keyboard/wheel nav, fullscreen/presenter orchestration, per-slide AI actions: runBlockEdit, quick edit, alternatives) — split out of part-slides.jsx; references components declared there, so must stay immediately after it
+part-list.jsx     # lane/module/slide list (TOC): ModuleList → ConceptRow → SlideListWithAdder, ContextMenu/AddMenu, AiSlideAdder, drag-and-drop handlers
+part-chat.jsx     # ChatPanel, ChatMarkdown, ToolTraceCard + TOOL_META, JSON clipboard modal
+part-test.jsx     # dev-only battery render tests (excluded from --release builds)
+part-uitest.jsx   # dev-only in-app UI test battery — uiSuite registry, runUITests, window.__velaRunUITests, plus suites through v13.19 block-reorder (excluded from --release builds)
+part-uitest2.jsx  # dev-only UI test battery continued — SVG-sanitizer/deck-sanitization security suites, Gallery/Presenter/Review suites, Multi-select, CR5 AI-working animation, the VelaUITestRunner/VelaBatteryTest component (excluded from --release builds; must follow part-uitest.jsx — no cross-file references, order kept for readability)
+part-demo.jsx     # cinematic demo mode — scripted scenes over the live app
+part-pdf-fonts.jsx # COMPRESSED_FONTS — offline font fallback data (compressed TTF blobs), rarely changes; declared before part-pdf-vector.jsx's loadFonts() reads it
+part-pdf.jsx      # canvas PDF export: PdfExportModal, domToCanvas/buildPdfFromImages raster pipeline, slide reflow, link-icon drawing, watermark
+part-pdf-extract.jsx # PDF/PPTX shared plumbing: color/gradient parsing, pdfStringEncode, emoji rendering, font metrics, DOM extractors (extractBoxes/extractCircles/extractLinks) — must precede part-pptx.jsx (reuses the extractors)
+part-pdf-vector.jsx # vector PDF builder: SVG icon extraction, buildVectorPdf, TrueType font parsing/loading, VectorPdfExportModal
+part-export-md.jsx # markdown export (deckToMarkdown, mdInline/mdCell) and standalone HTML export
+part-pptx.jsx     # native editable PowerPoint export — buildPptx (OOXML+ZIP writer), pptxExtractTextBoxes, pptxEsc; reuses part-pdf-extract.jsx extractors
+part-app-modals.jsx # standalone modal/dialog components the root App only renders: ModalBackdrop, PptxExportModal, StatsDialog, ChangelogDialog, CommentsPanel, NewDeckDialog, ShortcutHelp, CostBadge, AgentStatusChip, AgentSettingsDialog, itemFingerprint, MergePatchDialog — split out of part-app.jsx; must stay immediately before it (App references these; nothing here references App back)
+part-app.jsx      # root App (export default function App): top-level layout, storage load/save effects, deck import/export, global keyboard handlers, local/desktop sync; renders the modals declared in part-app-modals.jsx

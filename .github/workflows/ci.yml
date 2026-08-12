@@ -130,6 +130,20 @@ jobs:
         # src/parts and fails the build (exit 1) on any drift.
         run: python3 tools/vela-dev/scripts/lint.py --parts src/parts
 
+      - name: Routing-table freshness (CLAUDE.md "Where does X live")
+        # The routing table is a discovery index for coding agents; a stale
+        # row (file/symbol that no longer exists) was measured to cost MORE
+        # than having no index. Verify every path and symbol claim against
+        # the tree, so renames/moves must update the table in the same commit.
+        run: python3 tools/vela-dev/scripts/check-routing.py
+
+      - name: Code-map freshness (src/parts/CODEMAP.md)
+        # CODEMAP.md is the generated, complete discovery index (every top-level
+        # symbol, reducer action + dispatch sites, Vera tool, UI suite). A stale
+        # discovery index measurably costs more than none, so it must regenerate
+        # in the same commit as the code it indexes — same rule as concat sync.
+        run: python3 tools/vela-dev/scripts/gen-codemap.py --check
+
       - name: Release-build hardening assertions
         # Phase 6.2: proves `concat.py --release` strips every test/debug hook
         # (ASVS V14.1.3/V14.2.2) from the shipped bundle, that the strip is

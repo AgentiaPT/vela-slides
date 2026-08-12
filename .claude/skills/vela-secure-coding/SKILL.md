@@ -17,6 +17,30 @@ rather than re-implemented, and hold findings to §5's proof standard (a claimed
 vulnerability or fix is demonstrated at the real sink, not asserted from source
 reading). Review comments follow §6's disclosure discipline.
 
+## Triage — how much of this skill your change needs
+
+**§0 (the five non-negotiables) is mandatory for every change, always.** Then:
+
+**Full read required** (§1–§6) if your change does ANY of: reads a new or
+existing deck-supplied field anywhere; touches a sanitizer, encoder, allowlist,
+or `SAFE_*` key set; touches an exporter (PDF/PPTX/Markdown/standalone HTML);
+touches `part-imports.jsx`, `part-pdf.jsx`, `part-pdf-extract.jsx`,
+`part-pdf-vector.jsx`, `part-export-md.jsx`, `part-pptx.jsx`, `serve.py`,
+`assemble.py`, `agent_backend.py`, or anything under `vela-neutralino/`;
+touches storage/reload paths, the startup patch, CI/release/build scripts, or
+any `dangerouslySetInnerHTML`/`<style>`/CSS-sink/native-bridge code.
+
+**Quick path** (§0 + the table in §2 as a lookup + §5's gates) is enough ONLY
+when the change is confined to app-chrome/editor UI with static, code-authored
+values — e.g. repositioning existing editor controls, adding a button that
+dispatches an existing action, changing static styling of app chrome — and
+reads no deck value it doesn't already receive sanitized. Two hard rules stay
+in force on the quick path: never interpolate any deck-derived value into a
+style/URL/DOM sink without its §2 helper, and never introduce a new external
+fetch. **If in doubt — or if mid-change you touch anything in the full-read
+list — stop and read the whole skill.** The post-edit lint and CI gates run
+regardless of path.
+
 ## 0. The five non-negotiables
 
 1. **Untrusted in = deck JSON, always.** A deck arrives from a file, clipboard,
@@ -75,10 +99,10 @@ All in `src/parts/part-imports.jsx` unless noted.
 | Image data URI | `sanitizeImageDataUri` (`SAFE_RASTER_DATA_IMAGE`, SVG re-encoded) | passing `data:` through |
 | New slide/block field | add it to `SAFE_SLIDE_KEYS` / `SAFE_BLOCK_KEYS` (+ `validate.py`, `block-schema.md`, compact/turbo maps) | reading a key that isn't allowlisted (CI lint fails) |
 | Numeric layout field | `clampDeckNumber` + `SLIDE_NUMERIC_BOUNDS` | trusting the number |
-| PDF literal string / URI | `pdfStringEncode` (`part-pdf.jsx`) | an inline escape |
+| PDF literal string / URI | `pdfStringEncode` (`part-pdf-extract.jsx`) | an inline escape |
 | PPTX / OOXML text | `pptxEsc` (`part-pptx.jsx`) | manual `&`/`<` replaces |
-| Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-pdf.jsx`) | writing a deck field into `.md` raw |
-| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-pdf.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
+| Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-export-md.jsx`) | writing a deck field into `.md` raw |
+| Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-export-md.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
 | Marker substitution in a template | `String.replace(marker, () => value)` (replacer **function**) | a string replacement (`$&`/`$1` splicing) |
 | Local HTTP auth compare | `hmac.compare_digest` | `==` |
 | Desktop filesystem path | go through `fs-guard` (`vela-neutralino/resources/js/fs-guard.js`) | a direct `Neutralino.filesystem.*` call |
@@ -140,7 +164,7 @@ commit if you want the full story.
 
 ## 4. Per-surface checklist
 
-**New/changed block renderer (`part-blocks.jsx`, `part-slides.jsx`)**
+**New/changed block renderer (`part-blocks.jsx`, `part-slides.jsx`, `part-slidepanel.jsx`)**
 - Every deck field you read is in `SAFE_BLOCK_KEYS` / `SAFE_SLIDE_KEYS` (the
   key-drift lint enforces this) and is sanitized at ingress.
 - Every colour/paint value reaching `background`, `backgroundImage`, `mask`,
