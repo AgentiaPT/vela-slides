@@ -1,0 +1,40 @@
+=== (a) vela deck expand — normalisation warnings ===
+⚠️  palette key 'A' normalised to '$A' — write palette keys with the $ sigil
+⚠️  palette key 'B' normalised to '$B' — write palette keys with the $ sigil
+⚠️  palette key 'C' normalised to '$C' — write palette keys with the $ sigil
+✅ Expanded compact → 2 slides → /tmp/claude-0/-home-user-vela-slides/d5317d2c-0c24-5a18-ad44-e2496e897c31/scratchpad/after/expanded.json
+EXIT_CODE=0
+
+=== (b) vela deck validate — fixture now processes correctly ===
+⚠️  palette key 'A' normalised to '$A' — write palette keys with the $ sigil
+⚠️  palette key 'B' normalised to '$B' — write palette keys with the $ sigil
+⚠️  palette key 'C' normalised to '$C' — write palette keys with the $ sigil
+📊 Deck Stats: 2 slides | 7 blocks | 2m 0s
+   Block types: heading(2), icon-row(2), badge(1), text(1), callout(1)
+
+⚠️  2 warnings:
+   • L1/I1/S1: No 'color' set — will use default
+   • L1/I1/S2: No 'color' set — will use default
+
+✅ Deck is valid
+EXIT_CODE=0
+
+=== (c) vela deck ship on fixture with undefined alias $M — hard error ===
+(bad-alias fixture: heading color changed from $A to $M, an undefined palette key)
+-- before run: does ship-out.jsx exist? --
+ls: cannot access '/tmp/claude-0/-home-user-vela-slides/d5317d2c-0c24-5a18-ad44-e2496e897c31/scratchpad/after/ship-out.jsx': No such file or directory
+
+⚠️  palette key 'A' normalised to '$A' — write palette keys with the $ sigil
+⚠️  palette key 'B' normalised to '$B' — write palette keys with the $ sigil
+⚠️  palette key 'C' normalised to '$C' — write palette keys with the $ sigil
+❌ 1 unresolved colour alias after expansion.
+  lanes[0].items[0].slides[0].blocks[1].color = "$M"
+'C' defines: $A, $B, $C
+Palette keys must carry the $ sigil: {"$M": "#3B82F6"}
+   💡 Fix the palette 'C' entries and re-run
+   💡 Pass --allow-unresolved to ship anyway (aliases stay literal)
+EXIT_CODE=4
+
+-- after run: does ship-out.jsx exist? --
+ls: cannot access '/tmp/claude-0/-home-user-vela-slides/d5317d2c-0c24-5a18-ad44-e2496e897c31/scratchpad/after/ship-out.jsx': No such file or directory
+EXIT_CODE_LS=2
