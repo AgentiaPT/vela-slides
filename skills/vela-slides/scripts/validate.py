@@ -65,13 +65,20 @@ def validate(path, allow_unresolved=False):
         sys.path.insert(0, script_dir)
     expand_errors = []
     try:
-        from vela import is_compact, find_unresolved_aliases, DeckExpandError, _load_full
+        import vela as _vela
+        from vela import (is_compact, find_unresolved_aliases, DeckExpandError,
+                          _load_full, _needs_expansion)
         have_vela = True
     except ImportError as e:
         have_vela = False
         print(f"WARNING: could not import vela.py helpers ({e}); "
               f"validating the un-expanded form", file=sys.stderr)
-    if have_vela and (is_compact(deck) or isinstance(deck, list)):
+    if have_vela and (_needs_expansion(deck) or isinstance(deck, list)):
+        # Propagate --allow-unresolved into the expansion path — expand_deck
+        # reads vela's module flag, so without this the standalone validator
+        # would hard-fail where `vela deck validate --allow-unresolved` passes.
+        prev_mode = _vela._allow_unresolved_mode
+        _vela._allow_unresolved_mode = allow_unresolved
         try:
             deck = _load_full(path)
             # Save expanded version back so assembly works
@@ -85,12 +92,20 @@ def validate(path, allow_unresolved=False):
             # Unusable palette / unresolved aliases — report as validation
             # errors instead of a traceback; the deck stays un-expanded.
             expand_errors.append(str(e))
+        finally:
+            _vela._allow_unresolved_mode = prev_mode
 
     errors = []
     warnings = []
     stats = {"slides": 0, "blocks": 0, "duration": 0, "block_types": {}}
 
-    errors.extend(expand_errors)
+    if expand_errors:
+        # Expansion failed: report only the expand error. Running the rest of
+        # the checks against the un-expanded compact form would double-report
+        # the same aliases and add bogus cascade noise (missing deckTitle,
+        # no lanes, 0-slide stats) about a shape the author never wrote.
+        stats["expand_failed"] = True
+        return expand_errors, warnings, stats
 
     # Post-expansion invariant: no colour alias may survive into a deck this
     # validator blesses — a leftover "$X" ships as a literal string. Full-format
@@ -243,8 +258,11 @@ if __name__ == "__main__":
 
     errors, warnings, stats = validate(argv[0], allow_unresolved="--allow-unresolved" in sys.argv)
 
-    print(f"📊 Deck Stats: {stats['slides']} slides | {stats['blocks']} blocks | {stats['duration']//60}m {stats['duration']%60}s")
-    print(f"   Block types: {', '.join(f'{k}({v})' for k,v in sorted(stats['block_types'].items(), key=lambda x: -x[1]))}")
+    # When expansion failed the stats describe a deck that never existed —
+    # print only the expand error, not 0-slide noise.
+    if not stats.pop("expand_failed", False):
+        print(f"📊 Deck Stats: {stats['slides']} slides | {stats['blocks']} blocks | {stats['duration']//60}m {stats['duration']%60}s")
+        print(f"   Block types: {', '.join(f'{k}({v})' for k,v in sorted(stats['block_types'].items(), key=lambda x: -x[1]))}")
 
     if warnings:
         print(f"\n⚠️  {len(warnings)} warnings:")

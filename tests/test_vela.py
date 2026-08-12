@@ -3670,6 +3670,194 @@ def test_palette_resolution():
         fail("incident fixture warnings", buf.getvalue())
 
 
+# ━━━ Palette Hardening (exact tokens, prose depth, collisions, key grammar,
+#      input immutability, full-format 'C') ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def test_palette_hardening():
+    print("\n── Palette Hardening ──")
+
+    import io
+    from contextlib import redirect_stderr
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, find_unresolved_aliases, DeckExpandError
+    except Exception as e:
+        fail("Import vela.py palette helpers", str(e))
+        return
+
+    def make_deck(palette, block_color="$A", extra_slide=None):
+        d = {"n": "Palette Deck",
+             "G": [{"g": "S1", "S": [
+                 {"n": "H", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+                  "B": [{"_": "text", "x": "hi", "c": block_color}]}]}]}
+        if palette is not None:
+            d["C"] = palette
+        if extra_slide:
+            d["G"][0]["S"].append(extra_slide)
+        return d
+
+    # 1. Exact-token substitution: an UNDEFINED two-letter alias overlapping a
+    #    defined one-letter alias must hard-error, never be mangled into
+    #    <defined value>+<letter>.
+    try:
+        expand_deck(make_deck({"$A": "#3B82F6"}, block_color="$AB"))
+        fail("undefined $AB with defined $A raises", "no exception raised")
+    except DeckExpandError as e:
+        if ".blocks[0].color" in str(e) and "$AB" in str(e):
+            ok("undefined $AB (overlapping defined $A) hard-errors with the offender path")
+        else:
+            fail("undefined $AB error content", str(e))
+    both = expand_deck(make_deck({"$A": "#3B82F6", "$AB": "#FF0000"},
+                                 block_color="$AB"))
+    got = both["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"]
+    if got == "#FF0000":
+        ok("defined $AB resolves to its own value, never $A's value + 'B'")
+    else:
+        fail("$AB longest-token resolution", f"got {got!r}")
+    grad = expand_deck(make_deck({"$A": "#111111", "$AB": "#FF0000"},
+                                 block_color="linear-gradient($A, $AB)"))
+    got = grad["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"]
+    if got == "linear-gradient(#111111, #FF0000)":
+        ok("embedded tokens in a gradient each resolve to their own value")
+    else:
+        fail("gradient token substitution", f"got {got!r}")
+    # Token boundary: '$' + 3+ letters is not an alias token — survives verbatim
+    # in a non-prose field instead of being mis-read as "$Ab" + "stract".
+    bound = expand_deck(make_deck(
+        {"$A": "#111111"}, block_color="#0A0F1C",
+        extra_slide={"n": "X", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+                     "B": [{"_": "text", "x": "y", "icon": "$Abstract"}]}))
+    got = bound["lanes"][0]["items"][0]["slides"][1]["blocks"][0]["icon"]
+    if got == "$Abstract":
+        ok("'$Abstract' in a non-prose field is not tokenised as '$Ab'")
+    else:
+        fail("alias token boundary", f"got {got!r}")
+
+    # 2. _TEXT_KEYS exemption persists through dicts AND lists at all depths:
+    #    glossary VALUES (arbitrary term keys) and question dicts stay verbatim.
+    prose = {"n": "Prose", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+             "B": [{"_": "text", "x": "t"}],
+             "sN": {"text": "body",
+                    "glossary": {"anchor": "the $A token means anchor",
+                                 "hex": "#3B82F6 note"},
+                    "questions": [{"q": "Why $A?", "a": "Because $M"},
+                                  "plain $A q"]}}
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        deep = expand_deck(make_deck({"$A": "#3B82F6"}, extra_slide=prose))
+    sn = deep["lanes"][0]["items"][0]["slides"][1]["studyNotes"]
+    if (sn["glossary"]["anchor"] == "the $A token means anchor"
+            and sn["glossary"]["hex"] == "#3B82F6 note"
+            and sn["questions"][0] == {"q": "Why $A?", "a": "Because $M"}
+            and sn["questions"][1] == "plain $A q"):
+        ok("studyNotes glossary values and nested question dicts survive verbatim")
+    else:
+        fail("text-subtree exemption at depth", json.dumps(sn))
+    if not find_unresolved_aliases(deep):
+        ok("unresolved-alias gate inherits the text-subtree exemption at depth")
+    else:
+        fail("gate text-subtree exemption", str(find_unresolved_aliases(deep)))
+    if "suspicious colour value" not in buf.getvalue():
+        ok("colour-grammar sweep inherits the text-subtree exemption at depth")
+    else:
+        fail("sweep text-subtree exemption", buf.getvalue())
+
+    # 3. Normalisation collisions: same normalised key + different values is
+    #    ambiguous authoring — hard error; identical values collapse to one
+    #    entry with a single warning.
+    try:
+        expand_deck(make_deck({"$A": "#222222", "A": "#111111"}))
+        fail("colliding palette keys with different values raise", "no exception")
+    except DeckExpandError as e:
+        if "ambiguous" in str(e) and "'$A'" in str(e):
+            ok("'A' and '$A' with different values hard-error as ambiguous")
+        else:
+            fail("collision error content", str(e))
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        same = expand_deck(make_deck({"$A": "#111111", "A": "#111111"}))
+    got = same["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"]
+    warns = [l for l in buf.getvalue().splitlines() if l.strip()]
+    if got == "#111111" and len(warns) == 1 and "treated as one" in warns[0]:
+        ok("'A' and '$A' with identical values collapse to one entry, one warning")
+    else:
+        fail("identical-value collision", f"got {got!r} warns={warns}")
+
+    # 4. Palette key grammar: degenerate keys ('', '$', '$$', '$1', 3+ letters)
+    #    never enter the palette (a '$' key would rewrite literal dollar signs).
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        deg = expand_deck(make_deck(
+            {"": "#111111", "$": "#222222", "$$": "#333333", "$1": "#444444",
+             "abc": "#555555", "$A": "#666666"},
+            extra_slide={"n": "X", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+                         "B": [{"_": "table", "headers": ["price US$ 100"],
+                                "rows": [["a"]]}]}))
+    got = deg["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"]
+    hdr = deg["lanes"][0]["items"][0]["slides"][1]["blocks"][0]["headers"][0]
+    if got == "#666666" and hdr == "price US$ 100":
+        ok("degenerate palette keys are ignored; literal dollar signs survive")
+    else:
+        fail("degenerate key exclusion", f"color={got!r} header={hdr!r}")
+    if buf.getvalue().count("ignored") == 5:
+        ok("each degenerate palette key gets a stderr warning")
+    else:
+        fail("degenerate key warnings", buf.getvalue())
+    try:
+        expand_deck(make_deck({"": "#111111", "$": "#222222"}))
+        fail("all-degenerate palette raises", "no exception")
+    except DeckExpandError as e:
+        if "no usable entries" in str(e):
+            ok("palette with only degenerate keys is a hard error")
+        else:
+            fail("all-degenerate error content", str(e))
+
+    # 5. expand_deck never mutates its input: 'C' stays on the caller's dict
+    #    and a second expansion of the same object gives the same result.
+    d7 = make_deck({"$A": "#3B82F6"})
+    first = expand_deck(d7)
+    second = expand_deck(d7)
+    if "C" in d7 and json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True):
+        ok("expand_deck leaves its input intact (second call identical)")
+    else:
+        fail("expand_deck input immutability", f"C in input: {'C' in d7}")
+
+    # 6. Full-format deck with a top-level 'C': same normalise→resolve→gate
+    #    pipeline, 'C' dropped from the result, input untouched.
+    full = {"deckTitle": "F", "C": {"$A": "#3B82F6"},
+            "lanes": [{"title": "Main", "items": [
+                {"title": "S", "status": "done", "importance": "must",
+                 "slides": [{"title": "T", "duration": 30, "bg": "#0A0F1C",
+                             "color": "#E6F1FF", "accent": "$A",
+                             "blocks": [{"type": "text", "text": "x",
+                                         "color": "$A"}]}]}]}]}
+    res = expand_deck(full)
+    s = res["lanes"][0]["items"][0]["slides"][0]
+    if (s["accent"] == "#3B82F6" and s["blocks"][0]["color"] == "#3B82F6"
+            and "C" not in res and "C" in full):
+        ok("full-format deck with 'C' resolves its aliases and drops 'C'")
+    else:
+        fail("full-format 'C' resolution", json.dumps(s)[:200])
+    bad = json.loads(json.dumps(full))
+    bad["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"] = "$Z"
+    try:
+        expand_deck(bad)
+        fail("full-format deck with undefined alias raises", "no exception")
+    except DeckExpandError as e:
+        if "'C' defines: $A" in str(e):
+            ok("full-format undefined alias errors truthfully (names defined keys)")
+        else:
+            fail("full-format undefined-alias error content", str(e))
+    no_c = json.loads(json.dumps(full))
+    del no_c["C"]
+    no_c["lanes"][0]["items"][0]["slides"][0]["accent"] = "#3B82F6"
+    no_c["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["color"] = "#3B82F6"
+    if json.dumps(expand_deck(no_c), sort_keys=True) == json.dumps(no_c, sort_keys=True):
+        ok("full-format deck without 'C' passes through unchanged")
+    else:
+        fail("full-format no-'C' passthrough")
+
+
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
@@ -4422,6 +4610,7 @@ if __name__ == "__main__":
         test_study_notes()
         test_slide_numeric_fields()
         test_palette_resolution()
+        test_palette_hardening()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
         test_script_context_escape_parity()

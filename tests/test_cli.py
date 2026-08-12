@@ -516,6 +516,50 @@ def main():
                   f"validate.py and vela.py agree on {label} ({want} slides)",
                   f"vela.py={want} validate.py={got}\n{r.stdout}\n{r.stderr}")
 
+        # ══ validate.py --allow-unresolved parity + no error cascade ════
+        print("\n── validate.py unresolved-alias flag parity ──")
+        unres = {"n": "U Deck", "C": {"$A": "#3B82F6"},
+                 "G": [{"g": "One", "S": [dict(compact_slide_full("A"),
+                                              B=[{"_": "text", "x": "hi",
+                                                  "c": "$Z"}])]}]}
+        r = run_validate(unres, "unres-strict.vela")
+        check(r.returncode != 0 and "unresolved colour alias" in r.stdout,
+              "validate.py (strict) fails a compact deck with an undefined alias",
+              f"rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+        cascade = ("Missing 'deckTitle'" in r.stdout or "No lanes" in r.stdout
+                   or "0 slides" in r.stdout)
+        check(not cascade,
+              "expand failure reports only the expand error (no unexpanded-deck cascade)",
+              r.stdout)
+        r = run_validate(unres, "unres-allow.vela", extra=("--allow-unresolved",))
+        check(r.returncode == 0 and "Deck is valid" in r.stdout,
+              "validate.py --allow-unresolved passes the same deck (parity with vela CLI)",
+              f"rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+        check(r.stdout.count("$Z") == 1 and "error" not in r.stdout.lower(),
+              "--allow-unresolved reports the alias once, as a warning (never doubled as an error)",
+              r.stdout)
+
+        # ══ full-format deck with a top-level 'C' palette resolves ══════
+        full_c = {"deckTitle": "FullC",
+                  "C": {"$A": "#3B82F6"},
+                  "lanes": [{"title": "Main", "items": [
+                      {"title": "S", "status": "done", "importance": "must",
+                       "slides": [{"title": "T", "duration": 30,
+                                   "bg": "#0f172a", "color": "#e2e8f0",
+                                   "accent": "$A",
+                                   "blocks": [{"type": "heading", "text": "T",
+                                               "color": "$A"}]}]}]}]}
+        r = run_validate(full_c, "full-with-c.vela")
+        check(r.returncode == 0 and "Unresolved colour alias" not in r.stdout,
+              "validate.py resolves a full-format deck's top-level 'C' palette",
+              f"rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+        with open(os.path.join(tmpdir, "full-with-c.vela"), encoding="utf-8") as f:
+            saved = json.load(f)
+        check("C" not in saved
+              and saved["lanes"][0]["items"][0]["slides"][0]["accent"] == "#3B82F6",
+              "full-format 'C' palette is resolved and dropped in the saved deck",
+              json.dumps(saved)[:300])
+
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

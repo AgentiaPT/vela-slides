@@ -31,7 +31,7 @@ Minified, one line. NEVER use `"type"`, `"text"`, `"deckTitle"`, `"lanes"`, `"sl
 
 `{"n":"Title","C":{palette},"T":{themes},"G":[sections]}`
 
-**`C`** — Colors used 2+ times. **Keys carry the `$`**: `"C":{"$A":"#3B82F6","$B":"#8B5CF6"}`. Reference as `"c":"$A"`. Frequency order. Hex 6 or 8 chars. Bare key (`"A"`) accepted with a warning; a `C` with no usable entries is an error.
+**`C`** — Colors used 2+ times. **Keys carry the `$`**: `"C":{"$A":"#3B82F6","$B":"#8B5CF6"}`. Key grammar: `$` + 1-2 letters. Reference as `"c":"$A"`. Frequency order. Hex 6 or 8 chars. Bare key (`"A"`) accepted with a warning; a `C` with no usable entries is an error.
 **`T`** — `"d"`:dark `{"b":"#0A0F1C","c":"#E6F1FF","a":"$A","p":"60px 72px"}`, `"a"`:alt different shade. Alternate d/a.
 **`G`** — Sections (USE FOR ALL DECKS): `[{"g":"Name","S":[slides]}]`. 3-5 narrative sections.
 **Slide** — `{"t":"d","n":"Assertion Headline","d":60,"B":[blocks]}`. Cover/CTA: `bgGradient`,`align:"center"`,`verticalAlign:"center"`. Duration: cover 20, content 60-90, CTA 25. Spacers: bare int.
