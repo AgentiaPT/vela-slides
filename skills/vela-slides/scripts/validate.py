@@ -52,16 +52,27 @@ def check_slide_numerics(slide, loc, errors):
             errors.append(f"{loc}: '{key}' out of range — must be {lo}..{hi} (got {v})")
 
 
-def validate(path):
+def validate(path, allow_unresolved=False):
     with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
 
-    # Auto-expand compact/turbo format to full format before validating
-    if "S" in deck or isinstance(deck, list):
+    # Auto-expand compact/turbo format to full format before validating.
+    # Compact detection is shared with vela.py (is_compact) so the two tools
+    # can never disagree — a divergent copy here once missed "G"-sectioned
+    # compact decks entirely and validated them as empty.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    expand_errors = []
+    try:
+        from vela import is_compact, find_unresolved_aliases, DeckExpandError, _load_full
+        have_vela = True
+    except ImportError as e:
+        have_vela = False
+        print(f"WARNING: could not import vela.py helpers ({e}); "
+              f"validating the un-expanded form", file=sys.stderr)
+    if have_vela and (is_compact(deck) or isinstance(deck, list)):
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            sys.path.insert(0, script_dir)
-            from vela import _load_full
             deck = _load_full(path)
             # Save expanded version back so assembly works
             real_path = os.path.realpath(path)
@@ -70,13 +81,25 @@ def validate(path):
             else:
                 with open(real_path, 'w', encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False)
-        except ImportError as e:
-            print(f"WARNING: could not expand compact/turbo deck ({e}); "
-                  f"validating the un-expanded form", file=sys.stderr)
+        except DeckExpandError as e:
+            # Unusable palette / unresolved aliases — report as validation
+            # errors instead of a traceback; the deck stays un-expanded.
+            expand_errors.append(str(e))
 
     errors = []
     warnings = []
     stats = {"slides": 0, "blocks": 0, "duration": 0, "block_types": {}}
+
+    errors.extend(expand_errors)
+
+    # Post-expansion invariant: no colour alias may survive into a deck this
+    # validator blesses — a leftover "$X" ships as a literal string. Full-format
+    # decks are checked too (they never go through expand_deck's own gate).
+    if have_vela and isinstance(deck, dict):
+        sink = warnings if allow_unresolved else errors
+        for apath, _akey, avalue in find_unresolved_aliases(deck):
+            sink.append(f"Unresolved colour alias: {apath} = {avalue!r} — "
+                        f"define it in palette 'C' (keys carry the $ sigil)")
 
     if not deck.get("deckTitle"):
         errors.append("Missing 'deckTitle' — every deck needs a title")
@@ -213,11 +236,12 @@ def validate(path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 validate.py <deck.vela>", file=sys.stderr)
+    argv = [a for a in sys.argv[1:] if a != "--allow-unresolved"]
+    if not argv:
+        print("Usage: python3 validate.py <deck.vela> [--allow-unresolved]", file=sys.stderr)
         sys.exit(1)
 
-    errors, warnings, stats = validate(sys.argv[1])
+    errors, warnings, stats = validate(argv[0], allow_unresolved="--allow-unresolved" in sys.argv)
 
     print(f"📊 Deck Stats: {stats['slides']} slides | {stats['blocks']} blocks | {stats['duration']//60}m {stats['duration']%60}s")
     print(f"   Block types: {', '.join(f'{k}({v})' for k,v in sorted(stats['block_types'].items(), key=lambda x: -x[1]))}")

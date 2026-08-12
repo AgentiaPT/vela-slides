@@ -3512,6 +3512,164 @@ def test_slide_numeric_fields():
         fail("imageCols sink clamp missing in part-canvas.jsx")
 
 
+# ━━━ Palette Resolution (bare keys, unresolved aliases, colour grammar) ━━
+def test_palette_resolution():
+    print("\n── Palette Resolution ──")
+
+    import io
+    from contextlib import redirect_stderr
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, find_unresolved_aliases, is_compact, DeckExpandError
+    except Exception as e:
+        fail("Import vela.py palette helpers", str(e))
+        return
+
+    def make_deck(palette, block_color="$A", extra_slide=None):
+        d = {"n": "Palette Deck",
+             "G": [{"g": "S1", "S": [
+                 {"n": "H", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+                  "B": [{"_": "text", "x": "hi", "c": block_color}]}]}]}
+        if palette is not None:
+            d["C"] = palette
+        if extra_slide:
+            d["G"][0]["S"].append(extra_slide)
+        return d
+
+    # 1. test_palette_bare_keys_normalised — bare vs sigil forms expand to
+    #    identical JSON; a warning names the normalised key.
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        bare = expand_deck(make_deck({"A": "#3B82F6"}))
+    sigil = expand_deck(make_deck({"$A": "#3B82F6"}))
+    if json.dumps(bare, sort_keys=True) == json.dumps(sigil, sort_keys=True):
+        ok("bare palette key expands identically to $-sigil key")
+    else:
+        fail("bare vs sigil palette expansion differs")
+    if "'A' normalised to '$A'" in buf.getvalue():
+        ok("bare palette key normalisation emits a warning naming the key")
+    else:
+        fail("bare-key normalisation warning", f"stderr: {buf.getvalue()!r}")
+    resolved = bare["lanes"][0]["items"][0]["slides"][0]["blocks"][0].get("color")
+    if resolved == "#3B82F6":
+        ok("bare palette key resolves the $A reference to the hex value")
+    else:
+        fail("bare palette key resolution", f"got {resolved!r}")
+
+    # 2. test_palette_present_but_empty_errors — {"C":{}} and C with only
+    #    non-string values must raise (never a silent no-op).
+    for pal, label in [({}, '{"C":{}}'),
+                       ({"$A": {"bg": "#fff"}, "$B": 7}, "C with only non-string values"),
+                       ("not-a-dict", "C that is not an object")]:
+        try:
+            expand_deck(make_deck(pal))
+            fail(f"expand_deck({label}) raises", "no exception raised")
+        except DeckExpandError as e:
+            if "no usable entries" in str(e):
+                ok(f"expand_deck({label}) raises DeckExpandError")
+            else:
+                fail(f"expand_deck({label}) error message", str(e))
+
+    # 3. test_unresolved_alias_blocks_ship — deck referencing undefined $M:
+    #    CLI exits non-zero and NO output file is written.
+    tmpdir = tempfile.mkdtemp(prefix="vela-palette-")
+    try:
+        deck_path = os.path.join(tmpdir, "undef.vela")
+        with open(deck_path, "w", encoding="utf-8") as f:
+            json.dump(make_deck({"$A": "#3B82F6"}, block_color="$M"), f)
+        out_jsx = os.path.join(tmpdir, "out.jsx")
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "vela.py"),
+                            "deck", "ship", deck_path, "--output", out_jsx],
+                           capture_output=True, text=True, cwd=tmpdir,
+                           env={**os.environ, "VELA_OUTPUT_DIR": tmpdir})
+        combined = r.stdout + r.stderr
+        if r.returncode != 0 and not os.path.exists(out_jsx):
+            ok("deck ship with undefined $M exits non-zero, writes no artifact")
+        else:
+            fail("deck ship undefined-alias gate",
+                 f"rc={r.returncode} artifact={os.path.exists(out_jsx)}")
+        if "unresolved colour alias" in combined and ".blocks[0].color" in combined:
+            ok("unresolved-alias error names the offender's JSON path")
+        else:
+            fail("unresolved-alias error content", combined[:400])
+        # Escape hatch: --allow-unresolved ships with a warning instead.
+        r2 = subprocess.run([sys.executable, os.path.join(SCRIPTS, "vela.py"),
+                             "deck", "ship", deck_path, "--output", out_jsx,
+                             "--allow-unresolved"],
+                            capture_output=True, text=True, cwd=tmpdir,
+                            env={**os.environ, "VELA_OUTPUT_DIR": tmpdir})
+        if r2.returncode == 0 and os.path.exists(out_jsx):
+            ok("deck ship --allow-unresolved downgrades the gate to a warning")
+        else:
+            fail("deck ship --allow-unresolved escape hatch",
+                 f"rc={r2.returncode}\n{r2.stdout[-300:]}{r2.stderr[-300:]}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 4. test_unresolved_alias_allows_prose — $-tokens inside text, markup and
+    #    studyNotes prose are never flagged and survive expansion verbatim.
+    prose_slide = {"n": "Prose", "d": 30, "bg": "#0A0F1C", "color": "#E6F1FF",
+                   "B": [{"_": "text", "x": "Costs $A lot and $M too"},
+                         {"_": "svg", "markup": "<svg><text>$A</text></svg>"}],
+                   "sN": {"text": "Alias $M and hex #3b82f6 stay put",
+                          "questions": ["Why $A?"]}}
+    prose_deck = expand_deck(make_deck({"$A": "#3B82F6"}, extra_slide=prose_slide))
+    s2 = prose_deck["lanes"][0]["items"][0]["slides"][1]
+    if (s2["blocks"][0]["text"] == "Costs $A lot and $M too"
+            and s2["blocks"][1]["markup"] == "<svg><text>$A</text></svg>"
+            and s2["studyNotes"]["text"] == "Alias $M and hex #3b82f6 stay put"
+            and s2["studyNotes"]["questions"] == ["Why $A?"]):
+        ok("$-tokens in text/markup/studyNotes prose survive expansion verbatim")
+    else:
+        fail("prose $-token preservation", json.dumps(s2)[:300])
+    if not find_unresolved_aliases(prose_deck):
+        ok("find_unresolved_aliases never flags prose fields")
+    else:
+        fail("find_unresolved_aliases prose exemption", str(find_unresolved_aliases(prose_deck)))
+
+    # 5. test_resolved_colors_grammar — typo'd hex and unclosed rgba() warn
+    #    (stderr) but never raise or fail expansion.
+    gram_deck = make_deck({"$A": "#3B82F6"})
+    gram_deck["G"][0]["S"][0]["B"].append({"_": "text", "x": "a", "c": "#3B82F"})
+    gram_deck["G"][0]["S"][0]["B"].append({"_": "text", "x": "b", "c": "rgba(1,2"})
+    buf = io.StringIO()
+    try:
+        with redirect_stderr(buf):
+            expand_deck(gram_deck)
+        errout = buf.getvalue()
+        if '"#3B82F"' in errout and '"rgba(1,2"' in errout and "suspicious colour value" in errout:
+            ok("colour-grammar sweep warns on typo'd hex and unclosed rgba()")
+        else:
+            fail("colour-grammar sweep warnings", f"stderr: {errout!r}")
+    except DeckExpandError as e:
+        fail("colour-grammar sweep must never raise", str(e))
+
+    # 6. Fixture: trimmed 2-slide reproduction of the incident (bare palette
+    #    keys + $ references incl. an icon block) expands fully resolved.
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "palette-bare-keys.json")
+    with open(fixture, encoding="utf-8") as f:
+        incident = json.load(f)
+    if is_compact(incident):
+        ok("palette-bare-keys fixture is detected as compact (G-form)")
+    else:
+        fail("palette-bare-keys fixture compact detection")
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        fixed = expand_deck(incident)
+    icon = fixed["lanes"][0]["items"][1]["slides"][0]["blocks"][0]
+    if (icon.get("iconColor") == "#3B82F6" and icon.get("iconBg") == "#1E293B"
+            and not find_unresolved_aliases(fixed)):
+        ok("incident fixture: bare keys normalise and every alias resolves")
+    else:
+        fail("incident fixture resolution", json.dumps(icon))
+    if buf.getvalue().count("normalised to") == 4:
+        ok("incident fixture: one warning per bare palette key")
+    else:
+        fail("incident fixture warnings", buf.getvalue())
+
+
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
@@ -4263,6 +4421,7 @@ if __name__ == "__main__":
         test_block_primitives()
         test_study_notes()
         test_slide_numeric_fields()
+        test_palette_resolution()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
         test_script_context_escape_parity()

@@ -25,6 +25,7 @@ Exit: 0 if all green, 1 otherwise. Prints "N passed, N failed" summary. No netwo
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -467,6 +468,53 @@ def main():
         check_exit(r, EXIT_OK, "deck init --force over existing file")
         with open(force_path, encoding="utf-8") as f:
             check(json.load(f).get("n") == "Fresh", "deck init --force overwrote the file")
+
+        # ══ validate.py expands G-form compact decks (regression) ═══════
+        print("\n── validate.py G-form expansion ──")
+        VALIDATE_PY = os.path.join(SCRIPTS, "validate.py")
+
+        def run_validate(deck_obj, name, extra=()):
+            p = write_json(name, deck_obj)
+            return subprocess.run([sys.executable, VALIDATE_PY, p, *extra],
+                                  capture_output=True, text=True, cwd=tmpdir)
+
+        def compact_slide_full(title):
+            return {"n": title, "d": 30, "bg": "#0f172a", "color": "#e2e8f0",
+                    "B": [{"_": "heading", "x": title, "s": "2xl"}]}
+
+        g_form = {"n": "G Deck",
+                  "G": [{"g": "One", "S": [compact_slide_full("A")]},
+                        {"g": "Two", "S": [compact_slide_full("B")]}]}
+        r = run_validate(g_form, "gform.vela")
+        m = re.search(r"(\d+) slides", r.stdout)
+        check(m is not None and int(m.group(1)) == 2,
+              "validate.py expands a G-form compact deck (reports 2 slides, not 0)",
+              f"rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+
+        # ══ compact-detection parity: validate.py vs vela.py ════════════
+        print("\n── compact-detection parity ──")
+        s_form = {"n": "S Deck", "S": [compact_slide_full("A")]}
+        turbo_form = vela.turbo_deck(_good_deck())
+        corpus = [("S-form", s_form), ("G-form", g_form),
+                  ("turbo list", turbo_form), ("full", _good_deck()),
+                  ("empty dict", {})]
+        for label, deck_obj in corpus:
+            # vela.py's view: what should the slide count be after expansion?
+            if isinstance(deck_obj, list):
+                expanded = vela.unturbo_deck(json.loads(json.dumps(deck_obj)))
+            elif vela.is_compact(deck_obj):
+                expanded = vela.expand_deck(json.loads(json.dumps(deck_obj)))
+            else:
+                expanded = deck_obj
+            want = sum(len(item.get("slides", []))
+                       for lane in expanded.get("lanes", [])
+                       for item in lane.get("items", []))
+            r = run_validate(deck_obj, f"parity-{label.replace(' ', '-')}.vela")
+            m = re.search(r"(\d+) slides", r.stdout)
+            got = int(m.group(1)) if m else -1
+            check(got == want,
+                  f"validate.py and vela.py agree on {label} ({want} slides)",
+                  f"vela.py={want} validate.py={got}\n{r.stdout}\n{r.stderr}")
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.45";
+const VELA_VERSION = "13.46";
 const VELA_CHANGELOG = [
+  { v: "13.46", d: ["fix: palette keys without the $ sigil no longer silently discard the whole palette (normalised with a warning)", "fix: unresolved colour aliases now fail the build instead of shipping; --allow-unresolved to override", "fix: standalone validate.py now expands sectioned (G-form) compact decks"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
   { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },

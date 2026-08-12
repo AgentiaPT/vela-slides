@@ -20,7 +20,7 @@ Exit codes:
   5  Conflict (already exists)
 """
 
-import json, sys, os, subprocess, copy, shutil
+import json, re, sys, os, subprocess, copy, shutil
 
 # ── Paths ──────────────────────────────────────────────────────────────
 SKILL_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -40,6 +40,9 @@ EXIT_CONFLICT = 5
 
 # ── Helpers ────────────────────────────────────────────────────────────
 _json_mode = False
+# Set by main() when --allow-unresolved is passed: downgrades the unresolved
+# colour-alias hard error in expand_deck() to a stderr warning (escape hatch).
+_allow_unresolved_mode = False
 
 def _safe_resolve(file_path, label="file"):
     """Resolve a file path and reject directory traversal / symlink escapes."""
@@ -192,9 +195,14 @@ _TK_REV = {v: k for k, v in _TK.items()}
 _THEME_PROPS = ["bg", "color", "accent", "padding"]
 
 
-def _is_compact(deck):
-    """Detect compact format."""
+def is_compact(deck):
+    """Detect compact format. Single source of truth — validate.py imports this
+    so the two tools can never disagree on what counts as compact (a divergent
+    copy there once missed "G"-sectioned decks entirely)."""
     return ("S" in deck or "G" in deck) and "lanes" not in deck
+
+
+_is_compact = is_compact  # backward-compat alias for existing callers
 
 
 def _expand_keys(obj, keymap):
@@ -259,48 +267,174 @@ def _expand_slide(slide, themes):
     return expanded
 
 
-def expand_deck(compact):
-    """Convert compact deck format to full Vela JSON."""
+class DeckExpandError(ValueError):
+    """Raised when a compact deck cannot be safely expanded (unusable palette,
+    unresolved colour aliases). Library callers get the exception; the CLI
+    converts it to EXIT_VALIDATION in main() so no artifact is ever written
+    from a deck that would render broken."""
+
+
+# Keys whose string values are prose/markup — never alias-substituted and never
+# flagged by the unresolved-alias gate (a literal "#3B82F6" or "$A" inside body
+# text must survive expansion byte-identically).
+_TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
+                        "author", "loopLabel", "gateLabel", "caption",
+                        "annotation", "date", "markup", "deckTitle",
+                        # studyNotes (offline student content) prose fields — preserve literal hex codes
+                        "diagram", "questions", "glossary", "definition"})
+
+# Every colour-bearing field in the slide/block schema (verified against
+# references/block-schema.md). A value under one of these keys that still
+# carries an alias after expansion ships as a literal "$X" string and renders
+# broken — the gate below turns that into a hard error.
+_COLOR_KEYS = frozenset({"color", "bg", "accent", "bgGradient", "iconColor",
+                         "iconBg", "borderColor", "cellColor", "headerBg",
+                         "headerColor", "labelColor", "sublabelColor",
+                         "arrowColor", "border", "lineColor", "numberColor",
+                         "titleColor", "textColor", "dotColor"})
+
+# A bare palette alias: $ + 1-2 letters (the only shape the compactor emits).
+_ALIAS_RE = re.compile(r"^\$[A-Za-z]{1,2}$")
+
+# Permissive CSS-colour grammar for the post-expansion sweep (warning-only, so
+# it errs on the side of accepting): hex 3/4/6/8, functional colours, gradients,
+# plus a letters-only fallback covering named colours / transparent /
+# currentColor. Catches typo'd hex like "#3B82F" and unclosed "rgba(1,2".
+_COLOR_VALUE_RE = re.compile(
+    r"^(?:#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})"
+    r"|(?:rgb|rgba|hsl|hsla)\(.*\)"
+    r"|(?:linear|radial|conic)-gradient\(.*\)"
+    r"|[A-Za-z]+)$",
+    re.DOTALL)
+
+
+def _normalise_palette(raw_palette):
+    """Normalise a compact palette 'C' block to {"$X": "#hex"}.
+
+    Bare keys ("A") are accepted and normalised to "$A" with a stderr warning —
+    silently skipping them once discarded a whole palette and shipped a deck of
+    literal "$X" strings. A 'C' block with no usable entries (empty, or only
+    non-string keys/values) raises DeckExpandError instead of a silent no-op.
+    """
+    palette = {}
+    raw_keys = []
+    if isinstance(raw_palette, dict):
+        for k, v in raw_palette.items():
+            raw_keys.append(k)
+            if isinstance(k, str) and isinstance(v, str):
+                key = k if k.startswith("$") else "$" + k
+                if key != k:
+                    print(f"⚠️  palette key '{k}' normalised to '{key}' — "
+                          f"write palette keys with the $ sigil", file=sys.stderr)
+                palette[key] = v
+    if not palette:
+        preview = ", ".join(repr(k) for k in raw_keys[:8])
+        raise DeckExpandError(
+            f"palette 'C' is present but no usable entries were found "
+            f"(keys: [{preview}]). Expected {{\"$A\": \"#3B82F6\", ...}}")
+    return palette
+
+
+def find_unresolved_aliases(deck):
+    """Walk a fully-expanded deck and return [(json_path, key, value)] for each
+    colour alias that survived expansion: any string that is exactly '$X'/'$XY',
+    or any '$' inside a value under a colour key (_COLOR_KEYS). Values under
+    _TEXT_KEYS are prose and never flagged — same skip rule the alias
+    substitution in expand_deck() applies, so prose is symmetric on both sides.
+    """
+    offenders = []
+
+    def walk(obj, path, key, skip):
+        if isinstance(obj, str):
+            if skip:
+                return
+            if _ALIAS_RE.match(obj) or (key in _COLOR_KEYS and "$" in obj):
+                offenders.append((path, key, obj))
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}.{k}" if path else k, k, k in _TEXT_KEYS)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                walk(v, f"{path}[{i}]", key, skip)
+
+    walk(deck, "", None, False)
+    return offenders
+
+
+def _format_unresolved(unresolved, palette_keys):
+    """Build the unresolved-alias report: count, offender paths, defined keys,
+    and the fix (palette keys must carry the $ sigil)."""
+    n = len(unresolved)
+    lines = [f"{n} unresolved colour alias{'es' if n != 1 else ''} after expansion."]
+    for path, _key, value in unresolved[:5]:
+        lines.append(f'  {path} = "{value}"')
+    if n > 5:
+        lines.append(f"  ... {n - 5} more")
+    lines.append(f"'C' defines: {', '.join(palette_keys) if palette_keys else '(none)'}")
+    m = re.search(r"\$[A-Za-z]{1,2}", unresolved[0][2])
+    alias = m.group(0) if m else "$A"
+    lines.append(f'Palette keys must carry the $ sigil: {{"{alias}": "#3B82F6"}}')
+    return "\n".join(lines)
+
+
+def _sweep_color_grammar(deck):
+    """Warning-only sweep: every value under a colour key should match the
+    permissive CSS-colour grammar (_COLOR_VALUE_RE). Returns
+    [(json_path, key, value)] for suspicious values. Never escalate this to an
+    error — false positives must not block a ship."""
+    offenders = []
+
+    def walk(obj, path):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                p = f"{path}.{k}" if path else k
+                if (k in _COLOR_KEYS and isinstance(v, str) and v.strip()
+                        and not _COLOR_VALUE_RE.match(v.strip())):
+                    offenders.append((p, k, v))
+                walk(v, p)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                walk(v, f"{path}[{i}]")
+
+    walk(deck, "")
+    return offenders
+
+
+def expand_deck(compact, allow_unresolved=None):
+    """Convert compact deck format to full Vela JSON.
+
+    allow_unresolved: None = follow the CLI --allow-unresolved flag (False for
+    in-process/library callers); True downgrades the unresolved-alias hard
+    error to a stderr warning. Raises DeckExpandError on an unusable palette
+    or (unless allowed) on aliases that survive expansion."""
     if not _is_compact(compact):
         return copy.deepcopy(compact)  # Already full format
+    if allow_unresolved is None:
+        allow_unresolved = _allow_unresolved_mode
 
     # Resolve color palette aliases ($A→#3B82F6, etc.)
+    palette_keys = []
     if "C" in compact:
-        raw_palette = compact.pop("C")
+        palette = _normalise_palette(compact.pop("C"))
+        palette_keys = list(palette)
 
-        # Normalize palette: must be flat {str: str}. Skip malformed entries.
-        palette = {}
-        if isinstance(raw_palette, dict):
-            for k, v in raw_palette.items():
-                if isinstance(k, str) and isinstance(v, str) and k.startswith("$"):
-                    palette[k] = v
-                elif isinstance(v, dict):
-                    # LLM wrote nested palette like {"palette":{"bg":"#..."}} — skip
-                    pass
+        # Walk the JSON tree and replace $aliases in string values.
+        # Skip known text-content keys (_TEXT_KEYS) to avoid corrupting prose.
+        # Sort longest alias first so $AB is replaced before $A
+        _sorted = sorted(palette.items(), key=lambda x: -len(x[0]))
 
-        if palette:
-            # Walk the JSON tree and replace $aliases in string values.
-            # Skip known text-content keys to avoid corrupting prose.
-            _TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
-                                    "author", "loopLabel", "gateLabel", "caption",
-                                    "annotation", "date", "markup", "deckTitle",
-                                    # studyNotes (offline student content) prose fields — preserve literal hex codes
-                                    "diagram", "questions", "glossary", "definition"})
-            # Sort longest alias first so $AB is replaced before $A
-            _sorted = sorted(palette.items(), key=lambda x: -len(x[0]))
-
-            def _resolve(obj, skip=False):
-                if isinstance(obj, str) and not skip:
-                    for alias, color in _sorted:
-                        obj = obj.replace(alias, color)
-                    return obj
-                if isinstance(obj, dict):
-                    return {k: _resolve(v, skip=(k in _TEXT_KEYS)) for k, v in obj.items()}
-                if isinstance(obj, list):
-                    return [_resolve(v, skip) for v in obj]
+        def _resolve(obj, skip=False):
+            if isinstance(obj, str) and not skip:
+                for alias, color in _sorted:
+                    obj = obj.replace(alias, color)
                 return obj
+            if isinstance(obj, dict):
+                return {k: _resolve(v, skip=(k in _TEXT_KEYS)) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_resolve(v, skip) for v in obj]
+            return obj
 
-            compact = _resolve(compact)
+        compact = _resolve(compact)
 
     # Resolve theme presets
     raw_themes = compact.get("T", {})
@@ -343,7 +477,6 @@ def expand_deck(compact):
     }
 
     # Fix bare hex colors missing # prefix (common LLM output issue)
-    import re
     raw = json.dumps(result, ensure_ascii=False)
     # Match color fields with 6-char hex missing #
     raw = re.sub(
@@ -351,6 +484,27 @@ def expand_deck(compact):
         r'\1#\2"', raw
     )
     result = json.loads(raw)
+
+    # Post-expansion invariant: no colour alias may survive into the deck we
+    # hand to validate/assemble — a leftover "$X" ships as a literal string
+    # and renders broken. Hard error unless --allow-unresolved was passed.
+    unresolved = find_unresolved_aliases(result)
+    if unresolved:
+        msg = _format_unresolved(unresolved, palette_keys)
+        if allow_unresolved:
+            print(f"⚠️  {msg}", file=sys.stderr)
+        else:
+            raise DeckExpandError(msg)
+
+    # Resolved-colour grammar sweep — warning-only (false positives must not
+    # block a ship): catches typo'd hex ("#3B82F"), unclosed functions, etc.
+    suspicious = _sweep_color_grammar(result)
+    for spath, _skey, svalue in suspicious[:10]:
+        print(f'⚠️  suspicious colour value: {spath} = "{svalue}" '
+              f"(not a recognised CSS colour)", file=sys.stderr)
+    if len(suspicious) > 10:
+        print(f"⚠️  ... {len(suspicious) - 10} more suspicious colour values",
+              file=sys.stderr)
 
     return result
 
@@ -1092,7 +1246,10 @@ def deck_validate(args):
         tmp_fd, validate_path = tempfile.mkstemp(suffix=".json")
         os.close(tmp_fd)
         _save_deck(expanded, validate_path)
-    result = subprocess.run([sys.executable, VALIDATE_PY, validate_path], capture_output=True, text=True)
+    validate_cmd = [sys.executable, VALIDATE_PY, validate_path]
+    if _allow_unresolved_mode:
+        validate_cmd.append("--allow-unresolved")
+    result = subprocess.run(validate_cmd, capture_output=True, text=True)
     if validate_path != path:
         os.unlink(validate_path)
     if result.returncode != 0:
@@ -1243,7 +1400,10 @@ def deck_ship(args):
                        "output": f"Expanded {fmt_name} format ({slides_n} slides)"})
 
     # Step 1: Validate
-    result = subprocess.run([sys.executable, VALIDATE_PY, ship_path], capture_output=True, text=True)
+    validate_cmd = [sys.executable, VALIDATE_PY, ship_path]
+    if _allow_unresolved_mode:
+        validate_cmd.append("--allow-unresolved")
+    result = subprocess.run(validate_cmd, capture_output=True, text=True)
     steps.append({"step": "validate", "success": result.returncode == 0, "output": result.stdout.strip()})
     if result.returncode != 0:
         if ship_path != path:
@@ -2486,7 +2646,7 @@ def deck_split(args):
 # ── DECK INIT / SLIDE APPEND (incremental deck building) ──────────────
 
 def deck_init(args):
-    """Create a deck skeleton. Usage: vela deck init <output.vela> --title "T" --palette '{"A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3" [--force]
+    """Create a deck skeleton. Usage: vela deck init <output.vela> --title "T" --palette '{"$A":"#hex"}' --themes '{"d":{...}}' --sections "S1,S2,S3" [--force]
     Creates a valid compact deck with empty sections, ready for slide append.
     Refuses to overwrite an existing file (exit 5) unless --force is given."""
     if not args:
@@ -2525,7 +2685,9 @@ def deck_init(args):
 
     deck = {"n": title}
     if palette:
-        deck["C"] = palette
+        # Normalise bare keys ("A" → "$A") the same way expand_deck does, so an
+        # init'd deck never carries a palette that expansion would reject.
+        deck["C"] = _normalise_palette(palette)
     if themes:
         deck["T"] = themes
     deck["G"] = [{"g": s, "S": []} for s in sections]
@@ -2613,10 +2775,11 @@ COMMANDS = {
 }
 
 def main():
-    global _json_mode
+    global _json_mode, _allow_unresolved_mode
     _json_mode = "--json" in sys.argv
+    _allow_unresolved_mode = "--allow-unresolved" in sys.argv
     # Strip global flags from argv for cleaner parsing
-    clean_args = [a for a in sys.argv[1:] if a not in ("--json", "--dry-run")]
+    clean_args = [a for a in sys.argv[1:] if a not in ("--json", "--dry-run", "--allow-unresolved")]
 
     if "--capabilities" in sys.argv:
         _out(CAPABILITIES)
@@ -2647,7 +2810,14 @@ def main():
     if "--dry-run" in sys.argv:
         remaining.append("--dry-run")
 
-    COMMANDS[resource][action](remaining)
+    try:
+        COMMANDS[resource][action](remaining)
+    except DeckExpandError as e:
+        # Deck could not be safely expanded (unusable palette / unresolved
+        # colour aliases). Fail before any artifact is written.
+        _err(EXIT_VALIDATION, str(e),
+             suggestions=["Fix the palette 'C' entries and re-run",
+                          "Pass --allow-unresolved to ship anyway (aliases stay literal)"])
 
 if __name__ == "__main__":
     main()

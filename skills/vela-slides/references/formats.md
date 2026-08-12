@@ -31,7 +31,7 @@ Pipeline: any format → `_load_full()` auto-expands → validate → assemble �
 
 **Block level**: `_`=type, `x`=text, `s`=size, `c`=color, `i`=icon, `b`=bg, `w`=weight, `ic`=iconColor, `ib`=iconBg, `I`=items, `B`=blocks (nested), `g`=gap, `lb`=label, `v`=variant, `H`=headers, `R`=rows, `sl`=sublabel, `slc`=sublabelColor, `ac`=arrowColor, `lc`=labelColor, `ts`=titleSize, `xs`=textSize, `hb`=headerBg, `hc`=headerColor, `cc`=cellColor, `bc`=borderColor, `str`=striped, `lo`=loop, `lnc`=lineColor, `nc`=numberColor, `tc`=titleColor, `xc`=textColor, `dc`=dotColor, `cir`=circle, `dir`=direction
 
-**Color palette (`C`)**: define every color used ≥2× as `"$A":"#hex"`. Use `$A` everywhere instead of raw hex. Assign in frequency order ($A = most common).
+**Color palette (`C`)**: define every color used ≥2× as `"$A":"#hex"`. Use `$A` everywhere instead of raw hex. Assign in frequency order ($A = most common). **$-sigil keys**: the `$` belongs in the key itself — `"C":{"$A":"#3B82F6"}`, never `"C":{"A":"#3B82F6"}` (bare keys are normalised with a warning; a `C` with no usable entries fails expansion).
 
 **Theme palette (`T`)**: `"d"`:dark, `"l"`:light, `"a"`:alt. Keys: `b`=bg, `c`=color, `a`=accent, `p`=padding. Theme values can use `$` aliases too.
 

@@ -1,0 +1,19 @@
+{
+  "n": "Palette Incident Repro",
+  "C": { "A": "#3B82F6", "B": "#8B5CF6", "E": "#1E293B", "H": "#E6F1FF" },
+  "T": { "d": { "b": "#0A0F1C", "c": "$H", "a": "$A", "p": "60px 72px" } },
+  "G": [
+    { "g": "Intro", "S": [
+      { "t": "d", "n": "Bare palette keys must still resolve", "d": 20, "B": [
+        { "_": "heading", "x": "Palette Repro", "s": "2xl", "c": "$H" },
+        { "_": "badge", "x": "INCIDENT", "b": "$E", "c": "$A" }
+      ] }
+    ] },
+    { "g": "Body", "S": [
+      { "t": "d", "n": "Icon blocks reference the palette too", "d": 60, "B": [
+        { "_": "icon", "i": "Zap", "c": "$B", "ic": "$A", "ib": "$E" },
+        { "_": "text", "x": "Body prose may mention $A literally and must survive.", "c": "$H" }
+      ] }
+    ] }
+  ]
+}
