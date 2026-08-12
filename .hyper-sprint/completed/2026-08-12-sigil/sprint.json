@@ -1,0 +1,42 @@
+{
+  "git": {
+    "commits": [
+      {
+        "t": "2026-08-12T10:35:07+00:00",
+        "subject": "Sprint sigil: capture plan for palette-resolution change request",
+        "is_fix": false,
+        "is_test": false
+      },
+      {
+        "t": "2026-08-12T10:51:41+00:00",
+        "subject": "fix(palette): normalise bare palette keys, gate unresolved colour aliases, share compact detection",
+        "is_fix": true,
+        "is_test": false
+      },
+      {
+        "t": "2026-08-12T10:53:11+00:00",
+        "subject": "Sprint sigil: before-fix proof assets (screenshots, fixture, CLI transcript)",
+        "is_fix": false,
+        "is_test": false
+      },
+      {
+        "t": "2026-08-12T10:55:55+00:00",
+        "subject": "Sprint sigil: after-fix proof assets (screenshots, CLI transcript)",
+        "is_fix": false,
+        "is_test": false
+      },
+      {
+        "t": "2026-08-12T11:20:31+00:00",
+        "subject": "fix(palette): harden alias resolution \u2014 exact-token matching, text-subtree exemption at depth, collision/degenerate-key errors, validate.py flag parity",
+        "is_fix": true,
+        "is_test": false
+      }
+    ],
+    "n_commits": 5,
+    "n_fix": 2,
+    "n_test": 0
+  },
+  "transcript": {
+    "available": false
+  }
+}

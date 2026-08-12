@@ -52,4 +52,9 @@ Blind best-model validation round finds zero in-scope defects: all 7 acceptance 
 
 ## What happened vs plan
 
-(appended at close)
+- Recon confirmed all three defects at HEAD and surfaced two things the CR missed: `deck init` itself documented bare palette keys (live defect-A generator, G-form output), and `dividerColor` doesn't exist while `numberColor`/`titleColor`/`textColor`/`dotColor` do — `_COLOR_KEYS` was corrected accordingly.
+- Single-cluster plan held: one implementation worker landed all five changes + 21 tests in one commit (`6394aa4`), all 7 acceptance criteria verified.
+- Blind round 1: verifier PASSed everything, but the adversarial hunter found **12 defects** — 7 in-scope hardening gaps in the new code (headline: partial-overlap alias `$AB` bypassing the hard gate via substring substitution), 5 verified pre-existing at base `527b94a` and reported as follow-ups. One fix-round worker (`7b3f169`) + regression tests (suites 534 + 65).
+- Blind round 2 (fresh agent): clean — gate closed after 2 rounds (plan assumed 1–2).
+- Stop-rule deviation (recorded in report): CLI surface → blind rounds drove the real CLI, not the browser burst engine; proof = Markdown report with browser-rendered before/after shots.
+- Cost: $47.11 total, hub $9.74 (21%), 0 images pinned in hub.

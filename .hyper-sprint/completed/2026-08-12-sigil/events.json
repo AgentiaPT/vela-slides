@@ -1,0 +1,7 @@
+[
+ {"label": "start 10:35", "work": 5, "kind": "start"},
+ {"label": "impl 6394aa4 10:51", "work": 0, "kind": "impl"},
+ {"label": "blind r1 +7 in-scope", "work": 7, "kind": "bump"},
+ {"label": "fix 7b3f169 11:20", "work": 0, "kind": "fix"},
+ {"label": "blind r2 clean", "work": 0, "kind": "done"}
+]
