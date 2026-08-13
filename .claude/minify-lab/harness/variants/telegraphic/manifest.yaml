@@ -1,0 +1,7 @@
+# variants/telegraphic/manifest.yaml — file pairs for reduction.py's
+# verdict 6A (harness-design.md §7) on the "telegraphic" approach.
+# `baseline` is repo-root-relative, `minified` is harness-dir-relative
+# (see reduction.py's resolve_pair_paths).
+pairs:
+  - baseline: CLAUDE.md
+    minified: variants/telegraphic/CLAUDE.md

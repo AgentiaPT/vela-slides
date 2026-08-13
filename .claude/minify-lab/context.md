@@ -617,7 +617,116 @@ disclosure — no discipline conflict with the security-fix-disclosure
 policy (that policy is about vulnerabilities in *shipped Vela code*,
 not this lab's own dev tooling).
 
-## Current status (last updated: 2026-08-13 ~07:35, phase 5 closed + runner.py isolation fix landed, Phase 6 starting)
+## `/minify` verify tool bug found and fixed: `_best_match` mislocation (2026-08-13, ~08:00-08:40, blocking Phase 6's first real minified CLAUDE.md)
+
+**What happened.** Before starting the real Phase 6 pilot, went to produce the
+actual minified CLAUDE.md variant for the "telegraphic" approach (the existing
+`variants/telegraphic/CLAUDE.md` turned out to be an explicit, self-documented
+PLACEHOLDER, not real output — caught before any pilot spend, see "gaps found"
+below). Ran the `/minify` skill's real 6-step pipeline (predict → plan →
+inventory → rewrite → verify) on the repo's real root `CLAUDE.md`, touching
+only genuinely low-risk C7 orientation prose and leaving every routing table,
+version-bump section, and security-disclosure section byte-for-byte untouched.
+`verify` REJECTED it (exit 4) on a single `K027 REVIEW quantifier-erosion:all`
+finding — even though the flagged constraint's real sentence ("All in
+`src/parts/part-engine.jsx`.") was never edited.
+
+**Isolation technique that proved it was a tool bug, not a content bug:** ran
+`verify CLAUDE.md CLAUDE.md --inventory <inv>` — i.e. verified the *unmodified*
+baseline against an exact copy of itself (0.0% byte change). It STILL
+REJECTED with the same K027 finding. A tool that rejects a perfect identity
+"minification" cannot be reporting a real content defect — this is a
+pre-existing bug in `minify_lib.py`'s matcher, unrelated to any edit.
+
+**Root cause.** `_best_match()` (locates which unit/window of the *minified*
+doc "is" a given constraint, so `survival()` can read modality/quantifier
+tokens from the right place) tracks its single best-matching unit via a
+plain `_coverage()` call, which uses `_matches()`'s deliberately lenient
+prefix-fuzzy rule (needed so `documents`→`doc` still counts as surviving).
+That same leniency lets a short, generic key like `"part"` prefix-match an
+unrelated hyphenated compound like `"part-import"` or `"part-engine"` anywhere
+the bare stem is reused — and this repo's CLAUDE.md is full of `part-*.jsx`
+filenames, so K027's 2-key set (`{"part", "part-engine"}`) scored a false
+1.0 coverage at ~88 different locations throughout the file (confirmed by
+direct measurement). The old tie-break was implicit "first unit in file
+order wins", which is arbitrary and had no reason to prefer K027's real,
+unedited location over an early, coincidental one (it picked line 15 —
+the Architecture diagram — over K027's real line 194/194 or its minified
+equivalent).
+
+**Fix (`_best_match` in `minify_lib.py`, ~35 lines changed, `_matches()`
+itself left untouched)**: added `_coverage_exact()` — exact key-membership
+only, no prefix fuzz — and made `_best_match` rank candidates by
+`(exact_coverage, fuzzy_coverage, -distance_to_constraint's_original_line)`
+instead of first-fuzzy-max-wins. An exact hit on the full compound token
+(`"part-engine"` literally present) now always beats a location that only
+has the bare stem `"part"` via fuzzy prefix match. The original-line
+distance is a last-resort tie-break only (minification never reorders
+sections, but absolute line numbers drift as earlier text is trimmed, so
+it's not reliable as a primary signal — an earlier attempt using distance
+alone as the *primary* criterion caused a *different* false match by
+coincidentally aligning with an unrelated line after trims shifted
+everything up).
+
+**Why `_matches()` itself was NOT changed**: first attempted a narrower fix
+directly in `_matches()` (reject a prefix match that lands exactly on a
+hyphen boundary) — this fixed K027 but broke 3 previously-passing fixtures
+(`probe-a known-good`, `links known-good`, `reworded rule valid attestation`),
+because legitimate cases like `"code"`→`"code-review"` and
+`"security-related"`→`"security"` are lexically identical in shape to the bad
+`"part"`→`"part-engine"` case — no string-only heuristic on `_matches()` can
+tell them apart. The real fix had to live in *selection* (`_best_match`), not
+*matching* (`_matches`/`_coverage`), which stayed untouched and keeps its
+existing (intentionally lenient) behavior for the file-wide present/lost
+decision.
+
+**New permanent regression fixture**: `fixtures/stem-collision.before.md` /
+`.after.md` — a minimal, isolated repro (decoy paragraphs plainly reuse the
+word "part"/"parts", the real rule is `All in \`parts/part-audit-hook.jsx\`.`,
+completely unedited between before/after) that reproduces the bug cleanly
+pre-fix (REJECTED, wrong match line) and passes cleanly post-fix. Wired into
+`minify.py`'s `CASES` selftest registry as `"generic-stem prefix does not
+steal a compound's match location"`. Selftest is now **17/17** (was 16/16).
+Full repo test suite re-run clean too: `tests/test_vela.py` **503/503**
+(unrelated to this change, run per the repo's mandatory-CI-check rule since
+this touched git-tracked files).
+
+**Result**: the real minified CLAUDE.md now verifies cleanly —
+`57/57 present, 0 review, 0 lost, structure PASS`; size `1.5% byte cut /
+1.0% token cut`, `MET-PREDICTION` against the file's own predicted
+`0.0-7.9%` band (this file is already dense/telegraphic — see the phase-1
+finding above; a small percentage here is the correct, honest outcome, not
+underperformance). Landed in `variants/telegraphic/CLAUDE.md`; the
+manifest (`variants/telegraphic/manifest.yaml`) and the previously-missing
+judge rubric (`harness/prompts/judge-ab-rubric.md`, referenced by
+`judge.py`'s `RUBRIC_PATH` but never created in phase 5) were also filled
+in this session — both real Phase-5 completeness gaps that had been
+signed off as "independently verified" but were not.
+
+**Also caught before any spend**: the pre-existing `variants/telegraphic/
+CLAUDE.md` was an explicit, self-documented PLACEHOLDER (1171 bytes vs the
+real file's 18,301; an HTML comment stated outright it was not real
+minified output and that producing it was Phase 6's job) — almost got used
+as a pilot input before noticing. This is exactly the kind of catch the
+standing "independently verify, don't trust self-report" discipline exists
+to produce.
+
+**User question worth logging for Phase 7+**: mid-session, the user asked
+whether the skill should use AI (not just deterministic string-matching) for
+verification, since skills run with real agency/tool access. Answered: the
+pipeline is already a hybrid — steps 1-5 (predict/plan/inventory/rewrite) are
+agent-driven judgment; step 6's `review` + `--attest` mechanism is the
+sanctioned "AI makes and records a judgment call" gate. `verify` itself is
+deliberately kept deterministic/zero-cost/zero-API-call so it can run in CI
+and `selftest` instantly and for free, and so it doesn't reintroduce the same
+self-grading-bias risk the whole eval harness exists to guard against (opus
+judging opus). The K027 bug was a plain mechanical mislocation bug (fixed
+deterministically above), not a case needing semantic judgment — but an
+**optional AI-assist tier for genuinely-ambiguous `review` items** (as a
+secondary confirmation, never a silent default) is a reasonable Phase 7+
+idea, not in scope for this fix.
+
+## Current status (last updated: 2026-08-13 ~08:40, /minify verify bug fixed + real minified CLAUDE.md ready, campaign.py driver not yet built)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -633,8 +742,9 @@ decided and why.
 
 Phases 1, 1b, 2, 3, and now **4 are all DONE**, each independently
 verified (not just self-report — ran phase 4's own selftest firsthand:
-16/16 pass; spot-checked its code for the frozen_ext fix: present). The
-`/minify` skill is real, live, and discoverable in the skill listing.
+17/17 pass as of this session's matcher fix, was 16/16 before; spot-checked
+its code for the frozen_ext fix: present). The `/minify` skill is real,
+live, and discoverable in the skill listing.
 
 **Phase 5 (harness scripts) landed and is independently verified** —
 see the Artifacts index entry above for the full check (all 10 modules'
@@ -643,19 +753,44 @@ confirmed genuinely wired with a real regression test, `runner.py`
 matches the §8.1 design, constraint-extractor duplication investigated
 and consciously left as-is with a documented reason rather than either
 silently ignored or riskily merged). The `send_later` keep-alive chain
-that was covering this wait has been stopped.
+that was covering this wait has been stopped. Two real Phase-5
+completeness gaps were found and closed this session (see the section
+above): the judge rubric prompt (`prompts/judge-ab-rubric.md`) had never
+been created despite `judge.py` referencing it, and the "telegraphic"
+approach's `variants/telegraphic/manifest.yaml` (required by
+`reduction.py`) didn't exist either.
 
-**Phase 6 (first real pilot run) is now STARTING.** Rate-limit throttle
-held it until ~07:15 UTC (wall-clock estimate, not a confirmed reading —
-the user declined further in-session investigation into checking this
-directly, see "Rate-limit throttle" section; treat that as closed). A
-final pre-flight isolation bug in `runner.py` was found and fixed just
-before starting — see the section above. Starting deliberately
-cautious: ONE scenario first (not the full 9-scenario fleet), 3 reps,
-sonnet as agent-under-test, opus as judge, per the locked budget. Will
-verify from the pilot's own transcript/session-id that the isolation fix
-actually held in a real run (not just in --selftest) before scaling up
-to the rest of the fleet.
+**Phase 6 (first real pilot run) is IN PROGRESS, not yet launched.**
+Rate-limit throttle held it until ~07:15 UTC (wall-clock estimate, not a
+confirmed reading — the user declined further in-session investigation
+into checking this directly, see "Rate-limit throttle" section; treat
+that as closed). A pre-flight isolation bug in `runner.py` was found and
+fixed before starting (session-attachment env-var leak — see the section
+above). Producing the real minified CLAUDE.md then surfaced a second,
+independent pre-flight bug — a false-REJECT in the `/minify` skill's own
+`verify` matcher (`_best_match` mislocation) — found, root-caused, fixed,
+covered by a new permanent regression fixture, and verified against both
+`selftest` (17/17) and the full repo test suite (`tests/test_vela.py`
+503/503). See the section immediately above for the full writeup.
+
+**What's ready now**: a real minified `variants/telegraphic/CLAUDE.md`
+that verifies cleanly (57/57 present, 0 review, structure PASS, size
+MET-PREDICTION at 1.0-1.5%). **What's still needed before the pilot can
+run**: the `campaign.py` driver script does not exist yet — `runner.py`
+only runs one `(scenario, arm, rep)` at a time; looping over arms/reps,
+wiring a real opus judge call, assembling the `campaign.json` shape (see
+the reverse-engineered contract in the prior "Session-isolation bug"
+section's surrounding context), and calling `gate.py`/`report.py` is
+unbuilt. Plan: build it, stub-test it at zero cost first (mirroring
+`runner.py`'s own `--selftest` pattern), then run ONE scenario
+(`reducer-nohistory` is the leading candidate — well-scoped, moderate
+complexity, strong assertion coverage), 3 reps, both arms, 2 judging
+rounds — real sonnet agent-under-test + real opus judge calls — and
+confirm from the pilot's own transcript/session-id that the isolation
+fix holds in a real run, not just `--selftest`, before scaling to the
+rest of the 9-scenario fleet. Per the last check-in's standing
+instruction: message the user with a brief status update once this
+actually kicks off (not a silent reschedule).
 
 ## Session hygiene: checking context usage
 

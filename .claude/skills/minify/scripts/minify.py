@@ -311,6 +311,12 @@ CASES = [
      "FAIL-GREW", None),
     ("tidied URL / dropped link title", "links.before.md", "links.lossy-url.md",
      "verbatim-span-lost", None),
+    # a generic stem repeated as ordinary prose ("part", "parts") earlier in the
+    # file must not out-rank a hyphenated compound's real, unedited location
+    # (`part-audit-hook`) when the matcher locates it for modality/quantifier
+    # extraction — see minify_lib.py's `_coverage_exact` / `_best_match`
+    ("generic-stem prefix does not steal a compound's match location",
+     "stem-collision.before.md", "stem-collision.after.md", "accept", None),
     # attestation path: unattested rework is rejected, a valid attestation clears
     # it, and an attestation pointing at an unrelated line does not
     ("reworded rule, unattested", "probe-a.before.md", "probe-a.reworded.md", "reject", None),

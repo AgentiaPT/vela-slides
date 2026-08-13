@@ -840,31 +840,63 @@ def _window_size(n_keys: int) -> int:
     return min(10, max(WINDOW, math.ceil(n_keys / 8)))
 
 
-def _best_match(keys: Set[str], target: List[Tuple[Unit, Set[str]]]
+def _coverage_exact(keys: Set[str], pool: Set[str]) -> float:
+    """Strict coverage: exact key membership only, no abbreviation fuzz.
+
+    `_matches`'s prefix leniency (needed so `documents`->`doc` still counts as
+    surviving) also lets a short, generic key like "part" prefix-match an
+    unrelated compound like "part-import" anywhere the stem is reused (e.g. a
+    file full of `part-*.jsx` names). An exact hit is much stronger evidence
+    of *this* constraint's location than that kind of prefix coincidence, so
+    `_best_match` ranks on exact coverage first and falls back to fuzzy
+    coverage only among exact ties.
+    """
+    if not keys:
+        return 0.0
+    return sum(1 for k in keys if k in pool) / len(keys)
+
+
+def _best_match(keys: Set[str], target: List[Tuple[Unit, Set[str]]],
+                 orig_line: Optional[int] = None
                 ) -> Tuple[float, Optional[Unit], str]:
     """Return (best window coverage, best single unit, best window text).
 
     The single best unit is where modality/quantifier tokens are read from — a
     multi-unit window bleeds a neighbouring rule's `NEVER` into this rule.
+
+    Candidates are ranked by (exact coverage, fuzzy coverage, closeness to the
+    constraint's original line) — see `_coverage_exact`. The line is a
+    last-resort tie-break only: minification never reorders sections, but
+    absolute line numbers drift as earlier text is trimmed, so it only
+    decides among candidates that are otherwise indistinguishable.
     """
     if not keys:
         return 0.0, None, ""
     size = _window_size(len(keys))
-    best_cov, best_text = 0.0, ""
-    best_unit, best_unit_cov = None, 0.0
+
+    def dist(line: int) -> int:
+        return abs(line - orig_line) if orig_line is not None else 0
+
+    best_cov, best_text, best_rank = 0.0, "", None
+    best_unit, best_unit_rank = None, None
     for i, (u, ks) in enumerate(target):
         c = _coverage(keys, ks)
-        if c > best_unit_cov:
-            best_unit_cov, best_unit = c, u
+        if c > 0:
+            rank = (_coverage_exact(keys, ks), c, -dist(u.line))
+            if best_unit_rank is None or rank > best_unit_rank:
+                best_unit, best_unit_rank = u, rank
         acc: Set[str] = set()
         for w in range(size):
             if i + w >= len(target):
                 break
             acc = acc | target[i + w][1]
             cov = _coverage(keys, acc)
-            if cov > best_cov:
-                best_cov = cov
-                best_text = "\n".join(t[0].raw for t in target[i: i + w + 1])
+            if cov > 0:
+                rank = (_coverage_exact(keys, acc), cov, -dist(target[i][0].line))
+                if best_rank is None or rank > best_rank:
+                    best_cov = cov
+                    best_text = "\n".join(t[0].raw for t in target[i: i + w + 1])
+                    best_rank = rank
     return best_cov, best_unit, best_text
 
 
@@ -887,7 +919,7 @@ def survival(inv: Dict[str, object], minified: Doc,
         keys = set(craw["keys"])
         cov_file = _coverage(keys, file_pool)
         missing = _missing(keys, file_pool)
-        cov_local, unit, win_text = _best_match(keys, target)
+        cov_local, unit, win_text = _best_match(keys, target, orig_line=craw["line"])
         located = cov_local >= COVERAGE_LOCATED
         # Modality/quantifier are read from the single best-matching unit when it
         # covers the rule — a multi-unit window bleeds a neighbour's tokens in.
