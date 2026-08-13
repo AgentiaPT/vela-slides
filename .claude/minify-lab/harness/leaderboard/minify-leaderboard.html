@@ -339,14 +339,14 @@
 
   <div class="masthead">
     <div>
-      <div class="status-chip">6/9 scenarios piloted &mdash; every runnable one: 4 pass cleanly, 1 fail root-caused to noise, 1 inconclusive with zero regression evidence</div>
+      <div class="status-chip">6/9 scenarios piloted (every runnable one, 4 pass) &mdash; plus a first real competitor beaten on constraint fidelity</div>
       <h1>Minify Scoreboard</h1>
       <div class="sub">Real, sourced results for the <code style="font-family:var(--mono)">/minify</code> instruction-compression skill. No number on this page is estimated without being labelled so &mdash; see methodology in the footer.</div>
     </div>
     <div class="meta">
       repo: agentiapt/vela-slides<br>
-      last updated: 2026-08-13 ~20:25 UTC<br>
-      runs logged: 16
+      last updated: 2026-08-13 ~20:45 UTC<br>
+      runs logged: 18
     </div>
   </div>
 
@@ -371,7 +371,7 @@
 
   <section>
     <h2 class="section"><span class="idx">01</span> Leaderboard</h2>
-    <p class="section-note">One approach has real data so far. Competing approaches are queued, not fabricated &mdash; see &sect;03 for one already reasoned out and rejected before ever being run.</p>
+    <p class="section-note">Two approaches now have real data, both measured on the same source text with the same instrument &mdash; see &sect;04 for the full head-to-head. &sect;03 covers two more approaches reasoned out and rejected before ever being run.</p>
     <div class="table-scroll">
       <table class="board">
         <thead>
@@ -401,17 +401,20 @@
             </td>
             <td class="num">100%</td>
           </tr>
-          <tr class="queued">
-            <td class="rank">&mdash;</td>
+          <tr>
+            <td class="rank">2</td>
             <td>
               <span class="approach-name">Naive LLM summarize</span>
               <span class="approach-sub">ask a model to shorten it, no structure</span>
             </td>
-            <td class="num">&mdash;</td>
-            <td class="num">&mdash;</td>
-            <td><span class="pill pending">Queued</span></td>
-            <td><span class="pill pending">Queued</span></td>
-            <td class="num">&mdash;</td>
+            <td class="num">51.9%<span class="approach-sub" style="margin:0">~2x TRB's cut</span></td>
+            <td class="num">&mdash;<span class="approach-sub" style="margin:0">not run &mdash; disqualified below</span></td>
+            <td><span class="pill fail">Fail &minus;14</span></td>
+            <td>
+              <span class="pill pending">Not run</span>
+              <span class="approach-sub" style="margin:0">no behavioral campaign spent &mdash; same policy already applied to the two approaches rejected at the design stage (&sect;03): a structure disqualification is grounds to skip the paid 6B spend, not a gap in the comparison</span>
+            </td>
+            <td class="num">43/57<span class="approach-sub" style="margin:0">75%, vs. TRB's 100%</span></td>
           </tr>
         </tbody>
       </table>
@@ -455,6 +458,9 @@
           <li>Zero evidence of a minified regression has been found anywhere the harness has run so far, including the one inconclusive result.
             <span class="cite">newpart-manifest: after fixing the one genuine judge parse failure, 2/3 stable judge pairs recorded, both ties &mdash; 0% loss rate for minified. The remaining instability is one rep's real round-to-round judge disagreement, not a measurement bug, so the scenario is honestly reported INCONCLUSIVE rather than forced to a pass &mdash; see &sect;04</span>
           </li>
+          <li>A real head-to-head against the most obvious competitor &mdash; asking a model to shorten text with no structure &mdash; shows TRB winning on the axis that matters, not just running faster.
+            <span class="cite">same two source excerpts TRB's own headline number was measured on, graded against the same pre-published checklists (not a bar invented for the comparison): naive summarization cuts <b>~2x</b> as many tokens (51.9% vs TRB's 27.4%) but loses <b>14 of 57</b> checklist rows outright (25%) plus a numeric-literal violation (an exact insertion count rounded away), a conditional-trigger distortion (a different trigger condition substituted for the original), and a softened MUST &mdash; against TRB's 0 of 57 on the identical text. Single trial per probe, not yet repeated for variance &mdash; see &sect;04</span>
+          </li>
         </ul>
       </div>
       <div class="ledger-col open">
@@ -469,8 +475,8 @@
           <li>The judge model has a real, non-trivial single-shot response-parsing failure rate that the harness currently handles by dropping data rather than retrying.
             <span class="cite">~1/3 transient JSON-parse failure rate, measured directly across three independent scenarios now (minimal-diff-temptation and newpart-manifest both hit it in this session's piloting, plus 5 dedicated diagnostic calls); proven capable of flipping a thin-sample (n=3) gate verdict. Retrying resolved it every time it was tried, but adding retry logic changes a previously deliberate, tested harness design decision and needs its own scoped review before shipping</span>
           </li>
-          <li>No head-to-head competitive benchmark has been run yet.
-            <span class="cite">"better than anything currently available" is a target, not yet a measured result</span>
+          <li>The naive-summarize head-to-head is one trial per probe on two excerpts, not yet a repeated or independently-replicated study, and only one competitor has a live run so far.
+            <span class="cite">a second independent naive run (variance check) and the symbolic/predicate-notation competitor (&sect;03) remain open; also not yet run on this repo's own CLAUDE.md, only on the two normal-density research probes</span>
           </li>
         </ul>
       </div>
@@ -564,6 +570,10 @@
       <div class="log-entry">
         <span class="when">Launch 14b (public-repo-hygiene)</span>
         <span class="what">Clean run, independently verified against the raw campaign JSON. <b>GATE 6B PASS</b>: 3/3 stable judge pairs, 0% instability, 0 parse failures needed, 15/15 critical assertions both arms. Minified won 2 reps and lost 1 (both rounds agreed cleanly each time it happened) &mdash; <code style="font-family:var(--mono)">33.3%</code> loss rate, landing exactly at, not over, the pre-set one-third tolerance. One non-blocking efficiency <code style="font-family:var(--mono)">WARN</code> (input tokens +26%; turns actually dropped, 2.0&rarr;1.67). This is the first of the four passing scenarios with a genuine win/loss mix rather than a loss-free sweep &mdash; and the sixth and final scenario piloted out of the six currently runnable.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Competitive benchmark vs. naive summarization</span>
+        <span class="what">First live competitor. Reused the exact two excerpts TRB's own 27.4% headline number was measured on (so the checklist can't have been shaped to flatter TRB), had a fresh agent blind to this whole project shorten them with no instructions beyond "make it shorter," then graded the result myself against the same pre-published, pre-existing constraint checklists row by row. Naive cuts roughly <b>twice</b> as many tokens (51.9% vs 27.4%) &mdash; but drops <b>14 of 57</b> checklist rows outright, plus a rounded-away exact number (8657 insertions &rarr; "8000+"), a substituted trigger condition (a git conflict became "your branch falls behind" &mdash; not the same condition), and a MUST softened to "carefully." TRB: 0 of 57 lost on the identical text. Reported as a single-trial finding, not yet repeated &mdash; the honest caveat this project applies to every number it publishes.</span>
       </div>
     </div>
   </section>

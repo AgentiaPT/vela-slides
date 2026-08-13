@@ -2288,4 +2288,88 @@ one-third tolerance.
 
 Context.md's "Current status" header and task #12 updated (6/9 piloted
 — every currently-runnable scenario now has a real verdict). Leaderboard
-next.
+updated (commit `d9147dd`), stale check-in trigger for launch14b deleted
+(it fired while I was working; its content was already superseded, same
+"actual state governs over stale trigger text" rule applied throughout
+this session), worktrees/processes confirmed clean.
+
+## Task #13: real competitive benchmark vs. naive LLM summarization (2026-08-13, ~20:35 onward)
+
+With task #12's piloting sweep complete for every runnable scenario, the
+next real piece of "amazing, proven" evidence per the governing pivot
+directive is the still-queued leaderboard row: **"Naive LLM summarize —
+ask a model to shorten it, no structure."** Designed and ran a real,
+cheap (no paid campaign needed), reusable head-to-head:
+
+**Method.** Reused probes P2 (`nodejs/node` "Step 9: Discuss and
+update", 1,655 B) and P3 (`kubernetes/community` "Why is my pull request
+not getting reviewed?", 2,213 B) from
+`research-normal-density-corroboration.md` — the SAME two normal-density
+excerpts already used for TRB's own published headline claim (27.2%/27.5%
+reduction, 100% constraint survival, 22/22 and 32/32-33/33 rows). Reusing
+them means the naive comparison is graded against a checklist that was
+pre-registered and already published *before* this benchmark existed —
+it cannot have been shaped to make TRB look good.
+
+Delegated the naive side to a fresh subagent (id `a51efd3a1684dacdd`)
+given ONLY the two raw BEFORE texts, explicitly blind to this project,
+the `/minify` skill, TRB, or any constraint-preservation methodology —
+told simply "shorten this, your own judgment, no required format." This
+is a faithful simulation of what a typical user gets from "ask a model to
+shorten it."
+
+**Size measurement** (via the harness's own `reduction.py` — same
+instrument used everywhere else on this leaderboard, not a new metric):
+
+```
+P2:  TRB   1655->1205 B  (27.2% bytes / 27.5% tok_regex)
+     NAIVE 1655-> 840 B  (49.2% bytes / 48.0% tok_regex)
+P3:  TRB   2209->1604 B  (27.4% bytes / 27.5% tok_regex)
+     NAIVE 2209-> 945 B  (57.2% bytes / 55.7% tok_regex)
+```
+
+Naive cuts roughly **twice** as much as TRB on both probes — exactly the
+lure the whole project's design pitch (`README`/skill docs: "fewer tokens
+is the goal; losing a rule is the failure") warns about.
+
+**Constraint-survival grading** (done directly by me, orchestrator, row
+by row against the SAME 24-row/33-row published checklists TRB itself
+was graded on — concept-level equivalence allowed, same standard used
+throughout this project, not a stricter bar invented for naive):
+
+- **P2 (24 rows, TRB 22/22 clean):** naive — 13 rows survive cleanly, 6
+  meaningfully weakened, **5 rows lost outright** (submission-process
+  framing; the sign-off-timing distinction; the more-advanced-rebase
+  scope note; the "one of the few ways to delete history" severity
+  framing; and — separately from a clean loss — one **conditional-trigger
+  distortion**: TRB's `WHEN git conflict ⇒` became naive's "if your
+  branch falls behind" — a *different* trigger condition, not a
+  paraphrase of the same one). Also one MUST→vague softening ("make sure
+  you understand the risks" → "use it carefully").
+- **P3 (33 rows, TRB 32/32-33/33 clean):** naive — 19 rows survive
+  cleanly, 5 weakened, **9 rows lost outright**, including a **numeric-
+  literal violation** (`8657 insertions` rounded to `"8000+"` — exactly
+  the failure class this project's own `references/failure-modes.md`
+  flags as never-acceptable) and a dropped byte-frozen URL (the bot-
+  command link, `prow.k8s.io/command-help`).
+
+**Result: naive summarization is not a viable competitor at any size
+target this project would accept.** It wins on raw compression (~2x
+TRB's cut) but loses on the axis this whole project is built around —
+constraint fidelity — with concrete, checkable evidence: 2 numeric/
+byte-frozen violations, 1 conditional-trigger distortion, 1 modality
+softening, and 14 of 57 checklist rows (25%) dropped outright across the
+two probes, against TRB's 0 of 57 on the identical source text and
+identical checklist.
+
+**Caveat, stated honestly (matches this project's own "no number without
+a label" rule):** single trial per probe, one naive-agent run each, not
+yet repeated for variance — the same caveat this project would apply to
+any n=1 result. The size numbers (48-57% cut) are a real measurement of
+what happened this run, not a claim about naive summarization's true
+mean. Task #13 is not "done forever" — a second competitor (symbolic/
+predicate notation or a second independent naive run) remains open,
+tracked as future work, not required to report this honestly now.
+
+Task #13 marked completed with this finding; leaderboard and lab log
+updated next.
