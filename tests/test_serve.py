@@ -1855,6 +1855,61 @@ class TestDeckLabelSpoofing(FolderServerTestBase):
         self.assertLessEqual(len(self._titles()["long-title.vela"]), 200)
 
 
+class TestLabelSpoofingCategories(unittest.TestCase):
+    """The first version of the label filter denylisted single categories and was
+    bypassed through five separate channels. These pin the category-allowlist
+    behaviour that replaced it, and pin that ordinary text still survives — a
+    filter that mangles legitimate titles would just be turned off."""
+
+    def _label(self, value):
+        return VelaHTTPHandler._display_label(value, "FALLBACK")
+
+    def test_blank_but_not_isspace_glyphs_cannot_hide_a_suffix(self):
+        """str.split() only splits on isspace(); these render blank but are not."""
+        for blank in ("⠀", "ㅤ", "ᅟ", "᠎", " "):
+            out = self._label("safe.pdf" + blank * 30 + "REAL.exe")
+            self.assertNotIn(blank, out, f"{blank!r} survived")
+            self.assertNotIn("  ", out, f"{blank!r} left a run that hides the suffix")
+            self.assertIn("REAL.exe", out)
+
+    def test_combining_marks_are_stripped(self):
+        self.assertEqual(self._label("in҉⃝voice" + "̶" * 10), "invoice")
+        self.assertEqual(self._label("safe̸deck"), "safedeck")  # overlay "slash"
+
+    def test_control_characters_are_stripped(self):
+        out = self._label("bad\x1b[31m\x00\x07\x7f-deck")
+        for ch in "\x1b\x00\x07\x7f":
+            self.assertNotIn(ch, out)
+
+    def test_format_and_bidi_controls_are_stripped(self):
+        self.assertNotIn("‮", self._label("Q3-report‮gpj.vela"))
+
+    def test_ordinary_text_survives_intact(self):
+        for text in ("Café Résumé Ünïcödé", "日本語のデッキ", "Q3 Report (final) — v2"):
+            self.assertEqual(self._label(text), text)
+
+
+class TestDeckNameSpoofingRejected(unittest.TestCase):
+    """The File column renders the name verbatim as the identity a user falls back
+    on, so deceptive characters are rejected at validation rather than rewritten —
+    rewriting would make the column disagree with the real filename."""
+
+    def test_blank_glyph_names_rejected(self):
+        for blank in ("⠀", "ㅤ", "ᅟ"):
+            self.assertFalse(VelaHTTPHandler._validate_deck_name(f"report{blank * 3}.vela"))
+
+    def test_stacked_combining_marks_rejected(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("in̶҉voice.vela"))
+
+    def test_control_characters_rejected(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("bad\x1b[31m.vela"))
+
+    def test_ordinary_names_still_accepted(self):
+        for name in ("normal.vela", "café.vela", "日本語.vela",
+                     "my deck (v2).vela"):
+            self.assertTrue(VelaHTTPHandler._validate_deck_name(name), name)
+
+
 class TestUnservableNamesNeverListed(FolderServerTestBase):
     """A name that cannot be turned into a request path must not be listed:
     the client throws on it and the whole listing would go down with it."""

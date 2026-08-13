@@ -295,6 +295,26 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # the invariant; drop these at the same gate as every other bad name.
         if any(0xD800 <= ord(c) <= 0xDFFF for c in name):
             return False
+        # The File column shows the name VERBATIM — it is the identity the user
+        # checks when a title looks wrong, so it must not be able to lie either.
+        # A name is an identifier, not prose, so deceptive characters are REJECTED
+        # here rather than rewritten (rewriting would make the column disagree
+        # with the real filename, which is its own kind of lie).
+        #   Cc      — control chars; also escape sequences into terminals/logs
+        #   Me      — enclosing marks
+        #   2+ Mn   — stacked combining marks (Zalgo); a single legitimate mark
+        #             stays allowed so non-Latin filenames still work
+        #   blanks  — glyphs that render empty but are not str.isspace(), used to
+        #             push the real extension out of view
+        if any(unicodedata.category(c) in ("Cc", "Me") for c in name):
+            return False
+        if any(c in VelaHTTPHandler._BLANK_GLYPHS for c in name):
+            return False
+        marks = 0
+        for c in name:
+            marks = marks + 1 if unicodedata.category(c) == "Mn" else 0
+            if marks >= 2:
+                return False
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
@@ -308,23 +328,48 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     # one place titles enter the listing.
     _TITLE_MAX = 200
 
+    # Characters that render blank or zero-width but are NOT str.isspace(), so
+    # " ".join(s.split()) leaves them intact: braille blank, the Hangul fillers
+    # (and their NFKC targets), Mongolian vowel separator, Khmer inherent vowels,
+    # no-break space. Runs of these push a label's real suffix out of view just as
+    # effectively as spaces, so they must be folded to whitespace before collapsing.
+    _BLANK_GLYPHS = " ᠎⠀ᅟᅠㅤﾠ឴឵"
+
+    # Unicode categories a display label may never contain. Denylisting single
+    # characters is what let the first version of this be bypassed; this is a
+    # category allowlist expressed as its complement — every codepoint is dropped
+    # unless its category is absent from here.
+    #   C* — control, format (bidi/RTLO), private-use, surrogate, unassigned
+    #   Mn/Me — combining marks: stacking produces Zalgo, and a single overlay
+    #           (e.g. combining long solidus) draws a slash the filter never sees
+    _LABEL_REJECT_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cs", "Cn", "Mn", "Me"))
+
     @classmethod
     def _display_label(cls, value, fallback):
         """Return a safe display label for the deck listing.
 
-        Drops Unicode format/bidi controls (RTLO spoofing) and surrogates, collapses
-        whitespace runs so a label cannot push its real extension off-screen, caps
-        length, and falls back when the value is not a usable string. The client
-        renders labels via textContent, so this is anti-spoofing, not anti-XSS.
+        The title comes from inside the deck JSON and is the listing's most
+        prominent, clickable label — so it must not be able to impersonate another
+        file. NFKC-fold first, drop every character in a rejected category, fold
+        blank-rendering glyphs to real spaces, collapse runs, bound length, and
+        fall back when nothing usable remains. The client renders labels via
+        textContent, so this is anti-spoofing, not anti-XSS.
+
+        RESIDUAL: cross-script homoglyphs (Cyrillic 'а' for Latin 'a') are not
+        folded — that needs confusables data and is disproportionate here. The
+        File column shows the real filename and the link target is the real path,
+        so the title is never the only identity the user can check.
         """
         if not isinstance(value, str):
             return fallback  # numbers/objects/lists are not labels
-        cleaned = "".join(
-            ch for ch in value
-            if unicodedata.category(ch) != "Cf" and not 0xD800 <= ord(ch) <= 0xDFFF
-        )
-        cleaned = " ".join(cleaned.split())  # collapse runs, incl. exotic spaces
-        cleaned = cleaned[:cls._TITLE_MAX]
+        text = unicodedata.normalize("NFKC", value)
+        out = []
+        for ch in text:
+            category = unicodedata.category(ch)
+            if category in cls._LABEL_REJECT_CATEGORIES:
+                continue
+            out.append(" " if ch in cls._BLANK_GLYPHS or category == "Zs" else ch)
+        cleaned = " ".join("".join(out).split())[:cls._TITLE_MAX]
         return cleaned or fallback
 
     @classmethod
