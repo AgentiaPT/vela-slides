@@ -330,6 +330,40 @@ def build_browser_html():
 
 
 # ── Deck file I/O ─────────────────────────────────────────────────────
+# The umask is process-global, so reading it (the only way to sample it) is a
+# read-modify-write that cannot be made thread-safe. Do it ONCE here, at import,
+# while the process is still single-threaded; the server then applies the result
+# with fchmod and never touches the process umask again. Doing it per write let
+# concurrent saves observe the temporarily-zeroed umask and create decks that
+# were readable and writable by everyone.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+DECK_FILE_MODE = 0o666 & ~_UMASK  # what a plain open(path, "w") would have made
+
+
+def pin_dir(path):
+    """Open a directory to use as a dir_fd anchor, or None where unsupported.
+
+    SECURITY (CWE-59/61/367): no-follow flags and containment checks constrain
+    only the FINAL path component — every by-path call re-resolves the
+    directories above it, so replacing a directory NAME relocates the whole
+    operation, however carefully the leaf was guarded. Resolving the directory
+    once and addressing entries relative to that descriptor pins the path: the
+    folder we list, read and write stays the one the server started on, whatever
+    its name comes to refer to later. Windows has no dir_fd-relative calls, so
+    callers there fall back to by-path access, which the leaf guards still
+    cover."""
+    # NB: os.replace is deliberately not probed here — it takes src_dir_fd /
+    # dst_dir_fd rather than dir_fd, so it never appears in supports_dir_fd.
+    # write_deck_json falls back to the by-path rename if renameat is missing.
+    needed = (os.open, os.stat, os.unlink)
+    if not all(fn in os.supports_dir_fd for fn in needed):
+        return None
+    try:
+        return os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return None
+
 # SECURITY (CWE-59/61/367): the served folder is the user's project, so a
 # deck-named ENTRY in it is untrusted even when its name passed validation.
 # Realpath containment (_safe_deck_path) sees a symlink but CANNOT see a hard
@@ -339,7 +373,7 @@ def build_browser_html():
 # functions below, and neither ever writes through, or reads out of, an entry it
 # did not verify on the descriptor it is using.
 
-def read_deck_json(path):
+def read_deck_json(path, dir_fd=None):
     """Read + parse a deck file. Raises OSError/ValueError on anything unusable.
 
     Opens no-follow, then takes the content from the SAME descriptor it
@@ -347,7 +381,14 @@ def read_deck_json(path):
     above one means the inode is reachable under another name (possibly outside
     the folder): treated as an escape, not as a deck."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
+    kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
+    if os.name == "nt":
+        # No O_NOFOLLOW on Windows: reject reparse points by name up front so
+        # this reader is not weaker than the runtime-file one.
+        wst = os.stat(path, follow_symlinks=False, **kwargs)
+        if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+            raise OSError(f"Refusing to read a reparse point: {path}")
+    fd = os.open(path, flags, **kwargs)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
@@ -360,7 +401,7 @@ def read_deck_json(path):
         return json.load(f)
 
 
-def write_deck_json(path, deck):
+def write_deck_json(path, deck, dir_fd=None, folder=None):
     """Write a deck file by atomic replace, never through the existing entry.
 
     The payload lands in a freshly created temp file in the same folder and is
@@ -368,21 +409,57 @@ def write_deck_json(path, deck):
     symlink or hard link sitting there is detached instead of written through,
     and there is no window in which the name is re-resolved for the write.
     Readers also never observe a half-written deck."""
-    folder = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".vela-save-", suffix=".tmp")
+    kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
+    if folder is None:
+        folder = os.path.dirname(path) or "."
+    tmp = None
+    # Replacing an entry does not need write permission on the FILE, only on the
+    # directory — so an atomic replace would happily overwrite a deck the user
+    # deliberately made read-only, which open(path, "w") could not. Keep the old
+    # promise, and carry the existing file's own mode over to the replacement so
+    # a private deck does not quietly become world-readable on the next save.
+    mode = DECK_FILE_MODE
+    try:
+        dst = os.stat(path, follow_symlinks=False, **kwargs)
+    except OSError:
+        dst = None
+    if dst is not None and stat.S_ISREG(dst.st_mode):
+        if not dst.st_mode & stat.S_IWUSR:
+            raise PermissionError(f"Deck file is read-only: {path}")
+        mode = stat.S_IMODE(dst.st_mode)
+    # Create the temp exclusively ourselves rather than via mkstemp, so it can be
+    # made relative to the pinned directory, and so its mode is set through the
+    # DESCRIPTOR. A by-path chmod here would follow a link planted at the temp
+    # name in the (untrusted) folder and change the mode of a file elsewhere.
+    for attempt in range(8):
+        cand = f".vela-save-{secrets.token_hex(8)}.tmp"
+        tmp_arg = cand if dir_fd is not None else os.path.join(folder, cand)
+        try:
+            fd = os.open(tmp_arg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, **kwargs)
+            tmp = tmp_arg
+            break
+        except FileExistsError:
+            continue
+    if tmp is None:
+        raise OSError(f"Could not create a temp file for {path}")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(deck, f, ensure_ascii=False, indent=2)
-        # mkstemp creates 0600; restore the umask-respecting mode a plain
-        # open(path, "w") would have produced so saved decks stay as readable as
-        # the user's other files (same rationale as concat.py's atomic write).
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
-        os.replace(tmp, path)
+            # Restore the mode a plain open(path, "w") would have produced, so
+            # saved decks stay as readable as the user's other files. fchmod, so
+            # it can only ever apply to the file we just created.
+            if hasattr(os, "fchmod"):
+                os.fchmod(f.fileno(), mode)
+        if dir_fd is not None:
+            try:
+                os.replace(tmp, path, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            except NotImplementedError:  # no renameat on this platform
+                os.replace(os.path.join(folder, tmp), os.path.join(folder, path))
+        else:
+            os.replace(tmp, path)
     except BaseException:
         try:
-            os.unlink(tmp)
+            os.unlink(tmp, **kwargs)
         except OSError:
             pass
         raise
@@ -597,7 +674,8 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_list_decks(self):
         srv = self.server_ref
         decks = []
-        for name in sorted(os.listdir(srv.folder_path)):
+        for name in sorted(os.listdir(srv.folder_fd if srv.folder_fd is not None
+                                      else srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
             # SECURITY (containment + no check/use race, CWE-22/59/367): every
@@ -614,18 +692,23 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             # the S_ISREG check drops anything that is not a plain file.
             if not self._validate_deck_name(name):
                 continue
-            fpath = os.path.join(srv.folder_path, name)
             open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd_kwargs = {"dir_fd": srv.folder_fd} if srv.folder_fd is not None else {}
+            fpath = name if srv.folder_fd is not None else os.path.join(srv.folder_path, name)
             try:
                 self._safe_deck_path(srv.folder_path, name)
-                fd = os.open(fpath, open_flags)
+                fd = os.open(fpath, open_flags, **fd_kwargs)
             except (ValueError, OSError):
-                continue  # escapes the folder, is a symlink (ELOOP), or unreadable
+                srv.note_skipped_deck(name, "outside the folder, a link, or unreadable")
+                continue
             try:
                 st = os.fstat(fd)
                 if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
                     os.close(fd)
-                    continue  # not a plain file, or reachable under another name
+                    srv.note_skipped_deck(
+                        name, "not a plain file" if not stat.S_ISREG(st.st_mode)
+                        else "shares its contents with another name (hard link)")
+                    continue
             except OSError:
                 os.close(fd)
                 continue
@@ -698,6 +781,14 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         try:
             html = srv._build_html_for_deck(deck_path, deck_name)
             self._serve(html, "text/html; charset=utf-8")
+        except OSError as e:
+            # The reader refuses links and non-plain files. That is a property of
+            # the FILE, not a server fault, and it is invisible from the browser
+            # — so name it and give the remedy rather than a bare 500.
+            print(f"[error] Refusing to serve {deck_name}: {e}")
+            self.send_error(409, "Deck not served: it is a link, or shares its "
+                                 "contents with another name. Copy it to a plain "
+                                 "file (cp deck.vela copy.vela) and open that.")
         except Exception as e:
             print(f"[error] Building HTML for {deck_name}: {e}")
             self.send_error(500, "Error loading deck")
@@ -754,11 +845,21 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 except ValueError:
                     self.send_error(403, "Access denied")
                     return
-                srv.set_deck_data(deck_name, deck)
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                write_deck_json(deck_path, deck)
+                try:
+                    write_deck_json(
+                        deck_name if srv.folder_fd is not None else deck_path,
+                        deck, dir_fd=srv.folder_fd, folder=srv.folder_path)
+                except OSError as e:
+                    # Report the real reason instead of a generic 400, and leave
+                    # the in-memory deck alone — publishing an edit that never
+                    # reached disk makes every other tab believe a lost save.
+                    print(f"[save] Could not write {deck_name}: {e}")
+                    self.send_error(500, f"Could not write deck: {e.strerror or e}")
+                    return
+                srv.set_deck_data(deck_name, deck)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
@@ -899,12 +1000,40 @@ class FileWatcher:
     def ignore_next(self, seconds=1.5):
         self._ignore_until = time.time() + seconds
 
+    MAX_HASH_BYTES = 64 * 1024 * 1024
+
     def _file_hash(self):
+        """Hash the watched file, refusing anything that is not a plain file.
+
+        SECURITY: the watched entry sits in a project directory, so it may have
+        been replaced since the watcher was armed. O_NOFOLLOW keeps a link from
+        redirecting the read outside the folder; O_NONBLOCK plus the S_ISREG
+        check keep a fifo from parking this thread inside open() (it runs while
+        the server lock is held, so a block there wedges every deck endpoint);
+        and the cap keeps an oversized file from being pulled into memory."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
-            with open(self.path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
-        except Exception:
+            fd = os.open(self.path, flags)
+        except OSError:
             return ""
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > self.MAX_HASH_BYTES:
+                return ""
+            h = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    break
+                h.update(chunk)
+            return h.hexdigest()
+        except OSError:
+            return ""
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     def _poll(self):
         while self._running:
@@ -965,11 +1094,44 @@ class VelaLocalServer:
             self.folder_path = os.path.dirname(abs_path)
         else:
             self.folder_path = abs_path
+        # Deck folder pinned once (see pin_dir): every list/read/write below is
+        # done relative to this descriptor, so swapping a directory name above
+        # the deck files cannot relocate them.
+        self.folder_fd = pin_dir(self.folder_path)
+
         # Per-deck state
+        self._skipped_decks = set()   # names already explained by note_skipped_deck
         self._deck_trackers = {}    # name → DeckVersionTracker
         self._deck_watchers = {}    # name → FileWatcher
         self._deck_cache = {}       # name → dict (deck data)
         self._lock = threading.Lock()
+
+    def note_skipped_deck(self, name, reason):
+        """Explain, once per name, why a file in the folder is not listed —
+        otherwise a deck the user can see on disk just vanishes silently."""
+        with self._lock:
+            if name in self._skipped_decks:
+                return
+            self._skipped_decks.add(name)
+        print(f"  [decks]  Skipping {name}: {reason}")
+
+    def sweep_save_temps(self):
+        """Remove our own leftover save temporaries (a save killed mid-write
+        leaves one). unlink never dereferences, so a planted entry using our
+        prefix is removed rather than followed."""
+        try:
+            names = os.listdir(self.folder_fd if self.folder_fd is not None
+                               else self.folder_path)
+        except OSError:
+            return
+        kwargs = {"dir_fd": self.folder_fd} if self.folder_fd is not None else {}
+        for name in names:
+            if name.startswith(".vela-save-") and name.endswith(".tmp"):
+                try:
+                    os.unlink(name if self.folder_fd is not None
+                              else os.path.join(self.folder_path, name), **kwargs)
+                except OSError:
+                    pass
 
     # ── Per-deck state management (folder mode) ──────────────────────
 
@@ -1012,7 +1174,9 @@ class VelaLocalServer:
                     except ValueError:
                         print(f"[sync] {name} no longer resolves inside the folder — skipping")
                         return
-                    new_data = read_deck_json(fpath)
+                    new_data = read_deck_json(
+                        name if self.folder_fd is not None else fpath,
+                        dir_fd=self.folder_fd)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
                     print(f"[sync] {name} changed → pushed to browser")
@@ -1112,7 +1276,9 @@ class VelaLocalServer:
 
     def _build_html_for_deck(self, deck_path, deck_name):
         """Build the Vela app HTML for a specific deck file (folder mode)."""
-        deck_data = self._normalize_deck(read_deck_json(deck_path))
+        deck_data = self._normalize_deck(read_deck_json(
+            deck_name if self.folder_fd is not None else deck_path,
+            dir_fd=self.folder_fd))
 
         self.set_deck_data(deck_name, deck_data)
         self._ensure_watcher(deck_name)
@@ -1141,11 +1307,12 @@ class VelaLocalServer:
 
     def _load_vendor_files(self):
         self._vendor_available = False
-        search_dirs = [
-            self.folder_path,
-            os.getcwd(),
-            os.path.dirname(os.path.dirname(SKILL_DIR)),
-        ]
+        # SECURITY: this file is served as JavaScript into the authenticated
+        # app origin, so it must come only from Vela's own checkout. The served
+        # folder and the CWD are project directories Vela does not own — reading
+        # node_modules from there would execute project-supplied script in the
+        # page that holds the session cookie and the deck contents.
+        search_dirs = [os.path.dirname(os.path.dirname(SKILL_DIR))]
         vendor_map = {
             "/vendor/babel.min.js": ("@babel/standalone/babel.min.js", "application/javascript"),
         }
@@ -1616,6 +1783,7 @@ class VelaLocalServer:
             print(f"ERROR: Directory not found: {self.folder_path}", file=sys.stderr)
             sys.exit(1)
 
+        self.sweep_save_temps()
         self._load_vendor_files()
 
         VelaHTTPHandler.server_ref = self

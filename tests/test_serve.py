@@ -32,6 +32,7 @@ LOCAL_HTML_PATH = os.path.join(REPO_ROOT, "tools", "vela-dev", "local.html")
 
 sys.path.insert(0, SCRIPTS_DIR)
 
+import serve as serve_mod
 from serve import (
     DeckVersionTracker,
     FileWatcher,
@@ -577,7 +578,9 @@ class TestSecurity(FolderServerTestBase):
     # sinks must not write through, or read out of, a linked entry either.
 
     def _link_deck(self, maker, name, outside_name, content="OUTSIDE"):
-        outside = os.path.join(os.path.dirname(self._tmpdir), outside_name)
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+        outside = os.path.join(outside_dir, outside_name)
         with open(outside, "w", encoding="utf-8") as f:
             f.write(content)
         link = os.path.join(self._tmpdir, name)
@@ -592,23 +595,37 @@ class TestSecurity(FolderServerTestBase):
     def test_save_through_hardlinked_deck_does_not_escape(self):
         outside, _ = self._link_deck(os.link, "hl-save.vela", "hl-save-victim.txt")
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
-        fetch(self._port, "POST", "/save/hl-save.vela", body=payload)
+        status, _, _ = fetch(self._port, "POST", "/save/hl-save.vela", body=payload)
         with open(outside, encoding="utf-8") as f:
             self.assertEqual(f.read(), "OUTSIDE", "save wrote through a hard link")
+        self.assertEqual(status, 200)
+        with open(os.path.join(self._tmpdir, "hl-save.vela"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], SAMPLE_DECK["deckTitle"],
+                             "the save did not land on the in-folder name")
 
-    def test_save_through_symlinked_deck_does_not_escape(self):
-        outside, _ = self._link_deck(os.symlink, "sl-save.vela", "sl-save-victim.txt")
+    def test_save_through_symlinked_deck_does_not_write_through(self):
+        # Containment already blocks a symlink pointing outside, so aim it at a
+        # deck INSIDE the folder: the check passes, and only the writer decides
+        # whether the other deck gets clobbered.
+        target = self._write_temp_deck("sl-target.vela", {"deckTitle": "TARGET", "lanes": []})
+        link = os.path.join(self._tmpdir, "sl-save.vela")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("platform cannot create symlinks")
+        self.addCleanup(lambda: os.path.exists(link) and os.unlink(link))
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
         fetch(self._port, "POST", "/save/sl-save.vela", body=payload)
-        with open(outside, encoding="utf-8") as f:
-            self.assertEqual(f.read(), "OUTSIDE", "save wrote through a symlink")
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "TARGET",
+                             "save wrote through a symlink into another deck")
 
     def test_serving_a_hardlinked_deck_does_not_leak_it(self):
         secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
         self._link_deck(os.link, "hl-read.vela", "hl-read-secret.json", secret)
         status, _, body = fetch(self._port, "GET", "/deck/hl-read.vela")
         self.assertNotIn(b"SUPERSECRET", body)
-        self.assertEqual(status, 500)  # refused at the reader, not rendered
+        self.assertEqual(status, 409)  # refused at the reader, with a reason
 
     def test_listing_skips_hardlinked_decks(self):
         secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
@@ -616,6 +633,82 @@ class TestSecurity(FolderServerTestBase):
         status, _, body = fetch(self._port, "GET", "/api/decks")
         self.assertEqual(status, 200)
         self.assertNotIn(b"SUPERSECRET", body)
+
+    # -- Deck file mode / atomicity --
+
+    def test_save_preserves_a_private_decks_mode(self):
+        # An atomic replace needs no write permission on the FILE, so without an
+        # explicit carry-over a deck the user made private would come back
+        # world-readable on the next browser save.
+        path = self._write_temp_deck("private.vela")
+        os.chmod(path, 0o600)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/private.vela", body=payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_save_refuses_a_read_only_deck(self):
+        path = self._write_temp_deck("readonly.vela", {"deckTitle": "KEEP", "lanes": []})
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/readonly.vela", body=payload)
+        self.assertEqual(status, 500)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "KEEP")
+
+    def test_failed_save_does_not_publish_the_edit(self):
+        # A save that never reached disk must not be pushed to other tabs.
+        path = self._write_temp_deck("lost.vela", {"deckTitle": "ONDISK", "lanes": []})
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save",
+                              "deck": {"deckTitle": "NEVER-SAVED", "lanes": []}})
+        fetch(self._port, "POST", "/save/lost.vela", body=payload)
+        self.assertNotEqual(
+            (self._server.get_deck_data("lost.vela") or {}).get("deckTitle"),
+            "NEVER-SAVED", "an unsaved edit was published to other clients")
+
+    def test_save_leaves_no_temp_files_behind(self):
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sample.vela", body=payload)
+        leftovers = [n for n in os.listdir(self._tmpdir) if n.startswith(".vela-save-")]
+        self.assertEqual(leftovers, [])
+
+    def test_concurrent_saves_never_widen_deck_permissions(self):
+        # write_deck_json must not read-modify-write the process umask: another
+        # thread inside that window creates world-writable files.
+        names = [f"conc{i}.vela" for i in range(12)]
+        for n in names:
+            self._write_temp_deck(n)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        threads = [threading.Thread(target=fetch,
+                                    args=(self._port, "POST", f"/save/{n}"),
+                                    kwargs={"body": payload}) for n in names]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+        modes = {os.stat(os.path.join(self._tmpdir, n)).st_mode & 0o777 for n in names}
+        self.assertFalse([m for m in modes if m & 0o022], f"widened modes: {modes}")
+
+    def test_vendor_js_is_not_loaded_from_the_served_folder(self):
+        # /vendor/babel.min.js is executed in the authenticated page origin, so
+        # it must never come from project-directory content.
+        nm = os.path.join(self._tmpdir, "node_modules", "@babel", "standalone")
+        os.makedirs(nm, exist_ok=True)
+        self.addCleanup(shutil.rmtree, os.path.join(self._tmpdir, "node_modules"),
+                        ignore_errors=True)
+        with open(os.path.join(nm, "babel.min.js"), "w", encoding="utf-8") as f:
+            f.write("/*PROJECT-SUPPLIED-JS*/")
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
+        saved = dict(VelaHTTPHandler.static_files)
+        try:
+            srv._load_vendor_files()
+            body = VelaHTTPHandler.static_files.get("/vendor/babel.min.js", (b"", ""))[0]
+        finally:
+            VelaHTTPHandler.static_files = saved
+        self.assertNotIn(b"PROJECT-SUPPLIED-JS", body)
 
     # -- Path traversal on /poll/ (DOCUMENTS MISSING VALIDATION) --
 
@@ -1734,26 +1827,30 @@ class TestRuntimeFileLinks(unittest.TestCase):
         # NB: claim a free ephemeral port rather than hardcoding one — a fixed
         # port could be held by an unrelated process on the machine running this
         # suite, and the port-holder fallback would then kill it for real.
-        import socket
+        # Assert the DECISION, with kills stubbed out: driving the real fallback
+        # would run `lsof -ti :PORT`, which also matches client sockets, and
+        # SIGKILL whichever unrelated process happens to hold that port on the
+        # machine running this suite.
         import subprocess
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            free_port = probe.getsockname()[1]
+        from unittest import mock
         victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         self.addCleanup(victim.wait)
         self.addCleanup(victim.kill)
-        self.server.port = free_port
+        self.server.port = 3030
         with open(self._rt, "w", encoding="utf-8") as f:
-            json.dump({"pid": victim.pid, "port": free_port}, f)
-        httpd = None
-        try:
-            httpd = self.server._retry_after_stale_kill(VelaHTTPHandler)
-        except Exception:
-            pass  # the kill decision is the subject, not the rebind
-        if httpd is not None:
-            httpd.server_close()
-        time.sleep(0.4)
-        self.assertIsNone(victim.poll(), "an unrelated process was SIGKILLed")
+            json.dump({"pid": victim.pid, "port": 3030}, f)
+        self.assertFalse(self.server._is_our_stale_server(victim.pid, 3030),
+                         "an unrelated live process was accepted as our stale server")
+        with mock.patch.object(serve_mod.os, "kill") as killed, \
+                mock.patch.object(serve_mod.subprocess, "run") as ran:
+            ran.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            try:
+                self.server._retry_after_stale_kill(VelaHTTPHandler)
+            except Exception:
+                pass  # the kill decision is the subject, not the rebind
+        self.assertNotIn(victim.pid, [c.args[0] for c in killed.call_args_list],
+                         "a process named only by the runtime file was signalled")
+        self.assertIsNone(victim.poll())
 
     @unittest.skipUnless(
         all(fn in os.supports_dir_fd for fn in (os.open, os.stat, os.unlink, os.rmdir)),
