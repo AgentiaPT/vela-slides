@@ -350,15 +350,30 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         """
         path = cls._safe_deck_path(folder, name)  # containment for the parent dirs
         if write:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            # NOTE: deliberately NO O_TRUNC here. O_TRUNC destroys the file at
+            # open(), before any check can run — so truncation would happen even
+            # for an entry we are about to refuse. Truncate below, after the
+            # inode passes every guard.
+            flags = os.O_WRONLY | os.O_CREAT
         else:
             # O_NONBLOCK so a fifo entry cannot hang the handler.
             flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
         fd = os.open(path, flags, 0o600)
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
                 raise OSError(f"not a regular file: {name}")
+            # Refuse multiply-linked inodes. O_NOFOLLOW only rejects a SYMlink; a
+            # HARDlink is an ordinary directory entry inside the folder whose
+            # realpath stays inside, so containment, O_NOFOLLOW and S_ISREG all
+            # pass while the inode is shared with a file outside the folder —
+            # reading it exfiltrates that file and writing it destroys it. A deck
+            # the server owns has exactly one link; anything else is refused.
+            if st.st_nlink != 1:
+                raise OSError(f"refusing multiply-linked file: {name}")
+            if write:
+                os.ftruncate(fd, 0)  # safe now: the inode passed every guard
         except BaseException:
             os.close(fd)
             raise

@@ -1735,6 +1735,60 @@ class TestDeckFileAccessContainment(FolderServerTestBase):
         status, _, _ = fetch(self._port, "GET", "/deck/balias.vela")
         self.assertNotEqual(status, 200)
 
+    def _hardlink(self, link_name, target):
+        path = os.path.join(self._tmpdir, link_name)
+        try:
+            os.link(target, path)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("hardlinks unavailable on this filesystem")
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        return path
+
+    def test_hardlinked_deck_is_refused(self):
+        """O_NOFOLLOW rejects a SYMlink only. A hardlink is an ordinary entry
+        inside the folder sharing an inode with a file outside it — containment,
+        O_NOFOLLOW and S_ISREG all pass, so the link count must be checked."""
+        outside = self._outside()
+        target = os.path.join(outside, "secret.vela")
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE", "lanes": []}, f)
+        self._hardlink("hl.vela", target)
+        with self.assertRaises(OSError):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "hl.vela")
+
+    def test_hardlinked_write_does_not_truncate_the_target(self):
+        """The ordering matters: O_TRUNC destroys the file AT open(), before any
+        check can run. The guard is only meaningful if truncation happens after
+        the inode is accepted — so the victim's content must survive intact."""
+        outside = self._outside()
+        target = os.path.join(outside, "victim.conf")
+        with open(target, "w", encoding="utf-8") as f:
+            f.write("IMPORTANT-ORIGINAL-CONTENT")
+        self._hardlink("hlw.vela", target)
+
+        status, _, _ = fetch(self._port, "POST", "/save/hlw.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "IMPORTANT-ORIGINAL-CONTENT",
+                             "hardlinked target was truncated or overwritten")
+
+    def test_hardlinked_deck_is_neither_listed_nor_served(self):
+        outside = self._outside()
+        target = os.path.join(outside, "hidden.vela")
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE", "lanes": []}, f)
+        self._hardlink("hlr.vela", target)
+
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        listed = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertNotIn("hlr.vela", listed)
+        self.assertIn("sample.vela", listed, "healthy decks must still be listed")
+        status, _, served = fetch(self._port, "GET", "/deck/hlr.vela")
+        self.assertNotEqual(status, 200)
+        self.assertNotIn(b"OUTSIDE", served)
+
     def test_served_root_is_resolved_once_at_startup(self):
         """O_NOFOLLOW guards the leaf, not a parent component.
 
