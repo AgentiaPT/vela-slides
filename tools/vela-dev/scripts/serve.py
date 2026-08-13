@@ -341,6 +341,21 @@ os.umask(_UMASK)
 DECK_FILE_MODE = 0o666 & ~_UMASK  # what a plain open(path, "w") would have made
 
 
+def console_safe(text, limit=160):
+    """Render untrusted text for the operator's terminal.
+
+    Deck names and OS error strings carry project-directory content, and a
+    terminal executes what it is sent: escape sequences clear the screen, retitle
+    the window, or forge a reassuring log line the operator then believes. Escape
+    every non-printable and cap the length. (Names reaching the HTTP layer are
+    rejected outright by _validate_deck_name — this is the console's own guard,
+    which also covers text that never passed through it, such as OS errors.)"""
+    text = str(text)
+    out = "".join(c if c.isprintable() or c == " " else f"\\x{ord(c):02x}"
+                  for c in text[:limit])
+    return out + ("…" if len(text) > limit else "")
+
+
 def pin_dir(path):
     """Open a directory to use as a dir_fd anchor, or None where unsupported.
 
@@ -426,7 +441,7 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
     if dst is not None and stat.S_ISREG(dst.st_mode):
         if not dst.st_mode & stat.S_IWUSR:
             raise PermissionError(f"Deck file is read-only: {path}")
-        mode = stat.S_IMODE(dst.st_mode)
+        mode = stat.S_IMODE(dst.st_mode) & 0o777  # never carry setuid/setgid/sticky
     # Create the temp exclusively ourselves rather than via mkstemp, so it can be
     # made relative to the pinned directory, and so its mode is set through the
     # DESCRIPTOR. A by-path chmod here would follow a link planted at the temp
@@ -507,6 +522,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # guarantee; this prevents deceptive names slipping into the listing.
         name = unicodedata.normalize("NFKC", name)
         if any(unicodedata.category(c) == "Cf" for c in name):
+            return False
+        # Control characters (Cc) and DEL: CR/LF split an HTTP status line into
+        # forged headers, and ESC/BEL rewrite the operator's terminal. Neither
+        # belongs in a filename, so reject them here rather than at each sink.
+        if any(unicodedata.category(c) == "Cc" for c in name) or "\x7f" in name:
             return False
         if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
             return False
@@ -785,12 +805,12 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             # The reader refuses links and non-plain files. That is a property of
             # the FILE, not a server fault, and it is invisible from the browser
             # — so name it and give the remedy rather than a bare 500.
-            print(f"[error] Refusing to serve {deck_name}: {e}")
+            print(f"[error] Refusing to serve {console_safe(deck_name)}: {console_safe(e)}")
             self.send_error(409, "Deck not served: it is a link, or shares its "
                                  "contents with another name. Copy it to a plain "
                                  "file (cp deck.vela copy.vela) and open that.")
         except Exception as e:
-            print(f"[error] Building HTML for {deck_name}: {e}")
+            print(f"[error] Building HTML for {console_safe(deck_name)}: {console_safe(e)}")
             self.send_error(500, "Error loading deck")
 
     def _handle_deck_poll(self):
@@ -856,18 +876,21 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                     # Report the real reason instead of a generic 400, and leave
                     # the in-memory deck alone — publishing an edit that never
                     # reached disk makes every other tab believe a lost save.
-                    print(f"[save] Could not write {deck_name}: {e}")
-                    self.send_error(500, f"Could not write deck: {e.strerror or e}")
+                    print(f"[save] Could not write {console_safe(deck_name)}: "
+                          f"{console_safe(e)}")
+                    # Static reason phrase: send_error writes `message` straight
+                    # into the status line, so nothing untrusted may reach it.
+                    self.send_error(500, "Could not write deck (see server console)")
                     return
                 srv.set_deck_data(deck_name, deck)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
-                print(f"[sync] Browser edit → saved {deck_name}")
+                print(f"[sync] Browser edit → saved {console_safe(deck_name)}")
             self._json_response(200, {"ok": True})
         except Exception as e:
             if not isinstance(e, BrokenPipeError):
-                print(f"[save] Error: {e}")
+                print(f"[save] Error: {console_safe(e)}")
                 self.send_error(400, "Invalid request")
 
     def _json_response(self, code, obj):
@@ -1051,7 +1074,7 @@ class FileWatcher:
             except FileNotFoundError:
                 pass
             except Exception as e:
-                print(f"[watch] Error: {e}")
+                print(f"[watch] Error: {console_safe(e)}")
             time.sleep(self.interval)
 
 
@@ -1113,7 +1136,7 @@ class VelaLocalServer:
             if name in self._skipped_decks:
                 return
             self._skipped_decks.add(name)
-        print(f"  [decks]  Skipping {name}: {reason}")
+        print(f"  [decks]  Skipping {console_safe(name)}: {reason}")
 
     def sweep_save_temps(self):
         """Remove our own leftover save temporaries (a save killed mid-write
@@ -1172,16 +1195,16 @@ class VelaLocalServer:
                     try:
                         fpath = VelaHTTPHandler._safe_deck_path(self.folder_path, name)
                     except ValueError:
-                        print(f"[sync] {name} no longer resolves inside the folder — skipping")
+                        print(f"[sync] {console_safe(name)} no longer resolves inside the folder — skipping")
                         return
                     new_data = read_deck_json(
                         name if self.folder_fd is not None else fpath,
                         dir_fd=self.folder_fd)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
-                    print(f"[sync] {name} changed → pushed to browser")
+                    print(f"[sync] {console_safe(name)} changed → pushed to browser")
                 except Exception as e:
-                    print(f"[sync] Error reading {name}: {e}")
+                    print(f"[sync] Error reading {console_safe(name)}: {console_safe(e)}")
 
             watcher = FileWatcher(deck_path, on_change)
             watcher.start()

@@ -634,6 +634,41 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 200)
         self.assertNotIn(b"SUPERSECRET", body)
 
+    # -- Control characters in deck names --
+
+    def test_control_characters_in_deck_name_rejected(self):
+        # CR/LF split an HTTP status line into forged headers; ESC/BEL rewrite
+        # the operator's terminal. Neither belongs in a filename.
+        v = VelaHTTPHandler._validate_deck_name
+        for bad in ("a\r\nX-Injected: 1\r\nz.vela", "a\nb.vela", "a\x1b[2Jb.vela",
+                    "a\x07b.vela", "a\x00b.vela", "a\x7fb.vela"):
+            self.assertFalse(v(bad), f"accepted control chars: {bad!r}")
+        self.assertTrue(v("normal-deck.vela"))
+        self.assertTrue(v("Präsentation-📊.vela"))  # printable unicode still fine
+
+    def test_save_error_does_not_reach_the_status_line(self):
+        # Even if a name slipped through, the reason phrase must stay static:
+        # http.server writes it into the status line without escaping.
+        path = self._write_temp_deck("ro-msg.vela")
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=5)
+        conn.request("POST", "/save/ro-msg.vela", body=payload,
+                     headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 500)
+        self.assertNotIn("ro-msg", resp.reason)
+        conn.close()
+
+    def test_console_safe_escapes_terminal_control(self):
+        out = serve_mod.console_safe("deck\x1b[2J\x07\nname.vela")
+        for ch in ("\x1b", "\x07", "\n"):
+            self.assertNotIn(ch, out)
+        self.assertIn("deck", out)
+        self.assertEqual(serve_mod.console_safe("Präsentation-📊"), "Präsentation-📊")
+        self.assertLess(len(serve_mod.console_safe("x" * 500)), 200)
+
     # -- Deck file mode / atomicity --
 
     def test_save_preserves_a_private_decks_mode(self):
@@ -668,6 +703,15 @@ class TestSecurity(FolderServerTestBase):
         self.assertNotEqual(
             (self._server.get_deck_data("lost.vela") or {}).get("deckTitle"),
             "NEVER-SAVED", "an unsaved edit was published to other clients")
+
+    def test_save_does_not_carry_special_mode_bits(self):
+        # S_IMODE keeps setuid/setgid/sticky; a file the server creates and owns
+        # must never inherit them from the entry it replaces.
+        path = self._write_temp_deck("sgid.vela")
+        os.chmod(path, 0o2644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sgid.vela", body=payload)
+        self.assertEqual(os.stat(path).st_mode & 0o7000, 0)
 
     def test_save_leaves_no_temp_files_behind(self):
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
