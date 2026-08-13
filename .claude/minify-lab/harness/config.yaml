@@ -1,0 +1,106 @@
+# Minify eval harness — configuration defaults.
+# Values below are LOCKED by .claude/minify-lab/context.md — do not re-derive
+# them from first principles in code; if a locked value needs to change, the
+# change belongs in context.md first, then here.
+
+agent_model: sonnet          # agent-under-test  (locked)
+judge_model: opus            # blind judge       (locked)
+reps: 3                      # per (scenario, arm)  (locked pilot budget)
+judge_rounds: 2               # judgings per pair, for stability detection
+arms: [baseline, minified]
+
+reduction:
+  # verdict 6a — size sub-verdict (harness-design.md §7, context.md amendment)
+  bar: 0.20                  # >=20% mean reduction  (locked)
+  metric: tok_regex          # primary gate metric; tok_char/bytes are cross-checks
+  weak_file_warn: 0.10       # per-file floor below which a warning (not a fail) is emitted
+  implausible_reduction: 0.95
+  proxy_disagreement_pp: 5   # percentage points
+
+  # pre-densified exemption (context.md "Autonomous decisions" — Gate resolution 1)
+  # A file this dense is exempt from the size bar; its size result is still
+  # computed and reported, it just cannot fail the size gate on its own.
+  exemption:
+    verbatim_fraction_gt: 0.25
+    function_word_ratio_lt: 0.30
+
+  # verdict 6a — structure sub-verdict (constraint-explicitness score)
+  # See harness/constraint_inventory.py — TODO(orchestrator): reconcile with
+  # .claude/skills/minify/'s extractor once both exist (see that module's
+  # header comment for detail).
+  structure:
+    # a structure sub-verdict passes when net constraint delta (explicit-made
+    # minus lost) is >= 0 for every pair — i.e. compression must not destroy
+    # more constraints than it clarifies. This is a permissive floor by
+    # design: 6a-structure exists to *surface* the signal (see probe B in
+    # research-encoding-formats.md), the real bar is 6b's behavioral-drift
+    # gate, which is where actual constraint loss gets enforced against a
+    # real agent.
+    min_net_delta: 0
+
+run:
+  base_ref: HEAD              # pinned per campaign, recorded in campaign.json
+  max_turns: 30
+  timeout_s: 900
+  jobs: 1                     # raise only after the first pilot
+  permission_mode: acceptEdits
+  allowed_tools: [Bash, Read, Write, Edit, MultiEdit, Glob, Grep, Skill]
+  hooks_mode: parity          # parity | neutralized (harness-design.md §6.2)
+
+pricing:                      # ported from evals/scripts/harvest.py PRICING ($/MTok)
+  sonnet: {input: 3.00, output: 15.00, cache_read: 0.30, cache_write: 3.75}
+  opus:   {input: 15.00, output: 75.00, cache_read: 1.50, cache_write: 18.75}
+
+gate:
+  # harness-design.md §11.1 — thresholds for VERDICT 6B (quality gate)
+  drift_baseline_min: 0.6667    # 2/3 — critical assertion "held" in baseline
+  drift_minified_max: 0.3334    # 1/3 — ...and "lost" in minified
+  absolute_floor: 0.6667        # 2/3 — every critical assertion must hold in minified
+  judge_loss_max: 0.3334        # 1/3 — minified may lose at most this share of stable pairs
+  judge_scenario_loss: 0.6667   # 2/3 — ...and never this much within one scenario
+  error_regression_max: 0.50    # tool-error count +50% => FAIL
+  turn_regression_max: 0.30     # turns +30% => FAIL
+  token_regression_warn: 0.10   # tokens +10% => WARN (not a fail)
+  unstable_max: 0.20            # >20% unstable pairs => INCONCLUSIVE
+  quarantine_max: 0.10          # >10% quarantined pairs => FAIL
+
+# Skill-name -> instruction-file path map, fixed (harness-design.md §9.3 step 2)
+skill_path_map:
+  vela-secure-coding: .claude/skills/vela-secure-coding/SKILL.md
+  vela-slides: skills/vela-slides/SKILL.md
+  hyper-sprint: .claude/skills/hyper-sprint/SKILL.md
+
+# harness-design.md §6.3 — preamble/scenario-prompt leak check stoplist.
+# The preamble and every scenario prompt must never mention any of these —
+# doing so would re-teach a rule that minification might have deleted.
+preamble_leak_terms:
+  - VELA_VERSION
+  - VELA_CHANGELOG
+  - NO_HISTORY
+  - SAFE_BLOCK_KEYS
+  - SAFE_SLIDE_KEYS
+  - MANIFEST
+  - "minimal[- ]diff"
+  - "secure[- ]coding"
+  - pptxEsc
+  - disclosure
+  - CODEMAP
+  - partsize
+
+# harness-design.md §10.2 — redaction stoplist (case-insensitive, word-boundary).
+judge_redaction_stoplist:
+  - "minif\\w*"
+  - "compress\\w*"
+  - condensed
+  - telegraphic
+  - "token-reduced"
+  - shortened
+  - baseline
+  - "original version"
+  - control
+  - variant
+  - arm
+  - "arm-a"
+  - "arm-b"
+  - "variant a"
+  - "variant b"

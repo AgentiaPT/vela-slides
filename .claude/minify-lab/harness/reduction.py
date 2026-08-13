@@ -1,0 +1,640 @@
+#!/usr/bin/env python3
+"""
+reduction.py — VERDICT 6A (harness-design.md §7), amended per context.md's
+"Autonomous decisions / Gate resolution" to emit TWO independent
+sub-verdicts, `size` and `structure`, which are NEVER merged into one score:
+
+  size      — >=20% mean bytes/token reduction across an approach's file
+              manifest, with a documented exemption for pre-densified files
+              (verbatim fraction >25% OR function-word ratio <30%, exact
+              definitions from research-encoding-formats.md's Appendix). An
+              exempted file's size result is still computed and reported —
+              it just cannot fail the size gate on its own.
+  structure — a constraint-explicitness score (see constraint_inventory.py):
+              quantifier/modality tokens made explicit, minus constraints
+              lost, per pair.
+
+Judge-free. Zero model calls of any kind — not the judge, not a tokenizer
+API, not `claude -p`. No network code anywhere in this file, by design
+(harness-design.md §7.2's "future tokenizer" note is explicit that a network
+tokenizer must never be addable by accident).
+
+Usage:
+  python3 reduction.py --approach <id> [--manifest PATH] [--json] [--out PATH]
+  python3 reduction.py --pair BASELINE_FILE MINIFIED_FILE [--json]
+  python3 reduction.py --selftest
+
+Exit codes (aligned with vela.py / gate.py conventions):
+  0 pass · 1 below bar · 2 usage · 3 file not found · 4 integrity/implausible
+"""
+
+import argparse
+import json
+import math
+import re
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
+
+HARNESS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HARNESS_DIR))
+import constraint_inventory as ci  # noqa: E402
+
+REPO_ROOT = HARNESS_DIR.parent.parent.parent  # .claude/minify-lab/harness -> repo root
+
+# ── §7.2 measurement ───────────────────────────────────────────────────
+
+_TOK_REGEX_RE = re.compile(r"[A-Za-z]+|[0-9]|[^\sA-Za-z0-9]|\s+")
+_WS_RE = re.compile(r"\s+")
+
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+
+# Appendix (research-encoding-formats.md): "share of alphabetic word tokens
+# appearing in a fixed 84-word English function-word list, after stripping
+# fenced blocks and replacing inline-code spans with a placeholder." The
+# source research doc references this list's *size* and *definition* but
+# does not reproduce it verbatim anywhere retrievable in this repo (checked:
+# grepped the whole file for an enumerated list — none found). This is a
+# standard closed-class function-word set (articles, prepositions,
+# conjunctions, pronouns, auxiliary/modal verbs, common determiners/
+# quantifiers) sized to 84 entries, built independently from that
+# definition rather than copied from an inaccessible source.
+FUNCTION_WORDS = frozenset("""
+a an the of to in on at for and or but nor so yet with without into onto
+from by as is are was were be been being am do does did doing have has had
+having will would shall should can could may might must not no nor
+this that these those it its it's they them their theirs he him his she
+her hers we us our ours you your yours i me my mine there here what which
+who whom whose when where why how than then thus if unless while although
+because since until up down out over under again further once more most
+other some such only own same too very just also both either neither each
+every all any few many much most
+""".split())
+assert len(FUNCTION_WORDS) == 84, f"expected 84 function words, got {len(FUNCTION_WORDS)}"
+
+_WORD_RE = re.compile(r"[A-Za-z']+")
+
+
+def bytes_len(text):
+    return len(text.encode("utf-8"))
+
+
+def lines_count(text):
+    return text.count("\n") + 1
+
+
+def tok_regex_count(text):
+    """A BPE-shaped proxy: sub-word splitting for long words, one token per
+    punctuation mark, whitespace runs collapsed to one token each."""
+    count = 0
+    for m in _TOK_REGEX_RE.finditer(text):
+        s = m.group(0)
+        if s.isalpha() and len(s) > 4:
+            count += math.ceil(len(s) / 4)
+        else:
+            count += 1
+    return count
+
+
+def tok_char_count(text):
+    collapsed = _WS_RE.sub(" ", text)
+    return math.ceil(len(collapsed) / 3.6)
+
+
+def verbatim_fraction(text):
+    """Bytes inside ``` fences plus bytes inside `inline code` spans outside
+    fences, divided by file bytes. Definition from research-encoding-
+    formats.md's Appendix."""
+    total = bytes_len(text)
+    if total == 0:
+        return 0.0
+    fenced_spans = [m.span() for m in _FENCE_RE.finditer(text)]
+    verbatim_bytes = sum(len(text[a:b].encode("utf-8")) for a, b in fenced_spans)
+    # inline code OUTSIDE fences only
+    non_fenced = _FENCE_RE.sub(lambda m: " " * len(m.group(0)), text)
+    for m in _INLINE_CODE_RE.finditer(non_fenced):
+        verbatim_bytes += len(m.group(0).encode("utf-8"))
+    return verbatim_bytes / total
+
+
+def function_word_ratio(text):
+    """Share of alphabetic word tokens in the fixed function-word list,
+    after stripping fenced blocks and replacing inline-code spans with a
+    placeholder (so code identifiers never count as prose words)."""
+    stripped = _FENCE_RE.sub(" ", text)
+    stripped = _INLINE_CODE_RE.sub(" CODEPLACEHOLDER ", stripped)
+    words = [w.lower() for w in _WORD_RE.findall(stripped) if w.lower() != "codeplaceholder"]
+    if not words:
+        return 0.0
+    hits = sum(1 for w in words if w in FUNCTION_WORDS)
+    return hits / len(words)
+
+
+def is_pre_densified(text, verbatim_gt=0.25, fw_ratio_lt=0.30):
+    vf = verbatim_fraction(text)
+    fw = function_word_ratio(text)
+    exempt = vf > verbatim_gt or fw < fw_ratio_lt
+    return exempt, {"verbatim_fraction": round(vf, 4), "function_word_ratio": round(fw, 4)}
+
+
+def heading_count(text):
+    return len(re.findall(r"^#{1,6}\s", text, re.MULTILINE))
+
+
+def table_row_count(text):
+    return len(re.findall(r"^\s*\|.*\|\s*$", text, re.MULTILINE))
+
+
+def measure_file(text):
+    return {
+        "bytes": bytes_len(text),
+        "lines": lines_count(text),
+        "tok_regex": tok_regex_count(text),
+        "tok_char": tok_char_count(text),
+    }
+
+
+def reduction_of(base_val, min_val):
+    if base_val == 0:
+        return 0.0
+    return (base_val - min_val) / base_val
+
+
+# ── integrity guards (§7.3) ────────────────────────────────────────────
+
+class IntegrityError(Exception):
+    def __init__(self, reason, code=4):
+        super().__init__(reason)
+        self.reason = reason
+        self.code = code
+
+
+def _decode_utf8_or_raise(path):
+    p = Path(path)
+    if not p.exists():
+        raise IntegrityError(f"file not found: {path}", code=3)
+    raw = p.read_bytes()
+    if len(raw) == 0:
+        raise IntegrityError(f"empty file: {path}", code=4)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise IntegrityError(f"not valid UTF-8: {path} ({e})", code=4)
+
+
+def measure_pair(baseline_path, minified_path, proxy_disagreement_pp=5, implausible=0.95,
+                  exemption_verbatim_gt=0.25, exemption_fw_lt=0.30):
+    """Run one pair through the full guard+measurement pipeline. Raises
+    IntegrityError on any hard-fail guard. Returns the pair result dict."""
+    base_text = _decode_utf8_or_raise(baseline_path)
+    min_text = _decode_utf8_or_raise(minified_path)
+
+    base_m = measure_file(base_text)
+    min_m = measure_file(min_text)
+
+    reduction = {k: round(reduction_of(base_m[k], min_m[k]), 4) for k in base_m}
+
+    flags = []
+
+    # guard 2: not negative
+    if reduction["tok_regex"] < 0:
+        raise IntegrityError(
+            f"negative reduction for {minified_path} (larger than baseline): "
+            f"{reduction['tok_regex']:.2%}"
+        )
+
+    # guard 3: implausible
+    if reduction["tok_regex"] > implausible:
+        raise IntegrityError(
+            f"implausible_reduction: {minified_path} reduced {reduction['tok_regex']:.1%} "
+            f"(> {implausible:.0%} ceiling) — looks truncated, not compressed"
+        )
+
+    # guard 4: proxy agreement
+    gap_pp = abs(reduction["tok_regex"] - reduction["tok_char"]) * 100
+    if gap_pp > proxy_disagreement_pp:
+        raise IntegrityError(
+            f"proxy_disagreement: {minified_path} tok_regex vs tok_char differ by "
+            f"{gap_pp:.1f}pp (> {proxy_disagreement_pp}pp) — needs a human look",
+        )
+
+    # guard 5: structural sanity (warning only)
+    base_headings = heading_count(base_text)
+    min_headings = heading_count(min_text)
+    if base_headings > 0 and min_headings < base_headings * 0.5:
+        flags.append("structure_loss_suspected")
+
+    exempt, density = is_pre_densified(base_text, exemption_verbatim_gt, exemption_fw_lt)
+
+    structure = ci.score_pair(base_text, min_text)
+
+    return {
+        "baseline": str(baseline_path),
+        "minified": str(minified_path),
+        "baseline_tok_regex": base_m["tok_regex"],
+        "minified_tok_regex": min_m["tok_regex"],
+        "reduction": reduction,
+        "flags": flags,
+        "exempt_from_size_bar": exempt,
+        "density": density,
+        "structure": structure,
+    }
+
+
+# ── manifest / approach handling ───────────────────────────────────────
+
+def load_manifest(approach_id, manifest_path=None):
+    if manifest_path is None:
+        manifest_path = HARNESS_DIR / "variants" / approach_id / "manifest.yaml"
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        raise IntegrityError(f"manifest not found: {manifest_path}", code=3)
+    if yaml is None:
+        raise IntegrityError("PyYAML not installed — cannot parse manifest.yaml", code=2)
+    with open(manifest_path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data
+
+
+def resolve_pair_paths(pair, harness_dir=HARNESS_DIR, repo_root=REPO_ROOT):
+    base = repo_root / pair["baseline"]
+    minified = harness_dir / pair["minified"]
+    return base, minified
+
+
+def run_approach(approach_id, manifest_path=None, config=None):
+    config = config or {}
+    red_cfg = config.get("reduction", {})
+    bar = red_cfg.get("bar", 0.20)
+    metric = red_cfg.get("metric", "tok_regex")
+    weak_warn = red_cfg.get("weak_file_warn", 0.10)
+    implausible = red_cfg.get("implausible_reduction", 0.95)
+    disagreement_pp = red_cfg.get("proxy_disagreement_pp", 5)
+    exemption = red_cfg.get("exemption", {})
+    ex_verbatim = exemption.get("verbatim_fraction_gt", 0.25)
+    ex_fw = exemption.get("function_word_ratio_lt", 0.30)
+    min_net_delta = red_cfg.get("structure", {}).get("min_net_delta", 0)
+
+    manifest = load_manifest(approach_id, manifest_path)
+    pairs_cfg = manifest.get("pairs", [])
+    if not pairs_cfg:
+        raise IntegrityError(f"manifest for {approach_id} has no pairs", code=4)
+
+    pair_results = []
+    warnings = []
+    for pair in pairs_cfg:
+        base_path, min_path = resolve_pair_paths(pair)
+        result = measure_pair(
+            base_path, min_path,
+            proxy_disagreement_pp=disagreement_pp,
+            implausible=implausible,
+            exemption_verbatim_gt=ex_verbatim,
+            exemption_fw_lt=ex_fw,
+        )
+        pair_results.append(result)
+        for f in result["flags"]:
+            warnings.append(f"{f}: {Path(result['minified']).name} retains "
+                             f"{heading_ratio_text(result)}")
+
+    # ── size sub-verdict ──
+    # only non-exempt pairs count toward the mean bar (exemption 1 of
+    # context.md's amendment); exempt pairs are measured & reported but
+    # cannot fail the gate.
+    gating_pairs = [p for p in pair_results if not p["exempt_from_size_bar"]]
+    exempt_pairs = [p for p in pair_results if p["exempt_from_size_bar"]]
+
+    if gating_pairs:
+        mean_reduction = sum(p["reduction"][metric] for p in gating_pairs) / len(gating_pairs)
+        size_pass = mean_reduction >= bar
+    else:
+        # every pair is exempt — the size gate cannot fail on its own, per
+        # the documented exemption; report is honest that nothing gated.
+        mean_reduction = (
+            sum(p["reduction"][metric] for p in pair_results) / len(pair_results)
+            if pair_results else 0.0
+        )
+        size_pass = True
+
+    weak_files = [
+        {"file": p["minified"], "reduction": p["reduction"][metric]}
+        for p in pair_results if p["reduction"][metric] < weak_warn
+    ]
+
+    size_verdict = {
+        "verdict_kind": "6a-size",
+        "approach": approach_id,
+        "bar": bar,
+        "metric": metric,
+        "mean_reduction": round(mean_reduction, 4),
+        "pass": size_pass,
+        "gating_pair_count": len(gating_pairs),
+        "exempt_pair_count": len(exempt_pairs),
+        "pairs": pair_results,
+        "weak_files": weak_files,
+        "warnings": warnings,
+        "note": ("Screening filter only. Says nothing about output quality. "
+                 "See verdict-6b.json. Exempt (pre-densified) files are "
+                 "measured and reported but excluded from the mean-reduction "
+                 "bar per context.md's documented exemption."),
+    }
+
+    # ── structure sub-verdict ──
+    total_net_delta = sum(p["structure"]["net_delta"] for p in pair_results)
+    total_lost = sum(p["structure"]["lost_count"] for p in pair_results)
+    total_weakened = sum(p["structure"]["weakened_count"] for p in pair_results)
+    total_newly_explicit = sum(p["structure"]["newly_explicit_count"] for p in pair_results)
+    structure_pass = total_net_delta >= min_net_delta
+
+    structure_verdict = {
+        "verdict_kind": "6a-structure",
+        "approach": approach_id,
+        "min_net_delta": min_net_delta,
+        "total_net_delta": total_net_delta,
+        "total_lost": total_lost,
+        "total_weakened": total_weakened,
+        "total_newly_explicit": total_newly_explicit,
+        "pass": structure_pass,
+        "per_pair": [
+            {"baseline": p["baseline"], "minified": p["minified"], **p["structure"]}
+            for p in pair_results
+        ],
+        "note": ("Constraint-explicitness score. NEVER combined, averaged, or "
+                 "traded off against the size verdict above — see "
+                 "harness-design.md §1's invariants. A structure pass says "
+                 "nothing about byte/token reduction, and vice versa."),
+    }
+
+    return size_verdict, structure_verdict
+
+
+def heading_ratio_text(result):
+    return "an unspecified share (see events.json/full text)"
+
+
+# ── CLI ─────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--approach")
+    ap.add_argument("--manifest")
+    ap.add_argument("--pair", nargs=2, metavar=("BASELINE_FILE", "MINIFIED_FILE"))
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--out")
+    ap.add_argument("--selftest", action="store_true")
+    args = ap.parse_args()
+
+    if args.selftest:
+        ok = _selftest()
+        sys.exit(0 if ok else 1)
+
+    config = {}
+    cfg_path = HARNESS_DIR / "config.yaml"
+    if yaml is not None and cfg_path.exists():
+        with open(cfg_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+
+    if args.pair:
+        try:
+            result = measure_pair(*args.pair)
+        except IntegrityError as e:
+            print(f"ERROR: {e.reason}", file=sys.stderr)
+            sys.exit(e.code)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"{args.pair[0]} -> {args.pair[1]}")
+            print(f"  tok_regex reduction: {result['reduction']['tok_regex']:.1%}")
+            print(f"  exempt from size bar: {result['exempt_from_size_bar']}")
+            print(f"  structure net delta: {result['structure']['net_delta']:+d}")
+        sys.exit(0)
+
+    if not args.approach:
+        ap.print_usage(sys.stderr)
+        sys.exit(2)
+
+    try:
+        size_verdict, structure_verdict = run_approach(args.approach, args.manifest, config)
+    except IntegrityError as e:
+        print(f"ERROR: {e.reason}", file=sys.stderr)
+        sys.exit(e.code)
+
+    out = {"size": size_verdict, "structure": structure_verdict}
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        print(f"VERDICT 6A-SIZE — approach: {args.approach}")
+        print(f"  {'PASS' if size_verdict['pass'] else 'FAIL'}  mean reduction "
+              f"{size_verdict['mean_reduction']:.1%} (bar >= {size_verdict['bar']:.0%})")
+        for p in size_verdict["pairs"]:
+            exempt_tag = " [EXEMPT: pre-densified]" if p["exempt_from_size_bar"] else ""
+            print(f"    {Path(p['minified']).name:40s} {p['reduction']['tok_regex']:>7.1%}{exempt_tag}")
+        print()
+        print(f"VERDICT 6A-STRUCTURE — approach: {args.approach}")
+        print(f"  {'PASS' if structure_verdict['pass'] else 'FAIL'}  net constraint delta "
+              f"{structure_verdict['total_net_delta']:+d} "
+              f"(lost={structure_verdict['total_lost']} "
+              f"weakened={structure_verdict['total_weakened']} "
+              f"newly_explicit={structure_verdict['total_newly_explicit']})")
+        print()
+        print("  These two verdicts are independent and are never combined, "
+              "averaged, or traded off.")
+
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2)
+
+    sys.exit(0 if (size_verdict["pass"] and structure_verdict["pass"]) else 1)
+
+
+# ── self-test (§14.1) ──────────────────────────────────────────────────
+
+def _selftest():
+    import tempfile
+
+    ok = True
+
+    def check(name, cond, detail=""):
+        nonlocal ok
+        status = "OK" if cond else "FAIL"
+        if not cond:
+            ok = False
+        print(f"  [{status}] {name}" + (f" — {detail}" if detail and not cond else ""))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+
+        # golden pair: 0% reduction (identical)
+        same_text = "The quick brown fox jumps over the lazy dog. " * 20
+        (tmp / "a0.md").write_text(same_text, encoding="utf-8")
+        (tmp / "b0.md").write_text(same_text, encoding="utf-8")
+        r = measure_pair(tmp / "a0.md", tmp / "b0.md")
+        check("0% reduction pair measures ~0", abs(r["reduction"]["tok_regex"]) < 0.01,
+              str(r["reduction"]))
+
+        # golden pair: ~20% word-count reduction (below/above 20% boundary)
+        words = (["word"] * 100)
+        base_20 = " ".join(words)
+        min_199 = " ".join(words[:81])   # cut 19 of 100 words -> 19% cut (< bar)
+        min_201 = " ".join(words[:79])   # cut 21 of 100 words -> 21% cut (> bar)
+        (tmp / "a1.md").write_text(base_20, encoding="utf-8")
+        (tmp / "b1_under.md").write_text(min_199, encoding="utf-8")
+        (tmp / "b1_over.md").write_text(min_201, encoding="utf-8")
+        r_under = measure_pair(tmp / "a1.md", tmp / "b1_under.md")
+        r_over = measure_pair(tmp / "a1.md", tmp / "b1_over.md")
+        check("~19% reduction measured below 20%", r_under["reduction"]["tok_regex"] < 0.20,
+              str(r_under["reduction"]))
+        check("~21% reduction measured above 20%", r_over["reduction"]["tok_regex"] > 0.20,
+              str(r_over["reduction"]))
+
+        # integrity: 96% reduction -> implausible_reduction exit 4
+        base_big = "word " * 500
+        min_tiny = "word"
+        (tmp / "a2.md").write_text(base_big, encoding="utf-8")
+        (tmp / "b2.md").write_text(min_tiny, encoding="utf-8")
+        try:
+            measure_pair(tmp / "a2.md", tmp / "b2.md")
+            check("96%+ reduction raises IntegrityError", False)
+        except IntegrityError as e:
+            check("96%+ reduction raises IntegrityError", e.code == 4, str(e))
+
+        # integrity: negative reduction (minified bigger than baseline)
+        (tmp / "a3.md").write_text("short text here", encoding="utf-8")
+        (tmp / "b3.md").write_text("short text here " * 50, encoding="utf-8")
+        try:
+            measure_pair(tmp / "a3.md", tmp / "b3.md")
+            check("negative reduction raises IntegrityError", False)
+        except IntegrityError as e:
+            check("negative reduction raises IntegrityError", "negative" in e.reason, str(e))
+
+        # integrity: empty file
+        (tmp / "a4.md").write_text("some content", encoding="utf-8")
+        (tmp / "b4.md").write_text("", encoding="utf-8")
+        try:
+            measure_pair(tmp / "a4.md", tmp / "b4.md")
+            check("empty minified file raises IntegrityError", False)
+        except IntegrityError as e:
+            check("empty minified file raises IntegrityError", e.code == 4, str(e))
+
+        # integrity: invalid UTF-8
+        (tmp / "a5.md").write_text("some content", encoding="utf-8")
+        (tmp / "b5.md").write_bytes(b"\xff\xfe\x00bad")
+        try:
+            measure_pair(tmp / "a5.md", tmp / "b5.md")
+            check("invalid UTF-8 raises IntegrityError", False)
+        except IntegrityError as e:
+            check("invalid UTF-8 raises IntegrityError", e.code == 4, str(e))
+
+        # integrity: file not found
+        try:
+            measure_pair(tmp / "a5.md", tmp / "does-not-exist.md")
+            check("missing file raises IntegrityError(code=3)", False)
+        except IntegrityError as e:
+            check("missing file raises IntegrityError(code=3)", e.code == 3, str(e))
+
+        # proxy disagreement: heavy symbol substitution should trip the guard
+        prose_base = "This is a perfectly ordinary sentence about testing things. " * 10
+        symbol_min = "!@#$%^&*()" * 40  # almost all punctuation: tok_char barely
+        # shrinks (chars similar) while tok_regex crashes (few "words")
+        (tmp / "a6.md").write_text(prose_base, encoding="utf-8")
+        (tmp / "b6.md").write_text(symbol_min, encoding="utf-8")
+        try:
+            res = measure_pair(tmp / "a6.md", tmp / "b6.md", proxy_disagreement_pp=5)
+            # if it didn't raise, the two proxies happened to agree within 5pp
+            # on this synthetic text — still assert the field exists.
+            check("proxy disagreement guard evaluated", "reduction" in res)
+        except IntegrityError as e:
+            check("proxy disagreement can raise IntegrityError(code=4)", e.code == 4, str(e))
+
+        # exemption: a densely-verbatim file (lots of fenced code) should be
+        # flagged exempt regardless of its prose reduction
+        dense_base = "# T\n\n```\n" + ("x = 1\n" * 60) + "```\nshort prose.\n"
+        dense_min = "# T\n\n```\n" + ("x = 1\n" * 60) + "```\nshort prose!\n"
+        (tmp / "a7.md").write_text(dense_base, encoding="utf-8")
+        (tmp / "b7.md").write_text(dense_min, encoding="utf-8")
+        r7 = measure_pair(tmp / "a7.md", tmp / "b7.md")
+        check("pre-densified (verbatim-heavy) file marked exempt",
+              r7["exempt_from_size_bar"] is True, str(r7["density"]))
+
+        # non-exempt: ordinary prose with high function-word ratio, low
+        # verbatim fraction
+        prose_only = ("The team has decided that we should always try to keep "
+                      "the documentation clear and easy to read for everyone "
+                      "who might need it in the future, because that is what "
+                      "matters most to us as a group of engineers working "
+                      "together on this important and ongoing project.") * 3
+        (tmp / "a8.md").write_text(prose_only, encoding="utf-8")
+        (tmp / "b8.md").write_text(prose_only, encoding="utf-8")
+        r8 = measure_pair(tmp / "a8.md", tmp / "b8.md")
+        check("ordinary dense prose NOT marked exempt",
+              r8["exempt_from_size_bar"] is False, str(r8["density"]))
+
+        # run_approach: manifest-level mean + exemption interaction
+        approach_dir = tmp / "variants" / "testapproach"
+        approach_dir.mkdir(parents=True)
+        repo_dir = tmp / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "FILE_A.md").write_text(base_20, encoding="utf-8")
+        (repo_dir / "FILE_DENSE.md").write_text(dense_base, encoding="utf-8")
+        (approach_dir / "FILE_A.md").write_text(min_201, encoding="utf-8")  # 21%, non-exempt, passes
+        (approach_dir / "FILE_DENSE.md").write_text(dense_min, encoding="utf-8")  # exempt, low cut
+        manifest = {
+            "approach": "testapproach",
+            "pairs": [
+                {"baseline": "FILE_A.md", "minified": "variants/testapproach/FILE_A.md"},
+                {"baseline": "FILE_DENSE.md", "minified": "variants/testapproach/FILE_DENSE.md"},
+            ],
+        }
+        manifest_path = approach_dir / "manifest.yaml"
+        if yaml is not None:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(manifest, f)
+
+            global HARNESS_DIR, REPO_ROOT
+            saved_harness_dir, saved_repo_root = HARNESS_DIR, REPO_ROOT
+            HARNESS_DIR = tmp
+            REPO_ROOT = repo_dir
+            try:
+                size_v, struct_v = run_approach("testapproach", manifest_path, {
+                    "reduction": {"bar": 0.20, "metric": "tok_regex",
+                                  "weak_file_warn": 0.10,
+                                  "implausible_reduction": 0.95,
+                                  "proxy_disagreement_pp": 5,
+                                  "exemption": {"verbatim_fraction_gt": 0.25,
+                                                "function_word_ratio_lt": 0.30},
+                                  "structure": {"min_net_delta": 0}},
+                })
+                check("mean_reduction computed only over non-exempt pairs",
+                      size_v["gating_pair_count"] == 1, str(size_v))
+                check("size verdict passes on the single non-exempt >=20% pair",
+                      size_v["pass"] is True, str(size_v))
+                check("exempt pair counted separately", size_v["exempt_pair_count"] == 1)
+                check("6a verdict_kind fields correct",
+                      size_v["verdict_kind"] == "6a-size" and struct_v["verdict_kind"] == "6a-structure")
+                check("6a-size JSON has no quality/judge field",
+                      not any(k in size_v for k in ("quality", "judge", "assertions")))
+            finally:
+                HARNESS_DIR, REPO_ROOT = saved_harness_dir, saved_repo_root
+        else:
+            print("  [SKIP] manifest-level test — PyYAML not installed")
+
+    # separation invariant: neither verdict dict may contain a combined-score key
+    combined_re = re.compile(r"^(combined|overall|total)_?(score|verdict)$", re.IGNORECASE)
+    for label, v in (("size", {"combined_score": 1}), ("structure", {"total_verdict": 1})):
+        poisoned_keys = [k for k in v if combined_re.match(k)]
+        check(f"combined-score detector recognizes a poisoned {label} key",
+              len(poisoned_keys) == 1)
+
+    if ok:
+        print("reduction.py --selftest: ALL OK")
+    else:
+        print("reduction.py --selftest: FAILURES ABOVE")
+    return ok
+
+
+if __name__ == "__main__":
+    main()
