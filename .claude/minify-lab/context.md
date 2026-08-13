@@ -929,6 +929,60 @@ report, per the standing "verify before trusting a self-report" rule
 — then commit good fixes myself, update this file and the leaderboard
 artifact with the real outcome, and only then decide next steps.**
 
+**Judge-instability diagnosis landed and was independently verified
+(2026-08-13, ~11:10)** — agent `a33496ea0bc7f30f0`'s report, spot-checked
+directly against the code (not taken on trust):
+- **Confirmed**: `config.yaml` locks `reps: 3` and `gate.py`'s
+  `unstable_max: 0.20` — with 3 pairs the only achievable unstable
+  rates are 0/33/67/100%, so the `rate > 0.20` test only ever clears
+  at exactly 0% unstable. INCONCLUSIVE is close to the *structurally
+  expected* outcome at this rep count unless the judge is perfect
+  across all 3 pairs, not evidence the judge itself is broken.
+  Quantitatively: even a genuinely good judge at 80% true per-round
+  agreement only clears 3/3 stable 51% of the time; at 65% agreement,
+  27.5% of the time.
+- **Confirmed**: `campaign.py`'s `default_judge_invoke` shells out to
+  `claude -p ... --model opus --max-turns 1 --permission-mode
+  bypassPermissions` with **no `--temperature` flag anywhere** — the
+  `claude` CLI doesn't expose one. Verified via `claude --help` and
+  Anthropic's own Messages API docs: default temperature is 1.0,
+  documented as the wrong end of the range for analytical/near-binary
+  judging tasks like this one.
+- **Confirmed by direct execution**: `judge.py`'s
+  `seeded_random_choice` (the presentation-order swap) differs between
+  a pair's two judging rounds roughly half the time — ran it myself
+  against 100 varied (campaign_id, rep) combinations, got 53/100
+  flips. A judge with any position sensitivity will register as
+  "unstable" on those pairs regardless of whether its actual content
+  judgement was consistent.
+- **Confirmed real bug, independent of the instability question**:
+  `judge.py::parse_ab_response`'s dimension-completeness check
+  (`expected = set(dims.keys()) if dims else set(DIMENSIONS)` then
+  `missing = expected - set(dims.keys())`) is tautological — `missing`
+  is always empty whenever the response has ANY dimensions at all, so
+  a response scoring only 1 of 4 required dimensions silently passes.
+  The existing selftest for this only checks `isinstance(result,
+  dict)`, never that an error fires — false confidence in test
+  coverage.
+- **Decision (orchestrator, this session)**: NOT changing
+  `unstable_max`/`reps`/`judge_rounds` right now — they're explicitly
+  locked in `config.yaml` ("if a locked value needs to change, the
+  change belongs in context.md first") and changing rep count has
+  real cost implications that deserve a deliberate sizing decision,
+  not a reflexive patch. Deferred to when task #12 (expanding
+  piloting) actually runs — will size reps/judge_rounds properly
+  against real budget at that point. **Delegated instead** (agent
+  `a10fbb4a8699fbdbb`, task #14) the two clearly low-risk, purely
+  additive fixes: (1) fix the dead dimension-completeness check
+  properly (real correctness bug, independent of the reps question),
+  (2) add diagnostic fields to `judge_pairs` entries
+  (`swap_per_round`, `raw_winner_per_round`, `parse_failure`) so any
+  future INCONCLUSIVE run is actually diagnosable instead of leaving
+  the next investigation as blind as this one. Explicitly told not to
+  touch `gate.py`/`config.yaml`/thresholds. Awaiting completion,
+  will independently verify (`--selftest` on all three modules +
+  `tests/test_vela.py`) before committing.
+
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
 are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous
