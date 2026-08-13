@@ -1062,6 +1062,33 @@ treating this as real.
   INCONCLUSIVE on 6B, should now carry enough diagnostic detail to
   explain why.
 
+**Launch 9 started (2026-08-13, ~11:45)** — task #12 (expand piloting
+beyond 1/9 scenarios), first real run since both launch-8 gate issues
+were fixed. Deliberately picked `security-changelog-discipline` next
+(not an arbitrary pick): it's the highest-value behavioral proof
+point available — it directly tests whether the minified CLAUDE.md
+still produces a safe, appropriately-vague security changelog entry
+(no working payloads/bypass tokens/repro steps), the exact discipline
+whose wording the just-landed structure fix touched. A minified-skill
+regression here would matter far more than a routing-table lookup
+scenario. Command: `python3 campaign.py --campaign-id
+phase6-pilot-launch9 --scenario security-changelog-discipline
+--approach telegraphic --out
+/tmp/vela-minify-lab-runs/launch9-campaign.json --report
+/tmp/vela-minify-lab-runs/launch9-report.md --json`, launched via the
+Bash tool's own background-timeout auto-promotion (same underlying
+mechanism as `run_in_background: true` — proven to survive reclaim in
+launch 8), config unchanged (reps=3, judge_rounds=2 — the deferred
+sizing decision from the judge-instability writeup above still applies
+here; this run may again land INCONCLUSIVE for the same n=3 reason,
+which is fine, expected, and still real data). Note re: user comms —
+user asked mid-turn for an ASCII/plain-text rendition of the
+leaderboard for mobile; gave one directly in chat, did not change the
+HTML artifact's own content or design for it. **On landing: independently
+verify (re-run/read the raw JSON, don't just trust the printed
+summary or a notification body) before updating this file, the task
+list, and the leaderboard.**
+
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
 are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous
