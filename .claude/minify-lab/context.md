@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~14:50, leaderboard redeployed a second time with task #16's corrected interpretation — fully caught up). Summary: two real harness bugs found and fixed today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) is the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability, 33.3% loss rate). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification (governing rule text byte-identical/reinforced between arms; baseline itself fails the same assertion once; best explanation is small-sample noise on a rule already borderline in the original text) — not editing the minified variant over it, since the text isn't actually different between arms. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 2/9 scenarios piloted with genuine, trustworthy verdicts; leaderboard and context.md both current. Next: keep piloting task #12's remaining 7 scenarios (blockfield-safekeys, routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene))
+## Current status (last updated: 2026-08-13 ~13:47, launch10c in flight for `blockfield-safekeys`). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) is the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability, 33.3% loss rate). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification (governing rule text byte-identical/reinforced between arms; baseline itself fails the same assertion once; best explanation is small-sample noise on a rule already borderline in the original text) — not editing the minified variant over it, since the text isn't actually different between arms. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 2/9 scenarios piloted with genuine, trustworthy verdicts; leaderboard and context.md both current as of the last redeploy. `blockfield-safekeys` (task #12's 3rd scenario) is mid-run as `phase6-pilot-launch10c` (task id `b11ospyy4`, 1800s budget) after two false starts (timeout-too-short, then an accidental nohup relaunch — both caught and cleaned up before real cost, see "Launch 10" entry above). Next: verify launch10c's raw output independently once it lands, update leaderboard, then continue piloting the remaining 6 scenarios (routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene))
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1807,4 +1807,38 @@ use best judgment, make this a world-record minifying skill")
   (harness `assertions.py`) in parallel to avoid blocking either on the
   other. Expect two implementations to reconcile into one shared module
   once both land — orchestrator must do this explicitly, don't let it
+
+## Launch 10 (`blockfield-safekeys`, task #12) — two false starts, then a clean launch (2026-08-13, ~13:31-13:47)
+
+First attempt (`phase6-pilot-launch10`, `timeout 590`) hit the shell
+`timeout` wrapper's own limit (exit 124) after finishing all 3 baseline
+reps but only just starting `minified/rep0` — this scenario evidently
+needs noticeably more wall-clock per rep than `reducer-nohistory` did,
+so the 590s budget (sized for the earlier scenario) was too tight.
+Confirmed via the partial run directory: baseline reps 0-2 all had
+complete `diff.patch`/`final-answer.txt`/`metrics.json`; `minified/rep0`
+had only `anchors.json` + a freshly-checked-out `wt/` worktree, nothing
+else — genuinely mid-run, not stalled. Left a stale worktree registered
+(`git worktree list` showed it); removed with `git worktree remove
+--force` + `git worktree prune`.
+
+Second attempt: relaunched with a longer inner timeout, but wrapped it
+in `nohup ... &` — this is precisely the launch pattern this file's own
+"Standing rule" section (above) documents as **unreliable across
+container reclaim** (the reason `run_in_background: true` replaced it
+in the first place). Caught this immediately after launch, before any
+real time was lost: killed the nohup'd process (`kill -TERM` on the
+`timeout` PID), cleaned its one stale worktree the same way, and
+relaunched a third time using the proven pattern — `run_in_background:
+true` directly on the `timeout 1800 python3 campaign.py ...` command,
+no nohup, no manual backgrounding. This is now `phase6-pilot-launch10c`
+(task id `b11ospyy4`), timeout raised to 1800s to comfortably cover 6
+reps + judging for this heavier scenario. **Lesson for future
+launches**: don't assume every scenario needs the same per-rep budget as
+`reducer-nohistory` did — check partial-run evidence before just
+bumping the number, and never reach for `nohup`/`disown` again even for
+"just a bit more headroom" — extend the inner `timeout` value instead,
+always through `run_in_background: true` directly.
+
+Status: launch10c running, not yet complete.
   silently stay duplicated.
