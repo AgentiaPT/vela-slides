@@ -306,14 +306,27 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         #             stays allowed so non-Latin filenames still work
         #   blanks  — glyphs that render empty but are not str.isspace(), used to
         #             push the real extension out of view
-        if any(unicodedata.category(c) in ("Cc", "Me") for c in name):
-            return False
         if any(c in VelaHTTPHandler._BLANK_GLYPHS for c in name):
             return False
-        marks = 0
+        # Category allowlist, expressed as its complement. An enumerated list of
+        # slash lookalikes was bypassed by characters nobody thought to enumerate,
+        # so reject by ROLE instead: nothing whose purpose is to modify or draw a
+        # glyph may appear in a name.
+        #   Mn/Mc/Me — combining marks. A single overlay (long solidus) draws a
+        #              slash through its base, forging a path separator; the title
+        #              filter already drops all marks, so this matches it.
+        #   Lm/Sk    — modifier letters/symbols, e.g. the modifier colon
+        #   So       — "other symbols", which includes the box-drawing diagonals
+        #              that render pixel-identical to a slash
+        #   Cc       — controls, which also inject escapes into logs/terminals
+        # Zs other than ASCII space is rejected too (the Ogham space draws a dash).
+        # TRADE-OFF: this also rejects emoji in filenames (they are So). Such a
+        # deck is simply not listed or served until renamed — fail-closed, and the
+        # name is the identity the whole listing is trusted against.
         for c in name:
-            marks = marks + 1 if unicodedata.category(c) == "Mn" else 0
-            if marks >= 2:
+            if unicodedata.category(c) in ("Mn", "Mc", "Me", "Lm", "Sk", "So", "Cc"):
+                return False
+            if unicodedata.category(c) == "Zs" and c != " ":
                 return False
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
@@ -904,10 +917,27 @@ class FileWatcher:
     def ignore_next(self, seconds=1.5):
         self._ignore_until = time.time() + seconds
 
+    # A watched path lives inside the served folder, so a local process can
+    # replace it with a symlink to a fifo (a blocking open hangs this thread) or
+    # to /dev/zero (an unbounded read exhausts memory). This hash is only used for
+    # change detection — the content actually served is re-read through
+    # _open_deck_fd — so it needs the same open discipline, plus a size cap.
+    _HASH_MAX_BYTES = 64 * 1024 * 1024
+
     def _file_hash(self):
         try:
-            with open(self.path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
+            flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+            fd = os.open(self.path, flags)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    return None
+                with os.fdopen(fd, "rb") as f:  # fdopen takes ownership
+                    fd = None
+                    return hashlib.sha256(f.read(self._HASH_MAX_BYTES)).hexdigest()
+            finally:
+                if fd is not None:
+                    os.close(fd)
         except Exception:
             return ""
 
@@ -1396,16 +1426,42 @@ class VelaLocalServer:
         if not self._no_auth:
             info["token"] = self._auth_token
         rpath = self._runtime_path()
+        # SECURITY: this file carries the auth token, and it is written into the
+        # launch cwd — which for the usual `serve.py .` IS the served folder, so
+        # the same local process that plants hostile decks can pre-plant this name.
+        # Opening it O_CREAT|O_TRUNC without O_NOFOLLOW followed a planted symlink:
+        # it truncated whatever the link pointed at and wrote the token into it.
+        # Remove any existing entry (unlink acts on the link itself, never its
+        # target) and then create EXCLUSIVELY: O_CREAT|O_EXCL fails on an existing
+        # path including a symlink, so the file we write is always one we just
+        # made, owned by us, at mode 0600. No O_TRUNC — there is nothing to
+        # truncate, and a refused open must never destroy anything.
         try:
-            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.unlink(rpath)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"  [auth]   WARNING: Could not replace runtime file: {e}")
+            return
+        try:
+            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:
+            # Lost a race to recreate the name, or it reappeared as a symlink.
+            # Fail closed: never write the token to a path we did not create.
+            print(f"  [auth]   WARNING: Could not write runtime file safely: {e}")
+            return
+        try:
+            actual = os.fstat(fd).st_mode & 0o777  # from the fd we own, not a path
             with os.fdopen(fd, "w") as f:
                 json.dump(info, f, indent=2)
-            actual = os.stat(rpath).st_mode & 0o777
-            if actual != 0o600 and not self._no_auth:
-                print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
-                print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
         except OSError as e:
+            os.close(fd)
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        if actual != 0o600 and not self._no_auth:
+            print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
+            print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
 
     def _remove_runtime_files(self):
         """Remove runtime files (.vela.env, .vela.pid)."""

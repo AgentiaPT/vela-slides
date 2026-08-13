@@ -1889,6 +1889,53 @@ class TestLabelSpoofingCategories(unittest.TestCase):
             self.assertEqual(self._label(text), text)
 
 
+class TestRuntimeFileWrite(unittest.TestCase):
+    """.vela.env carries the auth token and is written into the launch cwd —
+    which for the usual `serve.py .` IS the served folder, so the same process
+    that plants hostile decks can pre-plant this name."""
+
+    def _run_in(self, cwd, decks, token="TESTTOKEN"):
+        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0, token=token)
+        prev = os.getcwd()
+        os.chdir(cwd)
+        try:
+            srv._write_runtime_info()
+        finally:
+            os.chdir(prev)
+        return srv
+
+    def test_planted_symlink_is_not_followed(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        cwd = os.path.join(root, "cwd"); os.makedirs(cwd)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        victim = os.path.join(root, "victim.txt")
+        with open(victim, "w", encoding="utf-8") as f:
+            f.write("IMPORTANT-USER-FILE")
+        try:
+            os.symlink(victim, os.path.join(cwd, ".vela.env"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+
+        self._run_in(cwd, decks)
+
+        with open(victim, encoding="utf-8") as f:
+            body = f.read()
+        self.assertEqual(body, "IMPORTANT-USER-FILE", "symlink target was overwritten")
+        self.assertNotIn("TESTTOKEN", body, "auth token written through a symlink")
+        written = os.path.join(cwd, ".vela.env")
+        self.assertFalse(os.path.islink(written), "runtime file is still a symlink")
+        self.assertEqual(os.stat(written).st_mode & 0o777, 0o600)
+
+    def test_normal_write_still_works(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        self._run_in(root, decks)
+        with open(os.path.join(root, ".vela.env"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["token"], "TESTTOKEN")
+
+
 class TestDeckNameSpoofingRejected(unittest.TestCase):
     """The File column renders the name verbatim as the identity a user falls back
     on, so deceptive characters are rejected at validation rather than rewritten —
@@ -1904,9 +1951,26 @@ class TestDeckNameSpoofingRejected(unittest.TestCase):
     def test_control_characters_rejected(self):
         self.assertFalse(VelaHTTPHandler._validate_deck_name("bad\x1b[31m.vela"))
 
+    def test_separator_lookalikes_rejected_by_role_not_by_list(self):
+        """An enumerated list of slash lookalikes was bypassed by characters
+        nobody enumerated. These render pixel-identical to real separators and
+        must be refused because of what they ARE, not because they were listed."""
+        # Escapes, not literals: these characters are invisible or easily
+        # normalised away by an editor, which would silently defang the test.
+        for label, name in (
+            ("box-drawing diagonal", "reports╱2024╱final.vela"),
+            ("combining overlay", "s̸e̸c̸.vela"),
+            ("modifier colon", "etc꞉shadow.vela"),
+            ("ogham space", "a b.vela"),
+        ):
+            self.assertFalse(VelaHTTPHandler._validate_deck_name(name), label)
+
     def test_ordinary_names_still_accepted(self):
+        """A filter that rejected real filenames would be turned off, so the
+        cost of the allowlist has to stay bounded to genuinely odd input."""
         for name in ("normal.vela", "café.vela", "日本語.vela",
-                     "my deck (v2).vela"):
+                     "my deck (v2).vela", "презентация.vela", "عرض.vela",
+                     "q3-2024_final.vela"):
             self.assertTrue(VelaHTTPHandler._validate_deck_name(name), name)
 
 
