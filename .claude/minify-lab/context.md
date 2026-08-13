@@ -2191,3 +2191,10 @@ from the reps the dead attempt reached before dying — corrupting the
 looks like a real quality signal but is pure execution-order noise.
 This is a process rule, not a code change (task #19 tracks the
 optional harness-side hardening).
+
+**Clean rerun launched** ~19:46 UTC as `phase6-pilot-launch13-clean`
+(task id `bx5ychew9`), fresh campaign-id per the new standing rule
+above → guaranteed-fresh worktree paths → no inherited markers on any
+rep. Same proven pattern: `run_in_background: true` directly on
+`timeout 1800 python3 campaign.py ...`, no nohup. Confirmed alive via
+`ps aux` immediately after launch. Not yet complete.
