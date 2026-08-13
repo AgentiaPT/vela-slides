@@ -1,0 +1,30 @@
+diff --git a/src/parts/part-reducer.jsx b/src/parts/part-reducer.jsx
+index 6c03d5e..bff9282 100644
+--- a/src/parts/part-reducer.jsx
++++ b/src/parts/part-reducer.jsx
+@@ -5,12 +5,13 @@
+ // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
+ // current-slide marker can read/act on it.
+ // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
+-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
++const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, tocFilter: "" };
+ 
+ // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
+ // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
+-// are view-only too.
+-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
++// are view-only too. tocFilter (minify-lab harness fixture): view-only TOC
++// search string, never part of undo/redo history and never persisted.
++const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK", "SET_TOC_FILTER"]);
+ const MAX_HISTORY = 50;
+ 
+ function innerReducer(state, a) {
+@@ -57,6 +58,8 @@ function innerReducer(state, a) {
+     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
+     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
+     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
++    // minify-lab harness fixture (S1/S9 setup): view-only TOC search string.
++    case "SET_TOC_FILTER": return { ...state, tocFilter: a.filter || "" };
+     case "ADD_ITEM": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; const nid = uid(); if (a.slides?.length) _dirtyMods.add(nid); _loadedMods.add(nid); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, { id: nid, title: a.title, notes: a.notes || "", comments: [], status: "todo", importance: a.importance || "should", order: lane.items.length + 1, slides: Array.isArray(a.slides) ? a.slides.map(sanitizeSlide).filter(Boolean) : [], createdAt: now() }] } : l) }; }
+     case "INSERT_ITEM": { let lanes = state.lanes; let lane = lanes.find((l) => l.id === a.laneId) || lanes[0]; if (!lane) { lane = { id: uid(), title: a.laneTitle || "Slides", collapsed: false, items: [] }; lanes = [...lanes, lane]; } const nid = uid(); _loadedMods.add(nid); const newItem = { id: nid, title: a.title || "New section", notes: "", comments: [], status: "todo", importance: a.importance || "should", order: 0, slides: [], createdAt: now() }; _autoEditItemId = nid; const sorted = [...lane.items].sort((x, y) => (x.order ?? 999) - (y.order ?? 999)); let insertIdx = sorted.length; if (a.afterId) { const ai = sorted.findIndex((i) => i.id === a.afterId); if (ai >= 0) insertIdx = ai + 1; } else if (a.beforeId) { const bi = sorted.findIndex((i) => i.id === a.beforeId); if (bi >= 0) insertIdx = bi; } sorted.splice(insertIdx, 0, newItem); return { ...state, lanes: lanes.map((l) => l.id === lane.id ? { ...l, items: sorted.map((it, i) => ({ ...it, order: i + 1 })) } : l), selectedId: nid, slideIndex: 0 }; }
+     // Insert a section at an EXACT position within a source section's slide list.
