@@ -478,6 +478,38 @@ python3 .claude/minify-lab/check-context.py
 Prints context tokens used, the 300k threshold, % used, and headroom.
 Override the threshold with `--threshold N` if it's ever changed.
 
+## Cost tracking (checked 2026-08-13, ~04:45)
+
+Real token counts pulled from session transcripts (main thread
+`~/.claude/projects/.../<session>.jsonl` + each subagent's own file under
+`.../subagents/agent-<id>.jsonl` — subagents do NOT appear in the main
+transcript, they have separate files). Dollar figures are an
+**approximation using standard published Sonnet/Opus-tier per-token
+rates** (input/output/cache-read/cache-write-5m/cache-write-1h) — not
+confirmed actual billing for this account, since no `costUSD` field is
+present in the transcripts. Treat as directional, not exact.
+
+**Grand total so far: ~$112** (opus ~$71, sonnet ~$41) across main thread
++ 7 subagents, ~100M raw tokens moved (dominated by cache reads, which are
+~10x cheaper than fresh input — this is expected and healthy, not a red
+flag).
+
+| Agent | Model | ~Cost | Phase |
+|---|---|---|---|
+| main thread | sonnet | $24.91 | orchestration (this conversation) |
+| a79015f96541a6542 | opus | $28.94 | 1b — normal-density corroboration |
+| ae01cc72c7db18a25 | opus | $22.43 | 1 — research encoding formats |
+| a1c1264e443c7f11e | opus | $13.07 | 2 — harness design |
+| a2caefbe6e75c35bb | sonnet | $7.10 | 5 — harness completion (running) |
+| af4bf3c6dac8b3eb1 | opus | $6.96 | 4 — skill build (post-restart) |
+| afc37b746c6251643 | sonnet | $5.46 | 5 — harness original build (killed) |
+| ac2959171dddc90d5 | sonnet | $3.23 | 3 — citation verification |
+
+Research phases (1, 1b, 2) dominate cost — expected, they're opus and
+read the most source material. Re-check with the same method
+(read main + subagent transcripts, sum `usage` fields) rather than
+re-deriving from memory; agent IDs are stable and reusable across checks.
+
 ## Open questions / to revisit
 
 - None currently blocking. (Prior gate question below was resolved
