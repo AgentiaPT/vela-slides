@@ -47,11 +47,25 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
 HARNESS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = HARNESS_DIR.parent.parent.parent  # .claude/minify-lab/harness -> repo root
+
+# Run artifacts (worktrees, transcripts, campaign.json, ...) default OUTSIDE
+# the repo entirely — never a path under REPO_ROOT. A worktree nested inside
+# the repo's own .claude/ tree lets Claude Code's ancestor-walking
+# skill-discovery reach back up into the LIVE repo's .claude/skills instead
+# of the worktree's own checked-out copy (the agent then keeps using that
+# live-repo absolute path for every subsequent Read/Grep/Edit — a real
+# isolation breach observed in a pilot run), and it also makes the worktree
+# path contain a `.claude/` segment, which Claude Code's built-in
+# "sensitive file" safety check blocks Edit calls on regardless of
+# --permission-mode. A sibling location under the system temp dir has
+# neither problem. Still overridable via --runs-root / the `runs_root` param.
+DEFAULT_RUNS_ROOT = Path(tempfile.gettempdir()) / "vela-minify-lab-runs"
 
 sys.path.insert(0, str(HARNESS_DIR))
 import prepare as prepare_mod  # noqa: E402
@@ -281,7 +295,7 @@ def main():
     ap.add_argument("--arm", choices=["baseline", "minified"])
     ap.add_argument("--rep", type=int)
     ap.add_argument("--approach", default="telegraphic")
-    ap.add_argument("--runs-root", default=str(HARNESS_DIR / "runs"))
+    ap.add_argument("--runs-root", default=str(DEFAULT_RUNS_ROOT))
     ap.add_argument("--run-dir", default=None,
                      help="override the derived <runs-root>/<campaign>/<scenario>/<arm>/rep<N> path")
     ap.add_argument("--base-ref", default=None)

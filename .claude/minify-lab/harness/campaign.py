@@ -159,7 +159,7 @@ def run_campaign(scenario_ids, campaign_id, config=None, approach="telegraphic",
     reps = reps if reps is not None else config.get("reps", 3)
     judge_rounds = judge_rounds if judge_rounds is not None else config.get("judge_rounds", 2)
     judge_model = config.get("judge_model", "opus")
-    runs_root = Path(runs_root) if runs_root else HARNESS_DIR / "runs"
+    runs_root = Path(runs_root) if runs_root else runner_mod.DEFAULT_RUNS_ROOT
     invoke = invoke or runner_mod.default_invoke
     judge_invoke = judge_invoke or default_judge_invoke
 
@@ -268,7 +268,7 @@ def main():
     ap.add_argument("--approach", default="telegraphic")
     ap.add_argument("--reps", type=int, default=None)
     ap.add_argument("--judge-rounds", type=int, default=None)
-    ap.add_argument("--runs-root", default=str(HARNESS_DIR / "runs"))
+    ap.add_argument("--runs-root", default=str(runner_mod.DEFAULT_RUNS_ROOT))
     ap.add_argument("--out", default=None, help="write the assembled campaign.json here")
     ap.add_argument("--report", default=None, help="write the two-panel markdown report here")
     ap.add_argument("--base-ref", default=None)
