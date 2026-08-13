@@ -292,15 +292,39 @@ non-obligation material exists to cut. design-patterns.md (0.9%) is
 JSON-example-dominated similarly to block-schema before its v2 pass —
 a good candidate for the same v2 treatment.
 
-**Decision point flagged to user below**: the eval-set average is
-structurally capped by including files that are honestly near-0%-
-compressible. Options: (a) push design-patterns.md through the same v2
-treatment that worked for block-schema (plausible, similar JSON-heavy
-shape) to lift the average further, (b) accept that CLAUDE.md/hyper-
-sprint/secure-coding/vela-slides-SKILL have a real ~0-5% ceiling and
-either exclude them from the "average >=20%" calculation (keep them in
-the eval as separate "near-zero-upside, compliance-only" cases) or ask
-the user whether to relax the average target given this finding.
+design-patterns.md v2 landed: **22.3%** (5248/6751 tokens), gate PASS,
+18/18 Tier N preserved. Same aggressive-example-trimming approach as
+block-schema, worked equally well — confirms the approach is repeatable
+across JSON-example-heavy reference docs.
+
+## FINAL consolidated numbers (all committed, all gate PASS)
+
+| File | Best candidate | Reduction |
+|---|---|---|
+| CLAUDE.md | v1 | 4.7% |
+| skills/vela-slides/SKILL.md | v1 | 1.5% |
+| vela-secure-coding/SKILL.md | v1 | 0.5% |
+| hyper-sprint/SKILL.md | v1 | 0.2% |
+| docs/ARCHITECTURE.md | v2 | 22.8% |
+| docs/SCREENSHOTS.md | v1 | 8.2% |
+| block-schema.md | v2 | 31.5% |
+| design-patterns.md | v2 | 22.3% |
+
+**Average across all 8: ~11.5%. Still below the 20% target.** Clear
+2-cluster pattern: 4 "reference/doc" files (ARCHITECTURE, SCREENSHOTS,
+block-schema, design-patterns) average ~21.2% — the aggressive approach
+gets 3 of 4 comfortably past 20%, SCREENSHOTS' 8.2% ceiling is honest
+(half the file is functionally-distinct code samples, not padding). The
+4 "policy/rule" files (CLAUDE.md, hyper-sprint, secure-coding, vela-
+slides SKILL.md) average ~1.7% — genuinely near their compressibility
+floor, confirmed independently by 2 separate agents per file across
+conservative and (for some) aggressive attempts.
+
+**Reported to user**: flagged the split and asked them to choose between
+excluding the near-0% policy files from the ">=20% average" gate (vs.
+keeping them as separate zero-upside compliance-only eval cases) or
+relaxing the target. Awaiting their call before locking the final eval
+set and moving to the harness.
 
 ## Next action
 
