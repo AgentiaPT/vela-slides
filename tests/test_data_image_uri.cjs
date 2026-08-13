@@ -45,7 +45,11 @@ const grabs = {
   dataUri:  source.match(/function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/),
 };
 for (const [k, v] of Object.entries(grabs)) {
-  if (!v) { console.error(`FAIL: could not locate '${k}' in source. Check regexes.`); process.exit(2); }
+  // Exit 3, NOT the jsdom-missing "skip" code 2: test_vela.py maps 2 to SKIP, so a
+  // cosmetic reshape of a sanitizer construct would silently delete this whole
+  // suite while CI stayed green. A missing construct is a failure. (Mirrors the
+  // same reasoning in test_svg_mxss.cjs's extractOne.)
+  if (!v) { console.error(`FAIL: could not locate '${k}' in source. Check regexes.`); process.exit(3); }
 }
 
 const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");

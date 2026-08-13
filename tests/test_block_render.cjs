@@ -287,8 +287,14 @@ renders("render <bullets> in presenting mode", BASE_BLOCKS.bullets, { presenting
 // High-level security assertion only (no payload/bypass detail). Confirms the svg
 // branch runs the production sanitizer rather than passing markup through raw.
 {
-  const cleaned = realSanitizeSvg("<svg xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8'/><script>1</script></svg>");
-  if (typeof cleaned === "string" && cleaned.indexOf("<script") === -1 && cleaned.indexOf("rect") !== -1) ok("svg sanitizer keeps benign shapes, drops <script>");
+  // The benign half of this probe deliberately carries a PAINT reference: it is
+  // also this suite's liveness check, and the sanitizer swallows every exception
+  // and returns "". A probe with no paint/style attribute never reaches the CSS
+  // filters, so a helper missing from the extraction preamble above would leave
+  // this suite passing against a sanitizer that is dead for all real content.
+  const cleaned = realSanitizeSvg("<svg xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8' fill='url(#g)' style='stroke:#888'/><script>1</script></svg>");
+  if (typeof cleaned === "string" && cleaned.indexOf("<script") === -1 && cleaned.indexOf("rect") !== -1
+      && cleaned.indexOf("url(#g)") !== -1 && cleaned.indexOf("stroke:#888") !== -1) ok("svg sanitizer keeps benign shapes + paint refs, drops <script>");
   else bad("svg sanitizer did not behave as expected", JSON.stringify(cleaned).slice(0, 80));
 }
 

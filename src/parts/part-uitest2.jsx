@@ -177,8 +177,13 @@ uiSuite("SVG Sanitizer (XSS)", [
       host.innerHTML = sanitizeSvgMarkup(
         '<svg xmlns="http://www.w3.org/2000/svg" style=\'--p:"https:attacker.invalid/b1";background-image:image-set(var(--p) 1x)\'>' +
         '<rect style=\'--q:"https:attacker.invalid/b2";mask-image:image-set(var(--q) 1x)\'/></svg>');
-      await new Promise((r) => setTimeout(r, 400));
-      obs.takeRecords();
+      // Poll rather than sleep a fixed window: a failed request to an unresolvable
+      // host lands as a resource entry at an unpredictable delay, and a window too
+      // short lets the observer see nothing — which would silently reduce this to
+      // the string check below and stop it detecting a regression. Bail out early
+      // the moment an entry appears (the failing direction needs no waiting).
+      for (let i = 0; i < 30 && !seen.length; i++) await new Promise((r) => setTimeout(r, 100));
+      for (const e of obs.takeRecords()) seen.push(e.name);
       return !seen.some((u) => /attacker\.invalid/i.test(u)) && !/attacker\.invalid/i.test(host.innerHTML);
     } finally { obs.disconnect(); host.remove(); }
   }},

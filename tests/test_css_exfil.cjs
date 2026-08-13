@@ -58,18 +58,24 @@ try {
   const pkey = grab(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY");
   const stem = grab(/const cssKeyStem = .+;/, "cssKeyStem");
   const pfn = grab(/function scrubPaintFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubPaintFields");
+  // v13.46: scrubSubObject is the only gate on RAW-SPREAD sub-object keys, so its
+  // behavior (not just its wiring) is asserted below.
+  const skeys = grab(/const SAFE_STYLE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_STYLE_KEYS");
+  const sstyle = grab(/function sanitizeStyle\(style\)\s*\{[\s\S]*?\n\}/, "sanitizeStyle");
+  const maxd = grab(/const MAX_SUBOBJECT_DEPTH = .+;/, "MAX_SUBOBJECT_DEPTH");
+  const sso = grab(/function scrubSubObject\(obj, depth = 0\)\s*\{[\s\S]*?\n\}/, "scrubSubObject");
   const ctx = { module: { exports: {} } };
   vm.createContext(ctx);
   vm.runInContext(
-    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc, gkey, cg, pkey, stem, pfn,
-      "module.exports = { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, CSS_PAINT_KEY, cssUrl, cssColor, cssGradient };"].join("\n"),
+    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc, gkey, cg, pkey, stem, pfn, skeys, sstyle, maxd, sso,
+      "module.exports = { scrubColorFields, scrubLayoutFields, scrubPaintFields, scrubSubObject, sanitizeStyle, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, CSS_PAINT_KEY, cssUrl, cssColor, cssGradient };"].join("\n"),
     ctx, { filename: "part-imports-slice.js" });
   api = ctx.module.exports;
 } catch (e) {
   console.log("\n  " + pass + " passed, " + failCount + " failed");
   process.exit(1);
 }
-const { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, cssUrl, cssColor, cssGradient } = api;
+const { scrubColorFields, scrubLayoutFields, scrubPaintFields, scrubSubObject, sanitizeStyle, STYLE_VALUE_REJECT, cssUrl, cssColor, cssGradient } = api;
 
 // Every color/background scalar field reported across slide/block/item/cell/branding.
 const COLOR_FIELDS = [
@@ -274,6 +280,29 @@ else bad("sanitizeBlock does not wire scrubLayoutFields on block/items");
 if (/if \(Array\.isArray\(clean\.quadrants\)\) scrubSubObject\(clean\.quadrants\);/.test(src))
   ok("sanitizeBlock scrubs block.quadrants (color + layout via scrubSubObject)");
 else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
+// v13.46 BEHAVIORAL: sub-objects are copied by raw spread and keep whatever key a
+// deck invents. A `--x` key spread into a style object would DECLARE a CSS custom
+// property — the token-bag store whose var() load the value filters reject — so
+// the store is closed here structurally, alongside the `_` renderer-private
+// namespace. Both are asserted by running the real scrubber, not by matching source.
+{
+  const o = { "--p": "https:a.invalid/b", "--": "x", "_solo": true, bg: "#fff", label: "keep" };
+  scrubSubObject(o);
+  const noCustomProp = !("--p" in o) && !("--" in o);
+  const noPrivate = !("_solo" in o);
+  const keeps = o.bg === "#fff" && o.label === "keep";
+  if (noCustomProp && noPrivate && keeps) ok("scrubSubObject drops `--` custom-property keys and `_` private keys, keeps real ones");
+  else bad("scrubSubObject key-namespace drop", JSON.stringify(o));
+  // …at every nesting level, not just the first (the raw-spread surface is nested).
+  const deep = { items: [{ cell: { "--p": "https:a.invalid/b", bg: "#000" } }] };
+  scrubSubObject(deep);
+  if (!("--p" in deep.items[0].cell) && deep.items[0].cell.bg === "#000") ok("scrubSubObject drops `--` keys at nested depth");
+  else bad("nested `--` key survived", JSON.stringify(deep));
+  // sanitizeStyle's own key allowlist independently refuses to emit one.
+  const st = sanitizeStyle({ "--p": "https:a.invalid/b", color: "red" });
+  if (!("--p" in st) && st.color === "red") ok("sanitizeStyle never emits a custom property (key allowlist)");
+  else bad("sanitizeStyle emitted a custom property", JSON.stringify(st));
+}
 // scrubSubObject itself must apply both scrubbers and drop the `_` namespace.
 if (/function scrubSubObject\(/.test(src) &&
     /scrubColorFields\(obj\)/.test(src) && /scrubLayoutFields\(obj\)/.test(src) &&
@@ -333,6 +362,14 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       "fill:url(var(--p))",
       "background-image:url(https:a.invalid/b)",
       'background-image:image-set("https:a.invalid/b" 1x)',
+      // …and the forms that ONLY the scheme reject catches: no url() token, no
+      // quote after the function name, no `//`. Every other rule in this filter
+      // passes these, so they are what makes CSS_FETCH_SCHEME load-bearing here
+      // rather than a rule that merely shadows the ones above it.
+      "fill:image-set(https:a.invalid/x)",
+      "background-image:src(https:a.invalid/b)",
+      "background-image:image-set(https:a.invalid/x 1x)",
+      "font-family:https:a.invalid",
     ];
     const svgAllow = [
       "fill:url(#grad)", "fill:#3b82f6", "stroke:rgb(1,2,3)",
