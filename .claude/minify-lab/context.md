@@ -106,6 +106,11 @@ session; do not re-attempt without a real new idea.**
   accounting from transcripts (see Cost tracking section) — but not the
   account-level rate-limit meter itself. That still requires the user to
   share it (chat message or screenshot) when it matters.
+- **User declined further investigation** (2026-08-13): asked about
+  firing a research agent to dig deeper, then retracted it unprompted —
+  "forget it, let's keep focus, I'll wait for window reset." Treat this
+  as closed, not just paused — don't re-raise or re-attempt this without
+  the user bringing it up again.
 
 ## Standing rule: never go idle without updating this file (reinforced 2026-08-13)
 
