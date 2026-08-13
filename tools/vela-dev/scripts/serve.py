@@ -369,6 +369,9 @@ def entry_writable(path, dir_fd=None, folder=None):
     deck writable via group/other permissions. faccessat flags are applied
     only where the platform supports them; the caller has already stat'd the
     entry no-follow and rejected links, so this stays a permissions check.
+    CodeQL flags the os.access as py/path-injection, but every caller reaches
+    it only after _validate_deck_name + _safe_deck_path containment (same
+    unmodeled-sanitizer limitation noted on _safe_deck_path).
     """
     kwargs = {}
     if dir_fd is not None:
