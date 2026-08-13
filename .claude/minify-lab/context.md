@@ -2238,3 +2238,20 @@ recorded, both resolvable pairs are ties, no evidence at all that
 minified is worse here). Counts as a real, trustworthy piloted result
 — just a third outcome bucket alongside pass/fail. Raw campaign saved
 to `/tmp/vela-minify-lab-runs/launch13-clean-campaign-rejudged.json`.
+
+Context.md's "Current status" header and task #12 updated (5/9
+piloted now). Leaderboard updated and redeployed (commit `c45c934`):
+hero stats 4/9→5/9, 3/4→3/5, table row's Behavioral pill and sub-note,
+both ledger columns (new "Proven" bullets for the marker-leakage fix
+and the zero-regression-evidence finding; "Not yet" bullet corrected
+to 5/9 and public-repo-hygiene as the sole remaining unpiloted
+scenario), lab log entry split into "first attempt" (bad) and "clean
+rerun" (resolved) sub-entries.
+
+**Launch 14 (`public-repo-hygiene`) started** ~20:06 UTC as
+`phase6-pilot-launch14` (task id `bu84xghv4`), same proven pattern:
+`run_in_background: true` directly, no nohup, 1800s inner timeout.
+Confirmed alive via `ps aux` immediately after launch. This is the
+final remaining runnable scenario in the original 9 — once resolved,
+6/9 scenarios will have real behavioral data (3 blocked pending
+scenario redesign, task #17). Not yet complete.
