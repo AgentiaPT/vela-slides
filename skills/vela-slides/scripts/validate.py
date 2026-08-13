@@ -53,8 +53,19 @@ def check_slide_numerics(slide, loc, errors):
 
 
 def validate(path, allow_unresolved=False):
-    with open(path, 'r', encoding="utf-8") as f:
-        deck = json.load(f)
+    try:
+        with open(path, 'r', encoding="utf-8") as f:
+            deck = json.load(f)
+    except RecursionError:
+        # json.load recurses per nesting level. A deck nested deep enough
+        # exhausts Python's recursion limit here, BEFORE this file's own
+        # RecursionError guards (expand_deck / find_unresolved_aliases,
+        # below) ever run. Same fail-closed outcome as those: a clean
+        # error, never a traceback, and the unparseable file is never
+        # touched further. Mirrors the expand_errors short-circuit path.
+        return (["deck is too deeply nested to validate safely"], [],
+                {"slides": 0, "blocks": 0, "duration": 0, "block_types": {},
+                 "expand_failed": True})
 
     # Auto-expand compact/turbo format to full format before validating.
     # Compact detection is shared with vela.py (is_compact) so the two tools

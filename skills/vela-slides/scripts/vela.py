@@ -118,6 +118,16 @@ def _load_deck(path):
     except json.JSONDecodeError as e:
         _err(EXIT_FAIL, f"Invalid JSON: {e}",
              suggestions=["Check JSON syntax", "Run: python3 -m json.tool " + path])
+    except RecursionError:
+        # json.load recurses per nesting level. A deck nested deep enough
+        # exhausts Python's recursion limit here, BEFORE expand_deck's own
+        # RecursionError guard ever runs — previously an uncaught traceback
+        # instead of the same clean, fail-closed error every other unusable
+        # deck path produces. Catch RecursionError only (never a broader
+        # except) at this parse boundary; DeckExpandError propagates to
+        # main()'s handler as EXIT_VALIDATION with no artifact written.
+        raise DeckExpandError(
+            "deck is too deeply nested to parse safely") from None
 
 def _save_deck(deck, path):
     with open(path, 'w', encoding="utf-8") as f:

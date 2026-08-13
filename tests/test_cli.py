@@ -590,6 +590,55 @@ def main():
               "validate.py never reports 'Deck is valid' when the alias gate was skipped by import failure",
               r.stdout)
 
+        # ══ json.load parse boundary: RecursionError on a real on-disk file ═
+        # test_vela.py's deep-nesting coverage builds decks in-memory, which
+        # bypasses json.load entirely — exactly why a deck deep enough to
+        # blow Python's recursion limit during json.load() itself (BEFORE
+        # expand_deck's or find_unresolved_aliases' own RecursionError
+        # guards ever run) slipped through as a raw traceback. Drive the
+        # real CLI against a real file to close that gap.
+        print("\n── json.load parse-boundary RecursionError guard (on-disk file) ──")
+
+        def _write_deep_deck_file(path, depth=500):
+            # String-built, not json.dump()'d — dumping a structure this deep
+            # recurses just as much as loading it and would blow the harness's
+            # own recursion limit before the file is even written.
+            nest_open = '{"type":"grid","items":[{"blocks":['
+            nest_close = ']}]}'
+            deep = nest_open * depth + '{"type":"spacer","h":1}' + nest_close * depth
+            prefix = ('{"deckTitle":"Deep","lanes":[{"title":"L","items":[{"title":"I",'
+                       '"slides":[{"duration":10,"bg":"#000000","blocks":[')
+            suffix = ']}]}]}]}'
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(prefix + deep + suffix)
+
+        deep_path = os.path.join(tmpdir, "deep-nested.json")
+        _write_deep_deck_file(deep_path)
+
+        deep_ship_out = os.path.join(tmpdir, "deep-ship-out.jsx")
+        r = run_vela("deck", "ship", deep_path, "--output", deep_ship_out)
+        check(r.returncode != 0, "vela deck ship on a deep on-disk deck exits non-zero",
+              f"rc={r.returncode}")
+        check(not os.path.exists(deep_ship_out),
+              "vela deck ship writes no artifact for a deck too deep to parse")
+        combined = r.stdout + r.stderr
+        check("Traceback (most recent call last)" not in combined,
+              "vela deck ship emits no raw traceback for a deep on-disk deck", combined)
+        check("too deeply nested" in combined,
+              "vela deck ship emits the clean 'too deeply nested' message", combined)
+
+        r = subprocess.run([sys.executable, VALIDATE_PY, deep_path],
+                            capture_output=True, text=True, cwd=tmpdir)
+        check(r.returncode != 0, "validate.py on a deep on-disk deck exits non-zero",
+              f"rc={r.returncode}")
+        combined = r.stdout + r.stderr
+        check("Traceback (most recent call last)" not in combined,
+              "validate.py emits no raw traceback for a deep on-disk deck", combined)
+        check("too deeply nested" in combined,
+              "validate.py emits the clean 'too deeply nested' message", combined)
+        check("Deck is valid" not in combined,
+              "validate.py never reports 'Deck is valid' for a deck it couldn't parse", combined)
+
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
