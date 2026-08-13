@@ -30,10 +30,16 @@ function ok(name) { pass++; console.log("  ✅ " + name); }
 function bad(name, detail) { failCount++; console.log("  ❌ " + name + (detail ? " — " + detail : "")); }
 
 // ── Extract the real guard from source (fail loudly if the fix is absent) ──
+// EXACTLY ONE definition, not the first match. A first-match extraction tests
+// whichever copy appears earliest in the file — so a decoy anywhere above the real
+// one (a commented-out `// const STYLE_VALUE_REJECT = /…/` is enough) makes this
+// suite report green while the shipped filter is dead. Mirrors extractOne in
+// tests/test_svg_mxss.cjs, which has always required a unique definition.
 function grab(re, label) {
-  const m = src.match(re);
-  if (!m) { bad("extract " + label, "not found in part-imports.jsx (fix missing?)"); throw new Error("missing " + label); }
-  return m[0];
+  const all = src.match(new RegExp(re.source, re.flags.replace("g", "") + "g"));
+  if (!all || all.length === 0) { bad("extract " + label, "not found in part-imports.jsx (fix missing?)"); throw new Error("missing " + label); }
+  if (all.length > 1) { bad("extract " + label, `${all.length} definitions found — a decoy/duplicate would be tested instead of the real one`); throw new Error("duplicate " + label); }
+  return all[0];
 }
 // Load the REAL shipped predicates into an isolated vm context (same approach as
 // tests/test_data_image_uri.cjs — no eval/new Function; the slice is repo source,

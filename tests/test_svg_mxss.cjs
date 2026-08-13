@@ -96,13 +96,13 @@ ${keyStemMatch[0]}
 ${isSafeMatch[0]}
 ${isInlineSafeMatch[0]}
 ${sanitizeMatch[0]}
-module.exports = { SVG_ALLOWED_TAGS, SVG_URL_REF_ATTRS, isSvgStyleSafe, isSvgInlineStyleSafe, sanitizeSvgMarkup };
+module.exports = { SVG_ALLOWED_TAGS, SVG_URL_REF_ATTRS, SVG_STYLE_PROPS, isSvgStyleSafe, isSvgInlineStyleSafe, sanitizeSvgMarkup };
 `;
 const vm = require("vm");
 const sandbox = { ...ctx, module: { exports: {} }, exports: {}, require };
 vm.createContext(sandbox);
 vm.runInContext(harness, sandbox);
-const { sanitizeSvgMarkup, isSvgStyleSafe } = sandbox.module.exports;
+const { sanitizeSvgMarkup, isSvgStyleSafe, SVG_STYLE_PROPS } = sandbox.module.exports;
 
 // Harness liveness check. sanitizeSvgMarkup swallows every exception and returns
 // "" — correct at runtime (fail closed), but it means a harness that forgot to
@@ -423,6 +423,10 @@ runNoVar("var() into url() on a presentation attr",
   // dereferencing construct and the attribute that would apply it are gone.)
   const leaked = cases.filter(([payload, attr]) => {
     const out = sanitizeSvgMarkup(payload);
+    // The <rect> itself must survive: a negative-only assertion would also be
+    // satisfied by the whole element being dropped, which is how these checks go
+    // vacuous. Require the positive outcome alongside the negative one.
+    if (!/<rect/i.test(out)) return true;
     return /attr\s*\(/i.test(out) || new RegExp(`\\s${attr}=`, "i").test(out);
   });
   if (leaked.length === 0) { passed++; console.log("  ✅ attr() dereference of a preserved data-* attribute removed"); }
@@ -524,6 +528,26 @@ runNoVar("bare unquoted scheme in an inline-style value",
   else { failed++; console.log("  ❌ inline-style fragment refs dropped — output: " + out); }
 }
 
+// EVERY allowlisted property gets a positive control, derived from the real Set
+// rather than a hand-listed sample: rejection is whole-attribute, so silently
+// dropping one entry costs an element all of its paint, and a hand-written list
+// covered only a fraction of them. Driving the loop off SVG_STYLE_PROPS itself
+// means an entry removed in a future edit fails here immediately, and a new entry
+// is covered the moment it is added. `inherit` is a CSS-wide keyword valid on
+// every property, so this isolates the PROPERTY half of the gate from any
+// per-property value grammar.
+{
+  const rejected = [];
+  for (const prop of SVG_STYLE_PROPS) {
+    const out = sanitizeSvgMarkup(`<rect width="10" height="10" fill="red" style="${prop}:inherit"/>`);
+    if (!new RegExp(`style="${prop.replace(/[-]/g, "-")}:inherit"`).test(out)) rejected.push(prop);
+  }
+  if (rejected.length === 0) {
+    passed++; console.log(`  ✅ all ${SVG_STYLE_PROPS.size} allowlisted style properties survive the gate (no silent drop)`);
+  } else {
+    failed++; console.log(`  ❌ allowlisted property rejected by the gate: ${JSON.stringify(rejected)}`);
+  }
+}
 // Positive: legitimate same-document refs + click links must survive
 // (NB: <use> is intentionally absent from SVG_ALLOWED_TAGS — cross-doc ref XSS,
 // Cure53 #283 — so a #fragment ref is asserted on allowed elements only.)

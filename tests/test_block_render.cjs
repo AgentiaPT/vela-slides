@@ -129,8 +129,10 @@ try {
   // eslint-disable-next-line no-eval
   factory = (0, eval)(code);
 } catch (e) {
+  // Exit 3, not the missing-devDependency code 2: the source is present but does
+  // not compile, which must fail rather than be reported as a skipped suite.
   console.error("Failed to transpile/evaluate part-blocks.jsx:", e.stack || e.message);
-  process.exit(2);
+  process.exit(3);
 }
 let RenderBlock, realSanitizeSvg;
 try {
@@ -140,7 +142,7 @@ try {
   if (typeof RenderBlock !== "function") throw new Error("RenderBlock is not a function");
 } catch (e) {
   console.error("Block module did not initialize:", e.stack || e.message);
-  process.exit(2);
+  process.exit(3);
 }
 
 // ── Harness ──────────────────────────────────────────────────────────────────
