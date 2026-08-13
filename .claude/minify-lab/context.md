@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~13:47, launch10c in flight for `blockfield-safekeys`). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) is the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability, 33.3% loss rate). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification (governing rule text byte-identical/reinforced between arms; baseline itself fails the same assertion once; best explanation is small-sample noise on a rule already borderline in the original text) — not editing the minified variant over it, since the text isn't actually different between arms. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 2/9 scenarios piloted with genuine, trustworthy verdicts; leaderboard and context.md both current as of the last redeploy. `blockfield-safekeys` (task #12's 3rd scenario) is mid-run as `phase6-pilot-launch10c` (task id `b11ospyy4`, 1800s budget) after two false starts (timeout-too-short, then an accidental nohup relaunch — both caught and cleaned up before real cost, see "Launch 10" entry above). Next: verify launch10c's raw output independently once it lands, update leaderboard, then continue piloting the remaining 6 scenarios (routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene))
+## Current status (last updated: 2026-08-13 ~13:50, blockfield-safekeys landed as a second clean pass, leaderboard update pending). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) and `blockfield-safekeys` (launch10c) are BOTH full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs both times). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification (governing rule text byte-identical/reinforced between arms; baseline itself fails the same assertion once) — not editing the minified variant over it. `blockfield-safekeys` additionally exercised the same both-arms-fail scenario_invalid mechanism a second time, correctly excluding two assertions that fail on both arms (a real but pre-existing routing-table-adherence weakness, not a minification artifact). Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 3/9 scenarios piloted with genuine, trustworthy verdicts (2/3 piloted scenarios pass cleanly, 1/3 root-caused to non-minification noise). Next: update the leaderboard to reflect launch10c, commit/push, then continue piloting the remaining 6 scenarios (routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene))
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1807,6 +1807,7 @@ use best judgment, make this a world-record minifying skill")
   (harness `assertions.py`) in parallel to avoid blocking either on the
   other. Expect two implementations to reconcile into one shared module
   once both land — orchestrator must do this explicitly, don't let it
+  silently stay duplicated.
 
 ## Launch 10 (`blockfield-safekeys`, task #12) — two false starts, then a clean launch (2026-08-13, ~13:31-13:47)
 
@@ -1841,4 +1842,48 @@ bumping the number, and never reach for `nohup`/`disown` again even for
 always through `run_in_background: true` directly.
 
 Status: launch10c running, not yet complete.
-  silently stay duplicated.
+
+## Launch10c landed — `blockfield-safekeys` is the project's SECOND clean pass (2026-08-13, ~13:48)
+
+Independently verified against the raw campaign JSON
+(`/tmp/vela-minify-lab-runs/launch10c-campaign.json`), not just the
+printed report:
+
+- **GATE 6B: PASSED.** `judge_pairs`: 3/3 stable — rep0 baseline win,
+  rep1 minified win, rep2 tie (33.3% minified loss rate, same shape as
+  `reducer-nohistory`'s launch 8). `quarantined_pairs: []`. 0%
+  instability (not inconclusive).
+- **6A (the standing CLAUDE.md-wide screen, unrelated to which scenario
+  runs): SIZE PASS (1.4%, exempt/pre-densified) and STRUCTURE PASS
+  (net_delta +3, 0 lost, 0 weakened, 3 newly-explicit)** — identical
+  shape to every prior run of this same check; not new information, just
+  reconfirmed.
+- **Two assertion types were auto-excluded as `scenario_invalid`**
+  (`files_changed_include`: baseline 22%/minified 44% pass rate;
+  `version_bumped`: baseline 33%/minified 33%) — both below the 2/3
+  absolute floor **on both arms**, so `gate.py`'s existing
+  both-arms-fail logic (the same mechanism task #16 relied on for
+  `security-changelog-discipline`) correctly excluded them rather than
+  counting them as a minified regression. Independently confirmed by
+  reading raw `assertions.json`: the agent (both arms) frequently only
+  touched `part-imports.jsx` and skipped the other files
+  `blockfield-safekeys`'s routing-table row calls for
+  (`skills/vela-slides/scripts/validate.py`,
+  `skills/vela-slides/references/block-schema.md`) — a real weakness in
+  how reliably the agent follows that multi-file instruction, but
+  present in the *baseline* too, so not attributable to minification.
+  This is the second time (after `security-changelog-discipline`) this
+  exact anti-false-positive mechanism has fired correctly on real data —
+  it is working as designed, not a new finding.
+- **Metrics favor minified slightly**: baseline avg 1.0 errors/4.67
+  turns/104.3k input tokens vs. minified avg 0.67 errors/4.33 turns/
+  100.7k input tokens per rep.
+- **Efficiency**: no warnings.
+
+**Net: 2/2 fully-piloted scenarios (`reducer-nohistory`,
+`blockfield-safekeys`) now pass GATE 6B cleanly**, with
+`security-changelog-discipline`'s near-miss root-caused as unrelated to
+minification (task #16). 3/9 scenarios have real, trustworthy verdicts.
+
+**Next**: update the leaderboard, then continue task #12 with
+`routing-lookup` (next in the frozen scenario order).
