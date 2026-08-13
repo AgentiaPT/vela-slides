@@ -26,6 +26,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -328,6 +329,65 @@ def build_browser_html():
 </html>"""
 
 
+# ── Deck file I/O ─────────────────────────────────────────────────────
+# SECURITY (CWE-59/61/367): the served folder is the user's project, so a
+# deck-named ENTRY in it is untrusted even when its name passed validation.
+# Realpath containment (_safe_deck_path) sees a symlink but CANNOT see a hard
+# link — a hard link to a file outside the folder resolves inside it — and
+# re-opening by path after the check re-resolves the name, so a swap between
+# check and open escapes containment anyway. Both directions go through the two
+# functions below, and neither ever writes through, or reads out of, an entry it
+# did not verify on the descriptor it is using.
+
+def read_deck_json(path):
+    """Read + parse a deck file. Raises OSError/ValueError on anything unusable.
+
+    Opens no-follow, then takes the content from the SAME descriptor it
+    verified, so the bytes cannot come from a re-resolved path. A link count
+    above one means the inode is reachable under another name (possibly outside
+    the folder): treated as an escape, not as a deck."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            raise OSError(f"Not a plain, single-linked file: {path}")
+        f = os.fdopen(fd, "r", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
+    with f:
+        return json.load(f)
+
+
+def write_deck_json(path, deck):
+    """Write a deck file by atomic replace, never through the existing entry.
+
+    The payload lands in a freshly created temp file in the same folder and is
+    then os.replace()d onto the name. rename swaps the directory ENTRY, so a
+    symlink or hard link sitting there is detached instead of written through,
+    and there is no window in which the name is re-resolved for the write.
+    Readers also never observe a half-written deck."""
+    folder = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".vela-save-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(deck, f, ensure_ascii=False, indent=2)
+        # mkstemp creates 0600; restore the umask-respecting mode a plain
+        # open(path, "w") would have produced so saved decks stay as readable as
+        # the user's other files (same rationale as concat.py's atomic write).
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────
 class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     static_files = {}
@@ -563,9 +623,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 continue  # escapes the folder, is a symlink (ELOOP), or unreadable
             try:
                 st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode):
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
                     os.close(fd)
-                    continue
+                    continue  # not a plain file, or reachable under another name
             except OSError:
                 os.close(fd)
                 continue
@@ -698,8 +758,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w", encoding="utf-8") as f:
-                    json.dump(deck, f, ensure_ascii=False, indent=2)
+                write_deck_json(deck_path, deck)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
@@ -896,6 +955,10 @@ class VelaLocalServer:
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
+        # Runtime-file directory, pinned on first use (see _runtime_dir_fd).
+        self._dir_fd = None
+        self._dir_fd_unsupported = False
+
         # Always folder mode — if a file is passed, use its parent directory
         abs_path = os.path.abspath(path)
         if os.path.isfile(abs_path):
@@ -949,8 +1012,7 @@ class VelaLocalServer:
                     except ValueError:
                         print(f"[sync] {name} no longer resolves inside the folder — skipping")
                         return
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        new_data = json.load(f)
+                    new_data = read_deck_json(fpath)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
                     print(f"[sync] {name} changed → pushed to browser")
@@ -1050,8 +1112,7 @@ class VelaLocalServer:
 
     def _build_html_for_deck(self, deck_path, deck_name):
         """Build the Vela app HTML for a specific deck file (folder mode)."""
-        with open(deck_path, "r", encoding="utf-8") as f:
-            deck_data = self._normalize_deck(json.load(f))
+        deck_data = self._normalize_deck(read_deck_json(deck_path))
 
         self.set_deck_data(deck_name, deck_data)
         self._ensure_watcher(deck_name)
@@ -1123,16 +1184,12 @@ class VelaLocalServer:
         info = self._read_runtime_info() or {}
         killed = False
         stale_pid = info.get("pid")
-        # SECURITY: the PID comes from a file in the CWD that Vela does not own,
-        # so it names a kill TARGET chosen by whoever wrote that file — and this
-        # runs on the ordinary busy-port path, not just under --replace. Never
-        # signal it on the file's say-so: confirm it is a Python process AND the
-        # one actually holding the port (same two checks _cleanup_stale_server
-        # makes) before killing. Anything else falls through to the OS-discovered
-        # port holder below, where the PID comes from netstat/lsof, not the file.
-        if (stale_pid and info.get("port") == self.port
-                and self._is_python_process(stale_pid)
-                and self._pid_holds_port(stale_pid, self.port)):
+        # SECURITY: never signal the file-supplied PID on the file's say-so —
+        # this runs on the ordinary busy-port path, not just under --replace.
+        # Anything unverified falls through to the OS-discovered port holder
+        # below, where the PID comes from netstat/lsof rather than the file.
+        if (info.get("port") == self.port
+                and self._is_our_stale_server(stale_pid, self.port)):
             try:
                 os.kill(stale_pid, 9)
                 killed = True
@@ -1217,6 +1274,44 @@ class VelaLocalServer:
     def _runtime_path(self):
         return os.path.join(os.getcwd(), self.RUNTIME_FILE)
 
+    def _runtime_dir_fd(self):
+        """Descriptor for the directory the runtime file lives in, resolved once
+        and cached, or None where the platform has no dir_fd-relative calls.
+
+        SECURITY: O_NOFOLLOW/O_EXCL constrain only the FINAL path component. The
+        parent is re-resolved on every open, so swapping a parent directory
+        redirects the write — token included — out of the project even though the
+        inode we create is fresh. Resolving the directory once and addressing the
+        file relative to that descriptor pins the WHOLE path: every create, stat
+        and unlink below lands in the directory the server actually started in,
+        whatever happens to the names above it afterwards."""
+        if self._dir_fd is None and not self._dir_fd_unsupported:
+            needed = (os.open, os.stat, os.unlink, os.rmdir)
+            if not all(fn in os.supports_dir_fd for fn in needed):
+                self._dir_fd_unsupported = True  # Windows: fall back to paths
+                return None
+            try:
+                self._dir_fd = os.open(os.getcwd(),
+                                       os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            except OSError:
+                return None  # transient (e.g. the CWD is gone) — retry next call
+        return self._dir_fd
+
+    def _runtime_target(self, name):
+        """(target, kwargs) addressing `name` in the runtime directory —
+        dir_fd-relative where supported, else the plain absolute path.
+
+        Never raises: os.getcwd() itself fails if the directory was removed out
+        from under the process, and this is called from cleanup and startup
+        paths where that must degrade to a failed open, not an escaping error."""
+        dfd = self._runtime_dir_fd()
+        if dfd is not None:
+            return name, {"dir_fd": dfd}
+        try:
+            return os.path.join(os.getcwd(), name), {}
+        except OSError:
+            return name, {}  # no CWD to resolve — the open below fails closed
+
     # SECURITY (CWE-59/61/367): the runtime file lives in the process CWD — the
     # user's project/worktree, i.e. content Vela does not own and an attacker may
     # have authored (a cloned repo, a shared checkout). Any pre-existing
@@ -1239,9 +1334,18 @@ class VelaLocalServer:
         authorable, and a non-int pid would crash the callers' os.kill/tasklist
         while a non-positive one would make os.kill() signal a whole process
         group (-1 = every process this user can signal)."""
+        target, kwargs = self._runtime_target(self.RUNTIME_FILE)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
-            fd = os.open(self._runtime_path(), flags)
+            # O_NOFOLLOW does not exist on Windows, so the open there would
+            # follow a symlink or junction. Reject reparse points up front
+            # instead: weaker than an atomic no-follow open (the check is by
+            # name), but it closes the static case the flag covers elsewhere.
+            if os.name == "nt":
+                wst = os.stat(target, follow_symlinks=False, **kwargs)
+                if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+                    return None
+            fd = os.open(target, flags, **kwargs)
         except OSError:
             return None  # absent, a link (ELOOP), or unreadable
         try:
@@ -1255,14 +1359,19 @@ class VelaLocalServer:
                 return None  # fifo/device/directory, or implausibly large
             f = os.fdopen(fd, "r", encoding="utf-8")
         except OSError:
-            os.close(fd)
+            # fdopen takes ownership of the fd, so it may already be closed here
+            # — a second close would raise EBADF straight out of startup.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
             return None
         try:
             with f:
                 # Bounded read, not json.load(f): the file can grow between the
                 # fstat above and this read, so the cap is enforced on the bytes
                 # we actually take, never on a size we sampled earlier.
-                raw = f.read(self.RUNTIME_MAX_BYTES + 1)
+                raw = f.buffer.read(self.RUNTIME_MAX_BYTES + 1).decode("utf-8")
             if len(raw) > self.RUNTIME_MAX_BYTES:
                 return None
             info = json.loads(raw)
@@ -1273,30 +1382,34 @@ class VelaLocalServer:
         pid, port = info.get("pid"), info.get("port")
         return {
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 else None,
-            "port": port if isinstance(port, int) and not isinstance(port, bool) else None,
+            "port": port if (isinstance(port, int) and not isinstance(port, bool)
+                             and 0 < port <= 65535) else None,
         }
 
-    @staticmethod
-    def _discard_runtime_entry(path):
-        """Delete any existing entry at `path` WITHOUT dereferencing it, so a
-        planted link is destroyed instead of followed. A real directory is left
-        alone — the exclusive create then fails and the caller writes nothing."""
+    def _discard_runtime_entry(self, name):
+        """Delete any existing entry WITHOUT dereferencing it, so a planted link
+        is destroyed instead of followed. A real directory is left alone — the
+        exclusive create then fails and the caller writes nothing."""
+        target, kwargs = self._runtime_target(name)
         try:
-            st = os.lstat(path)
+            st = os.stat(target, follow_symlinks=False, **kwargs)
         except OSError:
             return  # nothing there (or unreadable) — the exclusive create decides
-        # Only a REAL directory is spared: lstat types a link as S_IFLNK (Windows
-        # reparse points included), so this never spares one. Decided from the
-        # single lstat above — a second path check would reopen the race.
         if stat.S_ISDIR(st.st_mode):
             return
         try:
-            os.unlink(path)
+            os.unlink(target, **kwargs)
         except OSError:
-            try:
-                os.rmdir(path)  # Windows directory symlink / junction
-            except OSError:
-                pass
+            # POSIX unlink removes every non-directory entry INCLUDING symlinks,
+            # so a failure here is never "it was a link". Only Windows needs the
+            # rmdir fallback (directory symlinks / junctions). Attempting it on
+            # POSIX would delete a real directory that raced into place after the
+            # stat above — exactly what the S_ISDIR guard exists to prevent.
+            if os.name == "nt":
+                try:
+                    os.rmdir(target, **kwargs)
+                except OSError:
+                    pass
 
     def _create_runtime_file(self):
         """Return a write fd for a freshly created runtime file (mode 0o600).
@@ -1304,10 +1417,10 @@ class VelaLocalServer:
         O_CREAT|O_EXCL refuses to open an existing entry at all — including a
         symlink, dangling or not — so this either creates our own inode or
         raises. O_NOFOLLOW is belt-and-braces for the same guarantee."""
-        rpath = self._runtime_path()
-        self._discard_runtime_entry(rpath)
+        self._discard_runtime_entry(self.RUNTIME_FILE)
+        target, kwargs = self._runtime_target(self.RUNTIME_FILE)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        return os.open(rpath, flags, 0o600)
+        return os.open(target, flags, 0o600, **kwargs)
 
     @staticmethod
     def _is_pid_alive(pid):
@@ -1323,6 +1436,16 @@ class VelaLocalServer:
                 return True
         except (OSError, subprocess.TimeoutExpired):
             return False
+
+    def _is_our_stale_server(self, pid, port):
+        """True only if `pid` is plausibly a previous Vela server on `port`.
+
+        SECURITY: the PID reaching both callers comes from the runtime file in a
+        directory Vela does not own, i.e. it names a kill TARGET chosen by
+        whoever wrote that file. Confirming the process kind AND that it really
+        holds the port is what keeps a planted file from turning either path into
+        an arbitrary-process kill. One copy, so the two callers cannot drift."""
+        return bool(pid) and self._is_python_process(pid) and self._pid_holds_port(pid, port)
 
     def _kill_pid(self, pid):
         """Kill a process by PID (platform-aware)."""
@@ -1391,12 +1514,9 @@ class VelaLocalServer:
             # PID alive + port matches .vela.env — but verify both:
             # 1. It's actually a Python process (guards PID recycling)
             # 2. It's actually bound to the port (guards stale .vela.env)
-            if not self._is_python_process(stale_pid):
-                print(f"  [port]   PID {stale_pid} is alive but not Python — PID was recycled, cleaning up")
-                self._remove_runtime_files()
-                return
-            if not self._pid_holds_port(stale_pid, stale_port):
-                print(f"  [port]   PID {stale_pid} is Python but not on port {stale_port} — stale runtime, cleaning up")
+            if not self._is_our_stale_server(stale_pid, stale_port):
+                print(f"  [port]   PID {stale_pid} is not a Vela server on port {stale_port} "
+                      f"(recycled PID or stale runtime) — cleaning up")
                 self._remove_runtime_files()
                 return
             # Confirmed: Python process holding our port — stop it first so we
@@ -1420,7 +1540,12 @@ class VelaLocalServer:
         try:
             fd = self._create_runtime_file()
         except OSError as e:
-            print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            # Reached when the existing entry could not be replaced (unwritable
+            # directory, immutable file, a directory in the way). Continuing
+            # without a runtime file is the safe outcome — the alternative is
+            # writing a token through something we do not own.
+            print(f"  [auth]   WARNING: Could not replace {self.RUNTIME_FILE} ({e})"
+                  f" — continuing without a runtime file.")
             return
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
@@ -1447,8 +1572,9 @@ class VelaLocalServer:
         os.unlink removes the directory entry itself and never dereferences it,
         so this cannot touch whatever a planted link pointed at."""
         for name in (self.RUNTIME_FILE, ".vela.pid"):
+            target, kwargs = self._runtime_target(name)
             try:
-                os.unlink(os.path.join(os.getcwd(), name))
+                os.unlink(target, **kwargs)
             except OSError:
                 pass
 

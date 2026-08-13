@@ -571,6 +571,52 @@ class TestSecurity(FolderServerTestBase):
         status, _, _ = fetch(self._port, "POST", "/save/sub/deck.vela", body=payload)
         self.assertEqual(status, 400)
 
+    # -- Link escapes on the deck sinks --
+    # Realpath containment sees a symlink but CANNOT see a hard link: a hard
+    # link to a file outside the served folder resolves inside it. So the deck
+    # sinks must not write through, or read out of, a linked entry either.
+
+    def _link_deck(self, maker, name, outside_name, content="OUTSIDE"):
+        outside = os.path.join(os.path.dirname(self._tmpdir), outside_name)
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write(content)
+        link = os.path.join(self._tmpdir, name)
+        try:
+            maker(outside, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem/platform cannot create this link type")
+        self.addCleanup(lambda: os.path.exists(outside) and os.unlink(outside))
+        self.addCleanup(lambda: os.path.exists(link) and os.unlink(link))
+        return outside, link
+
+    def test_save_through_hardlinked_deck_does_not_escape(self):
+        outside, _ = self._link_deck(os.link, "hl-save.vela", "hl-save-victim.txt")
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/hl-save.vela", body=payload)
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE", "save wrote through a hard link")
+
+    def test_save_through_symlinked_deck_does_not_escape(self):
+        outside, _ = self._link_deck(os.symlink, "sl-save.vela", "sl-save-victim.txt")
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sl-save.vela", body=payload)
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE", "save wrote through a symlink")
+
+    def test_serving_a_hardlinked_deck_does_not_leak_it(self):
+        secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-read.vela", "hl-read-secret.json", secret)
+        status, _, body = fetch(self._port, "GET", "/deck/hl-read.vela")
+        self.assertNotIn(b"SUPERSECRET", body)
+        self.assertEqual(status, 500)  # refused at the reader, not rendered
+
+    def test_listing_skips_hardlinked_decks(self):
+        secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-list.vela", "hl-list-secret.json", secret)
+        status, _, body = fetch(self._port, "GET", "/api/decks")
+        self.assertEqual(status, 200)
+        self.assertNotIn(b"SUPERSECRET", body)
+
     # -- Path traversal on /poll/ (DOCUMENTS MISSING VALIDATION) --
 
     def test_poll_dotdot_rejected(self):
@@ -1683,21 +1729,80 @@ class TestRuntimeFileLinks(unittest.TestCase):
 
     def test_planted_pid_cannot_kill_an_unrelated_process(self):
         # The runtime file names a kill TARGET, and _retry_after_stale_kill runs
-        # on the ordinary busy-port path. The PID must be verified (Python + the
-        # actual holder of the port), never trusted from the file.
+        # on the ordinary busy-port path. The PID must be verified (right process
+        # kind AND actually holding the port), never trusted from the file.
+        # NB: claim a free ephemeral port rather than hardcoding one — a fixed
+        # port could be held by an unrelated process on the machine running this
+        # suite, and the port-holder fallback would then kill it for real.
+        import socket
         import subprocess
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            free_port = probe.getsockname()[1]
         victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         self.addCleanup(victim.wait)
         self.addCleanup(victim.kill)
-        self.server.port = 65000
+        self.server.port = free_port
         with open(self._rt, "w", encoding="utf-8") as f:
-            json.dump({"pid": victim.pid, "port": 65000}, f)
+            json.dump({"pid": victim.pid, "port": free_port}, f)
+        httpd = None
         try:
-            self.server._retry_after_stale_kill(VelaHTTPHandler)
+            httpd = self.server._retry_after_stale_kill(VelaHTTPHandler)
         except Exception:
-            pass  # binding is expected to fail here; the kill decision is the subject
+            pass  # the kill decision is the subject, not the rebind
+        if httpd is not None:
+            httpd.server_close()
         time.sleep(0.4)
         self.assertIsNone(victim.poll(), "an unrelated process was SIGKILLed")
+
+    @unittest.skipUnless(
+        all(fn in os.supports_dir_fd for fn in (os.open, os.stat, os.unlink, os.rmdir)),
+        "platform has no dir_fd-relative calls")
+    def test_runtime_writes_stay_in_the_pinned_directory(self):
+        # No-follow/exclusive-create only constrain the final path component, so
+        # the directory itself must be pinned — otherwise a swap above the file
+        # relocates the token write. Changing CWD stands in for that swap.
+        self.server._write_runtime_info()
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        os.mkdir(elsewhere)
+        os.chdir(elsewhere)
+        self.server._write_runtime_info()
+        self.assertFalse(os.path.exists(os.path.join(elsewhere, ".vela.env")),
+                         "runtime write followed the moved directory")
+        self.assertTrue(os.path.exists(self._rt))
+
+    @unittest.skipIf(os.name == "nt", "POSIX-only fallback gating")
+    def test_rmdir_fallback_does_not_run_on_posix(self):
+        # POSIX unlink removes symlinks itself, so a failed unlink is never "it
+        # was a link" — running rmdir anyway deletes a real directory that raced
+        # into place after the stat.
+        os.symlink(self.tmp, self._rt)
+        calls = []
+        real_unlink, real_rmdir = os.unlink, os.rmdir
+
+        def refuse(*a, **k):
+            raise PermissionError("simulated race")
+
+        os.unlink, os.rmdir = refuse, lambda *a, **k: calls.append(a)
+        try:
+            self.server._discard_runtime_entry(".vela.env")
+        finally:
+            os.unlink, os.rmdir = real_unlink, real_rmdir
+        self.assertEqual(calls, [], "rmdir fallback ran on POSIX")
+
+    def test_missing_cwd_never_raises(self):
+        # Startup and atexit cleanup both address the runtime file; if the
+        # directory is gone, os.getcwd() itself fails and an escaping error
+        # would abort the server rather than degrade to "no runtime file".
+        gone = os.path.join(self.proj, "gone")
+        os.mkdir(gone)
+        os.chdir(gone)
+        os.rmdir(gone)
+        self.server._write_runtime_info()
+        self.assertIsNone(self.server._read_runtime_info())
+        self.server._cleanup_stale_server()
+        self.server._remove_runtime_files()
+        os.chdir(self.proj)
 
     def test_corrupt_runtime_file_is_ignored(self):
         for junk in ("not json", "[1,2,3]", '"str"', ""):
