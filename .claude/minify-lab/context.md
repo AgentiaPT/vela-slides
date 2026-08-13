@@ -141,6 +141,19 @@ Waiting on task-notifications, not polling. This file + directory get
 committed and pushed right after this initial scaffold, then again after
 each phase lands.
 
+## Session hygiene: checking context usage
+
+Auto-compact is set to **300k tokens** for this session. To check actual
+usage at any time (real reading from the live transcript's API `usage`
+field, not a byte-count guess):
+
+```bash
+python3 .claude/minify-lab/check-context.py
+```
+
+Prints context tokens used, the 300k threshold, % used, and headroom.
+Override the threshold with `--threshold N` if it's ever changed.
+
 ## Open questions / to revisit
 
 - None currently blocking.
