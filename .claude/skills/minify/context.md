@@ -219,20 +219,45 @@ still gate-checked, Tier N still untouchable at every rung):
      (only where content is genuinely a lookup, per the skill's own
      DSL caveat)
 
+## Status log (cont. 4) — conservative-pass results on 4 new files
+
+Word-count-based reduction (all gate PASS, all committed):
+| File | Reduction |
+|---|---|
+| `docs/ARCHITECTURE.md` | 7.6% |
+| `docs/SCREENSHOTS.md` | 10.1% |
+| `skills/vela-slides/references/block-schema.md` | 5.5% |
+| `skills/vela-slides/references/design-patterns.md` | **24.4%** (clears target) |
+
+design-patterns.md proves 20%+ IS achievable honestly on the right kind
+of file (archetype-catalog prose, low Tier N). The other 3 need a more
+aggressive approach-candidate to close the gap.
+
+Dispatched 2 approach-variant agents (v2 candidates, NOT overwriting the
+v1 conservative pass, so both remain comparable):
+- `block-schema.min.v2.md` (a132ae9a6fae0e01c): aggressive Tier-E
+  deletion + tighter Tier-M field-table compression.
+- `ARCHITECTURE.min.v2.md` (ac7c31af32151dc7a): aggressive Tier-E
+  deletion + cross-file dedup via pointer (non-obligation content only)
+  + tighter comparison-table compression.
+Not yet returned. (Did not re-run SCREENSHOTS.md yet — only 3 files
+under 20%, prioritized the 2 largest/worst first; SCREENSHOTS.md v2 is
+next if still needed after these land.)
+
 ## Next action
 
-1. Let the 4 in-flight file-level minify agents finish (their single-pass
-   tiered-hybrid data still counts toward the eval set).
-2. Dispatch approach-variant agents: pick 1-2 already-minified files (best
-   candidates: CLAUDE.md at 4.7%, or design-patterns.md once it lands) and
-   re-run minify through approach rungs 2-4 above, each as its own explicit
-   candidate output (e.g. `CLAUDE.min.v2.md`, `.v3.md`, `.v4.md`), each
-   individually gate-checked. Compare reduction vs approach.
-3. Pick winning approach(es) — the one(s) that clear >=20% while still
-   passing the gate and not degrading quality — as the finalized /minify
-   method. If needed, fold the winning approach's rules into SKILL.md
-   itself so future minify runs use it by default, rather than treating
-   it as a one-off manual escalation.
-4. Once eval-set average >=20% (honestly, no gate-forcing): build the
-   eval harness (task #5), then the blind randomized judge (task #6), then
-   run first directional pass and audit for bias.
+1. Wait for the 2 v2 agents. Compare v2 vs v1 reduction % per file —
+   confirms whether the more aggressive approach is what closes the gap
+   to 20%, not just file selection.
+2. If a v2 file still falls short of 20%, either escalate further (rung 3:
+   prose->DSL, cautiously) or accept the honest ceiling and don't force it.
+3. Once satisfied the aggressive-approach candidates are validated (gate
+   pass + real reduction gain over v1), decide: fold the winning
+   aggressive rules into SKILL.md as the new default procedure (so future
+   /minify runs don't need manual escalation), OR keep SKILL.md
+   conservative-by-default and treat "aggressive mode" as an explicit
+   opt-in. Not yet decided — flag to user once data is in.
+4. Compute final eval-set average reduction across ALL committed pairs
+   (using best candidate per file). Once honestly >=20% average: build
+   the eval harness (task #5), then the blind randomized judge (task #6),
+   then run first directional pass and audit for bias.
