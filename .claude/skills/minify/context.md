@@ -135,12 +135,36 @@ to that constraint, minimize tokens as much as possible.
   run rather than being averaged away; label first-pass results
   "directional, not confirmatory."
 
+## Status log (cont. 2)
+
+- [2026-08-13] First real minify run: `CLAUDE.md` -> `CLAUDE.min.md`.
+  4644 -> 4425 tokens (4.7% reduction), gate PASS (56/56 trigger sentences
+  preserved). Low reduction is plausible/expected — file is already dense
+  and mostly Tier N (routing/version/security rules). Committed
+  (CLAUDE.min.md is now in repo).
+- [2026-08-13] User steer: use MULTIPLE minify scenarios as evals — not just
+  CLAUDE.md. Dispatching parallel Sonnet agents to minify more real
+  skill files in this repo so we have several concrete baseline/minified
+  pairs to eval against, spanning different file types/sizes:
+  - `.claude/skills/hyper-sprint/SKILL.md` (already has eval-task-set.md
+    tasks B1-5 written against it)
+  - `skills/vela-slides/SKILL.md` (already has eval-task-set.md tasks
+    C1-6 written against it)
+  - `.claude/skills/vela-secure-coding/SKILL.md` (referenced by CLAUDE.md's
+    mandatory-read rule; high Tier-N density, good stress test)
+  Each agent: invoke /minify on its target, run the gate, iterate until
+  pass, report tier breakdown + token counts, do NOT commit (left for
+  orchestrator).
+
 ## Next action
 
-Build the eval harness (task #5): run a task against baseline file vs
+Once the 3 parallel minify agents return: review each `.min.md` + gate
+result, spot check Tier N preservation, commit all together. Then build
+the eval harness (task #5): run a task against baseline file vs
 `/minify`-produced file, fresh session each time, capture tokens/turns/
-tool-errors/success signal per eval-task-set.md's mechanical checks. Then
-build the blind randomized-order judge (task #6, separate model — leaning
-Opus — from the Sonnet task-executor). Then run first directional pass on
-Target A (CLAUDE.md) only, before scaling to B/C, and audit results for
-bias per the checklist above.
+tool-errors/success signal per eval-task-set.md's mechanical checks —
+now runnable across 4 targets (CLAUDE.md, hyper-sprint, vela-slides base
+skill, vela-secure-coding). Then build the blind randomized-order judge
+(task #6, separate model — leaning Opus — from the Sonnet task-executor).
+Then run first directional pass, and audit results for bias per the
+checklist above.
