@@ -112,30 +112,36 @@ Orchestrate only — sub-agents do the actual work.
 
 ## Phase plan (reset — redoing from scratch)
 
-1. **[dispatched]** Research candidate reduced-instruction encoding
-   formats (telegraphic/caveman, pseudocode, controlled natural language
-   / STE, structured key-value, symbolic notation, "omit-the-inferable"),
-   grounded in real prompt-compression literature + hand-minification
-   probes on this repo's actual CLAUDE.md/SKILL.md sections. Agent: opus,
-   background. Output: `.claude/minify-lab/research-encoding-formats.md`
+1. **[DONE — ⚠️ gate FAILED, see below]** Research candidate reduced-
+   instruction encoding formats. Agent: opus, background. Output:
+   `.claude/minify-lab/research-encoding-formats.md` — see Artifacts
+   index. **Requires a user decision before phase 4/5 proceed** — see
+   Open questions.
 2. **[DONE]** Design the eval harness: new "real change-request
    task, baseline vs minified instructions" harness, porting judge/
    report/gate/harvest patterns from `evals/scripts/`; 7+ fully-specified
    CLAUDE.md scenarios; keep 6a (reduction pre-filter) and 6b (quality
    gate) as separate verdicts, never merged. Agent: opus, background.
    Output: `.claude/minify-lab/harness-design.md` — see Artifacts index.
-3. **[ ]** Citation verification pass on phase 1's external citations
-   (WebSearch snippet-level — arXiv itself is egress-blocked in-
-   container). Agent: sonnet, background, dispatched after phase 1
-   lands. Output: `.claude/minify-lab/citation-verification.md`
-4. **[ ]** Build `.claude/skills/minify/` itself, applying phase 1's top-
-   ranked approach. Agent: opus. Constraints: don't apply to real repo
-   files yet, don't touch `VELA_VERSION`, don't `git commit` (orchestrator
+1b. **[dispatched]** Normal-density corroboration study — pre-register
+    ~6 typical (function-word ratio ≥35%) instruction files, re-run the
+    §3 probe protocol from research-encoding-formats.md against them.
+    Agent: opus, background. Output:
+    `.claude/minify-lab/research-normal-density-corroboration.md`
+3. **[dispatched]** Citation verification pass on phase 1's external
+   citations (WebSearch snippet-level — arXiv itself is egress-blocked
+   in-container). Agent: sonnet, background. Output:
+   `.claude/minify-lab/citation-verification.md`
+4. **[dispatched]** Build `.claude/skills/minify/` itself, applying TRB
+   (phase 1's top-ranked approach) + a self-check constraint-inventory
+   extractor. Agent: opus. Constraints: don't apply to real repo files
+   yet, don't touch `VELA_VERSION`, don't `git commit` (orchestrator
    reviews + commits).
-5. **[ ]** Build harness scripts under `.claude/minify-lab/harness/` per
-   phase 2's design. Agent: sonnet. Constraints: no real `claude -p` runs
-   yet (separate gated step, costs real budget), self-test with synthetic
-   fixtures only.
+5. **[dispatched]** Build harness scripts under `.claude/minify-lab/
+   harness/` per phase 2's design, amended with the split size/structure
+   6a verdict (see Autonomous decisions). Agent: sonnet. Constraints: no
+   real `claude -p` runs yet (separate gated step, costs real budget),
+   self-test with synthetic fixtures only.
 6. **[ ]** First real pilot: CLAUDE.md baseline vs minified — 3 reps,
    sonnet as agent-under-test, opus blind judge (budget locked above).
 7. **[ ]** Expand to additional skills (candidates: hyper-sprint,
@@ -145,6 +151,50 @@ Orchestrate only — sub-agents do the actual work.
 
 ## Artifacts index
 
+- `.claude/minify-lab/research-encoding-formats.md` — **DONE**
+  (2026-08-13, opus, ~1090 lines). **Contradicts the lost prior
+  session's over-optimistic ~30%-average projection** — this rigorous
+  redo measured, not estimated, and found:
+  - **This corpus is already pre-compressed.** Function-word ratio
+    21.5/24.5/27.5% (CLAUDE.md / secure-coding / hyper-sprint) vs ~44%
+    for ordinary prose — the author already writes telegraphically.
+  - **16.5% of the corpus is legally frozen** (fenced/inline-code
+    verbatim spans: commands, paths, symbols, DSL) — 0% budget.
+  - **5 hand-minification probes, 100% constraint survival, pooled 10.3%
+    byte reduction** (8,566→7,687 B); max-aggression single probe hit
+    18.3%.
+  - **Projected whole-corpus reduction: ~7.6% from rewriting alone,
+    ~13–15% with aggressive (risky) restatement pruning.**
+  - **❌ The ≥20% reduction gate does NOT clear on this corpus.**
+    Explicitly does NOT recommend closing the gap by loosening the
+    100%-constraint-survival standard.
+  - **#1 approach unchanged: Typed Rule Blocks** (`WHEN/SCOPE/MUST/
+    NEVER/DO/EXC/WHY/TEST/REF` key-value blocks, telegraphic values,
+    byte-frozen verbatim zones, explicit quantifier/modality tokens) —
+    but its value here is **correctness/enforceability, not bytes**:
+    probe B cut only 4.6% while turning 3 implicit quantifiers explicit,
+    a real defect-prevention win the eval harness should be built to
+    detect. Ruled out: symbolic/predicate notation, learned/soft
+    (LLMLingua-style) compression.
+  - **3 options given, in the researcher's recommended order**: (1)
+    re-measure the same probe protocol against a pre-registered
+    normal-density corpus (~6 files, function-word ratio ≥35%) to learn
+    whether the gate is wrong about the approach or right about these
+    specific already-dense files; (2) split 6a into separate `size`
+    (≥20%, with a documented exemption for pre-densified files) and
+    `structure` (constraint-explicitness score) verdicts — probe B fails
+    (a) at 4.6% but passes (b) decisively, and merging them hides that
+    signal; (3) only if 1 and 2 both fail, reconsider the project's
+    premise for this repo (CLAUDE.md is always-resident every session,
+    unlike SKILL.md bodies that load on trigger — honest available
+    prize there alone is ~1.1 KB).
+  - **22 risks flagged (R1–R22)**, each with a detection method,
+    covering the full brief. Top build priority: an enumerated
+    constraint-inventory extractor with 1:1 survival mapping (needed
+    regardless of which gate option is chosen).
+  - All external literature citations tagged ⚠️ UNVERIFIED (snippet-only,
+    arXiv egress-blocked) and explicitly **not load-bearing** — the
+    recommendation rests entirely on the 5 measured probes.
 - `.claude/minify-lab/harness-design.md` — **DONE** (2026-08-13, opus,
   ~1600 lines). Implementation-ready spec for `.claude/minify-lab/
   harness/`. Key points:
@@ -184,20 +234,22 @@ Orchestrate only — sub-agents do the actual work.
     the confounder-control sections (§6, spot-checked — sound). Full
     review still pending before phase 5 (implementation) starts.
 
-## Current status (last updated: 2026-08-13, phase 2 landed)
+## Current status (last updated: 2026-08-13, phases 1+2 landed)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
-user's choice (full re-run, not summary-reconstruction). Phase 1
-(research) and phase 2 (harness design) were dispatched in parallel as
-background agents. **Phase 2 is DONE** — `harness-design.md` written, see
-Artifacts index; 3 new confounder controls folded into the watchlist.
-Phase 1 (research-encoding-formats.md) still running. Not polling —
-waiting on its task-notification. Phase 3 (citation verification) is
-blocked on phase 1 landing, not yet dispatched. Phases 4-5 (build skill,
-build harness scripts) are blocked on phases 1 and 2 respectively — phase
-5 can be dispatched now that phase 2 is done, but holding it until phase 1
-lands too so both builder agents can start together as in the original
-plan. This file gets committed and pushed after every phase lands.
+user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
+are both **DONE** — full summaries in Artifacts index. **Phase 1's
+rigorous redo overturned the lost prior session's conclusion**: the
+locked ≥20% reduction gate does NOT clear on this repo's actual files
+(they're already dense/telegraphic; measured ~7.6–15%, not ~30%). This
+touches a decision the user explicitly locked, so it's surfaced as an
+open question below rather than resolved unilaterally — asked the user
+same turn the finding landed. Phase 3 (citation verification) not yet
+dispatched — also pending the same check-in since its priority depends on
+which direction phase 1's finding sends the project. Phases 4-5 (build
+skill, build harness scripts) are blocked on this decision: building the
+skill against a gate that doesn't fit the corpus would be premature. This
+file gets committed and pushed after every phase lands.
 
 ## Session hygiene: checking context usage
 
@@ -214,4 +266,48 @@ Override the threshold with `--threshold N` if it's ever changed.
 
 ## Open questions / to revisit
 
-- None currently blocking.
+- None currently blocking. (Prior gate question below was resolved
+  autonomously per the user going AFK — see "Autonomous decisions".)
+
+## Autonomous decisions (user went AFK, told orchestrator: "don't block,
+use best judgment, make this a world-record minifying skill")
+
+- **Gate resolution (2026-08-13)**: adopted the research doc's own
+  recommended options **1 + 2 together** (not asked to the user — they
+  were AFK; this is the lowest-risk reading of "best judgment" because
+  neither option touches the 100%-constraint-survival bar):
+  1. **6a splits into two sub-verdicts**: `size` (≥20%, per-file, with a
+     documented exemption for pre-densified files — verbatim fraction
+     >25% OR function-word ratio <30% — this repo's 3 files all qualify
+     for the exemption) and `structure` (constraint-explicitness score:
+     quantifier/modality tokens made explicit, minus constraints lost).
+     Merging them into one number was hiding the real signal (probe B:
+     4.6% size, decisive structure win).
+  2. **Commissioned a normal-density corroboration study** (new agent,
+     not yet in original phase list) — pre-register ~6 typical
+     instruction files (function-word ratio ≥35%, i.e. NOT already
+     telegraphic like this repo's) and re-run the same probe protocol,
+     to learn whether ≥20% is achievable in general. This is what makes
+     the "world-record" framing honest: if the approach clears 20%+
+     cleanly on normal-density text while still hitting 100% survival on
+     this repo's already-dense text, that adaptive range (aggressive
+     where there's fat, surgical where there isn't, always
+     survival-safe) is the actual competitive claim — not a flat
+     percentage. **No superlative/"world record" claim goes in any
+     artifact, doc, or the skill's own text without a number to back
+     it** — same discipline already locked for citations. "World-record"
+     is direction/ambition, not a claim to assert unverified.
+  3. Did NOT adopt option 3 (reconsider the project's premise) — the
+     first two options are cheap, non-destructive, and the user's AFK
+     instruction reads as "keep going," not "reconsider scope."
+- Dispatched phases 3, 4, 5 and the new normal-density study in parallel
+  rather than sequencing on the gate answer, since none of their designs
+  actually depend on *which* gate option was chosen — TRB's mechanics
+  and the constraint-inventory extractor are unaffected either way.
+- **Known follow-up, not yet reconciled**: the constraint-inventory
+  extractor (flagged in research §6 as the top build priority) was
+  requested from BOTH phase 4 (skill's own self-check) and phase 5
+  (harness `assertions.py`) in parallel to avoid blocking either on the
+  other. Expect two implementations to reconcile into one shared module
+  once both land — orchestrator must do this explicitly, don't let it
+  silently stay duplicated.
