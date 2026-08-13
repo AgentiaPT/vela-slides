@@ -195,11 +195,17 @@ def run_campaign(scenario_ids, campaign_id, config=None, approach="telegraphic",
             for rep in range(reps):
                 run_dir = runs_root / campaign_id / sid / arm / f"rep{rep}"
                 try:
+                    # Scope to `chosen`, not the full scenarios file: variant_leak_check
+                    # scans a variant against every scenario's leak_tokens in whatever list
+                    # is passed, and several frozen scenarios have pre-existing token
+                    # collisions with CLAUDE.md's own routing table (see prepare.py's
+                    # module docstring "KNOWN FINDING"). Passing the full file would make
+                    # unrelated scenarios spuriously block a campaign that never runs them.
                     outcome = runner_mod.run_one(
                         scenario, arm, rep, run_dir, config=config,
                         approach=approach if arm != "baseline" else None,
                         base_ref=base_ref, hooks_mode=hooks_mode, repo_root=repo_root,
-                        scenarios_for_leak_check=all_scenarios, invoke=invoke,
+                        scenarios_for_leak_check=chosen, invoke=invoke,
                         keep_worktree=keep_worktree,
                     )
                 except prepare_mod.PrepareError as e:
