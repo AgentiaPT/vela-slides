@@ -339,14 +339,14 @@
 
   <div class="masthead">
     <div>
-      <div class="status-chip">In progress &mdash; first full clean pass landed, 1 fail root-caused to noise</div>
+      <div class="status-chip">In progress &mdash; 2/3 piloted scenarios pass cleanly, 1 root-caused to noise</div>
       <h1>Minify Scoreboard</h1>
       <div class="sub">Real, sourced results for the <code style="font-family:var(--mono)">/minify</code> instruction-compression skill. No number on this page is estimated without being labelled so &mdash; see methodology in the footer.</div>
     </div>
     <div class="meta">
       repo: agentiapt/vela-slides<br>
-      last updated: 2026-08-13 ~14:45 UTC<br>
-      runs logged: 9
+      last updated: 2026-08-13 ~13:52 UTC<br>
+      runs logged: 10
     </div>
   </div>
 
@@ -360,12 +360,12 @@
       <div class="l">Constraint survival across every probe and piloted scenario so far &mdash; 0 ever lost outright</div>
     </div>
     <div class="stat">
-      <div class="n">2<small>/9</small></div>
+      <div class="n">3<small>/9</small></div>
       <div class="l">Scenarios piloted end-to-end with real, trustworthy 6A+6B verdicts</div>
     </div>
     <div class="stat">
-      <div class="n">1<small>/2</small></div>
-      <div class="l">Piloted scenarios pass cleanly &mdash; the other's 6B fail was root-caused and is not attributable to minification (&sect;04)</div>
+      <div class="n">2<small>/3</small></div>
+      <div class="l">Piloted scenarios pass cleanly &mdash; the third's 6B fail was root-caused and is not attributable to minification (&sect;04)</div>
     </div>
   </div>
 
@@ -396,8 +396,8 @@
             <td class="num">1.5%<span class="approach-sub" style="margin:0">exempt, pre-densified</span></td>
             <td><span class="pill pass">Pass +3</span></td>
             <td>
-              <span class="pill mixed">Mixed 1/2</span>
-              <span class="approach-sub" style="margin:0">reducer-nohistory pass &middot; changelog-discipline fail (root cause: not minification &mdash; &sect;04)</span>
+              <span class="pill mixed">Mixed 2/3</span>
+              <span class="approach-sub" style="margin:0">reducer-nohistory pass &middot; blockfield-safekeys pass &middot; changelog-discipline fail (root cause: not minification &mdash; &sect;04)</span>
             </td>
             <td class="num">100%</td>
           </tr>
@@ -440,11 +440,14 @@
           <li>This repo's own shipped minified CLAUDE.md passes the harness's independent structure check.
             <span class="cite">net constraint delta &minus;5 &rarr; +3 after fix (0 lost, 0 weakened, 67/67 retained); also PASS on the skill's own separate verifier (57/57)</span>
           </li>
-          <li>A full pilot scenario now passes cleanly on both the structure and behavioral verdicts, on real re-judged data.
-            <span class="cite">reducer-nohistory: 6A structure PASS (net +3) + 6B quality gate PASS (0% judge instability, 3/3 stable pairs, 33.3% loss rate under the 33.34% bar)</span>
+          <li>Two full pilot scenarios now pass cleanly on both the structure and behavioral verdicts, on real re-judged/directly-judged data.
+            <span class="cite">reducer-nohistory: 6A structure PASS (net +3) + 6B quality gate PASS (0% judge instability, 3/3 stable pairs, 33.3% loss rate). blockfield-safekeys: same clean shape independently &mdash; 3/3 stable pairs, 0% instability, 33.3% loss rate, minified used fewer average errors/turns/tokens than baseline</span>
           </li>
           <li>A real 6B FAIL was root-caused rather than taken at face value, and traced to something other than minification.
             <span class="cite">security-changelog-discipline: the governing rule text is byte-identical (or reinforced) between baseline and minified CLAUDE.md; baseline itself fails the same assertion once (rep2, 229 chars); best-supported explanation is small-sample noise on a rule that's already borderline in the original text, not information loss &mdash; see &sect;04</span>
+          </li>
+          <li>The gate's anti-false-positive mechanism (both-arms-fail &rArr; scenario bug, not a minified regression) has now fired correctly on a second, independent scenario.
+            <span class="cite">blockfield-safekeys: two assertions (files_changed_include, version_bumped) fail the 2/3 floor on BOTH arms &mdash; independently confirmed against raw assertions.json; correctly excluded from the gate rather than blamed on minification</span>
           </li>
         </ul>
       </div>
@@ -454,8 +457,8 @@
           <li>The rule ambiguity the investigation above surfaced hasn't been addressed.
             <span class="cite">the "DO state" checklist (class/severity/area/fix/tests-added) isn't explicitly tied to bullet-splitting in either arm's text &mdash; a genuine clarity gap in the real production CLAUDE.md, out of scope for this lab to fix; flagged for a future, separate, deliberate decision</span>
           </li>
-          <li>Only 2 of 9 authored scenarios have real behavioral data.
-            <span class="cite">blockfield-safekeys, routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene &mdash; still unpiloted</span>
+          <li>Only 3 of 9 authored scenarios have real behavioral data.
+            <span class="cite">routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene &mdash; still unpiloted</span>
           </li>
           <li>No head-to-head competitive benchmark has been run yet.
             <span class="cite">"better than anything currently available" is a target, not yet a measured result</span>
@@ -524,6 +527,10 @@
       <div class="log-entry">
         <span class="when">Changelog-shape root cause</span>
         <span class="what">Investigated the 6B FAIL rather than shipping a fix on top of an assumption. Both rule blocks that govern this behavior are byte-identical or reinforced between the baseline and minified CLAUDE.md; the full-file diff between variants is only ~1.5&ndash;2.8%; and <b>baseline itself fails the identical assertion once</b> (rep2, 229 chars &mdash; independently confirmed against the raw data). Conclusion: this is small-sample (n=3) noise on a rule that's already borderline in the original text, not evidence the minified text lost force. Not editing the minified variant to chase this result &mdash; the text isn't actually different between arms, so doing so would be overfitting the eval, not a real fix.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Launch 10 (blockfield-safekeys)</span>
+        <span class="what">Two false starts caught before real cost &mdash; a too-short timeout, then a launch-mechanism slip that was corrected within the same round &mdash; before the campaign completed cleanly on a third attempt. Result: the project's <b>second full clean GATE 6B pass</b> (3/3 stable pairs, 0% instability, 33.3% loss rate), independently verified against the raw campaign JSON. The same both-arms-fail exclusion mechanism validated on the changelog-discipline scenario fired again here on two unrelated assertions, correctly recognizing a pre-existing routing-table-adherence gap present in baseline too, not a minification-caused regression.</span>
       </div>
     </div>
   </section>
