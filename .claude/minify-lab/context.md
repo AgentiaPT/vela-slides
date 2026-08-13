@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~10:55, launch 4 caught a real worktree-isolation breach — sub-agent edited THIS live repo directly — root-caused, fixed (delegated), verified, repo restored to clean; Phase 6 pilot not yet relaunched)
+## Current status (last updated: 2026-08-13 ~11:35, launch 5 COMPLETED end-to-end for real — first full pilot result — isolation held throughout; result is INCONCLUSIVE for a real, now-diagnosed harness reason (missing node_modules in worktrees), fix delegated; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -868,12 +868,68 @@ generated before this fix) was deleted — no resume support exists in
 `campaign.py`, and data collected before an isolation fix can't be
 trusted regardless, so a clean re-run is required either way.
 
-**Not yet done**: the actual Phase 6 pilot re-launch (launch 5) — this
-finding took priority. Next step once resumed: relaunch the same
-`reducer-nohistory` campaign now that the isolation fix is in place, and
-this time also treat "does `git status` on this repo stay clean
-throughout" as a first-class pass/fail signal for the run, not just the
-campaign's own assertions.
+**Launch 5 ran to completion** (`reducer-nohistory`, 3 reps, both arms,
+2 judge rounds, real sonnet agent-under-test + real opus judge) — the
+first real, non-crashed, non-contaminated pilot result. `git status` on
+this repo stayed clean the entire time (checked live during the run and
+again after) — the isolation fix holds. Total real spend: **$5.73** for
+the 6 agent-under-test reps (well under the $15-50 estimate; judge calls
+add a small amount more, not yet separately totaled).
+
+**Result: 6B (the actual quality gate) is INCONCLUSIVE** — but for a
+real, now-diagnosed harness reason, not because the measurement itself
+is unsound:
+
+- Every one of the 6 reps (3 baseline + 3 minified) failed the SAME
+  critical assertion, `command_succeeds` for `python3 tests/test_vela.py`
+  (7/8 critical passed on every single rep, always the same one missing)
+  — both arms failing identically is exactly what `gate.py`'s
+  measurement-integrity evaluator is designed to catch and correctly
+  excluded from the drift decision ("scenario-invalid... scenario bug,
+  not counted"), rather than silently treating it as a real quality
+  difference.
+- Root-caused with zero agent spend: a throwaway worktree created fresh
+  from HEAD (`git worktree add --detach /tmp/sanity-wt HEAD`), with NO
+  edits at all, fails the same way — `python3 tests/test_vela.py` exits 1
+  with "498 passed, 3 skipped, 2 failed" even on pristine code. The two
+  real failures are Node-based sub-tests
+  (`test_block_render.cjs`/`test_css_exfil.cjs`); two more skip for
+  missing `jsdom`. Confirmed: the main repo (not a worktree) has
+  `node_modules/` installed and passes 503/503 clean; a fresh
+  `git worktree add` never gets its own copy, because `node_modules/` is
+  gitignored and worktrees only check out git-tracked content. Pure
+  environment gap in worktree setup, unrelated to baseline-vs-minified
+  content — confirmed via a cheap, zero-cost sanity check before
+  concluding anything, rather than taking the campaign's own report at
+  face value.
+- **Fix delegated** (mirroring the isolation-fix pattern): make
+  `node_modules` reachable inside every prepared worktree (symlink to
+  the main repo's copy is the obvious approach — no need to `npm
+  install` per worktree). In progress as of this update; not yet
+  reviewed/committed.
+
+**Also surfaced, independent of the inconclusive-gate reason — worth
+tracking separately**: the real minified `variants/telegraphic/CLAUDE.md`
+built earlier this session **fails its own 6A structure verdict**: net
+constraint delta **-5** (0 lost, 7 weakened, only 2 newly-explicit),
+against a `min_net_delta: 0` bar. This is the file-level structure score,
+not the 6B behavioral gate — a real, separate signal that the current
+minification of THIS repo's CLAUDE.md may have compressed some
+constraints too aggressively (weakened, not lost outright) relative to
+how much it gained in explicitness. Worth root-causing once the
+node_modules fix lands and a clean 6B result is in hand — not urgent
+enough to block the immediate next step.
+
+**Also noted**: all 3 judge pairs came back `stable: false` (the 2
+judging rounds disagreed with each other), with round-1's winner
+recorded as "tie" in each case. At n=3 this is too small to read much
+into on its own, but worth watching once more scenarios/reps accumulate
+— if instability stays high at scale it would itself trip `gate.py`'s
+instability evaluator.
+
+**Next**: once the node_modules fix is reviewed/committed, relaunch the
+same `reducer-nohistory` campaign (launch 6) for a clean 6B read, then
+come back to the structure-verdict finding above.
 
 **The real Phase 6 pilot launch found two more real bugs before it ever
 reached agent spend** — the smoke test above only exercised
