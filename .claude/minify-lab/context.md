@@ -200,6 +200,45 @@ must produce the exact same quality of agent outputs as the original.
 Validate rigorously using this repo's real tasks as evals: tokens, turns,
 errors, and LLM-as-judge, with continuous bias/leak auditing.
 
+**Explicit user redirection (2026-08-13, ~10:35, after launch 8's clean
+pilot result landed): "your goal is not the harness but [to] make an
+amazing minifying skill, so do it, dont stop until [w]e have amazing
+that is better than anything currently available, with proofs" —
+followed immediately by "and keep update on the progress, like a ml
+leader board" and "keep context.md updated, manage and delegate."**
+This resets priority: the harness is instrumentation, not the
+deliverable. The deliverable is the `/minify` skill itself, proven
+best-in-class with real evidence, kept continuously visible via a
+living leaderboard artifact (see "Leaderboard artifact" section below
+for its URL — redeploy the SAME url on every real result, don't create
+a new one). Standing orchestrator posture reconfirmed: delegate actual
+investigation/fix work to subagents, independently verify before
+trusting a self-report, keep this file current, commit/push before any
+wait, never fabricate progress on the leaderboard or here.
+
+## Leaderboard artifact
+
+Published 2026-08-13 ~10:45: https://claude.ai/code/artifact/90551054-eac4-470e-93ff-bc49b3c7987f
+("Minify Scoreboard"). Source file for redeploys:
+`.claude/minify-lab/harness/leaderboard/minify-leaderboard.html` (kept in
+git so any future session can find and update it — see below).
+
+**On every future real result** (a completed pilot run, a fixed structure
+verdict, a new scenario piloted, a competitive benchmark): edit the source
+HTML, then republish via the `Artifact` tool passing this SAME URL as `url`
+so it updates in place rather than forking a new artifact. Never fabricate
+a number on it — every figure must trace to a committed harness run's JSON
+or a committed research doc. 6A and 6B stay visually and textually
+independent (never averaged/combined) per the standing invariant.
+
+Current content as of first publish: 1/9 scenarios piloted
+(`reducer-nohistory`); real proven yield 27.4% (normal-density corpora,
+Phase 1b); this-repo's own CLAUDE.md exempt at 1.5% (pre-densified);
+100% constraint survival; two open gates blocking a clean win — 6A
+structure FAIL (net delta −5) and 6B INCONCLUSIVE (100% judge instability)
+— both from launch 8, both explained on the page as real measured
+findings, not harness bugs.
+
 ## Locked decisions (2026-08-13, reconfirmed unchanged on this redo)
 
 - **Eval targets**: plural — CLAUDE.md *and* several skills in this repo,

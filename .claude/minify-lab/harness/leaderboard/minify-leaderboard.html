@@ -1,0 +1,506 @@
+<title>Minify Scoreboard</title>
+<style>
+  :root {
+    --paper: #eef1f4;
+    --paper-raised: #ffffff;
+    --ink: #171b22;
+    --ink-soft: #4b5261;
+    --ink-faint: #7c8290;
+    --hair: #d7dce2;
+    --accent: #a6641f;
+    --accent-ink: #6e4315;
+    --accent-soft: #f2e3d0;
+    --pass: #1f7a4d;
+    --pass-soft: #dcefe3;
+    --fail: #b23b30;
+    --fail-soft: #f7dfdc;
+    --inconclusive: #4f5f8c;
+    --inconclusive-soft: #e2e6f2;
+    --pending: #7c8290;
+    --pending-soft: #e7e8ea;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10131a;
+      --paper-raised: #171c25;
+      --ink: #e7e9ee;
+      --ink-soft: #aab0bf;
+      --ink-faint: #767d8d;
+      --hair: #2a3140;
+      --accent: #d99a4e;
+      --accent-ink: #f0c791;
+      --accent-soft: #2e2214;
+      --pass: #57c98c;
+      --pass-soft: #123423;
+      --fail: #e58278;
+      --fail-soft: #3a1e1c;
+      --inconclusive: #93a3d6;
+      --inconclusive-soft: #1e2440;
+      --pending: #767d8d;
+      --pending-soft: #1c212b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10131a;
+    --paper-raised: #171c25;
+    --ink: #e7e9ee;
+    --ink-soft: #aab0bf;
+    --ink-faint: #767d8d;
+    --hair: #2a3140;
+    --accent: #d99a4e;
+    --accent-ink: #f0c791;
+    --accent-soft: #2e2214;
+    --pass: #57c98c;
+    --pass-soft: #123423;
+    --fail: #e58278;
+    --fail-soft: #3a1e1c;
+    --inconclusive: #93a3d6;
+    --inconclusive-soft: #1e2440;
+    --pending: #767d8d;
+    --pending-soft: #1c212b;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  /* ---- masthead ---- */
+  .masthead {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+  }
+  .masthead h1 {
+    font-family: var(--serif);
+    font-size: 2.4rem;
+    font-weight: 600;
+    margin: 0 0 6px;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .masthead .sub {
+    color: var(--ink-soft);
+    font-size: 0.98rem;
+    max-width: 56ch;
+  }
+  .masthead .meta {
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--inconclusive-soft);
+    color: var(--inconclusive);
+    border: 1px solid color-mix(in srgb, var(--inconclusive) 35%, transparent);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 8px;
+  }
+  .status-chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--inconclusive);
+  }
+
+  /* ---- hero stats ---- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--hair);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 40px;
+  }
+  .stat {
+    background: var(--paper-raised);
+    padding: 18px 16px;
+  }
+  .stat .n {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.9rem;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .stat .n small { font-size: 1rem; color: var(--ink-faint); font-weight: 500; }
+  .stat .l {
+    margin-top: 6px;
+    font-size: 0.76rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+
+  /* ---- section headings ---- */
+  h2.section {
+    font-family: var(--serif);
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.section .idx {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .section-note {
+    color: var(--ink-faint);
+    font-size: 0.86rem;
+    margin: 0 0 16px;
+    max-width: 70ch;
+  }
+  section { margin-bottom: 44px; }
+
+  /* ---- leaderboard table ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--hair); border-radius: 10px; }
+  table.board {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--paper-raised);
+    font-size: 0.86rem;
+    min-width: 760px;
+  }
+  table.board th, table.board td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: middle;
+  }
+  table.board thead th {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    background: color-mix(in srgb, var(--paper) 55%, var(--paper-raised));
+  }
+  table.board tbody tr:last-child td { border-bottom: none; }
+  table.board tbody tr.queued { color: var(--ink-faint); }
+  table.board td.num, table.board th.num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .rank {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--accent-ink);
+  }
+  .approach-name { font-weight: 600; }
+  .approach-sub { display: block; font-size: 0.76rem; color: var(--ink-faint); font-weight: 400; margin-top: 2px; }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .pill.pass { background: var(--pass-soft); color: var(--pass); }
+  .pill.fail { background: var(--fail-soft); color: var(--fail); }
+  .pill.inconclusive { background: var(--inconclusive-soft); color: var(--inconclusive); }
+  .pill.pending { background: var(--pending-soft); color: var(--pending); }
+
+  /* ---- ledger (proven / open) ---- */
+  .ledger {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 640px) { .ledger { grid-template-columns: 1fr; } }
+  .ledger-col {
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    background: var(--paper-raised);
+    padding: 16px 18px;
+  }
+  .ledger-col h3 {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ledger-col.proven h3 { color: var(--pass); }
+  .ledger-col.open h3 { color: var(--inconclusive); }
+  .ledger-col ul { margin: 0; padding: 0 0 0 1.1em; }
+  .ledger-col li { margin-bottom: 10px; font-size: 0.88rem; }
+  .ledger-col li:last-child { margin-bottom: 0; }
+  .ledger-col li .cite { display: block; font-size: 0.76rem; color: var(--ink-faint); margin-top: 2px; }
+
+  /* ---- rejected approaches ---- */
+  .rejected {
+    border: 1px dashed var(--hair);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--paper) 40%, var(--paper-raised));
+  }
+  .rejected b { color: var(--ink); }
+
+  /* ---- lab log ---- */
+  .log {
+    border-left: 2px solid var(--hair);
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .log-entry { position: relative; }
+  .log-entry::before {
+    content: "";
+    position: absolute;
+    left: -25px;
+    top: 5px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--paper-raised);
+    border: 2px solid var(--accent);
+  }
+  .log-entry.bad::before { border-color: var(--fail); }
+  .log-entry .when {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .log-entry .what { font-size: 0.9rem; }
+  .log-entry .what b { font-weight: 600; }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--hair);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  footer code { font-family: var(--mono); background: var(--pending-soft); padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 720px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .masthead { flex-direction: column; align-items: flex-start; }
+    .masthead .meta { text-align: left; }
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div>
+      <div class="status-chip">In progress &mdash; proof not yet complete</div>
+      <h1>Minify Scoreboard</h1>
+      <div class="sub">Real, sourced results for the <code style="font-family:var(--mono)">/minify</code> instruction-compression skill. No number on this page is estimated without being labelled so &mdash; see methodology in the footer.</div>
+    </div>
+    <div class="meta">
+      repo: agentiapt/vela-slides<br>
+      last updated: 2026-08-13 ~10:40 UTC<br>
+      runs logged: 8
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="n">27.4<small>%</small></div>
+      <div class="l">Best proven yield &mdash; normal-density prose, pooled across 2 pre-registered probes</div>
+    </div>
+    <div class="stat">
+      <div class="n">100<small>%</small></div>
+      <div class="l">Constraint survival across every probe run so far &mdash; 0 ever lost outright</div>
+    </div>
+    <div class="stat">
+      <div class="n">1<small>/9</small></div>
+      <div class="l">Scenarios behaviorally A/B piloted end-to-end</div>
+    </div>
+    <div class="stat">
+      <div class="n">2<small> open</small></div>
+      <div class="l">Gates blocking a clean win: structure FAIL, judge instability</div>
+    </div>
+  </div>
+
+  <section>
+    <h2 class="section"><span class="idx">01</span> Leaderboard</h2>
+    <p class="section-note">One approach has real data so far. Competing approaches are queued, not fabricated &mdash; see &sect;03 for one already reasoned out and rejected before ever being run.</p>
+    <div class="table-scroll">
+      <table class="board">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Approach</th>
+            <th class="num">Size &mdash; normal text</th>
+            <th class="num">Size &mdash; this repo</th>
+            <th>Structure</th>
+            <th>Behavioral</th>
+            <th class="num">Survival</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="rank">1</td>
+            <td>
+              <span class="approach-name">Typed Rule Blocks</span>
+              <span class="approach-sub">telegraphic &middot; labelled-field encoding</span>
+            </td>
+            <td class="num">27.4%</td>
+            <td class="num">1.5%<span class="approach-sub" style="margin:0">exempt, pre-densified</span></td>
+            <td><span class="pill fail">Fail &minus;5</span></td>
+            <td><span class="pill inconclusive">Inconclusive</span></td>
+            <td class="num">100%</td>
+          </tr>
+          <tr class="queued">
+            <td class="rank">&mdash;</td>
+            <td>
+              <span class="approach-name">Naive LLM summarize</span>
+              <span class="approach-sub">ask a model to shorten it, no structure</span>
+            </td>
+            <td class="num">&mdash;</td>
+            <td class="num">&mdash;</td>
+            <td><span class="pill pending">Queued</span></td>
+            <td><span class="pill pending">Queued</span></td>
+            <td class="num">&mdash;</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section"><span class="idx">02</span> Proven vs. open</h2>
+    <p class="section-note">The honest state of the claim right now &mdash; updated as each item below moves column.</p>
+    <div class="ledger">
+      <div class="ledger-col proven">
+        <h3>&#10003; Proven</h3>
+        <ul>
+          <li>TRB clears the &ge;20% bar comfortably on ordinary-density normative prose.
+            <span class="cite">27.4% pooled, 2 pre-registered probes (node.js 27.2%, k8s 27.5%), 100% constraint survival</span>
+          </li>
+          <li>The approach was compared against alternatives before being chosen, not by default.
+            <span class="cite">symbolic/predicate notation and learned soft compression (LLMLingua-style) both ruled out &mdash; see &sect;03</span>
+          </li>
+          <li>A real agent-vs-agent A/B trial runs end-to-end with zero contamination between arms.
+            <span class="cite">2 independent isolation bugs found and fixed this project; both held clean across a full real run</span>
+          </li>
+          <li>Baseline and minified arms perform at task-assertion parity on the one scenario tested.
+            <span class="cite">24/24 critical assertions, both arms, reducer-nohistory scenario</span>
+          </li>
+        </ul>
+      </div>
+      <div class="ledger-col open">
+        <h3>&#8635; Not yet</h3>
+        <ul>
+          <li>This repo's own shipped minified CLAUDE.md fails the harness's comparative structure check.
+            <span class="cite">net constraint delta &minus;5 (0 lost, 7 weakened, 2 gained explicitness) &mdash; reproduced identically twice, fix in progress</span>
+          </li>
+          <li>The behavioral quality gate can't yet render a verdict on this scenario.
+            <span class="cite">0/3 judge pairs stable round-to-round (100% instability) &mdash; diagnosis in progress</span>
+          </li>
+          <li>Only 1 of 9 authored scenarios has real behavioral data.
+            <span class="cite">blockfield-safekeys, routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, security-changelog-discipline, newpart-manifest, public-repo-hygiene &mdash; all unpiloted</span>
+          </li>
+          <li>No head-to-head competitive benchmark has been run yet.
+            <span class="cite">"better than anything currently available" is a target, not yet a measured result</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section"><span class="idx">03</span> Approaches considered</h2>
+    <p class="section-note">Reasoned exclusions count as evidence too &mdash; an approach that fails the survival bar by construction doesn't need a live run to be ruled out.</p>
+    <div class="rejected">
+      <b>Learned / soft compression (LLMLingua-style)</b> &mdash; rejected at the research stage. This class of technique drops tokens by learned salience, not by a checkable rule; it cannot give the 100%-constraint-survival guarantee this project requires, so a live run would only measure how much it fails by, not whether it's viable. <b>Symbolic/predicate notation</b> &mdash; rejected for the same reason: compresses well, but the mapping back to the original constraint isn't independently checkable at scale.
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section"><span class="idx">04</span> Lab log</h2>
+    <p class="section-note">Real events only, wins and failures both &mdash; a scoreboard that hides its failures isn't a scoreboard.</p>
+    <div class="log">
+      <div class="log-entry">
+        <span class="when">Phase 1</span>
+        <span class="what">Rigorous corpus measurement overturns an earlier ~30% estimate: this repo is already pre-compressed (function-word ratio ~21&ndash;27% vs ~44% ordinary prose). Projected ceiling <b>~7.6%</b>, not ~30%.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Phase 1b</span>
+        <span class="what">Pre-registered 6 external files before fetching them (anti-cherry-pick). Confirms the technique itself reaches <b>27.4%</b> on ordinary-density text &mdash; Phase 1's low number was about this repo's input, not the method.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Harness build</span>
+        <span class="what">9 scenario-driven eval modules built and self-tested; two independent measurement bugs found live and corrected before they could bias a result.</span>
+      </div>
+      <div class="log-entry bad">
+        <span class="when">Pilot attempt</span>
+        <span class="what"><b>Worktree isolation breach</b> &mdash; a real sub-agent edited this live repo instead of its sandboxed copy, due to Claude Code's skill-discovery walking into the wrong directory. Caught live, contained, root-caused, fixed.</span>
+      </div>
+      <div class="log-entry bad">
+        <span class="when">Launch 5</span>
+        <span class="what">First complete run &mdash; but a missing <code style="font-family:var(--mono)">node_modules</code> in fresh worktrees made a critical test assertion fail identically on both arms. Correctly flagged inconclusive by the gate rather than misread as a real signal; root-caused and fixed.</span>
+      </div>
+      <div class="log-entry bad">
+        <span class="when">Launches 6&ndash;7</span>
+        <span class="what">Both killed mid-run by container reclaim during an idle wait. Switched the launch mechanism; problem resolved.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Launch 8</span>
+        <span class="what">First fully clean run. Both prior bugs confirmed fixed under real load (24/24 critical assertions, both arms). Verdict inconclusive for a real reason this time: 100% judge-round instability, not a harness defect.</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span><b>Methodology:</b> every number above is read directly from a committed harness run or research doc in <code>.claude/minify-lab/</code>; nothing is projected without an explicit label. 6A (size/structure) and 6B (behavioral) verdicts are never combined or averaged.</span>
+    <span>Updated as real results land &mdash; same URL, redeployed.</span>
+  </footer>
+
+</div>
