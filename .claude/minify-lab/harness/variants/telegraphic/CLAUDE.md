@@ -49,8 +49,8 @@ if one is wrong, fix it in the same change. Line numbers deliberately omitted (t
 rot) — grep the symbol, or use `partsize.py` for the section map.
 
 **Read sections, not files.** Most changes fit one banner section. Grep the symbol
-for its line, or run `partsize.py <part>` for the section map, then Read just that
-range (offset/limit) — whole-file reads only for files under ~300 lines.
+for its line — or, for the section map, run `partsize.py <part>` — then Read just
+that range (offset/limit); whole-file reads only for files under ~300 lines.
 
 **No row matches? Grep `src/parts/CODEMAP.md`** — generated, CI-kept-fresh complete
 index: every top-level symbol grouped by part/section, every reducer action with
@@ -66,11 +66,11 @@ change this table doesn't cover.
 | **Lane / module / slide list (TOC)**, incl. per-row action controls | `src/parts/part-list.jsx` | `ModuleList` → `ConceptRow` (module row: collapse caret, ▲/▼ move glyphs, `REORDER`) → `SlideListWithAdder` (slide rows); menus `ContextMenu` / `CtxItem` / `AddMenu`; inline AI add `AiSlideAdder` |
 | **Block toolbar & in-slide editing UX** | `src/parts/part-canvas.jsx` | `renderBlockItem` (per-block hover toolbar + block AI-prompt popup) inside `SlideContent`; inline text `EditableText`/`ItemChrome` stay in `part-blocks.jsx`. The AI driver `runBlockEdit` lives in `part-slidepanel.jsx` |
 | **Fullscreen / presenter / gallery** | `src/parts/part-slidepanel.jsx` (`SlidePanel`: arrow/space nav, wheel nav, Fullscreen-API sync), `src/parts/part-slides.jsx` (`PresenterView`, Presenter TOC, Gallery View, `StudentPanel`) | `SlidePanel` renders the others; state via `SET_FULLSCREEN` in `part-reducer.jsx` |
-| **PDF export** | `src/parts/part-pdf.jsx` (canvas path), `src/parts/part-pdf-vector.jsx` (vector path), `src/parts/part-pdf-extract.jsx` (shared plumbing) | vector path `buildVectorPdf` + its export modal in `part-pdf-vector.jsx`; canvas path `PdfExportModal` / `buildPdfFromImages` in `part-pdf.jsx`; every string through `pdfStringEncode`; DOM extraction `extractBoxes` / `extractCircles` / `extractLinks` — all in `part-pdf-extract.jsx`, which concatenates before `part-pptx.jsx` |
+| **PDF export** | `src/parts/part-pdf.jsx` (canvas path), `src/parts/part-pdf-vector.jsx` (vector path), `src/parts/part-pdf-extract.jsx` (shared plumbing) | ALL strings go through `pdfStringEncode`; vector path `buildVectorPdf` + its export modal in `part-pdf-vector.jsx`; canvas path `PdfExportModal` / `buildPdfFromImages` in `part-pdf.jsx`; DOM extraction `extractBoxes` / `extractCircles` / `extractLinks` — all in `part-pdf-extract.jsx`, which concatenates before `part-pptx.jsx` |
 | **PPTX export** | `src/parts/part-pptx.jsx` | `buildPptx`, `pptxEsc`, `pptxExtractTextBoxes` (reuses `part-pdf-extract.jsx`'s extractors); the modal `PptxExportModal` is in `part-app-modals.jsx` |
 | **App-level modals/dialogs** — PPTX/help/stats/changelog/comments/new-deck/merge-patch/AI cost & agent status | `src/parts/part-app-modals.jsx` | `PptxExportModal`, `StatsDialog`, `ChangelogDialog`, `CommentsPanel`, `NewDeckDialog`, `ShortcutHelp`, `CostBadge`, `AgentStatusChip`, `AgentSettingsDialog`, `MergePatchDialog`, shared `ModalBackdrop` — all rendered by `App` in `part-app.jsx`, which concatenates immediately after |
 | **Markdown export** | `src/parts/part-export-md.jsx` | `deckToMarkdown`, encoders `mdInline` / `mdCell` / `escGap`. Standalone-HTML export sits in the same file (its own section) |
-| **Vera AI engine tools** | `src/parts/part-engine.jsx` | `executeTool` — the `switch (name)` — AND the tool contract prose inside the system prompt in the same file. Both must change together or the model calls a tool that doesn't exist |
+| **Vera AI engine tools** | `src/parts/part-engine.jsx` | MUST change together: `executeTool` — the `switch (name)` — AND the tool contract prose inside the system prompt in the same file, or else the model calls a tool that doesn't exist |
 | **Reducer action / undo-redo** | `src/parts/part-reducer.jsx` | `innerReducer` (the action switch), `NO_HISTORY` (actions that must NOT create an undo step), `reducer` (history wrapper), `MAX_HISTORY` |
 | **UI test battery** | `src/parts/part-uitest.jsx` (registry/runner + suites through v13.19 block-reorder), `src/parts/part-uitest2.jsx` (later suites, incl. SVG/deck-sanitization security suites, and the `VelaUITestRunner`/`VelaBatteryTest` component) | `uiSuite("<name>", [...])` to add a suite, `runUITests`, headless entry `window.__velaRunUITests` (dev builds only — keep new hooks inside a `VELA:DEV-ONLY` fence) |
 
@@ -79,7 +79,7 @@ change this table doesn't cover.
 Virtual canvas **960×540px** (16:9). Deck JSON: three interchangeable formats —
 Full (named keys), Compact (~32% smaller), Turbo (~47% smaller, positional) —
 auto-expanded on load. 27 block types: text, lists, data, flow, media, layout groups.
-**Reference (read on demand, do not memorize here):**
+**Reference (read on demand — never memorize here):**
 `skills/vela-slides/references/formats.md` (formats + key maps),
 `references/block-schema.md` (per-block fields), `references/themes.md`.
 
@@ -237,9 +237,9 @@ Violations of this policy cannot be undone — git history is permanent and publ
 
 For any security-related change, describe it at a **high level only**:
 - ✅ DO state: the class of issue (e.g. "CSS exfil channel", "mutation-XSS", "fail-open sanitization"), severity, the affected area, what the fix does, and that regression tests were added.
-- ❌ DO NOT include: working payloads or example attack strings, the exact bypass token/primitive, step-by-step reproduction, "where the gap was" maps (precise unguarded fields/endpoints/parameters an attacker should target), or chained CVE/exploit references that amount to a recipe.
+- ❌ NEVER include: working payloads or example attack strings, the exact bypass token/primitive, step-by-step reproduction, "where the gap was" maps (precise unguarded fields/endpoints/parameters an attacker should target), or chained CVE/exploit references that amount to a recipe.
 
-Rule of thumb: if a reader could copy a string or follow the steps to trigger the bug, it's too much — generalize it. Keep precise mechanics in **non-public** channels (private security threads / advisories), or, where genuinely needed for maintenance, in **in-code comments** (maintainer-facing, not surfaced in release notes) — and even there, prefer the minimum needed to explain *why* the guard exists.
+Rule of thumb: if a reader could copy a string or follow the steps to trigger the bug, it's too much — generalize it. Keep precise mechanics only in **non-public** channels (private security threads / advisories) or, where genuinely needed for maintenance, in **in-code comments** (maintainer-facing, not surfaced in release notes) — even there, prefer the minimum needed to explain *why* the guard exists.
 
 This discipline is permanent and applies to **every** future change, not just the current one. When in doubt, write less.
 
@@ -251,8 +251,8 @@ re-exploring `evals/` each time.
 
 ## Running the app live in a browser (offline / demo videos / visual QA)
 
-Container blocks React/lucide CDNs and Playwright downloads — never fetch
-esm.sh or run `npx playwright install`. Chromium pinned at
+Never fetch esm.sh or run `npx playwright install` — the container blocks
+React/lucide CDNs and Playwright downloads. Chromium pinned at
 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, ffmpeg at
 `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`.
 - **One-off / interactive** work (explore, screenshot, reproduce, verify UX):
