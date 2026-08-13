@@ -1089,6 +1089,70 @@ verify (re-run/read the raw JSON, don't just trust the printed
 summary or a notification body) before updating this file, the task
 list, and the leaderboard.**
 
+**Launch 9 landed but 6B was unusable — root cause found, is a harness
+bug (not a minified-CLAUDE.md finding), fixed and independently verified
+(2026-08-13, ~13:20).** Independent read of the raw
+`launch9-campaign.json` (not the printed summary) showed something
+qualitatively worse than launch 8's instability: **all 3 judge pairs had
+`parse_failure: true` on every round** (`raw_winner_per_round: [null,
+null]`) — the judge never produced a parseable response at all, not
+"disagreed." 6A structure PASS reproduced a third time unchanged
+(net_delta +3), confirming that fix is solid.
+
+Root-caused by hand (no delegation needed — a couple of direct calls
+made the cause obvious): `campaign.py`'s `default_judge_invoke` hardcodes
+`--permission-mode bypassPermissions`. The `claude` CLI refuses
+`--dangerously-skip-permissions` outright when running as root — which
+this harness's own containers do (`whoami` → `root`) — so **every single
+judge invocation has been silently failing immediately** (nonzero exit,
+empty transcript, empty response) for as long as this flag has been
+there. Confirmed directly: the identical judge prompt/bundle, replayed
+by hand with `--permission-mode acceptEdits` instead, returned a full,
+well-formed, high-confidence real verdict on the first try.
+
+**This calls launch 8's "judge instability" diagnosis (task #11) into
+question** — that diagnosis (n=3 arithmetic, no temperature control,
+~50% order-swap noise) was built entirely from the aggregate
+`stable`/`winner_arm` booleans, before the `parse_failure` diagnostic
+field existed and with no raw judge transcript persisted anywhere to
+check against (the judge call writes to a `TemporaryDirectory` that
+self-deletes). It's likely launch 8 hit this exact same bug — same
+container type, same code path — and the "instability" was actually
+100% invocation failure the whole time, not genuine round-to-round
+disagreement. Not re-confirmable now (launch 8's raw transcripts are
+gone), but flagging honestly rather than letting the earlier diagnosis
+stand unchallenged.
+
+**Fixed, both in `campaign.py`, self-tests re-run clean (all 10 harness
+modules' `--selftest`, plus a real end-to-end judge call through the
+actual fixed code path)**:
+1. `default_judge_invoke`'s permission mode: `bypassPermissions` →
+   `acceptEdits` (matches `config.yaml`'s `run.permission_mode`, already
+   used for the agent-under-test call; behaviorally equivalent here
+   since the judge has no `--allowedTools` and proposes no edits).
+2. A second, related gap found while investigating: this scenario's own
+   YAML declares `leak_tokens` for a synthetic fixture canary (a fake
+   tracking-id string + a fictional, explicitly-labeled-non-functional
+   "how to trigger it" sentence baked into the setup patch's source
+   comment, present identically in both arms) — its own
+   `note_for_implementer` says this must be scrubbed from the judge
+   bundle so the judge isn't distracted by bait that's identical between
+   arms. `_judge_pairs_for_rep` never threaded `leak_tokens` into
+   `redact_bundle`'s `extra_terms`, so it reached the judge unredacted.
+   Now wired through (reusing the existing `leak_tokens` field —
+   `prepare.py`'s variant-leak-check already consumed it for a different
+   purpose — no new scenario-schema field needed).
+
+Re-judged launch 9's existing (still-valid, real, already-paid-for)
+baseline/minified diffs directly against the fixed code — no need to
+re-spend on the agent-under-test side, only the judge side was broken —
+via `_judge_pairs_for_rep` + `gate.gate()` on the same campaign JSON.
+Result pending at time of writing this entry; see the next dated entry
+for the real numbers once that finishes. If it lands stable, this is the
+harness's **first-ever real, parseable 6B judge verdict** — everything
+6B has reported before this fix (launch 8 included) may have been
+reporting invocation failure, not judgment.
+
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
 are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous

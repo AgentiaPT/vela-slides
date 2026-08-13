@@ -34,6 +34,7 @@ Usage:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,15 @@ def default_judge_invoke(prompt, model, timeout_s=300):
     (not REPO_ROOT) so even an unexpected default tool grant finds nothing to
     explore. Isolated exactly like the agent-under-test call
     (runner.isolated_agent_env / a fresh --session-id) so it can never attach
-    to this orchestrator's own session."""
+    to this orchestrator's own session.
+
+    `acceptEdits`, not `bypassPermissions`: the CLI refuses
+    --dangerously-skip-permissions outright when running as root/sudo (this
+    harness's own containers do), which silently zeroed every judge call —
+    an immediate nonzero exit, empty transcript, empty response. `acceptEdits`
+    is accepted under root and is behaviorally identical here since the judge
+    has no `--allowedTools` and proposes no edits; it matches config.yaml's
+    `run.permission_mode` used for the agent-under-test call."""
     session_id = str(uuid.uuid4())
     cmd = [
         "timeout", f"{timeout_s}s",
@@ -78,7 +87,7 @@ def default_judge_invoke(prompt, model, timeout_s=300):
         "--verbose",
         "--model", model,
         "--max-turns", "1",
-        "--permission-mode", "bypassPermissions",
+        "--permission-mode", "acceptEdits",
     ]
     with tempfile.TemporaryDirectory(prefix="minify-lab-judge-") as tmp:
         transcript_path = Path(tmp) / "transcript.jsonl"
@@ -113,16 +122,22 @@ def _judge_pairs_for_rep(scenario, campaign_id, rep, base_dir, min_dir, judge_ro
     bundle_baseline = judge_mod.load_bundle(base_dir, artifact)
     bundle_minified = judge_mod.load_bundle(min_dir, artifact)
 
-    scenario_prompt_r, _ = redact_mod.redact_bundle(scenario.get("prompt", ""))
+    # scenario-specific bait/canary tokens (e.g. a fixture's fake CVE id) are
+    # pre-existing in BOTH arms' source and would otherwise reach the judge
+    # bundle unredacted, since they're not on redact.py's generic stoplist —
+    # see claude-md.yaml's security-changelog-discipline note_for_implementer.
+    extra_terms = [re.escape(t) for t in (scenario.get("leak_tokens") or [])]
+
+    scenario_prompt_r, _ = redact_mod.redact_bundle(scenario.get("prompt", ""), extra_terms=extra_terms)
     reasons_a, reasons_b = [], []
     if artifact in ("diff", "both"):
-        bundle_baseline["diff"], ra = redact_mod.redact_bundle(bundle_baseline.get("diff", ""), is_diff=True)
-        bundle_minified["diff"], rb = redact_mod.redact_bundle(bundle_minified.get("diff", ""), is_diff=True)
+        bundle_baseline["diff"], ra = redact_mod.redact_bundle(bundle_baseline.get("diff", ""), extra_terms=extra_terms, is_diff=True)
+        bundle_minified["diff"], rb = redact_mod.redact_bundle(bundle_minified.get("diff", ""), extra_terms=extra_terms, is_diff=True)
         reasons_a += ra
         reasons_b += rb
     if artifact in ("answer", "both"):
-        bundle_baseline["answer"], ra2 = redact_mod.redact_bundle(bundle_baseline.get("answer", ""))
-        bundle_minified["answer"], rb2 = redact_mod.redact_bundle(bundle_minified.get("answer", ""))
+        bundle_baseline["answer"], ra2 = redact_mod.redact_bundle(bundle_baseline.get("answer", ""), extra_terms=extra_terms)
+        bundle_minified["answer"], rb2 = redact_mod.redact_bundle(bundle_minified.get("answer", ""), extra_terms=extra_terms)
         reasons_a += ra2
         reasons_b += rb2
 
