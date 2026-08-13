@@ -27,16 +27,48 @@ const REPO = path.resolve(__dirname, "..");
 const SRC = path.join(REPO, "src/parts/part-imports.jsx");
 const source = fs.readFileSync(SRC, "utf8");
 
+// Every helper sanitizeSvgMarkup closes over must be listed here. A missing one
+// throws inside its own try/catch and turns the sanitizer into a constant "" —
+// which passes every negative assertion vacuously. The "benign svg survives"
+// positive control below is what makes that failure visible; keep it.
 const grabs = {
+  scheme:   source.match(/const CSS_FETCH_SCHEME = .+;/),
   allowed:  source.match(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/),
   refAttrs: source.match(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/),
+  styleProps: source.match(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/),
+  valueFns: source.match(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/),
+  paintKey: source.match(/const CSS_PAINT_KEY = .+;/),
+  keyStem: source.match(/const cssKeyStem = .+;/),
   isSafe:   source.match(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/),
+  rootBlocked: source.match(/const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/),
+  isInlineSafe: source.match(/function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/),
   svg:      source.match(/function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/),
   raster:   source.match(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/),
   dataUri:  source.match(/function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/),
 };
+// EXACTLY ONE definition each, not the first match: a decoy copy anywhere above
+// the real one (even inside a comment) would otherwise be the thing under test.
+// Mirrors extractOne in tests/test_svg_mxss.cjs.
+for (const [k, re] of Object.entries({
+  scheme: /const CSS_FETCH_SCHEME = .+;/g, allowed: /const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/g,
+  refAttrs: /const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/g, styleProps: /const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/g, valueFns: /const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/g,
+  paintKey: /const CSS_PAINT_KEY = .+;/g, keyStem: /const cssKeyStem = .+;/g,
+  isSafe: /function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/g, rootBlocked: /const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/g, isInlineSafe: /function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/g,
+  svg: /function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/g, raster: /const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/g,
+  dataUri: /function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/g,
+})) {
+  const all = source.match(re);
+  if (all && all.length > 1) {
+    console.error(`FAIL: ${all.length} definitions of '${k}' found (decoy/duplicate?) — the first would be tested instead of the real one.`);
+    process.exit(3);
+  }
+}
 for (const [k, v] of Object.entries(grabs)) {
-  if (!v) { console.error(`FAIL: could not locate '${k}' in source. Check regexes.`); process.exit(2); }
+  // Exit 3, NOT the jsdom-missing "skip" code 2: test_vela.py maps 2 to SKIP, so a
+  // cosmetic reshape of a sanitizer construct would silently delete this whole
+  // suite while CI stayed green. A missing construct is a failure. (Mirrors the
+  // same reasoning in test_svg_mxss.cjs's extractOne.)
+  if (!v) { console.error(`FAIL: could not locate '${k}' in source. Check regexes.`); process.exit(3); }
 }
 
 const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");
@@ -50,9 +82,16 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(`
+${grabs.scheme[0]}
 ${grabs.allowed[0]}
 ${grabs.refAttrs[0]}
+${grabs.styleProps[0]}
+${grabs.valueFns[0]}
+${grabs.paintKey[0]}
+${grabs.keyStem[0]}
 ${grabs.isSafe[0]}
+${grabs.rootBlocked[0]}
+${grabs.isInlineSafe[0]}
 ${grabs.svg[0]}
 ${grabs.raster[0]}
 ${grabs.dataUri[0]}
@@ -104,7 +143,25 @@ check("svg event handlers stripped", r3 !== "" && !decoded(r3).toLowerCase().inc
 const styleSvg = "data:image/svg+xml," + encodeURIComponent(
   "<svg xmlns='http://www.w3.org/2000/svg'><style>rect{fill:url('https://evil.example/x')}</style><rect width='1' height='1'/></svg>");
 const r4 = sanitizeImageDataUri(styleSvg);
-check("svg <style> external url() stripped", !decoded(r4).includes("evil.example"));
+// `r4 !== ""` matters: without it this passes against a sanitizer that returns
+// "" for everything, which is exactly the vacuous-pass mode the header warns of.
+check("svg <style> external url() stripped", r4 !== "" && !decoded(r4).includes("evil.example"));
+
+// The INLINE-STYLE path specifically. Without a style-bearing probe, dropping
+// SVG_STYLE_PROPS or isSvgInlineStyleSafe from the extraction preamble leaves the
+// sanitizer dead only for style-carrying decks — which nothing else here exercises,
+// so the suite stayed green. This probe closes that: it asserts a benign inline
+// style SURVIVES (liveness of the inline gate) and a fetching one does not.
+const styleAttrSvg = "data:image/svg+xml," + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg'><rect width='8' height='8' style='fill:#3b82f6;stroke-width:2'/></svg>");
+const r4b = sanitizeImageDataUri(styleAttrSvg);
+check("benign inline style survives (inline-style gate is live)",
+  r4b !== "" && decoded(r4b).includes("fill:#3b82f6") && decoded(r4b).includes("stroke-width:2"));
+const styleAttrBad = "data:image/svg+xml," + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg'><rect width='8' height='8' style=\'background-image:url(https://evil.example/x)\'/></svg>");
+const r4c = sanitizeImageDataUri(styleAttrBad);
+check("inline style with a fetching property stripped",
+  r4c !== "" && !decoded(r4c).includes("evil.example") && decoded(r4c).includes("rect"));
 
 // base64-encoded svg path also sanitized
 const b64 = "data:image/svg+xml;base64," + Buffer.from(

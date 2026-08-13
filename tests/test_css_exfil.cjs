@@ -30,17 +30,24 @@ function ok(name) { pass++; console.log("  ✅ " + name); }
 function bad(name, detail) { failCount++; console.log("  ❌ " + name + (detail ? " — " + detail : "")); }
 
 // ── Extract the real guard from source (fail loudly if the fix is absent) ──
+// EXACTLY ONE definition, not the first match. A first-match extraction tests
+// whichever copy appears earliest in the file — so a decoy anywhere above the real
+// one (a commented-out `// const STYLE_VALUE_REJECT = /…/` is enough) makes this
+// suite report green while the shipped filter is dead. Mirrors extractOne in
+// tests/test_svg_mxss.cjs, which has always required a unique definition.
 function grab(re, label) {
-  const m = src.match(re);
-  if (!m) { bad("extract " + label, "not found in part-imports.jsx (fix missing?)"); throw new Error("missing " + label); }
-  return m[0];
+  const all = src.match(new RegExp(re.source, re.flags.replace("g", "") + "g"));
+  if (!all || all.length === 0) { bad("extract " + label, "not found in part-imports.jsx (fix missing?)"); throw new Error("missing " + label); }
+  if (all.length > 1) { bad("extract " + label, `${all.length} definitions found — a decoy/duplicate would be tested instead of the real one`); throw new Error("duplicate " + label); }
+  return all[0];
 }
 // Load the REAL shipped predicates into an isolated vm context (same approach as
 // tests/test_data_image_uri.cjs — no eval/new Function; the slice is repo source,
 // not external input). cssUrl/cssColor/CSS_COLOR_OK are loaded here too (v12.66).
 let api;
 try {
-  const reject = grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
+  const reject = grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
   const key = grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY");
   // Shared value filter the three key-pattern scrubbers delegate to (v13.25).
   const shared = grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields");
@@ -57,18 +64,24 @@ try {
   const pkey = grab(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY");
   const stem = grab(/const cssKeyStem = .+;/, "cssKeyStem");
   const pfn = grab(/function scrubPaintFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubPaintFields");
+  // v13.46: scrubSubObject is the only gate on RAW-SPREAD sub-object keys, so its
+  // behavior (not just its wiring) is asserted below.
+  const skeys = grab(/const SAFE_STYLE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_STYLE_KEYS");
+  const sstyle = grab(/function sanitizeStyle\(style\)\s*\{[\s\S]*?\n\}/, "sanitizeStyle");
+  const maxd = grab(/const MAX_SUBOBJECT_DEPTH = .+;/, "MAX_SUBOBJECT_DEPTH");
+  const sso = grab(/function scrubSubObject\(obj, depth = 0\)\s*\{[\s\S]*?\n\}/, "scrubSubObject");
   const ctx = { module: { exports: {} } };
   vm.createContext(ctx);
   vm.runInContext(
-    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc, gkey, cg, pkey, stem, pfn,
-      "module.exports = { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, CSS_PAINT_KEY, cssUrl, cssColor, cssGradient };"].join("\n"),
+    [reject, key, shared, fn, lkey, lfn, ckey, cu, cc, gkey, cg, pkey, stem, pfn, skeys, sstyle, maxd, sso,
+      "module.exports = { scrubColorFields, scrubLayoutFields, scrubPaintFields, scrubSubObject, sanitizeStyle, STYLE_VALUE_REJECT, CSS_COLOR_KEY, CSS_LAYOUT_KEY, CSS_PAINT_KEY, cssUrl, cssColor, cssGradient };"].join("\n"),
     ctx, { filename: "part-imports-slice.js" });
   api = ctx.module.exports;
 } catch (e) {
   console.log("\n  " + pass + " passed, " + failCount + " failed");
   process.exit(1);
 }
-const { scrubColorFields, scrubLayoutFields, scrubPaintFields, STYLE_VALUE_REJECT, cssUrl, cssColor, cssGradient } = api;
+const { scrubColorFields, scrubLayoutFields, scrubPaintFields, scrubSubObject, sanitizeStyle, STYLE_VALUE_REJECT, cssUrl, cssColor, cssGradient } = api;
 
 // Every color/background scalar field reported across slide/block/item/cell/branding.
 const COLOR_FIELDS = [
@@ -161,8 +174,20 @@ for (const f of COLOR_FIELDS) {
 {
   const mustReject = ['image-set("x")', 'image("x")', 'cross-fade("x")', 'src("x")', "url(x)", "EXPRESSION(1)",
     // v12.66: comment token-splitting must be rejected on the style/color surface.
-    'image-set(/**/"//x" 1x)', 'image(/**/"//x")', 'src(/* */"//x")', 'url/**/("//x")', "url/**/(//x)"];
-  const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc"];
+    'image-set(/**/"//x" 1x)', 'image(/**/"//x")', 'src(/* */"//x")', 'url/**/("//x")', "url/**/(//x)",
+    // v13.46: var() indirection. A custom property is substituted at computed-value
+    // time — after every lexical alternative above has been evaluated — so an
+    // indirected value can re-assemble a primitive none of them matched. This
+    // surface must reject the load half for the same reason isSvgStyleSafe does.
+    "image-set(var(--p) 1x)", "var(--p)", "VAR( --p )", "linear-gradient(var(--p),#000)",
+    // Slashless authority: for the special schemes the URL parser supplies the
+    // authority slashes, so `:\/\/` alone is not a complete absolute-URL test.
+    // These are what make the appended CSS_FETCH_SCHEME load-bearing on THIS
+    // surface — every other alternative in the regex passes them.
+    "https:a.invalid/beacon", "HTTPS:a.invalid/b", "file:/etc/passwd",
+    "ftp:a.invalid/x", "wss:a.invalid/x", "1px solid https:a.invalid/x"];
+  const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc",
+    "calc(100% - 8px)", "1px solid #ccc", "linear-gradient(90deg,#fff 0%,#000 100%)"];
   const r1 = mustReject.filter((v) => !STYLE_VALUE_REJECT.test(v));
   const r2 = mustAllow.filter((v) => STYLE_VALUE_REJECT.test(v));
   if (r1.length === 0) ok("STYLE_VALUE_REJECT catches every string-source CSS function (name-agnostic)");
@@ -183,7 +208,10 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
 // cssUrl: result is always a single quoted url(); embedded quotes/backslashes are
 // escaped and newlines removed, so a value can't terminate the string early.
 {
-  const breakout = 'data:image/png;base64,AAAA) , url(https://evil.example)';
+  // The breakout probe deliberately carries NO fetching scheme: cssUrl now also
+  // fails closed on one (asserted separately below), which would short-circuit
+  // this case and stop it from exercising the escaping it exists to test.
+  const breakout = 'data:image/png;base64,AAAA) , url(#x)';
   const u = cssUrl(breakout);
   const innerQuotesEscaped = /^url\("(?:[^"\\]|\\.)*"\)$/.test(u);
   // Reconstruct cssUrl's escaping the same way it does (backslash first, then quote)
@@ -192,6 +220,21 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
   else bad("cssUrl did not safely encode", JSON.stringify(u));
   if (cssUrl('a"b\\c') === 'url("a\\"b\\\\c")') ok("cssUrl escapes embedded quote and backslash");
   else bad("cssUrl escaping wrong", JSON.stringify(cssUrl('a"b\\c')));
+  // v13.46: cssUrl is an encoder, not a validator — quoting preserves a well-formed
+  // absolute URL intact. The helper table sends future authors here for any url()
+  // position, so it fails closed on a fetching scheme (with and without the
+  // authority slashes) rather than faithfully encoding a beacon. data: is the one
+  // scheme legitimately used in a url() here and must survive.
+  {
+    // (`//host` carries no scheme token and is caught upstream by
+    // STYLE_VALUE_REJECT; this encoder gates the scheme-bearing forms.)
+    const fetching = ["https://a.invalid/b", "https:a.invalid/b", "HTTP://a.invalid", "file:/etc/x", "ftp://a.invalid", "wss://a.invalid"];
+    const leaked = fetching.filter((v) => cssUrl(v) !== 'url("")');
+    if (leaked.length === 0) ok("cssUrl fails closed on a network-fetching scheme (slashless form too)");
+    else bad("cssUrl encoded a fetching URL", JSON.stringify(leaked));
+    if (cssUrl("data:image/png;base64,AAAA") === 'url("data:image/png;base64,AAAA")') ok("cssUrl preserves inline data:image (the legitimate url() payload)");
+    else bad("cssUrl broke data:image", JSON.stringify(cssUrl("data:image/png;base64,AAAA")));
+  }
   if (cssUrl("a\nb\r\fc").indexOf("\n") === -1) ok("cssUrl strips newlines");
   else bad("cssUrl kept a newline");
 
@@ -249,6 +292,37 @@ else bad("sanitizeBlock does not wire scrubLayoutFields on block/items");
 if (/if \(Array\.isArray\(clean\.quadrants\)\) scrubSubObject\(clean\.quadrants\);/.test(src))
   ok("sanitizeBlock scrubs block.quadrants (color + layout via scrubSubObject)");
 else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
+// v13.46 BEHAVIORAL: sub-objects are copied by raw spread and keep whatever key a
+// deck invents. A `--x` key spread into a style object would DECLARE a CSS custom
+// property — the token-bag store whose var() load the value filters reject — so
+// the store is closed here structurally, alongside the `_` renderer-private
+// namespace. Both are asserted by running the real scrubber, not by matching source.
+{
+  const o = { "--p": "https:a.invalid/b", "--": "x", "_solo": true, bg: "#fff", label: "keep" };
+  scrubSubObject(o);
+  const noCustomProp = !("--p" in o) && !("--" in o);
+  const noPrivate = !("_solo" in o);
+  const keeps = o.bg === "#fff" && o.label === "keep";
+  if (noCustomProp && noPrivate && keeps) ok("scrubSubObject drops `--` custom-property keys and `_` private keys, keeps real ones");
+  else bad("scrubSubObject key-namespace drop", JSON.stringify(o));
+  // …at every nesting level, not just the first (the raw-spread surface is nested).
+  const deep = { items: [{ cell: { "--p": "https:a.invalid/b", bg: "#000" } }] };
+  scrubSubObject(deep);
+  if (!("--p" in deep.items[0].cell) && deep.items[0].cell.bg === "#000") ok("scrubSubObject drops `--` keys at nested depth");
+  else bad("nested `--` key survived", JSON.stringify(deep));
+  // sanitizeStyle's own key allowlist independently refuses to emit one.
+  const st = sanitizeStyle({ "--p": "https:a.invalid/b", color: "red" });
+  if (!("--p" in st) && st.color === "red") ok("sanitizeStyle never emits a custom property (key allowlist)");
+  else bad("sanitizeStyle emitted a custom property", JSON.stringify(st));
+  // The value filter's substitution-function family: var() is one member, attr()
+  // and env() resolve at the same late stage and are equally good re-assembly
+  // primitives. All three must be rejected, or the class is only half closed.
+  const subst = ["attr(data-u url)", "ATTR( data-u )", "env(safe-area-inset-top)", "var(--p)",
+                 "image-set(attr(data-u url) 1x)", "linear-gradient(env(x),#000)"];
+  const passed2 = subst.filter((v) => !STYLE_VALUE_REJECT.test(v));
+  if (passed2.length === 0) ok("STYLE_VALUE_REJECT rejects the whole CSS substitution family (var/attr/env)");
+  else bad("substitution function accepted", JSON.stringify(passed2));
+}
 // scrubSubObject itself must apply both scrubbers and drop the `_` namespace.
 if (/function scrubSubObject\(/.test(src) &&
     /scrubColorFields\(obj\)/.test(src) && /scrubLayoutFields\(obj\)/.test(src) &&
@@ -273,11 +347,24 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 //    paint-server refs and plain colors. (Same root-cause bug as the color surface;
 //    both surfaces fixed together so they can't drift.)
 {
-  let isSvgStyleSafe;
+  let isSvgStyleSafe, isSvgInlineStyleSafe;
   try {
-    const fn = grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe");
+    // Extract every helper the predicates close over. A missing one would throw at
+    // CALL time, inside the .filter() below and outside this try — so extract-time
+    // success is not by itself proof the predicate runs; the liveness assertion
+    // right after this block is.
+    const fn = [
+      grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME"),
+      grab(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS"),
+      grab(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/, "SVG_VALUE_FNS"),
+      grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe"),
+      grab(/const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/, "SVG_ROOT_BLOCKED"),
+      grab(/function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/, "isSvgInlineStyleSafe"),
+    ].join("\n");
     // eslint-disable-next-line no-new-func
-    isSvgStyleSafe = new Function(fn + "\nreturn isSvgStyleSafe;")();
+    const api = new Function(fn + "\nreturn { isSvgStyleSafe, isSvgInlineStyleSafe };")();
+    isSvgStyleSafe = api.isSvgStyleSafe;
+    isSvgInlineStyleSafe = api.isSvgInlineStyleSafe;
   } catch (e) { isSvgStyleSafe = null; }
   if (typeof isSvgStyleSafe !== "function") {
     bad("extract isSvgStyleSafe", "not found in part-imports.jsx");
@@ -289,6 +376,27 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       'background:url/**/("//a.invalid")',
       "background:url/**/(//a.invalid)",
       'background:cross-fade(/**/"//a.invalid", red)',
+      // v13.46: custom-property indirection (substitution happens after every
+      // lexical check) and an authority written without its slashes (the URL
+      // parser canonicalizes `https:host/p` for the special schemes).
+      '--p:"https:a.invalid/b"',
+      "background-image:image-set(var(--p) 1x)",
+      "fill:url(var(--p))",
+      "background-image:url(https:a.invalid/b)",
+      'background-image:image-set("https:a.invalid/b" 1x)',
+      // …and the forms that ONLY the scheme reject catches: no url() token, no
+      // quote after the function name, no `//`. Every other rule in this filter
+      // passes these, so they are what makes CSS_FETCH_SCHEME load-bearing here
+      // rather than a rule that merely shadows the ones above it.
+      "fill:image-set(https:a.invalid/x)",
+      // attr()/env() are the other CSS substitution functions: same late binding
+      // as var(), and attr() reads a DOM attribute this sanitizer keeps verbatim.
+      "fill:attr(data-u url)",
+      "background-image:image-set(attr(data-u url) 1x)",
+      "fill:env(x)",
+      "background-image:src(https:a.invalid/b)",
+      "background-image:image-set(https:a.invalid/x 1x)",
+      "font-family:https:a.invalid",
     ];
     const svgAllow = [
       "fill:url(#grad)", "fill:#3b82f6", "stroke:rgb(1,2,3)",
@@ -303,6 +411,42 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
     // Any CSS comment is rejected outright (the token-splitting primitive).
     if (!isSvgStyleSafe("fill:/**/red")) ok("isSvgStyleSafe rejects any CSS comment outright");
     else bad("isSvgStyleSafe allowed a CSS comment");
+
+    // v13.46: style="" is a declaration LIST, so the PROPERTY half is allowlisted
+    // too — an image-loading or overlay property is rejected on its name alone,
+    // independently of any value cleverness (defense in depth against the next
+    // value-filter bypass). Whole-attribute rejection: fail closed, never filter.
+    if (typeof isSvgInlineStyleSafe !== "function") {
+      bad("extract isSvgInlineStyleSafe", "not found in part-imports.jsx");
+    } else {
+      const propReject = [
+        "background-image:url(#a)", "background:red", "mask-image:url(#a)",
+        "border-image:url(#a)", "list-style-image:url(#a)",
+        "offset-path:url(#a)", "shape-outside:url(#a)", "content:'x'",
+        "position:fixed", "fill:red;background-image:url(#a)",
+        // overflow un-clips the SVG viewport (UI-integrity), so it is rejected in
+        // inline style; <marker overflow="visible"> uses the attribute spelling.
+        "overflow:visible", "fill:red;overflow:visible",
+      ];
+      const propAllow = [
+        "fill:#3b82f6", "fill:url(#grad);stroke:#888;stroke-width:2",
+        "font-family:Inter,sans-serif;font-size:14px;text-anchor:middle",
+        "opacity:0.5;mix-blend-mode:multiply", "clip-path:url(#c);mask:url(#m);filter:url(#f)",
+        "fill:red;", " stroke : blue ", "cursor:pointer", "fill:url(#grad--blue)",
+        // transform/overflow/max-width: emitted by real SVG exporters, and the
+        // transform ATTRIBUTE spelling was never gated, so rejecting the CSS one
+        // removed content without removing a capability.
+        "transform:translate(10px,10px)", "max-width:704px",
+        "background-color:white", "enable-background:new 0 0 10 10",
+        "text-transform:uppercase;text-shadow:0 1px 2px #000", "line-height:1.4",
+      ];
+      const pr = propReject.filter((v) => isSvgInlineStyleSafe(v));
+      const pa = propAllow.filter((v) => !isSvgInlineStyleSafe(v));
+      if (pr.length === 0) ok("isSvgInlineStyleSafe allowlists inline-style properties (image/overlay families rejected)");
+      else bad("isSvgInlineStyleSafe accepted a non-paint property", JSON.stringify(pr));
+      if (pa.length === 0) ok("isSvgInlineStyleSafe preserves legitimate SVG paint/text declarations");
+      else bad("isSvgInlineStyleSafe dropped a legit declaration", JSON.stringify(pa));
+    }
   }
 }
 
@@ -336,6 +480,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (slide)"),
           grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (slide)"),
           grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (slide)"),
+          grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
           grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (slide)"),
           grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (slide)"),
@@ -533,7 +678,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (bg-e2e)"),
         grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (bg-e2e)"),
         grab(/function sanitizeString\([\s\S]*?\n\}/, "sanitizeString (bg-e2e)"),
-        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (bg-e2e)"),
+        grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (bg-e2e)"),
         grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (bg-e2e)"),
         grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (bg-e2e)"),
         grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (bg-e2e)"),
@@ -587,7 +733,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (F13)"),
         grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (F13)"),
         grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (F13)"),
-        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (F13)"),
+        grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (F13)"),
         grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (F13)"),
         grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (F13)"),
         grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (F13)"),
@@ -697,12 +844,25 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
           grab(/function sanitizeSvgMarkup\(raw\)\s*\{[\s\S]*?\n\}/, "sanitizeSvgMarkup (branding)"),
           grab(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/, "SAFE_RASTER_DATA_IMAGE (branding)"),
           grab(/function sanitizeImageDataUri\(s\)\s*\{[\s\S]*?\n\}/, "sanitizeImageDataUri (branding)"),
+          grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
           grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (branding)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (branding)"),
           grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (branding)"),
           grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (branding)"),
           grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK (branding)"),
           grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor (branding)"),
+          // v13.46: the branding reload path now runs the canonical scrubSubObject
+          // (key-namespace drops + all three scrubbers), so its whole dependency
+          // chain must be present or the slice throws at call time.
+          grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (branding)"),
+          grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (branding)"),
+          grab(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY (branding)"),
+          grab(/const cssKeyStem = .+;/, "cssKeyStem (branding)"),
+          grab(/function scrubPaintFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubPaintFields (branding)"),
+          grab(/const SAFE_STYLE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_STYLE_KEYS (branding)"),
+          grab(/function sanitizeStyle\(style\)\s*\{[\s\S]*?\n\}/, "sanitizeStyle (branding)"),
+          grab(/const MAX_SUBOBJECT_DEPTH = .+;/, "MAX_SUBOBJECT_DEPTH (branding)"),
+          grab(/function scrubSubObject\(obj, depth = 0\)\s*\{[\s\S]*?\n\}/, "scrubSubObject (branding)"),
           grab(/function resanitizeLoadedBranding\(branding\)\s*\{[\s\S]*?\n\}/, "resanitizeLoadedBranding"),
           "module.exports = { resanitizeLoadedBranding, cssColor };"].join("\n"),
         ctx6, { filename: "part-imports-slice-branding.js" });
@@ -759,6 +919,16 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       // to data:image/* on the same reload path, mirroring the import-time clamp.
       {
         const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        // v13.46: branding is a raw spread that keeps arbitrary KEYS, so the
+        // reload path must drop the reserved namespaces too — a `--x` key here
+        // would DECLARE a CSS custom property if branding were ever spread into a
+        // style object, which is the store half of the indirection class.
+        {
+          const keyed = resanitizeLoadedBranding({ enabled: true, "--p": "https:a.invalid/b", _priv: 1, footerText: "Acme" });
+          if (!("--p" in keyed) && !("_priv" in keyed) && keyed.footerText === "Acme" && keyed.enabled === true)
+            ok("resanitizeLoadedBranding drops `--`/`_` key namespaces, keeps real branding fields");
+          else bad("branding reload key-namespace drop", JSON.stringify(keyed));
+        }
         const legitLogo = resanitizeLoadedBranding({ enabled: true, logo: PNG });
         if (legitLogo.logo === PNG) ok("resanitizeLoadedBranding preserves a legit data:image/* logo");
         else bad("resanitizeLoadedBranding altered a legit data:image logo", JSON.stringify(legitLogo.logo));

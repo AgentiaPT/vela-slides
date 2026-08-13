@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.45";
+const VELA_VERSION = "13.46";
 const VELA_CHANGELOG = [
+  { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
   { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },
@@ -597,6 +598,141 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
+// A URL scheme token that the browser will fetch. Used by isSvgStyleSafe below:
+// the `//` reject there assumes an authority is written with its slashes, but the
+// URL parser canonicalizes the SPECIAL schemes without them (`https:host/p` is
+// parsed as `https://host/p` — same outbound request, no `//` anywhere in the
+// source text), so scanning for `//` alone under-approximates "contains an
+// absolute URL". Matches the scheme token itself, which is the part that cannot
+// be spelled any other way once CSS escapes and comments are already rejected.
+// data:/blob: are deliberately absent — neither fetches, and data:image is
+// legitimate elsewhere under its own gate (sanitizeImageDataUri). (v13.46)
+const CSS_FETCH_SCHEME = /\b(?:https?|ftps?|wss?|file)\s*:/i;
+
+// CSS functions permitted in a deck SVG value. ALLOWLIST, for the same reason the
+// property side is one: the rules around it reject the ways a URL can be SPELLED
+// (scheme, //, quoted string, url() to anything but a #fragment), but a RELATIVE
+// reference — image-set(a.png 1x) — is none of those and passes them all. Rather
+// than name the image functions (a denylist that the next CSS revision reopens),
+// admit only the functions SVG paint, text and transform values actually need;
+// image-set/image/cross-fade/src/paint/element and anything not yet invented are
+// then rejected because they are not on the list, not because we thought of them.
+// url() stays here and is separately restricted to a #fragment below. (v13.46)
+const SVG_VALUE_FNS = new Set([
+  "url",
+  // colour
+  "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color",
+  "color-mix", "light-dark",
+  // numeric
+  "calc", "min", "max", "clamp", "round", "abs", "mod", "rem",
+  // transform
+  "translate", "translatex", "translatey", "translatez", "translate3d",
+  "scale", "scalex", "scaley", "scalez", "scale3d",
+  "rotate", "rotatex", "rotatey", "rotatez", "rotate3d",
+  "skew", "skewx", "skewy", "matrix", "matrix3d", "perspective",
+  // filter primitives (pixel ops only — url() filters go through the url rule)
+  "blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate",
+  "invert", "opacity", "saturate", "sepia",
+  // geometry
+  "path", "polygon", "circle", "ellipse", "inset", "rect", "xywh",
+]);
+
+// CSS properties permitted in a deck SVG's inline style="" attribute. ALLOWLIST,
+// because the alternative — enumerating the properties that are dangerous — is a
+// bet that no CSS property we forgot can fetch a resource or escape its box, and
+// that bet has to be re-won with every CSS spec revision. Only SVG paint and text
+// presentation properties are listed; the whole image-loading family
+// (background/background-image, mask-image, border-image, list-style-image,
+// cursor's image form, offset-path, shape-outside, content …) is absent BY
+// CONSTRUCTION rather than by a named reject, so a property nobody thought of is
+// rejected by default.
+//
+// THIS LIST IS LOAD-BEARING FOR MORE THAN EXTERNAL URLS. isSvgStyleSafe rejects
+// an external authority, but a RELATIVE reference ("a.png", no scheme, no //, no
+// quote) is not a URL by its lexical rules and passes. Nothing fetches it today
+// only because no property here accepts an image. Adding one would reopen a fetch
+// channel that the value filter cannot close — so an image-accepting property
+// must never be added to this set.
+//
+// Positioning (position/inset/z-index) stays out: it escapes the render sink's
+// overflow:hidden and can overlay trusted app chrome (UI-redress invariant); it
+// is also rejected by isSvgStyleSafe's own denylist, so this is belt and braces.
+// transform-family IS included, deliberately: SVG geometry has an equivalent
+// `transform` ATTRIBUTE that this path passes through untouched, so rejecting
+// only the CSS spelling denied real exported diagrams their layout while buying
+// nothing. Verified in-browser: neither spelling escapes the clipped sink, and
+// unlike position it cannot leave an overflow:hidden ancestor at all.
+// The reference paints below (fill/mask/filter/marker/clip-path) are additionally
+// value-restricted to url(#fragment) by isSvgStyleSafe. (v13.46)
+const SVG_STYLE_PROPS = new Set([
+  // paint
+  "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width",
+  "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray",
+  "stroke-dashoffset", "paint-order", "vector-effect", "opacity", "color",
+  "stop-color", "stop-opacity", "flood-color", "flood-opacity", "lighting-color",
+  "color-interpolation", "color-interpolation-filters", "shape-rendering",
+  "image-rendering", "text-rendering", "color-rendering", "mix-blend-mode",
+  "isolation", "mask-type", "enable-background",
+  // background-COLOR only: it paints a colour and cannot reference an image. The
+  // `background` shorthand and background-image stay out — see the note above.
+  "background-color",
+  // same-document reference paints (value guard restricts these to url(#frag))
+  "marker", "marker-start", "marker-mid", "marker-end",
+  "clip-path", "clip-rule", "mask", "filter",
+  // text
+  "font", "font-family", "font-size", "font-size-adjust", "font-stretch",
+  "font-style", "font-variant", "font-variant-numeric", "font-feature-settings",
+  "font-kerning", "font-weight", "letter-spacing", "line-height", "word-spacing",
+  "text-anchor", "text-decoration", "text-decoration-color",
+  "text-decoration-line", "text-decoration-style", "text-overflow",
+  "text-shadow", "text-transform",
+  "dominant-baseline", "alignment-baseline", "baseline-shift", "direction",
+  "unicode-bidi", "writing-mode", "white-space", "word-break", "overflow-wrap",
+  "kerning", "glyph-orientation-horizontal", "glyph-orientation-vertical",
+  // SVG2 geometry properties (the CSS spelling of the geometry ATTRIBUTES this
+  // path already passes through untouched). Inert: they size and place a shape
+  // WITHIN its <svg> viewport, which clips them — viewport units, the one way to
+  // size against the window instead, are rejected by the value filter.
+  // (`d` is deliberately absent: its only useful value form is path("…"), which
+  // the value filter rejects as a quoted function argument, so listing it would
+  // be a dead entry implying support that does not exist.)
+  "x", "y", "width", "height", "r", "cx", "cy", "rx", "ry",
+  "max-width", "min-width", "max-height", "min-height",
+  // Geometry/layout spellings third-party exporters emit on the root <svg>.
+  // `overflow` is deliberately NOT here, and the earlier claim that the render
+  // sinks are themselves overflow:hidden was wrong: the svg-block sink is not
+  // clipped in its own right, it inherits the slide's clip. overflow:visible on an
+  // <svg> overrides the UA rule that clips a viewport to its bounds, which lets a
+  // negative-geometry or translated child paint and hit-test over sibling blocks
+  // and the branding layer. Verified in-browser. It is stripped from <svg> in the
+  // attribute walk too, since the presentation-attribute spelling does the same
+  // thing; it stays allowed on <marker>, where overflow="visible" is the ordinary
+  // way to draw an arrowhead that exceeds its marker viewport.
+  "transform", "transform-origin", "transform-box",
+  // element-local visibility / hit-testing (cannot affect anything outside the
+  // deck subtree). cursor's url() form is value-restricted to url(#frag) like the
+  // other reference paints; listing it also keeps this consistent with the
+  // cursor="" presentation attribute, which SVG_URL_REF_ATTRS already admits.
+  "display", "visibility", "cursor",
+]);
+
+// Properties that must not be applied to an <svg> ELEMENT. The outer <svg> IS the
+// deck's containment boundary — the viewport clip that keeps every inner element
+// inside the block — so a property applied to THAT element takes effect outside
+// the clip it establishes: `transform` relocates the whole box AND its hit-testing
+// over sibling blocks and the branding layer while painting nothing (an invisible
+// click interceptor — the classic redress shape), a `filter` region is explicitly
+// not limited to the border box so a large filterUnits region repaints the slide,
+// and `overflow` removes the clip outright. Verified in-browser, in both the CSS
+// and presentation-attribute spellings.
+//
+// Inner elements keep all of these and need them: <g transform="…"> is how every
+// real diagram is built, and an inner filter/overflow is bounded by this same
+// viewport. The rule is therefore about WHERE the property sits, not what it is —
+// which is why it cannot live in SVG_STYLE_PROPS, a per-value gate with no
+// knowledge of the element. (v13.46)
+const SVG_ROOT_BLOCKED = new Set(["transform", "transform-origin", "transform-box", "filter", "overflow"]);
+
 // SVG CSS-value filter for the inline style="" attribute and url-ref
 // presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
 // The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
@@ -623,6 +759,28 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
+  // Reject CSS custom properties (the `--name` store) and var() (the load). Every
+  // token-level check in this function inspects the DECLARED text, but a custom
+  // property is an untyped token bag whose contents are substituted into another
+  // declaration at computed-value time — after all of those checks have run. So a
+  // URL parked in a custom property as a plain string, then pulled into an
+  // image-accepting function by var(), reaches the network without ever presenting
+  // the adjacency (function-name + quote) or url( shapes those checks look for:
+  // indirection defeats any purely lexical filter. Legit deck paint CSS never
+  // needs either half; reject both, so neither store nor load alone reopens it.
+  // The store is matched as a DECLARATION (start of the value, or after a `;`),
+  // not as a bare `--` anywhere: a custom property can only be introduced in that
+  // position, while `--` occurs innocently inside same-document fragment ids
+  // (url(#grad--blue)) that this filter must keep. Comments are already rejected
+  // above, so nothing but whitespace can sit between the `;` and the name.
+  if (/(?:^|;)\s*--/.test(css)) return false;
+  // The load half is the whole SUBSTITUTION family, not var() alone. attr() reads
+  // a DOM attribute this sanitizer preserves verbatim, and env() reads a UA value;
+  // both are resolved at the same late stage as var(), so each is an equally good
+  // way to re-assemble a value out of pieces no lexical rule here ever sees.
+  // Naming the family rather than the one function that shipped a bug: any future
+  // CSS substitution primitive belongs on this line.
+  if (/(?:var|attr|env)\s*\(/i.test(css)) return false;
   if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   // Reject any at-rule outright: @import pulls an external sheet and @font-face
   // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
@@ -632,6 +790,11 @@ function isSvgStyleSafe(css) {
   // `://` guard (which this filter previously lacked) and also catches scheme-relative
   // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
   if (css.indexOf("//") !== -1) return false;
+  // …and the same reject for an authority written WITHOUT its slashes: for the
+  // special schemes the URL parser canonicalizes `https:host/p` to `https://host/p`,
+  // so the `//` scan above is not by itself a complete "contains an absolute URL"
+  // test. See CSS_FETCH_SCHEME.
+  if (CSS_FETCH_SCHEME.test(css)) return false;
   // Every url() must be a same-document #fragment paint reference (url(#grad)).
   // Match the OPENING url( token and require its first meaningful char (past an
   // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
@@ -653,6 +816,15 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // Function ALLOWLIST (see SVG_VALUE_FNS). The rules above reject the ways a URL
+  // can be SPELLED; this rejects the functions that can DEREFERENCE one. Without
+  // it a relative reference — no scheme, no //, no quote, no url() token — is
+  // invisible to every check here, and only the property allowlist keeps it from
+  // being fetched. Two independent gates instead of one, so neither has to be
+  // perfect. Escapes and comments are already rejected, so a function token cannot
+  // be obfuscated past this scan.
+  const fnNames = css.match(/[a-z][\w-]*(?=\s*\()/gi);
+  if (fnNames && fnNames.some((n) => !SVG_VALUE_FNS.has(n.toLowerCase()))) return false;
   // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
   // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
   // pointer-events let a deck element ESCAPE its container and overlay, hide, or
@@ -665,6 +837,38 @@ function isSvgStyleSafe(css) {
   // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
   // legit SVG paint never needs it.
   if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
+  return true;
+}
+
+// Gate for the inline style="" ATTRIBUTE specifically: isSvgStyleSafe judges a
+// CSS *value*, which is the right shape for the url-ref presentation attributes
+// (fill/stroke/filter/…) that carry one bare value — but style="" is a whole
+// DECLARATION LIST, where the attacker also chooses the properties. Judging only
+// the values there leaves the property side ungoverned, and it is the property
+// that decides whether a value is painted or FETCHED. So parse the declarations
+// and require every property to be in SVG_STYLE_PROPS: allowlist over the
+// structural half (§ "allowlist, never denylist"), value filter over the other.
+// Both must pass — this is an additional gate, never a replacement.
+//
+// FAIL CLOSED: the whole attribute is rejected if any declaration is unparsable
+// or carries an unknown property; nothing is silently filtered out and kept.
+// Splitting on ';' is exact enough here precisely because the value filter ran
+// first — escapes, comments and '<' are already gone — and where it is not (a ';'
+// inside a quoted string or a url()), the split yields a fragment with no
+// property and the attribute is rejected, which is the safe direction. (v13.46)
+function isSvgInlineStyleSafe(css, tag) {
+  if (!isSvgStyleSafe(css)) return false;
+  for (const decl of css.split(";")) {
+    const d = decl.trim();
+    if (!d) continue;
+    const i = d.indexOf(":");
+    if (i <= 0) return false;
+    const prop = d.slice(0, i).trim().toLowerCase();
+    if (!SVG_STYLE_PROPS.has(prop)) return false;
+    // …and on the boundary element itself, not even an allowlisted property may
+    // be one that acts outside the clip that element establishes.
+    if (tag === "svg" && SVG_ROOT_BLOCKED.has(prop)) return false;
+  }
   return true;
 }
 
@@ -761,7 +965,35 @@ function sanitizeSvgMarkup(raw) {
             // isSvgStyleSafe allows only url(#fragment); rejects external url(),
             // image-set()/image()/cross-fade()/src() string sources, @import and CSS-
             // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
-            if (SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)) { child.removeAttribute(a.name); continue; }
+            // style="" is a declaration LIST, so it takes the stricter gate, which
+            // adds the property allowlist on top of that value filter. (v13.46)
+            const cssOk = name === "style" ? (v) => isSvgInlineStyleSafe(v, tag) : isSvgStyleSafe;
+            // SVG_URL_REF_ATTRS names the attributes that fetch TODAY. SVG 2 lets
+            // more CSS properties be written as presentation attributes, so an
+            // attribute named after a fetching CSS property (mask-image,
+            // border-image, list-style-image, offset-path, shape-outside …) is
+            // inert only until a browser starts honouring it — and then it is a
+            // zero-click beacon that was never value-checked. Gate those by REUSING
+            // the canonical CSS_PAINT_KEY/cssKeyStem predicate this file already
+            // uses for the same question about sub-object keys, rather than
+            // maintaining a second list that can drift from it. Real SVG attributes
+            // whose stem collides (maskUnits, filterUnits, clipPathUnits …) carry
+            // plain idents that the value filter passes untouched. (v13.46)
+            // UI-integrity: `overflow` on an <svg> overrides the UA rule that clips a
+            // viewport to its bounds, so a child with negative geometry or a
+            // transform paints and hit-tests outside the deck's own box, over
+            // sibling blocks and the branding layer. Strip it there. Inner
+            // viewport-establishing elements keep it: <marker overflow="visible">
+            // is the standard arrowhead idiom and cannot escape the root's clip.
+            if (tag === "svg" && SVG_ROOT_BLOCKED.has(name)) { child.removeAttribute(a.name); continue; }
+            // pointer-events is named in isSvgStyleSafe's UI-integrity denylist but
+            // was reachable as a presentation attribute — the same asymmetry the
+            // property allowlist exists to remove. It makes an interceptor that
+            // paints nothing at all (fill="none"/opacity:0) still take clicks, so
+            // it amplifies any relocation primitive. Strip it in both spellings.
+            if (name === "pointer-events") { child.removeAttribute(a.name); continue; }
+            const urlRefAttr = SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name));
+            if (urlRefAttr && !cssOk(a.value)) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
@@ -856,7 +1088,16 @@ const SAFE_STYLE_KEYS = new Set([
 // token and let a string-source URL slip past the function-string and `://` checks
 // — a zero-click exfil beacon on render. Color/gradient/layout values never contain
 // a comment; reject outright (pairs with the same reject in isSvgStyleSafe).
-const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*/i;
+// The trailing `var\(` reject is the same indirection defence isSvgStyleSafe
+// carries: a custom property is an untyped token bag substituted at
+// computed-value time, i.e. AFTER every lexical check in this regex has run, so
+// var() can re-assemble a rejected primitive out of pieces none of these
+// alternatives match. Deck colour/gradient/layout values never reference one.
+// CSS_FETCH_SCHEME is APPENDED rather than re-spelled here: `:\/\/` alone misses
+// an authority written without its slashes, and that pattern must stay identical
+// on both CSS surfaces — two hand-maintained copies of a scheme list is exactly
+// how the earlier filters drifted apart. (v13.46)
+const STYLE_VALUE_REJECT = new RegExp(/url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*|(?:var|attr|env)\s*\(/.source + "|" + CSS_FETCH_SCHEME.source, "i");
 function sanitizeStyle(style) {
   if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
   const out = {};
@@ -1015,8 +1256,14 @@ function scrubSubObject(obj, depth = 0) {
   }
   // Drop the reserved renderer-private namespace: internal flags are set by our
   // own code AFTER sanitization, never carried in from a deck.
+  // Drop `--`-prefixed keys for the mirror-image reason: sub-objects keep whatever
+  // key a deck invents, and a `--x` key spread into a style object would DECLARE a
+  // CSS custom property — the token-bag store whose var() load the value filters
+  // reject. No renderer reads such a key, so this costs nothing and keeps the
+  // store closed structurally rather than relying on no future spread appearing.
   for (const k of Object.keys(obj)) {
     if (k.charCodeAt(0) === 95 /* "_" */) delete obj[k];
+    else if (k.charCodeAt(0) === 45 && k.charCodeAt(1) === 45 /* "--" */) delete obj[k];
   }
   if ("style" in obj) {
     const s = sanitizeStyle(obj.style);
@@ -1039,9 +1286,18 @@ function scrubSubObject(obj, depth = 0) {
 // context — defense-in-depth so any future/missed value still can't append a second
 // (external) background layer. cssUrl quotes + escapes so the value stays a single
 // url() string; cssColor passes only a strict color token (else empty, caller falls
-// back to a default). Neither permits a bare external URL on its own.
+// back to a default).
+// cssUrl is an ENCODER, not a URL validator: quoting keeps a value from appending a
+// second background layer, but a well-formed absolute URL survives quoting intact,
+// so callers must still validate what they pass (its one caller clamps to
+// data:image/* via sanitizeImageDataUri). Because the helper table points future
+// authors here for any url() position, it also FAILS CLOSED on a fetching scheme —
+// one unvalidated caller must not become a zero-click beacon. data: is unaffected
+// (CSS_FETCH_SCHEME lists only schemes that reach the network). (v13.46)
 function cssUrl(u) {
-  return 'url("' + String(u == null ? "" : u).replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
+  const s = String(u == null ? "" : u);
+  if (CSS_FETCH_SCHEME.test(s)) return 'url("")';
+  return 'url("' + s.replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "") + '")';
 }
 const CSS_COLOR_OK = /^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$/i;
 // Fail-closed on TYPE first (v13.26): `String(c)` coerces ANY shape to a string
@@ -1511,7 +1767,11 @@ function resanitizeLoadedLanes(lanes) {
 function resanitizeLoadedBranding(branding) {
   if (!branding || typeof branding !== "object") return branding;
   const b = { ...branding };
-  scrubColorFields(b);
+  // Same canonical scrub as the SET_BRANDING reducer path: branding reloaded from
+  // storage is exactly as untrusted as branding arriving in a deck, and it is a
+  // raw spread that keeps arbitrary KEYS, so it needs the key-namespace drops too
+  // — not only value scrubbing. Both paths must stay on one helper. (v13.46)
+  scrubSubObject(b);
   if ("logo" in b) {
     const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
     if (clamped) b.logo = clamped; else delete b.logo;
@@ -4482,7 +4742,29 @@ function innerReducer(state, a) {
     // SECURITY (v12.67): the Vera set_branding tool (and the branding modal) dispatch
     // here, bypassing the import-time scrub in validateAndSanitizeDeck. footerBg/
     // accentColor/footerColor feed inline CSS, so scrub the merged branding too.
-    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubColorFields(b); return { ...state, branding: b }; }
+    // SECURITY: branding is merged from an arbitrary caller-supplied object, so it
+    // is a raw-spread surface like the deck sub-objects — it keeps whatever KEY the
+    // input chose, and scrubColorFields only ever inspected values on keys it
+    // recognises. Route it through the canonical scrubSubObject instead: same
+    // colour/layout/paint scrubbing, plus the reserved `_` and `--` key namespaces
+    // dropped, so a caller can neither forge a renderer-private flag nor park a CSS
+    // custom property here. (v13.46)
+    // `logo` needs its own clamp: it is an IMAGE SOURCE, not a CSS scalar, so none
+    // of scrubSubObject's key patterns match it and it would ride through to an
+    // <img src>. The deck-ingress and storage-reload paths both clamp it to an
+    // inline data:image/*; this is the third door into the same field, and it was
+    // the only one that did not — safe today only because every current caller
+    // happens to supply a data: URI. Clamp here too so that stays true no matter
+    // who dispatches. (v13.46)
+    case "SET_BRANDING": {
+      const b = { ...state.branding, ...a.branding };
+      scrubSubObject(b);
+      if ("logo" in b) {
+        const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+        if (clamped) b.logo = clamped; else delete b.logo;
+      }
+      return { ...state, branding: b };
+    }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
@@ -11577,6 +11859,148 @@ uiSuite("SVG Sanitizer (XSS)", [
     // isSvgStyleSafe still guards url-ref presentation attrs; url( #frag ) must not false-reject.
     const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
     return /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
+  // v13.46 — CSS custom-property indirection. A lexical value filter inspects the
+  // DECLARED text; a custom property is an untyped token bag substituted at
+  // computed-value time, i.e. after those checks have run, so an indirected value
+  // can re-assemble a fetching primitive the filter never saw. Custom properties
+  // also inherit, so the store and the load can sit on different elements.
+  { name: "SVG custom-property indirection into an image source removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style=\'--p:"https:attacker.invalid/b";background-image:image-set(var(--p) 1x)\'/>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out) && !/--p/.test(out);
+  }},
+  { name: "SVG custom property inherited across elements (store on <g>, load on child) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<g style=\'--p:"https:attacker.invalid/b"\'><rect style="mask-image:image-set(var(--p) 1x)"/></g>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out);
+  }},
+  { name: "SVG attr()/env() indirection removed (whole substitution family)", fn: async () => {
+    // attr() reads a DOM attribute the sanitizer preserves verbatim, so the URL
+    // never appears in the CSS text; env() binds at the same late stage as var().
+    const a = sanitizeSvgMarkup('<rect data-u="https://attacker.invalid/b" style="fill:attr(data-u url)"/>');
+    const b = sanitizeSvgMarkup('<rect data-u="url(https://attacker.invalid/b)" fill="attr(data-u)"/>');
+    const c = sanitizeSvgMarkup('<rect style="background-image:image-set(env(x) 1x)"/>');
+    return !/attr\s*\(|env\s*\(/i.test(a + b + c) && !/\sstyle=/i.test(a) && !/\sfill=/i.test(b);
+  }},
+  { name: "SVG transform allowlisted in inline style (parity with the transform attribute)", fn: async () => {
+    // The transform ATTRIBUTE was never gated, so rejecting only the CSS spelling
+    // removed real exported-diagram layout without removing any capability.
+    const out = sanitizeSvgMarkup('<g style="transform:translate(10px,10px)"><rect width="10" height="10" fill="red"/></g>');
+    return /transform:translate\(10px,10px\)/.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SECURITY: neither transform spelling escapes the clipped render sink", fn: async () => {
+    // The UI-integrity invariant that makes the line above safe: transform cannot
+    // leave an overflow:hidden ancestor (position, which can, stays rejected).
+    const host = document.createElement("div");
+    host.style.cssText = "width:120px;height:80px;overflow:hidden;position:relative";
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<g style="transform:translate(-900px,-900px) scale(60)" transform="translate(-900,-900) scale(60)">' +
+        '<rect width="20" height="20" fill="red"/></g>');
+      const hb = host.getBoundingClientRect();
+      // Hit-test, not bounding rects: SVG clips paint, so a rect over-reports.
+      const probes = [[hb.right + 40, hb.bottom + 40], [Math.floor(innerWidth / 2), Math.floor(innerHeight / 2)]];
+      const escaped = probes.some(([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        return !!(el && host.contains(el));
+      });
+      const noPositioning = !/position\s*:/i.test(host.innerHTML);
+      const rendered = /fill="red"/.test(host.innerHTML);
+      return !escaped && noPositioning && rendered;
+    } finally { host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot un-clip its own viewport to cover sibling content", fn: async () => {
+    // overflow on an <svg> overrides the UA viewport clip, so a negative-geometry
+    // child paints and hit-tests outside the deck's box. Prove it against a real
+    // sibling: the escaped rect must not become the element at the sibling's point.
+    const sib = document.createElement("div");
+    sib.style.cssText = "width:200px;height:60px;background:#ddd";
+    const host = document.createElement("div");
+    host.style.cssText = "width:60px;height:60px";
+    document.body.appendChild(sib); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" overflow="visible" style="overflow:visible">' +
+        '<rect x="-300" y="-300" width="900" height="900" fill="red"/></svg>');
+      const r = sib.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const covered = !!(hit && host.contains(hit));
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !covered && !/overflow/i.test(host.innerHTML) && rendered;
+    } finally { sib.remove(); host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
+    // transform on the BOUNDARY <svg> relocates the box and its hit-testing while
+    // painting nothing — deck content silently takes clicks meant for a neighbour.
+    // Victim is static and precedes the host so it cannot out-rank the attacker in
+    // paint order (a positioned victim would mask a real escape).
+    const victim = document.createElement("div");
+    victim.style.cssText = "width:300px;height:60px;background:#dde";
+    const host = document.createElement("div");
+    host.style.cssText = "width:240px;height:90px";
+    document.body.appendChild(victim); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" transform="scale(20)" style="transform:scale(20)">' +
+        '<rect width="240" height="90" fill="none" pointer-events="all"/></svg>');
+      const r = victim.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const intercepts = !!(hit && host.contains(hit));
+      const clean = !/transform|pointer-events/i.test(host.innerHTML);
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !intercepts && clean && rendered;
+    } finally { victim.remove(); host.remove(); }
+  }},
+  { name: "SVG inner transform/filter preserved (diagram layout still works)", fn: async () => {
+    const out = sanitizeSvgMarkup('<g transform="translate(5,5)" filter="url(#f)" style="transform-origin:0 0"><rect width="9" height="9" style="filter:blur(2px)"/></g>');
+    return /transform="translate\(5,5\)"/.test(out) && /filter="url\(#f\)"/.test(out) &&
+           /transform-origin:0 0/.test(out) && /filter:blur\(2px\)/.test(out);
+  }},
+  { name: "SVG marker overflow=visible preserved (arrowhead idiom)", fn: async () => {
+    const out = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
+    return /overflow="visible"/.test(out) && /url\(#a\)/.test(out);
+  }},
+  { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG inline-style property allowlist drops image-loading/overlay properties", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="red" style="background-image:url(#a);cursor:url(#c),auto;transform:scale(500)"/>');
+    return !/style=/i.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SVG legitimate paint/text inline style preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8;text-transform:uppercase;cursor:pointer">A</text>');
+    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out) &&
+           /text-transform:uppercase/.test(out) && /cursor:pointer/.test(out);
+  }},
+  { name: "SVG double-hyphen fragment ids preserved (custom-property reject is declaration-anchored)", fn: async () => {
+    // `--` inside url(#id) is ordinary id naming, not a custom property: a store
+    // can only be introduced at the start of a declaration.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad--blue)" clip-path="url(#clip--1)" style="stroke:url(#s--2)"/>');
+    return /url\(#grad--blue\)/.test(out) && /url\(#clip--1\)/.test(out) && /url\(#s--2\)/.test(out);
+  }},
+  { name: "SECURITY: browser-truth — indirected deck SVG CSS makes no outbound request", fn: async () => {
+    // Real-sink proof: render the sanitizer's OUTPUT the way the app does and watch
+    // the browser's own resource timeline. A source-level "the regex rejects it" is
+    // not evidence that nothing fetched; a PerformanceObserver entry is.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const seen = [];
+    const obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) seen.push(e.name); });
+    try {
+      obs.observe({ entryTypes: ["resource"] });
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" style=\'--p:"https:attacker.invalid/b1";background-image:image-set(var(--p) 1x)\'>' +
+        '<rect style=\'--q:"https:attacker.invalid/b2";mask-image:image-set(var(--q) 1x)\'/></svg>');
+      // Poll rather than sleep a fixed window: a failed request to an unresolvable
+      // host lands as a resource entry at an unpredictable delay, and a window too
+      // short lets the observer see nothing — which would silently reduce this to
+      // the string check below and stop it detecting a regression. Bail out early
+      // the moment an entry appears (the failing direction needs no waiting).
+      for (let i = 0; i < 30 && !seen.length; i++) await new Promise((r) => setTimeout(r, 100));
+      for (const e of obs.takeRecords()) seen.push(e.name);
+      return !seen.some((u) => /attacker\.invalid/i.test(u)) && !/attacker\.invalid/i.test(host.innerHTML);
+    } finally { obs.disconnect(); host.remove(); }
   }},
   { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
     // The load-bearing regression test for the UI-integrity family: render a
