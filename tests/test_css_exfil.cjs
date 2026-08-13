@@ -40,7 +40,8 @@ function grab(re, label) {
 // not external input). cssUrl/cssColor/CSS_COLOR_OK are loaded here too (v12.66).
 let api;
 try {
-  const reject = grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
+  const reject = grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT");
   const key = grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY");
   // Shared value filter the three key-pattern scrubbers delegate to (v13.25).
   const shared = grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields");
@@ -189,7 +190,10 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
 // cssUrl: result is always a single quoted url(); embedded quotes/backslashes are
 // escaped and newlines removed, so a value can't terminate the string early.
 {
-  const breakout = 'data:image/png;base64,AAAA) , url(https://evil.example)';
+  // The breakout probe deliberately carries NO fetching scheme: cssUrl now also
+  // fails closed on one (asserted separately below), which would short-circuit
+  // this case and stop it from exercising the escaping it exists to test.
+  const breakout = 'data:image/png;base64,AAAA) , url(#x)';
   const u = cssUrl(breakout);
   const innerQuotesEscaped = /^url\("(?:[^"\\]|\\.)*"\)$/.test(u);
   // Reconstruct cssUrl's escaping the same way it does (backslash first, then quote)
@@ -198,6 +202,21 @@ else bad("duplicate CSS reject regex present", "CSS_LOAD_REJECT should be folded
   else bad("cssUrl did not safely encode", JSON.stringify(u));
   if (cssUrl('a"b\\c') === 'url("a\\"b\\\\c")') ok("cssUrl escapes embedded quote and backslash");
   else bad("cssUrl escaping wrong", JSON.stringify(cssUrl('a"b\\c')));
+  // v13.46: cssUrl is an encoder, not a validator — quoting preserves a well-formed
+  // absolute URL intact. The helper table sends future authors here for any url()
+  // position, so it fails closed on a fetching scheme (with and without the
+  // authority slashes) rather than faithfully encoding a beacon. data: is the one
+  // scheme legitimately used in a url() here and must survive.
+  {
+    // (`//host` carries no scheme token and is caught upstream by
+    // STYLE_VALUE_REJECT; this encoder gates the scheme-bearing forms.)
+    const fetching = ["https://a.invalid/b", "https:a.invalid/b", "HTTP://a.invalid", "file:/etc/x", "ftp://a.invalid", "wss://a.invalid"];
+    const leaked = fetching.filter((v) => cssUrl(v) !== 'url("")');
+    if (leaked.length === 0) ok("cssUrl fails closed on a network-fetching scheme (slashless form too)");
+    else bad("cssUrl encoded a fetching URL", JSON.stringify(leaked));
+    if (cssUrl("data:image/png;base64,AAAA") === 'url("data:image/png;base64,AAAA")') ok("cssUrl preserves inline data:image (the legitimate url() payload)");
+    else bad("cssUrl broke data:image", JSON.stringify(cssUrl("data:image/png;base64,AAAA")));
+  }
   if (cssUrl("a\nb\r\fc").indexOf("\n") === -1) ok("cssUrl strips newlines");
   else bad("cssUrl kept a newline");
 
@@ -338,7 +357,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
     } else {
       const propReject = [
         "background-image:url(#a)", "background:red", "mask-image:url(#a)",
-        "cursor:url(#a),auto", "border-image:url(#a)", "list-style-image:url(#a)",
+        "border-image:url(#a)", "list-style-image:url(#a)",
         "offset-path:url(#a)", "shape-outside:url(#a)", "content:'x'",
         "transform:scale(500)", "position:fixed", "fill:red;background-image:url(#a)",
       ];
@@ -346,7 +365,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         "fill:#3b82f6", "fill:url(#grad);stroke:#888;stroke-width:2",
         "font-family:Inter,sans-serif;font-size:14px;text-anchor:middle",
         "opacity:0.5;mix-blend-mode:multiply", "clip-path:url(#c);mask:url(#m);filter:url(#f)",
-        "fill:red;", " stroke : blue ",
+        "fill:red;", " stroke : blue ", "cursor:pointer", "fill:url(#grad--blue)",
+        "text-transform:uppercase;text-shadow:0 1px 2px #000", "line-height:1.4",
       ];
       const pr = propReject.filter((v) => isSvgInlineStyleSafe(v));
       const pa = propAllow.filter((v) => !isSvgInlineStyleSafe(v));
@@ -388,6 +408,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (slide)"),
           grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (slide)"),
           grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (slide)"),
+          grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
           grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (slide)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (slide)"),
           grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (slide)"),
@@ -585,7 +606,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (bg-e2e)"),
         grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (bg-e2e)"),
         grab(/function sanitizeString\([\s\S]*?\n\}/, "sanitizeString (bg-e2e)"),
-        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (bg-e2e)"),
+        grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (bg-e2e)"),
         grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (bg-e2e)"),
         grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (bg-e2e)"),
         grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (bg-e2e)"),
@@ -639,7 +661,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       [grab(/const SAFE_SLIDE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_SLIDE_KEYS (F13)"),
         grab(/const SLIDE_NUMERIC_BOUNDS = \{[\s\S]*?\n\};/, "SLIDE_NUMERIC_BOUNDS (F13)"),
         grab(/function clampDeckNumber\([\s\S]*?\n\}/, "clampDeckNumber (F13)"),
-        grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (F13)"),
+        grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
+          grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (F13)"),
         grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (F13)"),
         grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (F13)"),
         grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (F13)"),
@@ -749,6 +772,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
           grab(/function sanitizeSvgMarkup\(raw\)\s*\{[\s\S]*?\n\}/, "sanitizeSvgMarkup (branding)"),
           grab(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/, "SAFE_RASTER_DATA_IMAGE (branding)"),
           grab(/function sanitizeImageDataUri\(s\)\s*\{[\s\S]*?\n\}/, "sanitizeImageDataUri (branding)"),
+          grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME") + "\n" +
           grab(/const STYLE_VALUE_REJECT = .+;/, "STYLE_VALUE_REJECT (branding)"),
           grab(/const CSS_COLOR_KEY = .+;/, "CSS_COLOR_KEY (branding)"),
           grab(/function scrubCssFields\(obj, keyMatches\)\s*\{[\s\S]*?\n\}/, "scrubCssFields (branding)"),

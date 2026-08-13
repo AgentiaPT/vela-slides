@@ -101,9 +101,14 @@ ${extractConst(importsSrc, "CSS_COLOR_OK")}
 ${extractFn(importsSrc, "linkPreview")}
 ${extractFn(importsSrc, "sanitizeUrl")}
 ${extractFn(importsSrc, "cssColor")}
+${extractConst(importsSrc, "CSS_FETCH_SCHEME")}
+${extractConst(importsSrc, "CSS_PAINT_KEY")}
+${extractConst(importsSrc, "cssKeyStem")}
 ${extractConst(importsSrc, "SVG_ALLOWED_TAGS")}
 ${extractConst(importsSrc, "SVG_URL_REF_ATTRS")}
+${extractConst(importsSrc, "SVG_STYLE_PROPS")}
 ${extractFn(importsSrc, "isSvgStyleSafe")}
+${extractFn(importsSrc, "isSvgInlineStyleSafe")}
 ${extractFn(importsSrc, "sanitizeSvgMarkup")}
 // STUBS — browser-bound, off the static render path:
 function openExternalLink() {}

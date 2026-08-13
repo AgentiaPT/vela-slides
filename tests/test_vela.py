@@ -368,7 +368,8 @@ def test_security():
     #     style="" DECLARATION LIST taking the stricter property-allowlist gate
     #     (isSvgInlineStyleSafe) on top of it. Behavior is executed by
     #     test_svg_mxss.cjs / test_css_exfil.cjs; this only pins the wiring.
-    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !cssOk(a.value)' in all_jsx \
+    if 'SVG_URL_REF_ATTRS' in all_jsx and 'urlRefAttr && !cssOk(a.value)' in all_jsx \
+       and 'SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name))' in all_jsx \
        and 'name === "style" ? isSvgInlineStyleSafe : isSvgStyleSafe' in all_jsx:
         ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS (style= takes the property allowlist)")
     else:
@@ -649,7 +650,15 @@ def test_css_color_exfil():
 
     # (2) STYLE_VALUE_REJECT is function-name-agnostic (catches image()/cross-fade()/
     #     src(), not just image-set()) — the v12.59 bypass class, on this surface too.
-    rej = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^\n]+?)/[a-z]*;', imports)
+    # STYLE_VALUE_REJECT is composed (a regex literal + CSS_FETCH_SCHEME.source),
+    # so match the whole definition line rather than a bare /…/ literal.
+    _rejm = re.search(r'const STYLE_VALUE_REJECT = (.+);', imports)
+    rej = _rejm
+    if rej and "CSS_FETCH_SCHEME" in rej.group(1) and re.search(r'const CSS_FETCH_SCHEME = /', imports):
+        ok("STYLE_VALUE_REJECT reuses CSS_FETCH_SCHEME (one scheme pattern, both CSS surfaces)")
+    else:
+        fail("STYLE_VALUE_REJECT scheme reuse",
+             "must append CSS_FETCH_SCHEME.source so a slashless authority is rejected here too")
     if rej and "[a-z]" in rej.group(1) and "['\"]" in rej.group(1):
         ok("STYLE_VALUE_REJECT rejects any string-source CSS function (name-agnostic)")
     else:
@@ -867,7 +876,7 @@ def test_audit_2025_05_fixes():
     # could expose content: which accepts url()). Assert the real mechanism
     # — the STYLE_VALUE_REJECT regex and its use in the style sanitizer —
     # rather than proximity to prose, so changelog wording can't affect it.
-    reject_def = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^/]+)/', imports)
+    reject_def = re.search(r'const STYLE_VALUE_REJECT = (.+);', imports)
     if reject_def and 'url' in reject_def.group(1) and 'STYLE_VALUE_REJECT.test(' in imports:
         ok("H2 sanitizeStyle rejects values containing url( (via STYLE_VALUE_REJECT)")
     else:

@@ -154,8 +154,15 @@ uiSuite("SVG Sanitizer (XSS)", [
     return !/style=/i.test(out) && /fill="red"/.test(out);
   }},
   { name: "SVG legitimate paint/text inline style preserved (no false reject)", fn: async () => {
-    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8">A</text>');
-    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out);
+    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8;text-transform:uppercase;cursor:pointer">A</text>');
+    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out) &&
+           /text-transform:uppercase/.test(out) && /cursor:pointer/.test(out);
+  }},
+  { name: "SVG double-hyphen fragment ids preserved (custom-property reject is declaration-anchored)", fn: async () => {
+    // `--` inside url(#id) is ordinary id naming, not a custom property: a store
+    // can only be introduced at the start of a declaration.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad--blue)" clip-path="url(#clip--1)" style="stroke:url(#s--2)"/>');
+    return /url\(#grad--blue\)/.test(out) && /url\(#clip--1\)/.test(out) && /url\(#s--2\)/.test(out);
   }},
   { name: "SECURITY: browser-truth — indirected deck SVG CSS makes no outbound request", fn: async () => {
     // Real-sink proof: render the sanitizer's OUTPUT the way the app does and watch
