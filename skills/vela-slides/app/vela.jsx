@@ -4709,7 +4709,22 @@ function innerReducer(state, a) {
     // colour/layout/paint scrubbing, plus the reserved `_` and `--` key namespaces
     // dropped, so a caller can neither forge a renderer-private flag nor park a CSS
     // custom property here. (v13.46)
-    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubSubObject(b); return { ...state, branding: b }; }
+    // `logo` needs its own clamp: it is an IMAGE SOURCE, not a CSS scalar, so none
+    // of scrubSubObject's key patterns match it and it would ride through to an
+    // <img src>. The deck-ingress and storage-reload paths both clamp it to an
+    // inline data:image/*; this is the third door into the same field, and it was
+    // the only one that did not — safe today only because every current caller
+    // happens to supply a data: URI. Clamp here too so that stays true no matter
+    // who dispatches. (v13.46)
+    case "SET_BRANDING": {
+      const b = { ...state.branding, ...a.branding };
+      scrubSubObject(b);
+      if ("logo" in b) {
+        const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
+        if (clamped) b.logo = clamped; else delete b.logo;
+      }
+      return { ...state, branding: b };
+    }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
