@@ -14,12 +14,15 @@ Comprehensive test suite covering:
 import http.client
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import unittest
+from urllib.parse import quote
 
 # ── Path setup ────────────────────────────────────────────────────────
 # serve.py / agent_backend.py / local.html are dev-only tooling under
@@ -593,15 +596,16 @@ class TestSecurity(FolderServerTestBase):
         return outside, link
 
     def test_save_through_hardlinked_deck_does_not_escape(self):
-        outside, _ = self._link_deck(os.link, "hl-save.vela", "hl-save-victim.txt")
+        outside, link = self._link_deck(os.link, "hl-save.vela", "hl-save-victim.txt")
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
         status, _, _ = fetch(self._port, "POST", "/save/hl-save.vela", body=payload)
+        # A multiply-linked destination is refused outright, matching the read
+        # path — never written through, never silently detached.
+        self.assertNotEqual(status, 200)
         with open(outside, encoding="utf-8") as f:
             self.assertEqual(f.read(), "OUTSIDE", "save wrote through a hard link")
-        self.assertEqual(status, 200)
-        with open(os.path.join(self._tmpdir, "hl-save.vela"), encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["deckTitle"], SAMPLE_DECK["deckTitle"],
-                             "the save did not land on the in-folder name")
+        with open(link, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE", "refused save still changed the entry")
 
     def test_save_through_symlinked_deck_does_not_write_through(self):
         # Containment already blocks a symlink pointing outside, so aim it at a
@@ -644,7 +648,10 @@ class TestSecurity(FolderServerTestBase):
                     "a\x07b.vela", "a\x00b.vela", "a\x7fb.vela"):
             self.assertFalse(v(bad), f"accepted control chars: {bad!r}")
         self.assertTrue(v("normal-deck.vela"))
-        self.assertTrue(v("Präsentation-📊.vela"))  # printable unicode still fine
+        self.assertTrue(v("Präsentation-Daten.vela"))  # printable unicode still fine
+        # Emoji are category So, which the glyph-forging allowlist rejects
+        # (fail-closed: a name is an identifier, not prose).
+        self.assertFalse(v("Präsentation-📊.vela"))
 
     def test_save_error_does_not_reach_the_status_line(self):
         # Even if a name slipped through, the reason phrase must stay static:
@@ -1178,11 +1185,10 @@ class TestHTMLGeneration(unittest.TestCase):
 
     def test_build_html_for_deck_vela_export_unwrapped(self):
         """Deck in _vela export format should be unwrapped automatically."""
-        deck_path = os.path.join(self._tmpdir, "export.vela")
-        with open(deck_path, "w", encoding="utf-8") as f:
-            json.dump(VELA_EXPORT_DECK, f)
+        # _build_html_for_deck takes the PARSED deck: the caller reads it through
+        # the symlink-proof descriptor so nothing downstream re-opens by path.
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
-        html = server._build_html_for_deck(deck_path, "export.vela").decode("utf-8")
+        html = server._build_html_for_deck(VELA_EXPORT_DECK, "export.vela").decode("utf-8")
         self.assertIn("Test Deck", html)
 
     def test_prepare_html_channel_port_injected_when_ai_enabled(self):
@@ -1971,6 +1977,596 @@ class TestRuntimeFileLinks(unittest.TestCase):
             with open(self._rt, "w", encoding="utf-8") as f:
                 f.write(junk)
             self.assertIsNone(self.server._read_runtime_info())
+
+class TestDeckNameCodeDataSeparation(FolderServerTestBase):
+    """Deck filenames are attacker-influenced (decks are shared artifacts), so
+    a name must never reach a code context.
+
+    The server-side guard (names validated before listing) is covered by
+    TestSecurity. These cover the second layer: the browser page must not mix
+    code and data at all, so the guard being the *only* thing standing between
+    a filename and execution is not a state this page can return to.
+
+    They pin the INVARIANT rather than any one payload — a test that only
+    pinned one quoting trick would pass against the next one.
+    """
+
+    _extra_files = {
+        "apostrophe'.vela": SAMPLE_DECK,
+        'double".vela': SAMPLE_DECK,
+        "angle<>.vela": SAMPLE_DECK,
+        "backtick`.vela": SAMPLE_DECK,
+        "clean-name.vela": SAMPLE_DECK,
+        # A name whose percent-encoded form contains a query delimiter: it is
+        # listed, so it must also serve. Decoding before stripping the query
+        # would truncate it and break the listing/serving agreement.
+        "question?mark.vela": SAMPLE_DECK,
+    }
+
+    def test_listing_only_exposes_servable_names(self):
+        """Every listed name must pass the guard the serving routes enforce."""
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("clean-name.vela", names)  # the listing still works
+        for name in names:
+            self.assertTrue(
+                VelaHTTPHandler._validate_deck_name(name),
+                f"listing exposed a name the serving routes would reject: {name!r}",
+            )
+
+    @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
+    def test_listed_names_are_actually_servable(self):
+        """Every listed row serves when clicked — listing and serving agree.
+
+        Asserts 200 rather than 'not 400': a rejection is a rejection whatever
+        its status code, so a weaker assertion would let listing/serving drift
+        back apart unnoticed.
+        """
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("question?mark.vela", names)  # the drift case is covered
+        for name in names:
+            status, _, _ = fetch(self._port, "GET", "/deck/" + quote(name))
+            self.assertEqual(status, 200, f"listed but not servable: {name!r}")
+
+    def test_browser_page_has_no_inline_event_handlers(self):
+        """No inline on*= attribute — data can never land in a code context."""
+        _, _, body = fetch(self._port, "GET", "/")
+        html = body.decode("utf-8")
+        self.assertNotRegex(html, r"(?i)\son[a-z]+\s*=",
+                            "browser page must bind behaviour via addEventListener")
+
+    def test_browser_page_has_no_inline_script(self):
+        """Client code is external, so the page can run without 'unsafe-inline'."""
+        _, _, body = fetch(self._port, "GET", "/")
+        html = body.decode("utf-8")
+        self.assertNotRegex(html, r"(?is)<script(?![^>]*\ssrc=)[^>]*>\s*\S",
+                            "browser page must not contain an inline <script> body")
+        self.assertIn('src="/browser.js"', html)
+
+    def test_browser_csp_forbids_inline_script(self):
+        """The strict policy is what makes the above structural, not stylistic."""
+        for path in ("/", "/browser.js"):
+            _, hdrs, _ = fetch(self._port, "GET", path)
+            csp = hdrs["content-security-policy"]
+            self.assertIn("script-src 'self'", csp)
+            self.assertNotIn("unsafe-inline", csp.split("style-src")[0])
+            self.assertNotIn("unsafe-eval", csp)
+
+    @unittest.skipUnless(TEMPLATES_EXIST, "template files required")
+    def test_app_page_keeps_its_own_policy(self):
+        """The stricter browser policy must not leak onto the app page."""
+        _, hdrs, _ = fetch(self._port, "GET", "/deck/sample.vela")
+        self.assertIn("unsafe-eval", hdrs["content-security-policy"])
+
+    def test_client_never_builds_markup_from_deck_data(self):
+        """Rendering goes through nodes, not string-concatenated HTML."""
+        with open(os.path.join(os.path.dirname(SCRIPTS_DIR), "browser.js"),
+                  encoding="utf-8") as f:
+            js = f.read()
+        # Strip comments first — the file's own docs name these sinks to
+        # explain why they are avoided, which would otherwise self-trip.
+        code = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+        code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+        for sink in ("innerHTML", "outerHTML", "document.write", "insertAdjacentHTML", "eval("):
+            self.assertNotIn(sink, code, f"browser.js must not use {sink}")
+        self.assertIn("addEventListener", code)
+        self.assertIn("textContent", code)
+
+
+class TestDeckFileAccessContainment(FolderServerTestBase):
+    """Deck reads and writes must refuse a symlinked leaf ATOMICALLY.
+
+    Realpath containment alone is check-then-use: a local process can swap a
+    deck-named symlink between the check and the open and redirect the operation
+    outside the served folder (CWE-22/59/367). These pin the atomic guarantee, so
+    a future by-path open cannot quietly reopen that window.
+    """
+
+    def _outside(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _link(self, link_name, target):
+        path = os.path.join(self._tmpdir, link_name)
+        if os.path.lexists(path):
+            os.unlink(path)
+        try:
+            os.symlink(target, path)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+        self.addCleanup(lambda: os.path.lexists(path) and os.unlink(path))
+        return path
+
+    def test_open_deck_fd_refuses_symlink_even_when_target_is_inside(self):
+        """The leaf itself must be refused — not merely targets that escape.
+
+        This is the property that closes the race: if an in-folder symlink were
+        accepted, it could be re-pointed outside after the containment check.
+        """
+        self._link("alias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        with self.assertRaises(OSError):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "alias.vela")
+
+    def test_open_deck_fd_refuses_symlink_for_write(self):
+        """Two independent layers refuse this: realpath containment rejects an
+        outward target (ValueError) and O_NOFOLLOW rejects the symlink itself
+        (OSError). Accept either — what must never happen is the write landing."""
+        outside = self._outside()
+        self._link("wlink.vela", os.path.join(outside, "target.json"))
+        with self.assertRaises((ValueError, OSError)):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "wlink.vela", write=True)
+        self.assertFalse(os.path.exists(os.path.join(outside, "target.json")),
+                         "write followed a symlink out of the served folder")
+
+    def test_save_through_symlink_is_refused_over_http(self):
+        outside = self._outside()
+        target = os.path.join(outside, "PWNED.json")
+        self._link("race.vela", target)
+        status, _, _ = fetch(self._port, "POST", "/save/race.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        self.assertFalse(os.path.exists(target), "arbitrary write escaped the folder")
+
+    def test_serve_through_symlink_is_refused_over_http(self):
+        self._link("ralias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        status, _, _ = fetch(self._port, "GET", "/deck/ralias.vela")
+        self.assertNotEqual(status, 200, "a symlinked deck was served")
+
+    def test_listing_and_serving_agree_about_symlinks(self):
+        """Neither lists nor serves them — the two views cannot diverge."""
+        self._link("balias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        listed = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertNotIn("balias.vela", listed)
+        status, _, _ = fetch(self._port, "GET", "/deck/balias.vela")
+        self.assertNotEqual(status, 200)
+
+    def _hardlink(self, link_name, target):
+        path = os.path.join(self._tmpdir, link_name)
+        try:
+            os.link(target, path)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("hardlinks unavailable on this filesystem")
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        return path
+
+    def test_hardlinked_deck_is_refused(self):
+        """O_NOFOLLOW rejects a SYMlink only. A hardlink is an ordinary entry
+        inside the folder sharing an inode with a file outside it — containment,
+        O_NOFOLLOW and S_ISREG all pass, so the link count must be checked."""
+        outside = self._outside()
+        target = os.path.join(outside, "secret.vela")
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE", "lanes": []}, f)
+        self._hardlink("hl.vela", target)
+        with self.assertRaises(OSError):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "hl.vela")
+
+    def test_hardlinked_write_does_not_truncate_the_target(self):
+        """The ordering matters: O_TRUNC destroys the file AT open(), before any
+        check can run. The guard is only meaningful if truncation happens after
+        the inode is accepted — so the victim's content must survive intact."""
+        outside = self._outside()
+        target = os.path.join(outside, "victim.conf")
+        with open(target, "w", encoding="utf-8") as f:
+            f.write("IMPORTANT-ORIGINAL-CONTENT")
+        self._hardlink("hlw.vela", target)
+
+        status, _, _ = fetch(self._port, "POST", "/save/hlw.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "IMPORTANT-ORIGINAL-CONTENT",
+                             "hardlinked target was truncated or overwritten")
+
+    def test_hardlinked_deck_is_neither_listed_nor_served(self):
+        outside = self._outside()
+        target = os.path.join(outside, "hidden.vela")
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE", "lanes": []}, f)
+        self._hardlink("hlr.vela", target)
+
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        listed = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertNotIn("hlr.vela", listed)
+        self.assertIn("sample.vela", listed, "healthy decks must still be listed")
+        status, _, served = fetch(self._port, "GET", "/deck/hlr.vela")
+        self.assertNotEqual(status, 200)
+        self.assertNotIn(b"OUTSIDE", served)
+
+    def test_served_root_is_resolved_once_at_startup(self):
+        """O_NOFOLLOW guards the leaf, not a parent component.
+
+        If the served root stayed a symlink it would be re-resolved on every
+        request, and re-pointing it between the containment check and the open
+        redirects reads and writes elsewhere — demonstrated before this was
+        pinned. Asserting the resolved root is the deterministic form of that
+        race test.
+        """
+        real_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, real_dir, ignore_errors=True)
+        link_dir = os.path.join(tempfile.mkdtemp(), "served-link")
+        self.addCleanup(shutil.rmtree, os.path.dirname(link_dir), ignore_errors=True)
+        try:
+            os.symlink(real_dir, link_dir)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+
+        srv = VelaLocalServer(link_dir, port=0, no_open=True, channel_port=0)
+        self.assertEqual(srv.folder_path, os.path.realpath(real_dir),
+                         "served root must be resolved, not left as a symlink")
+
+    def test_write_still_creates_a_new_deck(self):
+        """The hardening must not break save-as-new (O_CREAT path)."""
+        status, _, _ = fetch(self._port, "POST", "/save/brand-new.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 200)
+        self.assertTrue(os.path.isfile(os.path.join(self._tmpdir, "brand-new.vela")))
+
+
+class TestDeckLabelSpoofing(FolderServerTestBase):
+    """`deckTitle` comes from inside the deck JSON and passes no name validation,
+    yet it is the listing's most prominent label — so it is a spoofing surface."""
+
+    _extra_files = {
+        "rtlo-title.vela": {"deckTitle": "Q3-report‮gpj.vela", "lanes": []},
+        "pad-title.vela": {"deckTitle": "harmless.pdf" + " " * 40 + "​.vela", "lanes": []},
+        "num-title.vela": {"deckTitle": 5, "lanes": []},
+        "obj-title.vela": {"deckTitle": {"a": 1}, "lanes": []},
+        "long-title.vela": {"deckTitle": "A" * 5000, "lanes": []},
+    }
+
+    def _titles(self):
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        return {d["name"]: d["title"] for d in json.loads(body)["decks"]}
+
+    def test_titles_carry_no_format_or_bidi_controls(self):
+        for name, title in self._titles().items():
+            self.assertIsInstance(title, str, f"{name}: non-string title reached the client")
+            for ch in title:
+                self.assertNotEqual(unicodedata.category(ch), "Cf",
+                                    f"{name}: format/bidi control survived in {title!r}")
+
+    def test_whitespace_runs_collapsed(self):
+        self.assertNotIn("   ", self._titles()["pad-title.vela"])
+
+    def test_non_string_titles_fall_back_to_the_filename(self):
+        t = self._titles()
+        self.assertEqual(t["num-title.vela"], "num-title.vela")
+        self.assertEqual(t["obj-title.vela"], "obj-title.vela")
+
+    def test_title_length_is_bounded(self):
+        self.assertLessEqual(len(self._titles()["long-title.vela"]), 200)
+
+
+class TestLabelSpoofingCategories(unittest.TestCase):
+    """The first version of the label filter denylisted single categories and was
+    bypassed through five separate channels. These pin the category-allowlist
+    behaviour that replaced it, and pin that ordinary text still survives — a
+    filter that mangles legitimate titles would just be turned off."""
+
+    def _label(self, value):
+        return VelaHTTPHandler._display_label(value, "FALLBACK")
+
+    def test_blank_but_not_isspace_glyphs_cannot_hide_a_suffix(self):
+        """str.split() only splits on isspace(); these render blank but are not."""
+        for blank in ("⠀", "ㅤ", "ᅟ", "᠎", " "):
+            out = self._label("safe.pdf" + blank * 30 + "REAL.exe")
+            self.assertNotIn(blank, out, f"{blank!r} survived")
+            self.assertNotIn("  ", out, f"{blank!r} left a run that hides the suffix")
+            self.assertIn("REAL.exe", out)
+
+    def test_combining_marks_are_stripped(self):
+        self.assertEqual(self._label("in҉⃝voice" + "̶" * 10), "invoice")
+        self.assertEqual(self._label("safe̸deck"), "safedeck")  # overlay "slash"
+
+    def test_control_characters_are_stripped(self):
+        out = self._label("bad\x1b[31m\x00\x07\x7f-deck")
+        for ch in "\x1b\x00\x07\x7f":
+            self.assertNotIn(ch, out)
+
+    def test_format_and_bidi_controls_are_stripped(self):
+        self.assertNotIn("‮", self._label("Q3-report‮gpj.vela"))
+
+    def test_ordinary_text_survives_intact(self):
+        for text in ("Café Résumé Ünïcödé", "日本語のデッキ", "Q3 Report (final) — v2"):
+            self.assertEqual(self._label(text), text)
+
+
+class TestPerNameStateIsNotAllocatedFreely(FolderServerTestBase):
+    """Per-name server state must only exist for decks that really exist.
+    Allocating it for any syntactically valid name lets a caller pin unbounded
+    state, and recording a save before authorizing it leaves the cache holding
+    content that was never written to disk."""
+
+    def test_poll_for_unknown_deck_does_not_allocate_a_tracker(self):
+        name = "never-seen-before.vela"
+        status, _, _ = fetch(self._port, "GET", f"/poll/{name}?v=0")
+        self.assertEqual(status, 404)
+        self.assertIsNone(self._server.peek_tracker(name),
+                          "polling an unknown name allocated permanent state")
+
+    def test_unusable_name_is_rejected_before_any_state_is_touched(self):
+        long_name = "Z" * 300 + ".vela"
+        self.assertFalse(VelaHTTPHandler._validate_deck_name(long_name))
+        status, _, _ = fetch(self._port, "POST", f"/save/{long_name}",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertIsNone(self._server.get_deck_data(long_name),
+                          "a refused save left its payload in the cache")
+
+    def test_refused_save_does_not_cache_the_payload(self):
+        """A symlinked target is refused at open; nothing about it may persist."""
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        link = os.path.join(self._tmpdir, "refused.vela")
+        try:
+            os.symlink(os.path.join(outside, "t.json"), link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+        self.addCleanup(lambda: os.path.lexists(link) and os.unlink(link))
+
+        status, _, _ = fetch(self._port, "POST", "/save/refused.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        self.assertIsNone(self._server.get_deck_data("refused.vela"),
+                          "a refused save cached content that was never written")
+
+
+class TestAuthRejectsUndecodableTokens(unittest.TestCase):
+    """compare_digest raises TypeError on non-ASCII str, and it runs before any
+    validation — so an unauthenticated request could take the handler down with
+    no response at all. Needs a server with auth ENABLED; the shared fixture
+    runs with --no-auth, where every request is allowed and this cannot be seen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.mkdtemp()
+        with open(os.path.join(cls._tmpdir, "sample.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        cls._server = VelaLocalServer(cls._tmpdir, port=0, no_open=True,
+                                      channel_port=0, token="TESTTOKEN")
+        VelaHTTPHandler.server_ref = cls._server
+        cls._httpd = ThreadedHTTPServer(("127.0.0.1", 0), VelaHTTPHandler)
+        cls._port = cls._httpd.server_address[1]
+        threading.Thread(target=cls._httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._httpd.shutdown()
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def test_non_ascii_bearer_is_refused_cleanly(self):
+        status, _, _ = fetch(self._port, "GET", "/api/decks",
+                             headers={"Authorization": "Bearer é"})
+        self.assertIn(status, (401, 403))
+
+    def test_non_ascii_url_token_is_refused_cleanly(self):
+        status, _, _ = fetch(self._port, "GET", "/?token=%C3%A9")
+        self.assertIn(status, (401, 403))
+
+    def test_correct_token_still_authenticates(self):
+        status, _, _ = fetch(self._port, "GET", "/api/decks",
+                             headers={"Authorization": "Bearer TESTTOKEN"})
+        self.assertEqual(status, 200)
+
+
+class TestVendorAssetTrust(unittest.TestCase):
+    """Vendor assets are served as executable JavaScript under a CSP whose
+    script-src includes 'self', so they must come only from the trusted install
+    root. Searching the served folder or launch cwd let a planted regular file
+    run as a first-class page script — no symlink, no race — which bypasses
+    every deck sanitizer at once."""
+
+    MARKER = b"__PLANTED_VENDOR_PAYLOAD__"
+
+    def _plant(self, base):
+        d = os.path.join(base, "node_modules", "@babel", "standalone")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "babel.min.js"), "wb") as f:
+            f.write(self.MARKER)
+
+    def _vendor_bodies(self):
+        return b"".join(body for body, _ in VelaHTTPHandler.static_files.values())
+
+    def test_served_folder_node_modules_is_not_loaded(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        served = os.path.join(root, "served"); os.makedirs(served)
+        self._plant(served)
+
+        prev = dict(VelaHTTPHandler.static_files)
+        self.addCleanup(lambda: VelaHTTPHandler.static_files.update(prev))
+        VelaHTTPHandler.static_files.clear()
+
+        VelaLocalServer(served, port=0, no_open=True, channel_port=0)._load_vendor_files()
+        self.assertNotIn(self.MARKER, self._vendor_bodies(),
+                         "a planted vendor asset was served as executable JS")
+
+    def test_launch_cwd_node_modules_is_not_loaded(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        served = os.path.join(root, "served"); os.makedirs(served)
+        self._plant(root)
+
+        prev = dict(VelaHTTPHandler.static_files)
+        self.addCleanup(lambda: VelaHTTPHandler.static_files.update(prev))
+        VelaHTTPHandler.static_files.clear()
+
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            VelaLocalServer(served, port=0, no_open=True, channel_port=0)._load_vendor_files()
+        finally:
+            os.chdir(cwd)
+        self.assertNotIn(self.MARKER, self._vendor_bodies(),
+                         "a vendor asset from the launch cwd was served as executable JS")
+
+
+class TestDeckReadIsBounded(unittest.TestCase):
+    """The listing re-reads every deck on each poll, so an unbounded read lets
+    one planted oversized file load repeatedly into memory."""
+
+    def test_oversized_deck_is_refused(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "big.vela")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"deckTitle":"' + "A" * 4096 + '","lanes":[]}')
+
+        original = VelaHTTPHandler._DECK_MAX_BYTES
+        VelaHTTPHandler._DECK_MAX_BYTES = 512  # smaller than the file
+        self.addCleanup(setattr, VelaHTTPHandler, "_DECK_MAX_BYTES", original)
+
+        fd = VelaHTTPHandler._open_deck_fd(root, "big.vela")
+        with self.assertRaises(ValueError):
+            VelaHTTPHandler._read_deck_json(fd)
+
+    def test_normal_deck_still_reads(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with open(os.path.join(root, "ok.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        fd = VelaHTTPHandler._open_deck_fd(root, "ok.vela")
+        self.assertEqual(VelaHTTPHandler._read_deck_json(fd)["deckTitle"],
+                         SAMPLE_DECK["deckTitle"])
+
+
+class TestRuntimeFileWrite(unittest.TestCase):
+    """.vela.env carries the auth token and is written into the launch cwd —
+    which for the usual `serve.py .` IS the served folder, so the same process
+    that plants hostile decks can pre-plant this name."""
+
+    def _run_in(self, cwd, decks, token="TESTTOKEN"):
+        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0, token=token)
+        prev = os.getcwd()
+        os.chdir(cwd)
+        try:
+            srv._write_runtime_info()
+        finally:
+            os.chdir(prev)
+        return srv
+
+    def test_planted_symlink_is_not_followed(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        cwd = os.path.join(root, "cwd"); os.makedirs(cwd)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        victim = os.path.join(root, "victim.txt")
+        with open(victim, "w", encoding="utf-8") as f:
+            f.write("IMPORTANT-USER-FILE")
+        try:
+            os.symlink(victim, os.path.join(cwd, ".vela.env"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+
+        self._run_in(cwd, decks)
+
+        with open(victim, encoding="utf-8") as f:
+            body = f.read()
+        self.assertEqual(body, "IMPORTANT-USER-FILE", "symlink target was overwritten")
+        self.assertNotIn("TESTTOKEN", body, "auth token written through a symlink")
+        written = os.path.join(cwd, ".vela.env")
+        self.assertFalse(os.path.islink(written), "runtime file is still a symlink")
+        self.assertEqual(os.stat(written).st_mode & 0o777, 0o600)
+
+    def test_normal_write_still_works(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        self._run_in(root, decks)
+        with open(os.path.join(root, ".vela.env"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["token"], "TESTTOKEN")
+
+
+class TestDeckNameSpoofingRejected(unittest.TestCase):
+    """The File column renders the name verbatim as the identity a user falls back
+    on, so deceptive characters are rejected at validation rather than rewritten —
+    rewriting would make the column disagree with the real filename."""
+
+    def test_blank_glyph_names_rejected(self):
+        for blank in ("⠀", "ㅤ", "ᅟ"):
+            self.assertFalse(VelaHTTPHandler._validate_deck_name(f"report{blank * 3}.vela"))
+
+    def test_stacked_combining_marks_rejected(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("in̶҉voice.vela"))
+
+    def test_control_characters_rejected(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("bad\x1b[31m.vela"))
+
+    def test_separator_lookalikes_rejected_by_role_not_by_list(self):
+        """An enumerated list of slash lookalikes was bypassed by characters
+        nobody enumerated. These render pixel-identical to real separators and
+        must be refused because of what they ARE, not because they were listed."""
+        # Escapes, not literals: these characters are invisible or easily
+        # normalised away by an editor, which would silently defang the test.
+        for label, name in (
+            ("box-drawing diagonal", "reports╱2024╱final.vela"),
+            ("combining overlay", "s̸e̸c̸.vela"),
+            ("modifier colon", "etc꞉shadow.vela"),
+            ("ogham space", "a b.vela"),
+        ):
+            self.assertFalse(VelaHTTPHandler._validate_deck_name(name), label)
+
+    def test_ordinary_names_still_accepted(self):
+        """A filter that rejected real filenames would be turned off, so the
+        cost of the allowlist has to stay bounded to genuinely odd input."""
+        for name in ("normal.vela", "café.vela", "日本語.vela",
+                     "my deck (v2).vela", "презентация.vela", "عرض.vela",
+                     "q3-2024_final.vela"):
+            self.assertTrue(VelaHTTPHandler._validate_deck_name(name), name)
+
+
+class TestUnservableNamesNeverListed(FolderServerTestBase):
+    """A name that cannot be turned into a request path must not be listed:
+    the client throws on it and the whole listing would go down with it."""
+
+    def test_undecodable_filename_is_not_listed(self):
+        raw = os.path.join(os.fsencode(self._tmpdir), b"bad\xd8\xff.vela")
+        try:
+            with open(raw, "wb") as f:
+                f.write(b'{"deckTitle":"weird","lanes":[]}')
+        except OSError:
+            self.skipTest("filesystem rejects undecodable names")
+        self.addCleanup(lambda: os.path.exists(raw) and os.unlink(raw))
+
+        status, _, body = fetch(self._port, "GET", "/api/decks")
+        self.assertEqual(status, 200)
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("sample.vela", names, "healthy decks must still be listed")
+        for n in names:
+            n.encode("utf-8")  # raises if a surrogate slipped through
+
+    def test_validator_rejects_surrogates(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("bad\udcd8.vela"))
 
 
 if __name__ == "__main__":
