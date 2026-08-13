@@ -1911,10 +1911,12 @@ def test_server_hardening():
     else:
         fail("Runtime file constant")
 
-    if '_runtime_path' in serve_src:
-        ok("_runtime_path method present")
+    # The runtime file is addressed through one helper (dir_fd-relative where
+    # the platform supports it), never by an ad-hoc path built at each call site.
+    if '_runtime_target' in serve_src:
+        ok("_runtime_target helper present")
     else:
-        fail("_runtime_path method")
+        fail("_runtime_target helper")
 
     # ── Server lifecycle ──
     if '_cleanup_stale_server' in serve_src:
