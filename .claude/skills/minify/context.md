@@ -113,10 +113,34 @@ to that constraint, minimize tokens as much as possible.
   since Fable is reserved for "blocking decision advisor" per user's
   original framing, not bulk judging work.
 
+## Status log (cont.)
+
+- [2026-08-13] Skill built: `SKILL.md` + `scripts/check_preservation.py`
+  (stdlib-only, generic two-file gate: extracts trigger-word sentences from
+  both files, exact+fuzzy diffs them, exit 1 on any Tier N loss, reports
+  token counts/% reduction, tiktoken with regex fallback). Verified against
+  a deliberately-broken pair (correctly FAILs) and a correct pair (PASSes,
+  ~18.6% reduction). Skill registered and discoverable via Skill tool.
+- [2026-08-13] Eval task set written: `eval-task-set.md`. 3 targets, ~15-17
+  tasks total (5-6 each): CLAUDE.md (A1-3 traps: minimal-diff, version-bump
+  gate, secure-coding-read+disclosure-discipline; A4-6 baseline routing/
+  reducer/CI tasks), hyper-sprint (B1-3 traps built from its own actual
+  rules: orchestrator-never-implements, blind-validator gate can't be
+  skipped, replace-not-absorb dead worker; B4-5 baseline), vela-slides base
+  skill (C1-3 traps: exact-tool-call-count workflow, compact-DSL-only,
+  --demo disambiguation; C4-6 baseline). Each task has a mechanically
+  checkable pass/violation signal, not a vibe judgment. Recommends N=3 per
+  (target x condition) per task as a tractable first pass, full N>=20 only
+  for confirmatory follow-up; any trap violation at N=3 escalates to a full
+  run rather than being averaged away; label first-pass results
+  "directional, not confirmatory."
+
 ## Next action
 
-Dispatch a Sonnet agent to draft the /minify skill itself (SKILL.md +
-any scripts) implementing the Tiered-hybrid strategy + the trigger-word
-preservation gate. In parallel, start designing the eval harness (task
-set + judge protocol) — can be done concurrently since they're independent
-until first real eval run.
+Build the eval harness (task #5): run a task against baseline file vs
+`/minify`-produced file, fresh session each time, capture tokens/turns/
+tool-errors/success signal per eval-task-set.md's mechanical checks. Then
+build the blind randomized-order judge (task #6, separate model — leaning
+Opus — from the Sonnet task-executor). Then run first directional pass on
+Target A (CLAUDE.md) only, before scaling to B/C, and audit results for
+bias per the checklist above.
