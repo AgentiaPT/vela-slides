@@ -582,7 +582,42 @@ committing to an approach) rather than being built ad hoc.
   - **Phase 5 is now CLOSED.** Stopped the `send_later` keep-alive
     check-in chain per its own stated stop condition.
 
-## Current status (last updated: 2026-08-13, phase 5 landed and independently verified — all of phases 1/1b/2/3/4/5 done, phase 6 held on rate-limit throttle)
+## Session-isolation bug found and fixed in runner.py (2026-08-13, ~07:20-07:35, before Phase 6 started)
+
+Before kicking off Phase 6's real pilot run, re-checked `runner.py`'s
+`default_invoke` against the exact bug class that had just cost ~$0.29
+during the rate-limit-check investigation (see "Rate-limit throttle"
+section above): this container preseeds `CLAUDE_CODE_SESSION_ID` and
+related vars, so a bare `claude -p` subprocess spawned without isolation
+silently attaches to and bills against the *caller's own* running
+session rather than starting fresh. Confirmed `default_invoke` had the
+identical unguarded `subprocess.run(cmd, ...)` (no `env=`, inheriting
+everything) — had this shipped, Phase 6's entire pilot would have
+silently run against the orchestrator's own session instead of an
+isolated one, corrupting both the run and this session's own token
+accounting.
+
+Fixed with two independent layers (defense in depth, not relying on
+either alone):
+1. `isolated_agent_env()` — copies `os.environ` and strips a new
+   `_SESSION_ATTACHMENT_ENV_VARS` list (`CLAUDE_CODE_SESSION_ID` +
+   6 related vars); passed as `env=` to the `subprocess.run` call.
+2. Command construction split into a pure `_build_invoke_command()`
+   (no side effects) so `--selftest` can assert on it for free: it now
+   injects a fresh `--session-id <uuid>` and `--no-session-persistence`
+   on every invocation.
+
+Added 9 new zero-spend `--selftest` regression checks (asserting the env
+strip and both flags) — all pass. Re-ran all 10 harness module
+selftests directly (not trusted from any agent report) — all green.
+Committed and pushed to `claude/autocompact-auto-w0dcer`
+(`7035587`). Full detail intentionally kept out of the commit message
+where it'd be excessive, but this is infra hygiene, not a security
+disclosure — no discipline conflict with the security-fix-disclosure
+policy (that policy is about vulnerabilities in *shipped Vela code*,
+not this lab's own dev tooling).
+
+## Current status (last updated: 2026-08-13 ~07:35, phase 5 closed + runner.py isolation fix landed, Phase 6 starting)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -610,13 +645,17 @@ and consciously left as-is with a documented reason rather than either
 silently ignored or riskily merged). The `send_later` keep-alive chain
 that was covering this wait has been stopped.
 
-**Phase 6 (first real pilot run) is READY but intentionally HELD** — not
-on any technical blocker, but on the rate-limit throttle logged above
-(5-hour usage was at 91% as of ~04:40; Phase 6 is the most agent-heavy
-phase in the plan: 3 reps × sonnet-under-test + opus judge, multiplied
-across 9 scenarios). Resume after ~07:15 UTC or when the user confirms
-headroom has recovered, whichever comes first — see "Rate-limit
-throttle" section.
+**Phase 6 (first real pilot run) is now STARTING.** Rate-limit throttle
+held it until ~07:15 UTC (wall-clock estimate, not a confirmed reading —
+the user declined further in-session investigation into checking this
+directly, see "Rate-limit throttle" section; treat that as closed). A
+final pre-flight isolation bug in `runner.py` was found and fixed just
+before starting — see the section above. Starting deliberately
+cautious: ONE scenario first (not the full 9-scenario fleet), 3 reps,
+sonnet as agent-under-test, opus as judge, per the locked budget. Will
+verify from the pilot's own transcript/session-id that the isolation fix
+actually held in a real run (not just in --selftest) before scaling up
+to the rest of the fleet.
 
 ## Session hygiene: checking context usage
 
