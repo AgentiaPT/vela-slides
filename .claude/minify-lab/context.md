@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~11:35, launch 5 COMPLETED end-to-end for real — first full pilot result — isolation held throughout; result is INCONCLUSIVE for a real, now-diagnosed harness reason (missing node_modules in worktrees), fix delegated; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
+## Current status (last updated: 2026-08-13 ~12:10, node_modules fix committed and independently re-verified; launch 6 about to start for a clean 6B read; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -902,11 +902,35 @@ is unsound:
   content — confirmed via a cheap, zero-cost sanity check before
   concluding anything, rather than taking the campaign's own report at
   face value.
-- **Fix delegated** (mirroring the isolation-fix pattern): make
-  `node_modules` reachable inside every prepared worktree (symlink to
-  the main repo's copy is the obvious approach — no need to `npm
-  install` per worktree). In progress as of this update; not yet
-  reviewed/committed.
+- **Fix delegated** (mirroring the isolation-fix pattern) **and now
+  committed** (`7a36100`): `prepare.py` gained `link_node_modules()`,
+  called from `prepare_arm()` right after the lab self-leak scrub —
+  symlinks `<worktree>/node_modules` -> the main repo's, skipping
+  silently if the main repo has none or the worktree already has one.
+  It also caught a wrinkle beyond what was asked: a *symlink* named
+  `node_modules` isn't matched by the project `.gitignore`'s
+  trailing-slash `node_modules/` rule (that only matches real
+  directories), so left alone `git add -A` inside `freeze()`/
+  `post_run_diff()` would have staged the symlink itself and corrupted
+  the prepared-arm parity check. Guarded by adding a slash-less
+  `node_modules` line to the worktree-shared, untracked
+  `.git/info/exclude` — the project `.gitignore` stays untouched, as
+  instructed.
+
+  **Independently re-verified before committing** (not just trusting the
+  subagent's own report, per the standing discipline this session):
+  re-ran all 9 harness modules' `--selftest` directly — all pass; wrote
+  a standalone throwaway-worktree check (`git worktree add --detach`
+  from HEAD, then called the real `link_node_modules()` function
+  directly) — confirmed `node_modules` becomes a real, resolvable
+  symlink to `/home/user/vela-slides/node_modules`; ran
+  `python3 tests/test_vela.py` inside that independently-created
+  worktree — **503 passed, exit 0**, matching the main repo exactly
+  (versus the earlier "498 passed, 3 skipped, 2 failed"); confirmed
+  `.git/info/exclude` picked up the `node_modules` guard line; cleaned
+  up the verification worktree (`git worktree remove --force` + prune)
+  and confirmed `git worktree list`/`git status --short` were clean
+  before committing.
 
 **Also surfaced, independent of the inconclusive-gate reason — worth
 tracking separately**: the real minified `variants/telegraphic/CLAUDE.md`
@@ -927,9 +951,14 @@ into on its own, but worth watching once more scenarios/reps accumulate
 — if instability stays high at scale it would itself trip `gate.py`'s
 instability evaluator.
 
-**Next**: once the node_modules fix is reviewed/committed, relaunch the
-same `reducer-nohistory` campaign (launch 6) for a clean 6B read, then
-come back to the structure-verdict finding above.
+**Next**: launch 6 — relaunch the same `reducer-nohistory` campaign
+(3 reps, both arms, 2 judge rounds) now that both harness bugs
+(isolation breach, node_modules gap) are fixed and independently
+verified. Output goes under the new out-of-repo runs root
+(`/tmp/vela-minify-lab-runs/...`, from the isolation fix), so launch 5's
+completed run there is untouched/reusable for comparison and doesn't
+need cleanup. Once launch 6 completes clean, come back to the
+structure-verdict finding above.
 
 **The real Phase 6 pilot launch found two more real bugs before it ever
 reached agent spend** — the smoke test above only exercised
