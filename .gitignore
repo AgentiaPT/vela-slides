@@ -65,6 +65,9 @@ tests/screenshots/
 .claude/*
 !.claude/settings.json
 !.claude/skills
+# minify-lab: WIP research/harness for the /minify project — tracked so
+# container reclaim can't wipe it again (see .claude/minify-lab/context.md)
+!.claude/minify-lab
 # Track only the committed security hook, not the whole hooks dir — keeps
 # local/experimental hooks (which may hold machine paths or tokens) out of this
 # public repo by default.
