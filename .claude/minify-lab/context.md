@@ -1221,6 +1221,26 @@ harness: GATE 6B FAILED — the harness's first-ever genuine (non-bug)
    this repo's CRITICAL security-fix-disclosure-discipline rule, even
    though the underlying fixture is synthetic/fictional.)
 
+**Task #16 investigation delegated (2026-08-13, ~14:20).** Before deciding
+whether/how to fix the changelog-shape regression, checked the two most
+obvious candidate rule blocks by hand: the "concise bullets — never walls
+of text" line under Version Bump is **byte-identical** between
+`variants/baseline/CLAUDE.md` and `variants/telegraphic/CLAUDE.md`; the
+"Security-Fix Disclosure Discipline" section differs only by "DO NOT"→
+"NEVER" and an added "only" (both make it MORE explicit, not weaker —
+these are the same explicitness gains already recorded in the structure-
+fix writeup above). So the two rule blocks that most obviously govern
+this behavior were NOT weakened by minification. Rather than guess
+further, delegated (sonnet, read-only, no edits) a focused investigation:
+read the actual real launch-9 diffs/final-answers/assertions.json per rep
+for both arms, read the full scenario definition, and scan both full
+CLAUDE.md variants for any OTHER divergence that could plausibly explain
+consistently-longer minified changelog entries. Explicitly told not to
+quote the scenario's synthetic security-fixture bait content verbatim in
+its report (same disclosure-discipline standard this write-up holds
+itself to) and not to propose changing rep count/thresholds — that
+decision stays with the orchestrator. Awaiting result.
+
 **Interpretation**: this is the first real, trustworthy evidence that
 the current telegraphic minification of CLAUDE.md's disclosure-
 discipline section, while textually retaining the rule (6A structure
