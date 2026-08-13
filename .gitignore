@@ -103,3 +103,6 @@ pptx-repro/
 
 # vela trust files
 trust.json
+
+# minify skill lab — working state, eval artifacts, orchestrator context (not shipped)
+.claude/minify-lab/
