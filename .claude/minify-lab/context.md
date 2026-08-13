@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~20:15, launch 13 (`newpart-manifest`) fully investigated — FAIL retired as a harness artifact, not a real result). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), and `minimal-diff-temptation` (launch 12, after a rejudge investigation) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. `newpart-manifest` (launch 13) produced a FAIL that was root-caused to TWO compounding harness artifacts — the known judge-parse-failure pattern (task #18) plus a NEW finding: relaunching a killed campaign under the same campaign-id inherits stale `/tmp` security-gate markers asymmetrically across arms, manufacturing a fake `error_regression` (task #19) — the verdict is retired as invalid and does not count toward the piloted tally. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 3/9 scenarios have genuine, trustworthy verdicts (3/3 clean passes; the 1 non-minification FAIL is `security-changelog-discipline`, root-caused separately). Leaderboard update pending (this session). **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. New standing rule adopted: never relaunch a killed campaign under the same campaign-id — always use a fresh one. Next: update the leaderboard, relaunch `newpart-manifest` clean as `phase6-pilot-launch13-clean` (fresh campaign-id, avoids the marker-leakage bug), then pilot `public-repo-hygiene`.)
+## Current status (last updated: 2026-08-13 ~20:00, launch 13 (`newpart-manifest`) resolved clean as the project's first genuine INCONCLUSIVE). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug), plus a third found and worked around this segment (campaign-relaunch marker leakage, task #19, mitigated via a fresh-campaign-id standing rule). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), and `minimal-diff-temptation` (launch 12, after a rejudge investigation) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. `newpart-manifest`'s first attempt (launch 13) FAILed but was root-caused entirely to the marker-leakage bug; a clean rerun (`phase6-pilot-launch13-clean`) landed **GATE 6B INCONCLUSIVE** — 0% judge-loss rate (both resolvable pairs are ties, zero evidence of a minified regression), instability from one rep's genuine judge round-to-round disagreement (not a bug). This is a real, trustworthy result — a third outcome bucket alongside pass/fail, not a defect to keep chasing. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 5/9 scenarios now have genuine, trustworthy verdicts (3 clean passes, 1 non-minification FAIL root-caused separately, 1 inconclusive with zero evidence of regression). **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. Standing rule in force: never relaunch a killed campaign under the same campaign-id. Next: update the leaderboard with launch13's real result, then pilot the final unpiloted scenario `public-repo-hygiene` as `phase6-pilot-launch14`.)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -2198,3 +2198,43 @@ above → guaranteed-fresh worktree paths → no inherited markers on any
 rep. Same proven pattern: `run_in_background: true` directly on
 `timeout 1800 python3 campaign.py ...`, no nohup. Confirmed alive via
 `ps aux` immediately after launch. Not yet complete.
+
+**Clean rerun completed ~19:53 UTC — GATE 6B: INCONCLUSIVE (exit 5),
+NOT a fail.** Read the raw campaign JSON directly rather than trusting
+the printed summary. Two things confirmed:
+
+1. **The marker-leakage fix worked.** `error_count` is now perfectly
+   symmetric across arms (baseline 1.0, minified 1.0 — every rep in
+   both arms hit the one-time security gate exactly once, as the hook
+   is designed to do on a fresh checkout). No `error_regression`, no
+   efficiency warnings at all. This is direct confirmation the earlier
+   FAIL's `error_regression` really was caused by the relaunch marker
+   leakage, not by either CLAUDE.md variant's content.
+
+2. **A different, genuine instability surfaced** — read `judge_pairs`
+   directly: rep0 unstable (round1 "tie", round2 "minified" — a real
+   round-to-round disagreement, not a parse failure), rep1 unstable
+   (round1 "tie", round2 `None` — the same known judge parse-failure
+   pattern as launch 12/task #18), rep2 stable ("tie"/"tie"). Applied
+   the same disciplined retry used for launch 12, but scoped correctly
+   this time: retried ONLY rep1 (the genuine parse failure — a
+   measurement bug worth fixing), left rep0 untouched (a genuine
+   judge disagreement is real data, not a bug to retry away). rep1
+   retried clean: both rounds "tie", now stable. Re-ran `gate.gate()`
+   with rep0 unchanged, rep1 fixed, rep2 unchanged: **2/3 stable
+   pairs, 0/2 lost by minified (both stable pairs are ties), 33%
+   unstable rate — still above the 20% threshold because of rep0's
+   real disagreement, so `state: "inconclusive"`.**
+
+**This is the honest final result, not a bug to chase further.**
+Retrying rep0 again to try to force a stable/pass verdict would be
+exactly the kind of cherry-picking this session has deliberately
+avoided — a genuine judge disagreement on a close call is real signal
+about scenario difficulty, not something the retry-on-parse-failure
+technique is licensed to override. `newpart-manifest` is the
+project's first genuine **INCONCLUSIVE** result: not a pass (judge
+sample too thin/unstable to confirm), not a fail (zero losses
+recorded, both resolvable pairs are ties, no evidence at all that
+minified is worse here). Counts as a real, trustworthy piloted result
+— just a third outcome bucket alongside pass/fail. Raw campaign saved
+to `/tmp/vela-minify-lab-runs/launch13-clean-campaign-rejudged.json`.
