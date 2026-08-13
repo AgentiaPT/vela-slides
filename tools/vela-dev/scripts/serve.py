@@ -1123,7 +1123,16 @@ class VelaLocalServer:
         info = self._read_runtime_info() or {}
         killed = False
         stale_pid = info.get("pid")
-        if stale_pid and info.get("port") == self.port:
+        # SECURITY: the PID comes from a file in the CWD that Vela does not own,
+        # so it names a kill TARGET chosen by whoever wrote that file — and this
+        # runs on the ordinary busy-port path, not just under --replace. Never
+        # signal it on the file's say-so: confirm it is a Python process AND the
+        # one actually holding the port (same two checks _cleanup_stale_server
+        # makes) before killing. Anything else falls through to the OS-discovered
+        # port holder below, where the PID comes from netstat/lsof, not the file.
+        if (stale_pid and info.get("port") == self.port
+                and self._is_python_process(stale_pid)
+                and self._pid_holds_port(stale_pid, self.port)):
             try:
                 os.kill(stale_pid, 9)
                 killed = True
@@ -1203,6 +1212,7 @@ class VelaLocalServer:
     # ── Run ──────────────────────────────────────────────────────────
 
     RUNTIME_FILE = ".vela.env"
+    RUNTIME_MAX_BYTES = 64 * 1024  # ours is ~200 B; cap what we will parse
 
     def _runtime_path(self):
         return os.path.join(os.getcwd(), self.RUNTIME_FILE)
@@ -1235,16 +1245,27 @@ class VelaLocalServer:
         except OSError:
             return None  # absent, a link (ELOOP), or unreadable
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
+            st = os.fstat(fd)
+            # Size-gate BEFORE parsing: json.load() on a file this process does
+            # not own would otherwise pull an attacker-chosen number of bytes
+            # into memory. Our own file is ~200 bytes; anything near the cap is
+            # not ours. Checked on the fd, so it describes what we will read.
+            if not stat.S_ISREG(st.st_mode) or st.st_size > self.RUNTIME_MAX_BYTES:
                 os.close(fd)
-                return None  # fifo/device/directory — not our runtime file
+                return None  # fifo/device/directory, or implausibly large
             f = os.fdopen(fd, "r", encoding="utf-8")
         except OSError:
             os.close(fd)
             return None
         try:
             with f:
-                info = json.load(f)
+                # Bounded read, not json.load(f): the file can grow between the
+                # fstat above and this read, so the cap is enforced on the bytes
+                # we actually take, never on a size we sampled earlier.
+                raw = f.read(self.RUNTIME_MAX_BYTES + 1)
+            if len(raw) > self.RUNTIME_MAX_BYTES:
+                return None
+            info = json.loads(raw)
         except (OSError, ValueError, UnicodeDecodeError, RecursionError):
             return None  # unreadable, not UTF-8, not JSON, or nested to exhaustion
         if not isinstance(info, dict):

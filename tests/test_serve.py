@@ -1673,6 +1673,32 @@ class TestRuntimeFileLinks(unittest.TestCase):
                               f"pid {bad!r} was accepted")
             self.server._cleanup_stale_server()  # must not raise
 
+    def test_oversized_runtime_file_is_not_parsed(self):
+        # An unbounded json.load() on a file this process does not own lets the
+        # project directory choose how much memory Vela allocates at startup.
+        pad = "A" * (VelaLocalServer.RUNTIME_MAX_BYTES + 1024)
+        with open(self._rt, "w", encoding="utf-8") as f:
+            json.dump({"pid": 1, "port": 0, "pad": pad}, f)
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_planted_pid_cannot_kill_an_unrelated_process(self):
+        # The runtime file names a kill TARGET, and _retry_after_stale_kill runs
+        # on the ordinary busy-port path. The PID must be verified (Python + the
+        # actual holder of the port), never trusted from the file.
+        import subprocess
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(victim.wait)
+        self.addCleanup(victim.kill)
+        self.server.port = 65000
+        with open(self._rt, "w", encoding="utf-8") as f:
+            json.dump({"pid": victim.pid, "port": 65000}, f)
+        try:
+            self.server._retry_after_stale_kill(VelaHTTPHandler)
+        except Exception:
+            pass  # binding is expected to fail here; the kill decision is the subject
+        time.sleep(0.4)
+        self.assertIsNone(victim.poll(), "an unrelated process was SIGKILLed")
+
     def test_corrupt_runtime_file_is_ignored(self):
         for junk in ("not json", "[1,2,3]", '"str"', ""):
             with open(self._rt, "w", encoding="utf-8") as f:
