@@ -785,7 +785,61 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~10:11, launches 6 AND 7 both killed mid-run by container reclaim — see the standing-rule section above — switching to Bash tool `run_in_background: true` for launch 8 instead of nohup/disown; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
+## Current status (last updated: 2026-08-13 ~10:30, LAUNCH 8 COMPLETED CLEAN — the first genuinely finished, non-crashed, non-contaminated, non-environment-gap Phase 6 pilot result. `run_in_background: true` survived the full run with no reclaim. 6B verdict: INCONCLUSIVE, but this time for a real measured reason — 100% judge-round instability, not a harness bug. Both prior fixes (isolation, node_modules) hold perfectly: 24/24 critical assertions on both arms. Real minified CLAUDE.md's own 6A structure verdict is a genuine FAIL, unchanged, still worth follow-up)
+
+**Launch 8 is the pilot's first clean, complete, trustworthy result.**
+Switching the launch mechanism from `nohup ... & disown` to the Bash
+tool's own `run_in_background: true` (see the standing-rule section
+above for why) worked: the campaign ran end to end with no container
+reclaim, and the harness's own task-notification fired correctly on
+completion (exit code 5 = `campaign.py`'s own `inconclusive` exit code,
+not a crash — verified against `exit_map` before reading anything into
+it).
+
+**Real data, independently checked against the raw JSON/report (not just
+the printed summary)**:
+- **Both harness bugs fixed earlier this session hold under a full real
+  run**: every one of the 6 reps (3 baseline + 3 minified) passed
+  **8/8 critical assertions**, including `command_succeeds`
+  (`"evidence": "exit=0"` on every rep) — the exact assertion that
+  failed identically on all 6 reps in launch 5 because of the missing
+  `node_modules`. Total: **24/24 critical baseline, 24/24 critical
+  minified**. No stray worktrees, no live-repo contamination — `git
+  status` on this repo stayed clean throughout (checked after
+  completion).
+- **6B (quality gate): INCONCLUSIVE — for a real, different, non-bug
+  reason this time.** `scenario_invalid: []`, `failures: []` (i.e. NOT
+  "both arms failed identically" — that specific failure mode is gone).
+  Instead: **all 3 judge pairs came back `stable: false`** — the two
+  judge rounds disagreed with each other on every single rep, an
+  unstable rate of **100% (3/3)**, which trips `gate.py`'s own
+  `evaluate_instability` threshold and correctly reports INCONCLUSIVE
+  rather than asserting a winner from a coin-flip judge. Every pair's
+  `winner_arm` was recorded as `"tie"` regardless. This is a genuine
+  finding about the current judge/rubric setup on this scenario (not
+  about baseline vs. minified quality) — worth investigating (larger n?
+  a sharper rubric? is "tie" itself unstable because the rubric allows
+  near-miss ties to flip round to round?) as a Phase 6 follow-up, not a
+  harness defect to fix blindly.
+- **Metrics, near-identical between arms** (as in launch 5):
+  baseline `{turns: 9.67, input_tokens: 68.67}`, minified `{turns: 9.0,
+  input_tokens: 74.67}`, both `error_count: 1.0`.
+- **6A (unchanged from launch 5, confirmed reproducible)**: SIZE PASS
+  (1.5% reduction, exempt as pre-densified, `actual 1.47%` vs `expected
+  3.19%` — inside its own predicted 0-7.9% band); STRUCTURE **FAIL**
+  (net delta -5: 0 lost, 7 weakened, 2 newly-explicit) — same known,
+  still-open follow-up item, now confirmed non-flaky (identical result
+  twice).
+- **Real cost**: agent-under-test spend across the 6 reps **$6.10**
+  (baseline $0.97/$1.03/$0.97, minified $1.06/$1.15/$0.90), each rep
+  100-140s wall-clock — judge-call cost not yet separately totaled.
+
+**Standing-rule update**: this resolves the open "does `run_in_background`
+survive/help with reclaim" question raised after launch 7 — at least for
+one full run (~15-20 min wall-clock for 6 reps + judge calls), it did.
+Treat as one confirmed data point in favor of preferring
+`run_in_background: true` over `nohup ... & disown` for future harness
+runs in this environment, not yet as a guaranteed fix.
 
 **Launch 6 did not produce a usable result** — not a harness bug, a
 container reclaim (see "Standing rule: keep the main session alive"
