@@ -58,6 +58,36 @@ happening on a predictable cadence rather than pure idle-timeout, that
 would need to be diagnosed/changed outside this session (host/platform
 level) — flagging for the user rather than guessing further.
 
+**Second incident, now CONFIRMED not just suspected (2026-08-13, ~09:22-09:49,
+launch 6 of the Phase 6 pilot)**: launched `campaign.py` as a local
+`nohup ... & disown` background OS process (not an Agent-tool task this
+time — a real `claude -p` subprocess tree spawned directly inside this
+same container), then scheduled a single `send_later` check-in **25
+minutes** out and went fully idle — longer than this rule's own 12-15
+minute guidance, which was the mistake. Baseline rep0 (182s) and rep1
+(130s) completed and wrote full data to disk (`metrics.json` etc.
+survived — confirms the git-commit/disk-persistence safety net extends
+to plain file writes, not just commits). Baseline rep2 started at
+09:28:48, transcript shows activity at 09:29:02, then nothing — at the
+09:49 check-in, `uptime` showed **"up 0 min"** (a freshly booted
+container), the `campaign.py` process and its log (0 bytes — stdout was
+block-buffered and never flushed before the kill) were both gone, and a
+stray `git worktree` registration for rep2 was left behind (cleaned up
+with `git worktree remove --force` + `prune`). **This is a second,
+independent data point pinning the idle-to-reclaim window at
+~19-20 minutes** (last real activity ~09:29, reclaim sometime before
+09:49 — consistent with the phase-5 incident's ~19 minutes). Crucially,
+this proves the reclaim kills **the whole container**, including plain
+local subprocesses the harness isn't even tracking (not just
+Agent-tool-launched background tasks) — so nohup/disown offers zero
+protection by itself; only the orchestrator's own foreground activity
+cadence matters. **Tightened mitigation**: check-in interval shortened
+from 12-15 min to **~10 minutes**, chained (schedule the next check-in
+immediately after each one, before going idle again) until the
+background run actually completes — a single long wait, even one
+`send_later` call, is not enough on its own for a run expected to take
+20-30+ minutes.
+
 ## Rate-limit throttle (2026-08-13, ~04:40)
 
 User shared usage: 5-hour limit **91%**, resets in ~2h33m (~07:15); weekly
@@ -726,7 +756,21 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~12:10, node_modules fix committed and independently re-verified; launch 6 about to start for a clean 6B read; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
+## Current status (last updated: 2026-08-13 ~09:52, launch 6 killed mid-run by a container reclaim — see the standing-rule section above for the full incident — relaunching as launch 7 with a tightened ~10-min check-in chain; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
+
+**Launch 6 did not produce a usable result** — not a harness bug, a
+container reclaim (see "Standing rule: keep the main session alive"
+above for the full incident writeup). It never reached the minified arm
+at all: only baseline rep0 and rep1 completed (both harness bugs — the
+isolation breach and the node_modules gap — are still believed fixed;
+rep0/rep1's data looks sane, no re-occurrence of either symptom, but
+n=2 baseline-only isn't a campaign result). Cleaned up the stray rep2
+worktree; left the partial run directory
+(`/tmp/vela-minify-lab-runs/phase6-pilot-launch6/`) on disk as-is (not
+git-tracked, no cleanup required, kept for reference). Relaunching as
+**launch 7** (`--campaign-id phase6-pilot-launch7`, same parameters)
+with a self-renewing `send_later` check-in chain at ~10-minute
+intervals instead of a single 25-minute wait.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
