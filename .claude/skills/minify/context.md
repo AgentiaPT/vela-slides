@@ -52,19 +52,71 @@ to that constraint, minimize tokens as much as possible.
 
 - [2026-08-13] Kickoff. Asked user clarifying questions (scope, target,
   eval model, judge rigor) — answers locked in above. Created this
-  context.md. Next: spawn research agent for encoding-format hypotheses
-  (caveman/pseudo-code/ste/technical-shorthand/etc), running in background.
+  context.md.
+- [2026-08-13] Opus research agent (accce87f7b9176660) completed encoding-
+  format survey. Full report kept in `research-encoding-formats.md` (write
+  it if not yet present). Key conclusions:
+  - **Reject**: caveman/telegraphic English, shorthand+glossary, emoji/glyph
+    substitution. Risk >> reward; these strip exactly the function words
+    ("unless", "except", "never", "must not") that encode conditional/
+    exception logic — the repo's highest-cost failure mode.
+  - **Adopt: "Tiered hybrid" strategy.** Classify every block into:
+    - **Tier N (normative/judgment)** — security discipline, minimal-diff
+      policy, version-bump gate, disambiguation logic, anything with
+      unless/except/only/never/must not/before/after/when-in-doubt/
+      otherwise/instead-of. Compress NOTHING beyond literal duplicate
+      removal. Must survive byte-identical or near-identical.
+    - **Tier M (mechanical/enumerable)** — routing tables, command lists,
+      dir trees, constants, exit codes. Compress hard (~30-40%): symbol-only
+      cells, drop connective prose, DSL-ish where it's genuinely a lookup.
+    - **Tier E (explanatory)** — rationale/background/examples/restated
+      context. Trim or move out-of-line via pointer (~30-50%).
+  - Reference-by-pointer (lazy load) is the single biggest remaining lever
+    by raw tokens, but ONLY for depth-on-demand content, never for
+    unconditional obligations (a rule the agent might not load is a rule
+    that gets violated sometimes).
+  - Biggest unexploited levers in already-dense files like this repo's
+    CLAUDE.md: cross-file dedup (same rule restated in CLAUDE.md/SKILL.md/
+    secure-coding skill), rationale pruning (keep directive, cut the "why"
+    clause), table-cell compression (prose fragments → symbols/paths),
+    example collapsing, CRITICAL/MANDATORY section consolidation (merge
+    headers, never downgrade modal verbs: MUST→should is a semantic edit,
+    not compression).
+  - **First-pass target: 20-30% reduction, not 50-60%.** <10% ⇒ file was
+    already optimal, stop. >35% starts cutting into Tier N / salience
+    markers — silent failure mode, only shows up probabilistically across
+    many live sessions.
+  - **Eval must score compliance, not comprehension.** A quiz over the
+    compressed file proves nothing. Need real tasks (N≥20/variant) measuring
+    version-bump compliance, secure-coding-read compliance, minimal-diff
+    adherence, routing accuracy, turns, tokens, test pass rate — including
+    ≥3 tasks that specifically trip a conditional/exception rule.
+  - **Mechanical safety gate for the minify skill itself**: regex-extract all
+    sentences containing the trigger words above, pre- and post-minify; set
+    must match 1:1 or the minify run fails. This becomes a hard check inside
+    the /minify skill, not just an eval nicety.
+  - Prompt caching: shorter file = smaller marginal saving on cache reads
+    (~10% of base rate already); real win is context budget/attention, not
+    $. Don't iteratively re-minify in prod — churn invalidates cache prefix.
 
 ## Open questions / not yet decided
 
-- Exact eval task set (specific change requests) per target — TBD after
-  research phase, need real representative tasks.
-- Where the final portable skill package lives long-term (still inside this
-  repo's .claude/skills/minify, or exported elsewhere) — revisit once it's
+- Exact eval task set (specific change requests) per target — TBD, need
+  ≥3 tasks per target tripping conditional/exception rules specifically,
+  plus general tasks. N≥20 trials/variant is the research-recommended
+  floor for statistical confidence — likely too expensive for first pass;
+  need to decide a realistic first-pass N (probably 3-5) and flag results
+  as directional only until scaled up.
+- Where the final portable skill package lives long-term — revisit once
   proven out.
-- Number of trials per condition for statistical confidence — TBD.
+- Judge model: Opus vs Fable for blind pairwise judging — leaning Opus
+  since Fable is reserved for "blocking decision advisor" per user's
+  original framing, not bulk judging work.
 
 ## Next action
 
-Research agent dispatched (see below) to survey candidate compression
-encodings for instruction files. Awaiting result.
+Dispatch a Sonnet agent to draft the /minify skill itself (SKILL.md +
+any scripts) implementing the Tiered-hybrid strategy + the trigger-word
+preservation gate. In parallel, start designing the eval harness (task
+set + judge protocol) — can be done concurrently since they're independent
+until first real eval run.
