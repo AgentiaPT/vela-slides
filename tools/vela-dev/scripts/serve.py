@@ -276,6 +276,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         no characters that could break JS/HTML string contexts)."""
         if not isinstance(name, str) or not name.strip():
             return False
+        # A name longer than the filesystem allows can never identify a real
+        # deck: every open fails with ENAMETOOLONG. Rejecting it here keeps
+        # unusable names from reaching per-name server state at all.
+        if len(name.encode("utf-8", "surrogatepass")) > 255:
+            return False
         # NFKC-fold first so fullwidth separators/dots (／ ＼ ．) collapse to ASCII
         # and get caught by the checks below; then reject bidi/format controls
         # (e.g. RTLO U+202E filename spoofing) and the Unicode separator/dot
@@ -503,7 +508,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
         url_token = qs.get("token", [None])[0]
         if url_token:
-            if hmac.compare_digest(url_token, srv._auth_token):
+            # compare_digest raises TypeError on non-ASCII str input, and this
+            # runs before any validation — an unauthenticated request could take
+            # the handler down with no response. A non-ASCII token cannot match
+            # a token_urlsafe secret anyway, so reject it outright.
+            if url_token.isascii() and hmac.compare_digest(url_token, srv._auth_token):
                 session_id = secrets.token_urlsafe(24)
                 with srv._sessions_lock:
                     srv._sessions.add(session_id)
@@ -525,7 +534,8 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. Authorization header: Bearer xxx (for API/programmatic access)
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            if hmac.compare_digest(auth_header[7:], srv._auth_token):
+            bearer = auth_header[7:]
+            if bearer.isascii() and hmac.compare_digest(bearer, srv._auth_token):
                 return True
             self.send_error(403, "Invalid token")
             return False
@@ -747,7 +757,10 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be polled")
             return
 
-        tracker = srv.get_tracker(deck_name)
+        # Look up WITHOUT creating. get_tracker() allocates on miss, which made
+        # the 404 below unreachable and let any syntactically valid name pin a
+        # tracker in memory for the process's lifetime.
+        tracker = srv.peek_tracker(deck_name)
         if not tracker:
             self.send_error(404, "Deck not tracked")
             return
@@ -778,7 +791,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                srv.set_deck_data(deck_name, deck)
+                # Authorize BEFORE recording anything. This used to populate the
+                # server-wide cache first, so a save that was then refused still
+                # left its payload resident — unbounded, never evicted, and
+                # holding content that was never on disk. Open first; only a
+                # write we are actually going to perform may touch shared state.
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
@@ -793,6 +810,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                     return
                 with os.fdopen(fd, "w", encoding="utf-8") as f:  # fdopen owns the fd
                     json.dump(deck, f, ensure_ascii=False, indent=2)
+                srv.set_deck_data(deck_name, deck)  # now it matches what is on disk
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
@@ -1027,6 +1045,11 @@ class VelaLocalServer:
 
     # ── Per-deck state management (folder mode) ──────────────────────
 
+    def peek_tracker(self, deck_name):
+        """Return an existing tracker, or None. Never allocates."""
+        with self._lock:
+            return self._deck_trackers.get(deck_name)
+
     def get_tracker(self, deck_name):
         with self._lock:
             if deck_name not in self._deck_trackers:
@@ -1249,9 +1272,8 @@ class VelaLocalServer:
         runtime_path = self._runtime_path()
         killed = False
         try:
-            with open(runtime_path, encoding="utf-8") as f:
-                info = json.load(f)
-            stale_pid = info.get("pid")
+            info = self._read_runtime_info(runtime_path)
+            stale_pid = info and info["pid"]
             # Apply the SAME verification as _cleanup_stale_server(). That path
             # checks the PID is a live Python process actually bound to the port
             # before signalling it; this one did not, so a runtime file naming
@@ -1407,14 +1429,12 @@ class VelaLocalServer:
         confirmed to be a Vela server on our port, kill it.
         Must run BEFORE _write_runtime_info."""
         rpath = self._runtime_path()
-        try:
-            with open(rpath, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return  # no file or corrupt — nothing to clean
+        info = self._read_runtime_info(rpath)
+        if not info:
+            return  # missing, corrupt, or not a plain file — nothing to clean
 
-        stale_pid = info.get("pid")
-        stale_port = info.get("port")
+        stale_pid = info["pid"]
+        stale_port = info["port"]
         if not stale_pid:
             return
 
@@ -1441,6 +1461,35 @@ class VelaLocalServer:
             self._kill_pid(stale_pid)
             time.sleep(0.5)
             self._remove_runtime_files()
+
+    @staticmethod
+    def _read_runtime_info(rpath):
+        """Read .vela.env safely, or return None.
+
+        The WRITE path was hardened to refuse a planted symlink; these readers
+        were left on a plain open(). They run before the socket binds, in a
+        directory the threat model treats as attacker-writable, so a planted
+        entry could hang the start-up (fifo), exhaust memory (/dev/zero), or
+        crash it with values of the wrong type. Same open discipline as every
+        other read, plus coercion of the two fields actually used.
+        """
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
+        try:
+            fd = os.open(rpath, flags)
+        except OSError:
+            return None
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                return None
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                info = json.loads(f.read(64 * 1024))
+            if not isinstance(info, dict):
+                return None
+            return {"pid": int(info.get("pid")), "port": int(info.get("port"))}
+        except (OSError, ValueError, TypeError, OverflowError):
+            return None
 
     def _write_runtime_info(self):
         """Write .vela.env with auth token, port, pid.

@@ -1889,6 +1889,87 @@ class TestLabelSpoofingCategories(unittest.TestCase):
             self.assertEqual(self._label(text), text)
 
 
+class TestPerNameStateIsNotAllocatedFreely(FolderServerTestBase):
+    """Per-name server state must only exist for decks that really exist.
+    Allocating it for any syntactically valid name lets a caller pin unbounded
+    state, and recording a save before authorizing it leaves the cache holding
+    content that was never written to disk."""
+
+    def test_poll_for_unknown_deck_does_not_allocate_a_tracker(self):
+        name = "never-seen-before.vela"
+        status, _, _ = fetch(self._port, "GET", f"/poll/{name}?v=0")
+        self.assertEqual(status, 404)
+        self.assertIsNone(self._server.peek_tracker(name),
+                          "polling an unknown name allocated permanent state")
+
+    def test_unusable_name_is_rejected_before_any_state_is_touched(self):
+        long_name = "Z" * 300 + ".vela"
+        self.assertFalse(VelaHTTPHandler._validate_deck_name(long_name))
+        status, _, _ = fetch(self._port, "POST", f"/save/{long_name}",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertIsNone(self._server.get_deck_data(long_name),
+                          "a refused save left its payload in the cache")
+
+    def test_refused_save_does_not_cache_the_payload(self):
+        """A symlinked target is refused at open; nothing about it may persist."""
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        link = os.path.join(self._tmpdir, "refused.vela")
+        try:
+            os.symlink(os.path.join(outside, "t.json"), link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+        self.addCleanup(lambda: os.path.lexists(link) and os.unlink(link))
+
+        status, _, _ = fetch(self._port, "POST", "/save/refused.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        self.assertIsNone(self._server.get_deck_data("refused.vela"),
+                          "a refused save cached content that was never written")
+
+
+class TestAuthRejectsUndecodableTokens(unittest.TestCase):
+    """compare_digest raises TypeError on non-ASCII str, and it runs before any
+    validation — so an unauthenticated request could take the handler down with
+    no response at all. Needs a server with auth ENABLED; the shared fixture
+    runs with --no-auth, where every request is allowed and this cannot be seen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.mkdtemp()
+        with open(os.path.join(cls._tmpdir, "sample.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        cls._server = VelaLocalServer(cls._tmpdir, port=0, no_open=True,
+                                      channel_port=0, token="TESTTOKEN")
+        VelaHTTPHandler.server_ref = cls._server
+        cls._httpd = ThreadedHTTPServer(("127.0.0.1", 0), VelaHTTPHandler)
+        cls._port = cls._httpd.server_address[1]
+        threading.Thread(target=cls._httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._httpd.shutdown()
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def test_non_ascii_bearer_is_refused_cleanly(self):
+        status, _, _ = fetch(self._port, "GET", "/api/decks",
+                             headers={"Authorization": "Bearer é"})
+        self.assertIn(status, (401, 403))
+
+    def test_non_ascii_url_token_is_refused_cleanly(self):
+        status, _, _ = fetch(self._port, "GET", "/?token=%C3%A9")
+        self.assertIn(status, (401, 403))
+
+    def test_correct_token_still_authenticates(self):
+        status, _, _ = fetch(self._port, "GET", "/api/decks",
+                             headers={"Authorization": "Bearer TESTTOKEN"})
+        self.assertEqual(status, 200)
+
+
 class TestVendorAssetTrust(unittest.TestCase):
     """Vendor assets are served as executable JavaScript under a CSP whose
     script-src includes 'self', so they must come only from the trusted install
