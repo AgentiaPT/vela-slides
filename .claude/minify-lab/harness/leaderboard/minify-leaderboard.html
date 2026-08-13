@@ -345,8 +345,8 @@
     </div>
     <div class="meta">
       repo: agentiapt/vela-slides<br>
-      last updated: 2026-08-13 ~14:30 UTC<br>
-      runs logged: 12
+      last updated: 2026-08-13 ~20:15 UTC<br>
+      runs logged: 14
     </div>
   </div>
 
@@ -542,6 +542,10 @@
       <div class="log-entry">
         <span class="when">Launch 12 (minimal-diff-temptation)</span>
         <span class="what">Came back a real <b>GATE 6B FAIL</b> &mdash; investigated rather than reported at face value. Root cause: 1 of 3 reps had its judge response fail to parse on both rounds, which correctly excludes it from the gate's sample rather than counting it either way &mdash; but with only 2 pairs left, a genuine 1-1 split reads as a 50% loss, over threshold. Confirmed via 5 independent re-judge calls on the same content that the underlying material judges consistently (parses cleanly most of the time, always favors the same arm when it does) &mdash; the failure is transient response-formatting noise, not a real disagreement or a content problem. A final, disciplined re-judge of the missing rep's two rounds resolved cleanly and agreed, restoring a genuine third data point: <b>GATE 6B PASS</b> (3/3 stable pairs, 0% instability, 33.3% loss rate) &mdash; the project's third clean pass. Flagged the underlying judge flakiness as a harness reliability item worth a dedicated look, rather than folding a fix in mid-investigation.</span>
+      </div>
+      <div class="log-entry bad">
+        <span class="when">Launch 13 (newpart-manifest)</span>
+        <span class="what">Came back a real <b>GATE 6B FAIL</b> (error regression + judge loss) &mdash; a container restart had killed the first attempt mid-run, so it was relaunched under the same campaign-id. Investigation found the FAIL traced entirely to that relaunch, not to the minified text: the killed attempt had already spent two reps' one-time repo security-gate check before dying, and the identical worktree paths on relaunch silently inherited that state, so 2 of 6 reps sailed past a check the other 4 had to pass fresh &mdash; a pure execution-order artifact, confirmed by matching each check's timestamp to which attempt produced it. Verdict retired as invalid rather than counted; a clean rerun under a fresh campaign-id (guaranteeing symmetric state on every rep) is the fix, now standing policy for every future relaunch-after-interruption.</span>
       </div>
     </div>
   </section>
