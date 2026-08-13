@@ -19,7 +19,6 @@ import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
 await page.goto(`file://${path.join(__dirname, 'test.html')}`);
@@ -50,17 +49,16 @@ kill %1 2>/dev/null
 **The deck takes a long time to load.** Wait for actual content, not just `networkidle`:
 
 ```javascript
-// Wait for Vela loading screen to finish
 for (let attempt = 0; attempt < 30; attempt++) {
   await page.waitForTimeout(2000);
   const text = await page.textContent('body');
-  if (text && text.includes('Your Expected Content')) break;
+  if (text?.includes('Your Expected Content')) break;
 }
 ```
 
-**Server auth:** Use `--no-auth` for automated screenshots. The token file is `.vela.env` (not `.vela-server-*`).
+**Server auth:** `--no-auth` for automated screenshots; token file is `.vela.env` (not `.vela-server-*`).
 
-**Deck URL pattern:** `http://127.0.0.1:{port}/deck/{filename.vela}`
+**Deck URL:** `http://127.0.0.1:{port}/deck/{filename.vela}`
 
 ## Before/After Comparison Pattern
 
@@ -86,7 +84,7 @@ Render the original (broken) code in the BEFORE column, the fix in the AFTER col
 
 ### Cropped Screenshots
 
-Use `clip` to zoom into specific areas — full-page screenshots are too small to see alignment issues:
+Use `clip` to zoom into specific areas — full-page shots are too small to see alignment issues:
 
 ```javascript
 await page.screenshot({
@@ -128,28 +126,26 @@ const metrics = await page.evaluate(() => {
   const results = [];
   document.querySelectorAll('.row').forEach((row, ri) => {
     row.querySelectorAll('.test').forEach((test, ti) => {
-      const container = test.querySelector('div[style*="display:flex;gap:0"]');
-      if (!container) return;
-      const panes = container.children;
+      const panes = test.querySelector('div[style*="display:flex;gap:0"]')?.children;
+      if (!panes) return;
       let vsRect = null;
-      for (const child of panes) {
-        const circle = child.querySelector('div[style*="border-radius:50%"]');
-        if (circle && circle.textContent === 'VS') { vsRect = circle.getBoundingClientRect(); break; }
+      for (const p of panes) {
+        const c = p.querySelector('div[style*="border-radius:50%"]');
+        if (c?.textContent === 'VS') { vsRect = c.getBoundingClientRect(); break; }
       }
-      let leftRightmostX = 0;
+      let leftX = 0, rightX = Infinity;
       panes[0].querySelectorAll('span').forEach(s => {
         const r = s.getBoundingClientRect();
-        if (r.right > leftRightmostX && r.width > 0 && s.textContent.length > 0) leftRightmostX = r.right;
+        if (r.right > leftX && r.width > 0 && s.textContent.length) leftX = r.right;
       });
-      let rightLeftmostX = Infinity;
       panes[panes.length - 1].querySelectorAll('span[style*="border-radius:50%"]').forEach(s => {
         const r = s.getBoundingClientRect();
-        if (r.left < rightLeftmostX && r.width > 0) rightLeftmostX = r.left;
+        if (r.left < rightX && r.width > 0) rightX = r.left;
       });
       results.push({
         row: ri, variant: ti === 0 ? 'BEFORE' : 'AFTER',
-        gapLeftTextToVS: vsRect ? Math.round(vsRect.left - leftRightmostX) : null,
-        gapVSToRightText: vsRect ? Math.round(rightLeftmostX - vsRect.right) : null,
+        gapLeftTextToVS: vsRect ? Math.round(vsRect.left - leftX) : null,
+        gapVSToRightText: vsRect ? Math.round(rightX - vsRect.right) : null,
       });
     });
   });
@@ -162,7 +158,6 @@ metrics.forEach(m => console.log(`Row ${m.row} ${m.variant}: L→VS=${m.gapLeftT
 ### Checking Element Alignment (e.g., bullet dots share same x)
 
 ```javascript
-// Verify all bullet dots in a pane share the same x coordinate
 const positions = [...pane.querySelectorAll('span[style*="border-radius:50%;background:#"]')]
   .map(d => Math.round(d.getBoundingClientRect().left));
 const allSame = positions.every(x => x === positions[0]);
@@ -185,8 +180,8 @@ console.log(`dots at x=${positions.join(', ')}${allSame ? ' ✅ ALIGNED' : ' ❌
 | Server dies between bash calls | Run server + node in same `bash` command with `&` |
 | Deck stuck on loading screen | Wait 15-30s+ for Babel compilation of 1MB JSX |
 | `networkidle` timeout | Use `load` + content polling instead |
-| Screenshots show loading spinner | Increase wait time or poll for expected text content |
-| Port already in use | Use a different `--port` value |
+| Screenshots show loading spinner | Increase wait time or poll for expected text |
+| Port already in use | Use a different `--port` |
 
 ## File Conventions
 

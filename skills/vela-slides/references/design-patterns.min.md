@@ -6,32 +6,17 @@
 
 Every slide should follow one of these proven patterns. Mix them throughout a deck for visual variety.
 
-### 1. Title Slide
-Opening — centered, gradient bg, badge + 4xl heading + subtitle + presenter line. `verticalAlign: "center"`, `align: "center"`. Duration: 20s.
-
-### 2. Section Break
-Divides major sections — centered xl icon in circle + 3xl heading + subtitle. High-contrast gradient. Duration: 15s.
-
-### 3. Key Point + Supporting Detail
-Workhorse slide — badge label → spacer → 2xl assertion heading w/ icon → body text → callout. Duration: 60-90s.
-
-### 4. Feature Grid
-2-3 col grid, icon + heading + text per cell. Each cell: subtle colored bg (`rgba(...,0.08)`) + border. Duration: 60-90s.
-
-### 5. Metrics / Stats
-3-col grid of metric blocks, large values (`3xl`), icons, ALL-CAPS labels. Gradient bg. Duration: 20-40s.
-
-### 6. Process / Flow
-Horizontal flow block, 3-5 icon steps + sublabels, arrows between. Add `loop: true` for iterative processes (agent loops, ReAct, OODA, feedback cycles). Add `gate: true` on items for human-review checkpoints. Italic footnote below. Duration: 90-120s.
-
-### 7. Comparison Table
-Table block, striped rows, colored headers. Heading with icon above. Duration: 60-120s.
-
-### 8. Timeline / Roadmap
-Horizontal timeline block, 3-5 dated milestones. Duration: 60s.
-
-### 9. Closing / CTA
-Centered — xl icon + 3xl heading + body text + tag-group for contact/links. Gradient bg. Duration: 30s.
+| # | Archetype | Composition | Duration |
+|---|---|---|---|
+| 1 | Title Slide | Opening — centered, gradient bg, badge + 4xl heading + subtitle + presenter line. `verticalAlign: "center"`, `align: "center"` | 20s |
+| 2 | Section Break | Divides major sections — centered xl icon in circle + 3xl heading + subtitle, high-contrast gradient | 15s |
+| 3 | Key Point + Supporting Detail | Workhorse slide — badge label → spacer → 2xl assertion heading w/ icon → body text → callout | 60-90s |
+| 4 | Feature Grid | 2-3 col grid, icon + heading + text per cell; each cell gets subtle colored bg (`rgba(...,0.08)`) + border | 60-90s |
+| 5 | Metrics / Stats | 3-col grid of metric blocks — large values (`3xl`), icons, ALL-CAPS labels, gradient bg | 20-40s |
+| 6 | Process / Flow | Horizontal flow block, 3-5 icon steps + sublabels, arrows between. `loop: true` for iterative processes (agent loops, ReAct, OODA, feedback cycles); `gate: true` on items for human-review checkpoints; italic footnote below | 90-120s |
+| 7 | Comparison Table | Table block, striped rows, colored headers, heading with icon above | 60-120s |
+| 8 | Timeline / Roadmap | Horizontal timeline block, 3-5 dated milestones | 60s |
+| 9 | Closing / CTA | Centered — xl icon + 3xl heading + body text + tag-group for contact/links, gradient bg | 30s |
 
 ### 10. Layer Diagram *(v13)*
 Stacked architecture/composition visual: 1-col grid with `direction: "row"` cells.
@@ -214,17 +199,17 @@ For a 10-slide deck, aim for at least:
 
 #### ⚠️ `align: "center"` slides shrink-wrap blocks — SVGs and dividers collapse
 
-**Problem:** When a slide has `align: "center"`, Vela shrink-wraps all blocks to their intrinsic content width. Blocks with no intrinsic width — `divider` (a border line), `svg` (responsive viewBox), and `progress` — collapse to zero or near-zero width and become invisible.
+**Problem:** `align: "center"` shrink-wraps blocks to intrinsic content width. Blocks with no intrinsic width — `divider`, `svg`, `progress` — collapse to zero width and vanish.
 
 **Symptoms:**
 - `divider` blocks disappear entirely
 - `svg` blocks don't render (no width to fill)
 - Layout looks like those blocks were never added
 
-**Fix:** Use `align: "left"` at slide level and center content via individual block properties:
-- Text/heading blocks: add `"align": "center"` per block
-- SVG blocks: add `"align": "center"` + `"maxWidth": "60%"` (SVG renderer uses `margin: 0 auto`)
-- For visual separators on centered slides: use an `svg` block with an explicit rect instead of `divider`
+**Fix:** Use `align: "left"` at slide level, center via block properties:
+- Text/heading: `"align": "center"` per block
+- SVG: `"align": "center"` + `"maxWidth": "60%"` (renderer uses `margin: 0 auto`)
+- Separators on centered slides: `svg` with an explicit rect instead of `divider`
 
 **Example — centered closing slide that works:**
 ```json
@@ -237,7 +222,7 @@ For a 10-slide deck, aim for at least:
 
 ## Cols Layout Patterns
 
-`layout: "cols"` arranges blocks into two columns via `L` (left) and `R` (right) arrays. Optional `blocks` (compact: `B`) renders full-width above the columns as a header. `contentFlex` / `imageFlex` control column widths (default 1:1). `splitGap` controls gap between columns (default 32px).
+`layout: "cols"` splits blocks into `L`/`R` arrays. Optional `blocks` (compact `B`) renders full-width above as a header. `contentFlex`/`imageFlex` set column widths (default 1:1); `splitGap` sets the gap (default 32px).
 
 ### Header + Balanced Cols (most common)
 B: badge + heading + context callout. L: primary content (steps, bullets, table). R: supporting visual (SVG, metrics, flow diagram).

@@ -244,20 +244,79 @@ Not yet returned. (Did not re-run SCREENSHOTS.md yet — only 3 files
 under 20%, prioritized the 2 largest/worst first; SCREENSHOTS.md v2 is
 next if still needed after these land.)
 
+## Bias finding: fix eval measurement, not just the files (important)
+
+Caught and fixing a real measurement bias per the user's standing
+"gradually fix bias" instruction:
+- My earlier "24.4% for design-patterns.md" was computed by ME from raw
+  `wc -w` word counts, NOT from the gate script's own token counter. It
+  was wrong/misleading — the gate's own (consistent) counter puts that
+  same file at **0.9%** reduction. Word/byte counts are NOT a valid proxy
+  for token reduction on JSON-heavy files (JSON pretty-print whitespace
+  removal shows up in word/byte counts but barely moves token counts).
+  **Rule going forward: only trust `check_preservation.py`'s own reported
+  token count, never a quick wc-based shortcut.**
+- Attempted to install tiktoken for real BPE counts — package installs,
+  but `tiktoken.get_encoding()` requires a network fetch of the BPE file
+  from `openaipublic.blob.core.windows.net`, which this sandbox's proxy
+  blocks (403). Real tiktoken counts are NOT available in this
+  environment. Not chasing further — the approx (whitespace/punctuation
+  regex) tokenizer is what every run so far has actually used (all
+  "tiktoken" mentions in prior agent reports were aspirational labels in
+  their prose, not what the script actually ran), so **all numbers below
+  are on a consistent, comparable yardstick** even though not real BPE.
+
+## Consolidated true numbers (gate's own approx tokenizer, re-verified 2026-08-13)
+
+| File | Best candidate | Reduction | Gate |
+|---|---|---|---|
+| CLAUDE.md | v1 | 4.7% | PASS |
+| skills/vela-slides/SKILL.md | v1 | 1.5% | PASS |
+| vela-secure-coding/SKILL.md | v1 | 0.5% | PASS |
+| hyper-sprint/SKILL.md | v1 | 0.2% | PASS |
+| docs/ARCHITECTURE.md | **v2** | **22.8%** | PASS |
+| docs/SCREENSHOTS.md | v1 | 8.2% | PASS |
+| block-schema.md | **v2** | **31.5%** | PASS |
+| design-patterns.md | v1 | 0.9% | PASS |
+
+**Updated average across all 8 (best candidate each): ~8.8%.** Better but
+still short of 20%. Two files now clear 20%+ (ARCHITECTURE v2 22.8%,
+block-schema v2 31.5%), both via an aggressive v2 pass — ARCHITECTURE's
+win came mostly from cross-file dedup via pointer, block-schema's from
+combined aggressive Tier-E example-trimming + Tier-M table tightening
+(cutting multi-item examples to 1, condensing prose to clauses). The 4
+policy/rule files (CLAUDE.md, hyper-sprint, vela-secure-coding,
+vela-slides SKILL.md) remain stuck near 0-5% — their own agent reports
+consistently say they're 70-90%+ Tier N by content, i.e. genuinely little
+non-obligation material exists to cut. design-patterns.md (0.9%) is
+JSON-example-dominated similarly to block-schema before its v2 pass —
+a good candidate for the same v2 treatment.
+
+**Decision point flagged to user below**: the eval-set average is
+structurally capped by including files that are honestly near-0%-
+compressible. Options: (a) push design-patterns.md through the same v2
+treatment that worked for block-schema (plausible, similar JSON-heavy
+shape) to lift the average further, (b) accept that CLAUDE.md/hyper-
+sprint/secure-coding/vela-slides-SKILL have a real ~0-5% ceiling and
+either exclude them from the "average >=20%" calculation (keep them in
+the eval as separate "near-zero-upside, compliance-only" cases) or ask
+the user whether to relax the average target given this finding.
+
 ## Next action
 
-1. Wait for the 2 v2 agents. Compare v2 vs v1 reduction % per file —
-   confirms whether the more aggressive approach is what closes the gap
-   to 20%, not just file selection.
-2. If a v2 file still falls short of 20%, either escalate further (rung 3:
-   prose->DSL, cautiously) or accept the honest ceiling and don't force it.
-3. Once satisfied the aggressive-approach candidates are validated (gate
-   pass + real reduction gain over v1), decide: fold the winning
-   aggressive rules into SKILL.md as the new default procedure (so future
-   /minify runs don't need manual escalation), OR keep SKILL.md
-   conservative-by-default and treat "aggressive mode" as an explicit
-   opt-in. Not yet decided — flag to user once data is in.
-4. Compute final eval-set average reduction across ALL committed pairs
-   (using best candidate per file). Once honestly >=20% average: build
-   the eval harness (task #5), then the blind randomized judge (task #6),
-   then run first directional pass and audit for bias.
+1. Re-apply the cross-file-dedup-via-pointer approach specifically
+   (not generic "aggressive") to the two weakest large files —
+   `block-schema.md` (6.7%) and `CLAUDE.md` (4.7%) — since both plausibly
+   restate content available elsewhere (schema fields documented in
+   `part-blocks.jsx` comments / `SAFE_BLOCK_KEYS`; CLAUDE.md dupes some
+   secure-coding-skill content). Only dedup non-obligation restated
+   content; never pointer-hide an obligation.
+2. Recompute average after those 2 land. If still short of 20%, report
+   the honest ceiling to the user rather than force it — this repo's
+   files may simply not have another 20% of safely-removable content
+   beyond cross-file dedup, and that itself is a valid, reportable
+   finding (not a failure of the skill).
+3. Once either >=20% average achieved honestly, or the honest ceiling is
+   confirmed and reported to the user for a go/no-go: build the eval
+   harness (task #5), then the blind randomized judge (task #6), then run
+   first directional pass and audit for bias.

@@ -16,7 +16,7 @@ Claude.ai artifacts require a **single .jsx file** — no module imports, no fil
 | Concern | Bundler | Concatenation |
 |---|---|---|
 | Module resolution | Complex (node_modules, aliases) | Not needed (fixed order) |
-| Build deps | Node.js + npm packages | Python 3 (stdlib only) |
+| Build dependencies | Node.js + npm packages | Python 3 (stdlib only) |
 | Build speed | ~1-5s | ~10ms |
 | Determinism | Depends on config | `cat` in fixed order — always identical |
 | Failure modes | Config errors, version conflicts | Missing file (instant error) |
@@ -61,25 +61,18 @@ imports → icons → blocks → canvas → reducer → engine → slides → li
 
 ### Part Responsibilities
 
-| Part | Lines | Owns |
-|---|---|---|
-| `part-imports.jsx` | ~1,940 | Constants (FONT/SIZES/COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch |
-| `part-icons.jsx` | ~290 | `getIcon()` resolver, 270+ Lucide mappings/aliases, emoji fallback |
-| `part-blocks.jsx` | ~1,520 | All 27 block renderers (heading, text, bullets, flow, grid, metric, table, SVG, code, image, checklist, etc.); `EditableText`/`ItemChrome` for WYSIWYG |
-| `part-branding.jsx` | ~50 | `BrandingOverlay` (accent bar, footer, slide number, logo); split from part-canvas.jsx |
-| `part-canvas.jsx` | ~370 | `SlideContent` (canvas+layout), `renderBlockItem` (hover toolbar/AI-prompt popup), `InlineCommentCard`; split from part-blocks.jsx |
-| `part-reducer.jsx` | ~390 | `useReducer` state shape, dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
-| `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera prompts, tool defs, slide improve/edit/create/alternatives, batch ops, ReAct loop |
-| `part-slides.jsx` | ~2,580 | `SlidePanel`, render pipeline, fullscreen presenter, branding overlay, thumbnails, image compression |
-| `part-list.jsx` | ~780 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reorder, AI slide adder |
-| `part-chat.jsx` | ~450 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
-| `part-test.jsx` | ~410 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~2,800 | 185 UI integration tests, 33 suites — rendering, themes, edge cases |
-| `part-demo.jsx` | ~860 | Cinematic demo mode, 18 scenes |
-| `part-pdf-fonts.jsx` | ~15 | `COMPRESSED_FONTS` offline TTF data; split out so its ~242KB base64 doesn't sit in the edited export logic |
-| `part-pdf.jsx` | ~4,040 | Canvas PDF renderer (raster+vector), watermark, link annotations, markdown export |
-| `part-pptx.jsx` | ~1,190 | Native editable PowerPoint exporter — second emitter over the vector-PDF path's primitive IR |
-| `part-app.jsx` | ~2,070 | `VelaApp` root, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile nav, file browser |
+Per-part purpose lines live in `src/parts/MANIFEST.txt` (single source of truth, kept in sync by CI) — read it instead of a copy here. Approximate size only:
+
+| Part | Lines | Part | Lines | Part | Lines |
+|---|---|---|---|---|---|
+| part-imports.jsx | ~1,940 | part-list.jsx | ~780 | part-pdf-fonts.jsx | ~15 |
+| part-icons.jsx | ~290 | part-chat.jsx | ~450 | part-pdf.jsx | ~4,040 |
+| part-blocks.jsx | ~1,520 | part-test.jsx | ~410 | part-pptx.jsx | ~1,190 |
+| part-branding.jsx | ~50 | part-uitest.jsx | ~2,800 | part-app.jsx | ~2,070 |
+| part-canvas.jsx | ~370 | part-demo.jsx | ~860 | | |
+| part-reducer.jsx | ~390 | | | | |
+| part-engine.jsx | ~1,240 | | | | |
+| part-slides.jsx | ~2,580 | | | | |
 
 ## Assembly Pipeline
 
@@ -94,17 +87,17 @@ imports → icons → blocks → canvas → reducer → engine → slides → li
 `part-engine.jsx` implements an **agentic ReAct loop** inside the artifact:
 
 ```
-User message → system prompt + deck state + tool definitions
+User message → System prompt + deck state + tool definitions
     → Claude API call (via artifact proxy, no key needed)
-    → parse response: { tool_calls: [...], message: "..." }
-    → execute tool calls (modify deck state via dispatch)
-    → loop if more tool calls needed
-    → final message displayed in chat
+    → Parse response: { tool_calls: [...], message: "..." }
+    → Execute tool calls (modify deck state via dispatch)
+    → If more tool calls needed → loop
+    → Final message displayed in chat
 ```
 
 ### Available Tools
 
-22 tools: `add_lane`, `add_item`, `batch_add_items`, `remove_item`, `remove_lane`, `rename_item`, `rename_lane`, `move_item`, `update_status`, `set_importance`, `set_slides`, `add_slide`, `edit_slide`, `add_image_to_slide`, `clear_all`, `set_branding`, `find_slides`, `find_replace`, `deck_stats`, `batch_restyle`, `list_comments`, `resolve_comment` — each modifies React state directly, visible immediately in the panel.
+22 tools: `add_lane`, `add_item`, `batch_add_items`, `remove_item`, `remove_lane`, `rename_item`, `rename_lane`, `move_item`, `update_status`, `set_importance`, `set_slides`, `add_slide`, `edit_slide`, `add_image_to_slide`, `clear_all`, `set_branding`, `find_slides`, `find_replace`, `deck_stats`, `batch_restyle`, `list_comments`, `resolve_comment` — each modifies React state directly, visible immediately in the slide panel.
 
 ## Rendering Pipeline
 
@@ -114,25 +107,30 @@ Slides render at a **virtual canvas of 960×540px** (16:9), scaled to fit the pa
 2. Each block → typed renderer from `part-blocks.jsx`
 3. Theme tokens (`{{accent}}`, `{{color}}`, etc.) injected into SVG markup
 4. SVG sanitized before `dangerouslySetInnerHTML`
-5. `EditableText` wraps text nodes for inline editing
+5. `EditableText` wraps all text nodes for inline editing
 6. Branding overlay (accent bar + footer) composited on top
 
 ### PDF Export
 
 `part-pdf.jsx` offers two paths, chosen by export quality:
 
-- **Raster** (Standard/High): each slide renders to a temp DOM node, captured as a bitmap via `html2canvas`, drawn onto the PDF canvas at the requested DPI.
+- **Raster** (Standard/High): each slide renders to a temporary DOM node, captured as a bitmap via `html2canvas`, drawn onto the PDF canvas at the requested DPI.
 - **Vector** (`buildVectorPdf`): slide primitives (boxes, text, circles, links,
   images) are extracted directly from the DOM (`extractBoxes` et al.) into a
   per-slide primitive IR and emitted as native, crisp, small-file PDF vector
   objects instead of a bitmap — no `html2canvas` in this path.
 
-Both paths share link annotations from `data-pdf-link` attributes, a vector watermark overlay, and final assembly into a downloadable PDF blob.
+Both paths share: link annotations from `data-pdf-link` attributes, a vector watermark overlay, and final assembly into a downloadable PDF blob.
 
 ### PowerPoint Export
 
-`part-pptx.jsx` is a second emitter over the **same** per-slide primitive IR the vector-PDF path produces (reusing its extractors), writing native OOXML+ZIP `.pptx` via `buildPptx(pages, opts)`. Text is grouped per element (`pptxExtractTextBoxes`) so wrapped paragraphs become one reflowable text box, not one per line. Canvas maps 1:1 to 16:9 PPT (1 px = 12700 EMU = 1 point).
+`part-pptx.jsx` is a second emitter over the **same** per-slide primitive IR the vector-PDF path produces (reusing its extractors), writing native OOXML+ZIP `.pptx` via `buildPptx(pages, opts)`. Text is grouped per element (`pptxExtractTextBoxes`) so wrapped paragraphs become one editable, reflowable text box rather than one per line. Canvas maps 1:1 to a 16:9 PPT slide (1 px = 12700 EMU = 1 point).
 
 ## Storage
 
-Vela uses Claude.ai's artifact `window.storage` API for persistence: a master key (`vela-deck`, core deck metadata — title, lanes, settings) plus per-module keys (`vela-m-{id}`, chunked to stay under the 5MB limit) so large decks with embedded images persist reliably.
+Vela uses Claude.ai's artifact `window.storage` API for persistence:
+
+- **Master key** (`vela-deck`): core deck metadata (title, lanes, settings)
+- **Module keys** (`vela-m-{id}`): per-module slide data, chunked to stay under the 5MB limit
+
+Chunking lets large decks with embedded images persist reliably.

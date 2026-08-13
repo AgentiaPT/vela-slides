@@ -7,23 +7,23 @@ Complete reference for all Vela v12 slide block types (27 total).
 ```
 {
   "blocks": [ ...block objects... ],
-  "bg": "#0f172a",                              // solid background color
-  "bgGradient": "linear-gradient(135deg, ...)", // gradient (overrides bg visually)
-  "color": "#e2e8f0",                           // default text color
-  "accent": "#3b82f6",                          // accent color for dots, icons, highlights
-  "align": "left|center|right",                 // horizontal alignment of block stack
-  "verticalAlign": "top|center|bottom",          // vertical alignment within 540px canvas
-  "padding": "36px 48px",                       // slide padding (CSS format)
-  "gap": 16,                                    // gap between blocks (px)
-  "duration": 60,                               // speaking time estimate (seconds, REQUIRED)
-  "title": "Slide Name",                        // optional label for filmstrip/TOC
-  "layout": "stack|image-right|image-left|cols", // layout mode (default: "stack")
-  "L": [ ...block objects... ],                 // left column blocks (cols layout only)
-  "R": [ ...block objects... ],                 // right column blocks (cols layout only)
-  "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
-  "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
-  "splitGap": 32,                               // gap between columns in px (cols/split layouts)
-  "imageCols": 3                                // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "bg": "#0f172a",                    // bg color
+  "bgGradient": "linear-gradient(135deg, ...)", // gradient, overrides bg visually
+  "color": "#e2e8f0",                 // default text color
+  "accent": "#3b82f6",                // accent for dots/icons/highlights
+  "align": "left|center|right",       // block-stack horizontal alignment
+  "verticalAlign": "top|center|bottom", // vertical alignment in 540px canvas
+  "padding": "36px 48px",             // CSS padding
+  "gap": 16,                          // gap between blocks (px)
+  "duration": 60,                     // speaking time estimate, sec (REQUIRED)
+  "title": "Slide Name",              // label for filmstrip/TOC
+  "layout": "stack|image-right|image-left|cols", // default "stack"
+  "L": [ ...block objects... ],       // left column blocks (cols layout only)
+  "R": [ ...block objects... ],       // right column blocks (cols layout only)
+  "contentFlex": 1,                   // left column flex ratio (cols/split)
+  "imageFlex": 1,                     // right column flex ratio (cols/split)
+  "splitGap": 32,                     // gap between columns, px (cols/split)
+  "imageCols": 3                      // pin col count for adjacent image blocks (int 1-6; omit = auto)
 }
 ```
 
@@ -102,8 +102,7 @@ Title/heading text with optional icon.
   "align": "left|center|right",
   "icon": "Zap",
   "iconColor": "#3b82f6",
-  "maxWidth": "80%",
-  "style": {}
+  "maxWidth": "80%"
 }
 ```
 Sizes: `xs` 12px, `sm` 14px, `md` 17px, `lg` 20px, `xl` 26px, `2xl` 35px, `3xl` 46px, `4xl` 56px
@@ -119,8 +118,7 @@ Body text paragraph.
   "bold": false,
   "italic": false,
   "align": "left|center|right",
-  "maxWidth": "70%",
-  "style": {}
+  "maxWidth": "70%"
 }
 ```
 
@@ -131,14 +129,12 @@ Bullet list with optional per-item icons.
   "type": "bullets",
   "items": [
     "Plain string item",
-    { "text": "Item with icon", "icon": "CheckCircle" },
-    { "text": "Another item", "icon": "ArrowRight" }
+    { "text": "Item with icon", "icon": "CheckCircle" }
   ],
   "size": "md",
   "dotColor": "#3b82f6",
   "gap": 8,
-  "color": "#e2e8f0",
-  "style": {}
+  "color": "#e2e8f0"
 }
 ```
 
@@ -198,9 +194,9 @@ Multi-column layout; each cell holds its own blocks array.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `direction` | `"row" \| "column"` | `"column"` | Flex direction within cell. `"row"` = horizontal, centered, 12px gap. `"column"` = vertical stack, 8px gap |
+| `direction` | `"row"\|"column"` | `"column"` | Flex dir within cell: row=horizontal/centered/12px gap, column=vertical/8px gap |
 | `blocks` | array | required | Child block objects |
-| `style` | object | `{}` | CSS style overrides on cell container |
+| `style` | object | `{}` | CSS overrides on cell container |
 
 Max 2-3 cols. Max 6 cells. Keep cell blocks minimal (2-4 blocks each).
 
@@ -281,8 +277,7 @@ Feature list with icons — use INSTEAD of bullets for visual impact.
   "type": "icon-row",
   "items": [
     { "icon": "Zap", "title": "Fast", "text": "Sub-second response times", "iconColor": "#fbbf24", "iconBg": "#fbbf2420" },
-    { "icon": "Shield", "title": "Secure", "text": "End-to-end encryption", "iconColor": "#34d399", "iconBg": "#34d39920" },
-    { "icon": "Globe", "title": "Global", "text": "Available in 40+ countries", "iconColor": "#60a5fa", "iconBg": "#60a5fa20" }
+    { "icon": "Shield", "title": "Secure", "text": "End-to-end encryption", "iconColor": "#34d399", "iconBg": "#34d39920" }
   ],
   "iconBg": "#3b82f620",
   "iconColor": "#3b82f6",
@@ -304,8 +299,7 @@ Process/pipeline diagram with connected steps.
   "type": "flow",
   "items": [
     { "icon": "FileText", "label": "Input", "sublabel": "Raw data" },
-    { "icon": "Cpu", "label": "Process", "sublabel": "AI model", "gate": true },
-    { "icon": "CheckCircle", "label": "Output", "sublabel": "Results" }
+    { "icon": "Cpu", "label": "Process", "sublabel": "AI model", "gate": true }
   ],
   "arrowColor": "#3b82f6",
   "direction": "horizontal|vertical",
@@ -327,7 +321,7 @@ Process/pipeline diagram with connected steps.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `icon` | string (Lucide) | — | Icon name for step |
+| `icon` | string (Lucide) | — | Step icon |
 | `label` | string | — | Step label |
 | `sublabel` | string | — | Secondary text below label |
 | `gate` | boolean | `false` | Show gate checkpoint AFTER this item |
@@ -337,8 +331,8 @@ Process/pipeline diagram with connected steps.
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `gateIcon` | string (Lucide) | `"UserCheck"` | Icon inside gate circle |
-| `gateLabel` | string | — | Optional label below gate (e.g. "Approve", "HITL") |
-| `gateColor` | string (hex) | slide accent | Color for gate circle border/icon/label |
+| `gateLabel` | string | — | Label below gate (e.g. "Approve", "HITL") |
+| `gateColor` | string (hex) | slide accent | Gate circle border/icon/label color |
 
 Gates render as a dashed-circle checkpoint between the gated item and the next arrow, aligned to the icon centerline regardless of text height below.
 
@@ -346,10 +340,10 @@ Gates render as a dashed-circle checkpoint between the gated item and the next a
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `loop` | boolean | `false` | Show return arrow from last item back to first |
-| `loopLabel` | string | — | Label centered on the return arrow (e.g. "repeat until done") |
-| `loopColor` | string (hex) | slide accent at 50% | Color of return arrow and label |
-| `loopStyle` | `"dashed"\|"dotted"\|"solid"` | `"dashed"` | Stroke style of return path |
+| `loop` | boolean | `false` | Return arrow from last item back to first |
+| `loopLabel` | string | — | Label on return arrow (e.g. "repeat until done") |
+| `loopColor` | string (hex) | slide accent 50% | Return arrow/label color |
+| `loopStyle` | `"dashed"\|"dotted"\|"solid"` | `"dashed"` | Return-path stroke style |
 
 Loop renders a dashed return arrow beneath horizontal flows (or right of vertical flows), connecting last item to first. Use for agent loops (ReAct, OODA), feedback cycles, iterative processes.
 
@@ -361,8 +355,7 @@ Data table with headers and rows.
   "headers": ["Feature", "Basic", "Pro", "Enterprise"],
   "rows": [
     ["Users", "5", "50", "Unlimited"],
-    ["Storage", "1 GB", "100 GB", "1 TB"],
-    ["Support", "Email", "Priority", "Dedicated"]
+    ["Storage", "1 GB", "100 GB", "1 TB"]
   ],
   "striped": true,
   "headerBg": "#1e293b",
@@ -383,8 +376,7 @@ Progress/skill bars.
   "type": "progress",
   "items": [
     { "label": "Python", "value": 95, "color": "#3b82f6" },
-    { "label": "TypeScript", "value": 85, "color": "#8b5cf6" },
-    { "label": "Rust", "value": 60, "color": "#f97316" }
+    { "label": "TypeScript", "value": 85, "color": "#8b5cf6" }
   ],
   "showValue": true,
   "trackColor": "#1e293b",
@@ -404,12 +396,12 @@ Progress/skill bars.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `leftLabel` | string | — | Label at left end of track |
-| `rightLabel` | string | — | Label at right end of track |
+| `leftLabel` | string | — | Label at track left end |
+| `rightLabel` | string | — | Label at track right end |
 | `leftIcon` | string (Lucide) | — | Icon before left label |
 | `rightIcon` | string (Lucide) | — | Icon after right label |
-| `annotation` | string | — | Italic text centered below the progress track |
-| `annotationColor` | string (hex) | `#94a3b8` | Color for annotation text |
+| `annotation` | string | — | Italic text below track |
+| `annotationColor` | string (hex) | `#94a3b8` | Annotation text color |
 
 Values: 0-100 (percentage). Endpoint labels render above the track; annotation renders below.
 
@@ -420,7 +412,6 @@ Numbered sequential process with connecting line.
   "type": "steps",
   "items": [
     { "title": "Discover", "text": "Identify the problem space" },
-    { "title": "Design", "text": "Prototype solutions" },
     { "title": "Deliver", "text": "Ship and iterate" }
   ],
   "lineColor": "#3b82f6",
@@ -438,7 +429,6 @@ Inline chip/tag collection.
   "type": "tag-group",
   "items": [
     { "text": "React", "color": "#61dafb", "icon": "Code" },
-    { "text": "Python", "color": "#3776ab" },
     { "text": "Docker", "color": "#2496ed", "icon": "Box" }
   ],
   "variant": "filled|outline|subtle",
@@ -454,7 +444,6 @@ Temporal progression / roadmap.
   "type": "timeline",
   "items": [
     { "date": "Q1 2025", "title": "Alpha Launch", "text": "Internal testing" },
-    { "date": "Q2 2025", "title": "Beta", "text": "Selected partners" },
     { "date": "Q3 2025", "title": "GA", "text": "Public release" }
   ],
   "lineColor": "#3b82f6",
@@ -491,11 +480,11 @@ Inline SVG diagram — escape hatch for visuals that structured blocks can't exp
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `markup` | string (SVG) | — (required) | Raw SVG with `viewBox`. NO fixed `width`/`height`. |
-| `maxWidth` | string (CSS) | `"100%"` | Max width (e.g. `"80%"`, `"400px"`) |
+| `maxWidth` | string (CSS) | `"100%"` | Max width, e.g. `"80%"`, `"400px"` |
 | `align` | `"left"\|"center"\|"right"` | inherits | Horizontal alignment |
 | `caption` | string | — | Caption text below SVG |
 | `captionColor` | string (hex) | `"#94a3b8"` | Caption color |
-| `captionSize` | size token | `"sm"` | Caption size (`xs`, `sm`, `md`) |
+| `captionSize` | size token | `"sm"` | `xs`, `sm`, `md` |
 | `bg` | string (CSS) | `"transparent"` | Background behind SVG |
 | `padding` | string (CSS) | `"0"` | Padding around SVG |
 | `rounded` | boolean | `false` | Border-radius 8px on container |
@@ -545,14 +534,14 @@ Side-by-side A vs B layout with semantic coloring, icon headers, optional centra
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | items | array(2) | `[]` | Exactly 2 side objects: `{title, icon?, color?, items[]}` |
-| items[].title | string | | Side heading (e.g. "Before", "Pros") |
+| items[].title | string | | Side heading, e.g. "Before"/"Pros" |
 | items[].icon | string | | Lucide icon for side header |
-| items[].color | string | left:`#ef4444` right:`#22c55e` | Side accent color |
+| items[].color | string | left `#ef4444` right `#22c55e` | Side accent color |
 | items[].items | string[] | `[]` | Bullet points for that side |
 | dividerLabel | string | `"VS"` | Text in center divider circle |
 | hideDivider | boolean | `false` | Hide the VS divider circle |
-| titleSize | size | `"md"` | Size of side titles |
-| size | size | `"sm"` | Size of bullet text |
+| titleSize | size | `"md"` | Side title size |
+| size | size | `"sm"` | Bullet text size |
 
 ### funnel
 Tapered stages from wide to narrow. SVG-rendered trapezoids with labels, values, drop annotations.
@@ -561,7 +550,6 @@ Tapered stages from wide to narrow. SVG-rendered trapezoids with labels, values,
   "type": "funnel",
   "items": [
     { "label": "Visitors", "value": "124,000", "color": "#3b82f6" },
-    { "label": "Signups", "value": "31,200", "color": "#6366f1", "drop": "−74.8%" },
     { "label": "Activated", "value": "4,800", "color": "#ef4444", "drop": "−84.6%", "highlight": true },
     { "label": "Paying", "value": "1,920", "color": "#a855f7", "drop": "−60.0%" }
   ]
@@ -571,10 +559,10 @@ Tapered stages from wide to narrow. SVG-rendered trapezoids with labels, values,
 |---|---|---|---|
 | items | array | `[]` | Funnel stages top-to-bottom |
 | items[].label | string | | Stage name |
-| items[].value | string | | Display value (e.g. "124,000") |
+| items[].value | string | | Display value, e.g. "124,000" |
 | items[].color | string | accent | Stage color |
-| items[].drop | string | | Drop annotation (e.g. "−74.8%") |
-| items[].highlight | boolean | `false` | Dashed border to highlight problem stage |
+| items[].drop | string | | Drop annotation, e.g. "−74.8%" |
+| items[].highlight | boolean | `false` | Dashed border to flag problem stage |
 
 ### cycle
 Circular process diagram with nodes around a circle, connected by curved arrows. Optional center label.
@@ -586,18 +574,17 @@ Circular process diagram with nodes around a circle, connected by curved arrows.
   "items": [
     { "label": "Think", "icon": "🧠", "color": "#3b82f6" },
     { "label": "Act", "icon": "⚡", "color": "#22c55e" },
-    { "label": "Observe", "icon": "👁", "color": "#f97316" },
     { "label": "Reflect", "icon": "🔄", "color": "#8b5cf6" }
   ]
 }
 ```
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| items | array | `[]` | Nodes arranged in a circle (3-7 recommended) |
+| items | array | `[]` | Nodes around a circle (3-7 recommended) |
 | items[].label | string | | Node label |
-| items[].icon | string | | Emoji or text shown inside node |
+| items[].icon | string | | Emoji/text inside node |
 | items[].color | string | auto-cycle | Node and arrow color |
-| centerLabel | string | | Large text in center of circle |
+| centerLabel | string | | Large text at circle center |
 | centerSub | string | | Smaller text below centerLabel |
 
 ### number-row
@@ -607,7 +594,6 @@ Inline row of 2-5 big metrics with labels, optional icons, separated by thin div
   "type": "number-row",
   "items": [
     { "value": "99.97%", "label": "Uptime", "icon": "Activity", "color": "#22c55e" },
-    { "value": "38ms", "label": "P95 Latency", "icon": "Clock", "color": "#3b82f6" },
     { "value": "2.4M", "label": "Active Users", "icon": "Users", "color": "#8b5cf6" }
   ],
   "size": "3xl",
@@ -623,8 +609,8 @@ Inline row of 2-5 big metrics with labels, optional icons, separated by thin div
 | items[].icon | string | | Lucide icon above value |
 | items[].color | string | accent | Value and icon color |
 | size | size | `"3xl"` | Value font size |
-| compact | boolean | `false` | Smaller padding, "2xl" default size |
-| bordered | boolean | `false` | Add background border container |
+| compact | boolean | `false` | Smaller padding, "2xl" default |
+| bordered | boolean | `false` | Background border container |
 | showIcons | boolean | `true` | Show/hide icon circles |
 
 ### matrix
@@ -638,7 +624,6 @@ Inline row of 2-5 big metrics with labels, optional icons, separated by thin div
   "yBottom": "NEGATIVE",
   "quadrants": [
     { "title": "Strengths", "icon": "TrendingUp", "color": "#22c55e", "items": ["Strong team", "First mover"] },
-    { "title": "Opportunities", "icon": "Lightbulb", "color": "#3b82f6", "items": ["Enterprise market", "API ecosystem"] },
     { "title": "Weaknesses", "icon": "TrendingDown", "color": "#f97316", "items": ["Small team", "Limited blocks"] },
     { "title": "Threats", "icon": "AlertTriangle", "color": "#ef4444", "items": ["Big tech competitors", "Cost increases"] }
   ]
@@ -646,7 +631,7 @@ Inline row of 2-5 big metrics with labels, optional icons, separated by thin div
 ```
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| quadrants | array(4) | `[]` | Four quadrant objects: top-left, top-right, bottom-left, bottom-right |
+| quadrants | array(4) | `[]` | 4 objects: top-left, top-right, bottom-left, bottom-right |
 | quadrants[].title | string | | Quadrant heading |
 | quadrants[].icon | string | | Lucide icon for heading |
 | quadrants[].color | string | auto | Quadrant accent color |
@@ -665,7 +650,6 @@ Status-aware item list with semantic icons/colors for each state: done, partial,
   "type": "checklist",
   "items": [
     { "text": "SSO integration", "status": "done" },
-    { "text": "Audit logging", "status": "done" },
     { "text": "SOC 2 certification", "status": "partial" },
     { "text": "HIPAA BAA template", "status": "pending" },
     { "text": "EU data residency", "status": "blocked" }
@@ -678,9 +662,9 @@ Status-aware item list with semantic icons/colors for each state: done, partial,
 |---|---|---|---|
 | items | array | `[]` | Checklist items |
 | items[].text | string | | Item text |
-| items[].status | enum | `"pending"` | `"done"`, `"partial"`, `"pending"`, `"blocked"` |
+| items[].status | enum | `"pending"` | `"done"`\|`"partial"`\|`"pending"`\|`"blocked"` |
 | size | size | `"sm"` | Text font size |
-| showLabels | boolean | `true` | Show status label on right side |
+| showLabels | boolean | `true` | Show status label on right |
 
 ### spacer
 Vertical whitespace.
