@@ -234,22 +234,34 @@ Orchestrate only — sub-agents do the actual work.
     the confounder-control sections (§6, spot-checked — sound). Full
     review still pending before phase 5 (implementation) starts.
 
-## Current status (last updated: 2026-08-13, phases 1+2 landed)
+## Current status (last updated: 2026-08-13, phases 1+2 landed, user went AFK, 4 more dispatched)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
-are both **DONE** — full summaries in Artifacts index. **Phase 1's
-rigorous redo overturned the lost prior session's conclusion**: the
-locked ≥20% reduction gate does NOT clear on this repo's actual files
-(they're already dense/telegraphic; measured ~7.6–15%, not ~30%). This
-touches a decision the user explicitly locked, so it's surfaced as an
-open question below rather than resolved unilaterally — asked the user
-same turn the finding landed. Phase 3 (citation verification) not yet
-dispatched — also pending the same check-in since its priority depends on
-which direction phase 1's finding sends the project. Phases 4-5 (build
-skill, build harness scripts) are blocked on this decision: building the
-skill against a gate that doesn't fit the corpus would be premature. This
-file gets committed and pushed after every phase lands.
+are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous
+redo overturned the lost prior session's conclusion: the locked ≥20%
+reduction gate does NOT clear on this repo's actual files (already
+dense/telegraphic; measured ~7.6–15%, not ~30%). Started to surface this
+as a blocking question, but the **user went AFK mid-turn and explicitly
+authorized proceeding on best judgment without asking further questions**
+("don't block, continue with best judgment, make this a world-record
+minifying skill") — see "Autonomous decisions" above for exactly what was
+decided and why.
+
+**4 agents dispatched in parallel this round** (all background, not yet
+landed as of this update):
+- Phase 1b (opus): normal-density corroboration study
+- Phase 3 (sonnet): citation verification
+- Phase 4 (opus): build `.claude/skills/minify/`
+- Phase 5 (sonnet): build `.claude/minify-lab/harness/` scripts
+
+Not polling — waiting on task-notifications for each. When each lands:
+review its actual output (not just its self-reported summary — this
+project's own risk list warns self-report isn't evidence), update this
+file's Artifacts index and Phase plan, resolve the flagged
+constraint-extractor duplication between phase 4 and 5 once both exist,
+then commit + push. This file gets committed and pushed after every phase
+lands — do not let WIP sit uncommitted (see Incident at top of file).
 
 ## Session hygiene: checking context usage
 
