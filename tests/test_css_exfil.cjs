@@ -423,6 +423,9 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         "border-image:url(#a)", "list-style-image:url(#a)",
         "offset-path:url(#a)", "shape-outside:url(#a)", "content:'x'",
         "position:fixed", "fill:red;background-image:url(#a)",
+        // overflow un-clips the SVG viewport (UI-integrity), so it is rejected in
+        // inline style; <marker overflow="visible"> uses the attribute spelling.
+        "overflow:visible", "fill:red;overflow:visible",
       ];
       const propAllow = [
         "fill:#3b82f6", "fill:url(#grad);stroke:#888;stroke-width:2",
@@ -432,7 +435,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         // transform/overflow/max-width: emitted by real SVG exporters, and the
         // transform ATTRIBUTE spelling was never gated, so rejecting the CSS one
         // removed content without removing a capability.
-        "transform:translate(10px,10px)", "overflow:visible", "max-width:704px",
+        "transform:translate(10px,10px)", "max-width:704px",
         "background-color:white", "enable-background:new 0 0 10 10",
         "text-transform:uppercase;text-shadow:0 1px 2px #000", "line-height:1.4",
       ];

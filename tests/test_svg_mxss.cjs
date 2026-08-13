@@ -523,6 +523,24 @@ runNoVar("bare unquoted scheme in an inline-style value",
   if (dropped.length === 0) { passed++; console.log("  ✅ real SVG paint/transform/filter functions still accepted (no false reject)"); }
   else { failed++; console.log("  ❌ legitimate CSS function rejected: " + JSON.stringify(dropped)); }
 }
+// UI-integrity: overflow on an <svg> un-clips its own viewport, letting a child
+// with negative geometry paint and hit-test over sibling blocks and the branding
+// layer. Both spellings are closed; <marker overflow="visible"> — the ordinary
+// arrowhead idiom, which cannot escape the root's clip — still works.
+{
+  const cases = [
+    '<svg xmlns="http://www.w3.org/2000/svg" overflow="visible"><rect x="-300" y="-300" width="900" height="900"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" style="overflow:visible"><rect x="-300" y="-300" width="900" height="900"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" style="fill:red;overflow:visible"><rect width="9" height="9"/></svg>',
+  ];
+  const leaked = cases.filter((c) => /overflow/i.test(sanitizeSvgMarkup(c)));
+  const marker = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
+  if (leaked.length === 0 && /overflow="visible"/.test(marker) && /url\(#a\)/.test(marker)) {
+    passed++; console.log("  ✅ overflow stripped from <svg> (viewport un-clip); <marker overflow> preserved");
+  } else {
+    failed++; console.log("  ❌ overflow containment — leaked=" + JSON.stringify(leaked.map((c) => sanitizeSvgMarkup(c))) + " marker=" + marker);
+  }
+}
 // A `--` inside a same-document fragment id is ordinary naming, not a custom
 // property: the store can only be introduced at the start of a declaration, so
 // the reject is anchored there and these must survive on BOTH gates (the

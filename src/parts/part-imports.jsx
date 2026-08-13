@@ -699,10 +699,16 @@ const SVG_STYLE_PROPS = new Set([
   "x", "y", "width", "height", "r", "cx", "cy", "rx", "ry",
   "max-width", "min-width", "max-height", "min-height",
   // Geometry/layout spellings third-party exporters emit on the root <svg>.
-  // overflow only un-clips within the deck's own subtree — the render sinks are
-  // themselves overflow:hidden — and its siblings (shape/image/text-rendering)
-  // are already here, so excluding it was an inconsistency, not a defence.
-  "overflow", "transform", "transform-origin", "transform-box",
+  // `overflow` is deliberately NOT here, and the earlier claim that the render
+  // sinks are themselves overflow:hidden was wrong: the svg-block sink is not
+  // clipped in its own right, it inherits the slide's clip. overflow:visible on an
+  // <svg> overrides the UA rule that clips a viewport to its bounds, which lets a
+  // negative-geometry or translated child paint and hit-test over sibling blocks
+  // and the branding layer. Verified in-browser. It is stripped from <svg> in the
+  // attribute walk too, since the presentation-attribute spelling does the same
+  // thing; it stays allowed on <marker>, where overflow="visible" is the ordinary
+  // way to draw an arrowhead that exceeds its marker viewport.
+  "transform", "transform-origin", "transform-box",
   // element-local visibility / hit-testing (cannot affect anything outside the
   // deck subtree). cursor's url() form is value-restricted to url(#frag) like the
   // other reference paints; listing it also keeps this consistent with the
@@ -952,6 +958,13 @@ function sanitizeSvgMarkup(raw) {
             // maintaining a second list that can drift from it. Real SVG attributes
             // whose stem collides (maskUnits, filterUnits, clipPathUnits …) carry
             // plain idents that the value filter passes untouched. (v13.46)
+            // UI-integrity: `overflow` on an <svg> overrides the UA rule that clips a
+            // viewport to its bounds, so a child with negative geometry or a
+            // transform paints and hit-tests outside the deck's own box, over
+            // sibling blocks and the branding layer. Strip it there. Inner
+            // viewport-establishing elements keep it: <marker overflow="visible">
+            // is the standard arrowhead idiom and cannot escape the root's clip.
+            if (name === "overflow" && tag === "svg") { child.removeAttribute(a.name); continue; }
             const urlRefAttr = SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name));
             if (urlRefAttr && !cssOk(a.value)) { child.removeAttribute(a.name); continue; }
           }

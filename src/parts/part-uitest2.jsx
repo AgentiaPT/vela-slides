@@ -181,6 +181,30 @@ uiSuite("SVG Sanitizer (XSS)", [
       return !escaped && noPositioning && rendered;
     } finally { host.remove(); }
   }},
+  { name: "SECURITY: deck SVG cannot un-clip its own viewport to cover sibling content", fn: async () => {
+    // overflow on an <svg> overrides the UA viewport clip, so a negative-geometry
+    // child paints and hit-tests outside the deck's box. Prove it against a real
+    // sibling: the escaped rect must not become the element at the sibling's point.
+    const sib = document.createElement("div");
+    sib.style.cssText = "width:200px;height:60px;background:#ddd";
+    const host = document.createElement("div");
+    host.style.cssText = "width:60px;height:60px";
+    document.body.appendChild(sib); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" overflow="visible" style="overflow:visible">' +
+        '<rect x="-300" y="-300" width="900" height="900" fill="red"/></svg>');
+      const r = sib.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const covered = !!(hit && host.contains(hit));
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !covered && !/overflow/i.test(host.innerHTML) && rendered;
+    } finally { sib.remove(); host.remove(); }
+  }},
+  { name: "SVG marker overflow=visible preserved (arrowhead idiom)", fn: async () => {
+    const out = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
+    return /overflow="visible"/.test(out) && /url\(#a\)/.test(out);
+  }},
   { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
     return !/attacker\.invalid/i.test(out);
