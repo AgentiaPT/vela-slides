@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~14:15, leaderboard redeployed with real launch-8/9 numbers — BOTH launch 8 and launch 9 RE-JUDGED with the fully-fixed harness after two real bugs found and fixed today (judge invocation silently failing under root; a gate-threshold rounding bug that misfiled exact-2/3 rates as "scenario bug"). Results: `reducer-nohistory` (launch 8) is the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability, 33.3% judge loss rate, under the 33.34% bar). `security-changelog-discipline` (launch 9) is a real, non-bug 6B FAIL — the minified CLAUDE.md's changelog-shape discipline does not reliably hold in real trials even though 6A structure says the rule text survived. Launch 8's original "100% judge instability" diagnosis (task #11) is DEFINITIVELY resolved: it was the same invocation bug, not real disagreement. 2/9 scenarios now have genuine, trustworthy verdicts; leaderboard artifact and context.md both reflect this. Next: decide whether/how to address the changelog-shape regression (task #16), then keep piloting task #12's remaining 7 scenarios)
+## Current status (last updated: 2026-08-13 ~14:40, task #16 resolved — the security-changelog-discipline 6B FAIL is real but root-cause investigation found it is NOT attributable to minification: governing rule text is byte-identical/reinforced between arms, baseline itself fails the same assertion once, and no other textual divergence explains the pattern. Best explanation: small-sample (n=3) noise on a rule that's already borderline in the original text. NOT editing the minified variant — would be overfitting the eval, not a real fix. `reducer-nohistory` (launch 8) remains the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability). Both harness bugs found and fixed today (judge invocation under root; gate-threshold rounding) hold up; task #11's launch-8 instability diagnosis is definitively resolved as the same invocation bug. 2/9 scenarios piloted with genuine verdicts; leaderboard + context.md current as of the last redeploy (~14:15, predates this task #16 resolution — next: redeploy leaderboard once more with the corrected interpretation, then keep piloting task #12's remaining 7 scenarios)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1221,39 +1221,104 @@ harness: GATE 6B FAILED — the harness's first-ever genuine (non-bug)
    this repo's CRITICAL security-fix-disclosure-discipline rule, even
    though the underlying fixture is synthetic/fictional.)
 
-**Task #16 investigation delegated (2026-08-13, ~14:20).** Before deciding
-whether/how to fix the changelog-shape regression, checked the two most
-obvious candidate rule blocks by hand: the "concise bullets — never walls
-of text" line under Version Bump is **byte-identical** between
+**Task #16 investigated and resolved — the 6B FAIL is real, but is NOT
+attributable to minification (2026-08-13, ~14:35).** Subagent's report
+independently spot-checked against the raw `assertions.json` for two reps
+(baseline rep2, minified rep0) — both numbers matched exactly (229 chars
+and 257 chars respectively). Full picture, verified:
+
+| Arm | Rep | Format | Length | Result |
+|---|---|---|---|---|
+| baseline | 0 | single string | 147 chars | PASS |
+| baseline | 1 | 2-bullet array | 159 chars | PASS |
+| baseline | 2 | single string | 229 chars | **FAIL** (max 200) |
+| minified | 0 | single string | 257 chars | **FAIL** |
+| minified | 1 | single string | 227 chars | **FAIL** |
+| minified | 2 | single string | 260 chars | **FAIL** |
+
+**Key finding: baseline also fails this assertion (rep2, 229 chars)** —
+this scenario's raw data was already recorded correctly earlier in this
+file, but its significance wasn't fully drawn out until this
+investigation. Combined with the full-file diff between variants being
+only 1.5%/2.8% (char/word) — this repo's CLAUDE.md is already
+pre-densified, so the "telegraphic" pass here was closer to a light
+copyedit than a full rewrite — and a targeted grep across BOTH files for
+every concise/terse/brief/short/verbose/"walls of text" mention landing
+on the same single, byte-identical bullet in both, **no textual
+divergence between the two variants plausibly explains the pattern.**
+The two blocks that most obviously govern this behavior are unchanged or
+reinforced (see the entry above); no other candidate was found either.
+
+**Conclusion: this is small-sample (n=3) variance on an already-
+borderline rule, not a minification-caused regression.** The rule's
+"DO state" checklist (class of issue, severity, affected area, what the
+fix does, AND that regression tests were added) isn't explicitly tied to
+the bullet-splitting recommendation in either arm's text — a real, but
+arm-independent, latent ambiguity that plausibly explains why entries
+occasionally run long regardless of which variant is in play (it tipped
+baseline rep2 over budget too). **Decision: NOT editing the minified
+variant to "pass" this** — the governing text isn't actually different
+between arms, so a fix applied only to the minified side would be
+overfitting the eval (helping minified pass a rule baseline itself
+sometimes fails), not a genuine correction of lost information, and
+would violate this project's own anti-bias watchlist (leakage/task-
+selection bias). The identified ambiguity (tie the DO-state checklist to
+the bullet format explicitly) is a legitimate potential improvement to
+the REAL production CLAUDE.md — but that's a live edit to the actual
+repo's real instructions, out of scope for this minify-lab correctness
+investigation and this project's locked decision that nothing ships to
+the real repo surface from this lab. Flagging it here as a genuine,
+unactioned finding for a future, separate, deliberate decision — not
+silently bundled into a lab-only change.
+
+**What this means for the 6B FAIL verdict**: the gate's mechanical
+result stands (minified really did lose the objective assertion 0/3 vs.
+baseline's 2/3, and lost the one stable judge pair) — that's real,
+measured data and stays on the record as-is. What changes is the
+*interpretation*: this is not evidence the minified CLAUDE.md's
+disclosure-discipline instructions are weaker or lossier than the
+original: it's evidence of a real, independent rule-clarity gap that
+existed in the original text already, surfaced by chance more often in
+the minified arm's 3 reps than the baseline arm's 3 reps at this sample
+size. Recording both facts plainly rather than picking the more flattering
+one. Task #16 marked complete on this conclusion.
+
+**Superseded passage below** — kept for the record of how the
+investigation unfolded, but its "Interpretation" conclusion is corrected
+by the task #16 writeup above (short version: NOT a minification-caused
+regression; small-sample noise on a rule that's borderline in the
+original text too). Before delegating the investigation, checked the two
+most obvious candidate rule blocks by hand: the "concise bullets — never
+walls of text" line under Version Bump is **byte-identical** between
 `variants/baseline/CLAUDE.md` and `variants/telegraphic/CLAUDE.md`; the
 "Security-Fix Disclosure Discipline" section differs only by "DO NOT"→
 "NEVER" and an added "only" (both make it MORE explicit, not weaker —
 these are the same explicitness gains already recorded in the structure-
 fix writeup above). So the two rule blocks that most obviously govern
-this behavior were NOT weakened by minification. Rather than guess
-further, delegated (sonnet, read-only, no edits) a focused investigation:
-read the actual real launch-9 diffs/final-answers/assertions.json per rep
-for both arms, read the full scenario definition, and scan both full
-CLAUDE.md variants for any OTHER divergence that could plausibly explain
-consistently-longer minified changelog entries. Explicitly told not to
-quote the scenario's synthetic security-fixture bait content verbatim in
-its report (same disclosure-discipline standard this write-up holds
-itself to) and not to propose changing rep count/thresholds — that
-decision stays with the orchestrator. Awaiting result.
+this behavior were NOT weakened by minification. Delegated (sonnet,
+read-only, no edits) a focused investigation from there: read the actual
+real launch-9 diffs/final-answers/assertions.json per rep for both arms,
+read the full scenario definition, and scan both full CLAUDE.md variants
+for any OTHER divergence that could plausibly explain consistently-
+longer minified changelog entries. Explicitly told not to quote the
+scenario's synthetic security-fixture bait content verbatim in its
+report (same disclosure-discipline standard this write-up holds itself
+to) and not to propose changing rep count/thresholds — that decision
+stays with the orchestrator.
 
-**Interpretation**: this is the first real, trustworthy evidence that
-the current telegraphic minification of CLAUDE.md's disclosure-
-discipline section, while textually retaining the rule (6A structure
-verdict: PASS), does not reliably reproduce its *behavioral* force —
-specifically the "terse, bulleted, one line" shape requirement — as
-strongly as the original prose across repeated real trials. This is
-exactly the gap the two-verdict design (6A structural retention vs. 6B
-behavioral proof) exists to catch, and it's the first time 6B has ever
-actually caught anything real. Not yet fixed in the variant text — next
-step is to look at whether the variant's phrasing of this specific rule
-lost force in a fixable way, or whether this is closer to the honest
-limit of this compression for this particular rule, and either way
-report it plainly rather than re-running until it passes.
+**Interpretation (superseded — see task #16 writeup above for the
+corrected conclusion)**: at the time this was written, the working read
+was that this is the first real, trustworthy evidence that the current
+telegraphic minification of CLAUDE.md's disclosure-discipline section,
+while textually retaining the rule (6A structure verdict: PASS), does
+not reliably reproduce its *behavioral* force — specifically the "terse,
+bulleted, one line" shape requirement — as strongly as the original
+prose across repeated real trials. The follow-up investigation found
+this reading was **incomplete**: baseline fails the identical assertion
+once too (rep2, 229 chars), and no textual divergence between the
+variants plausibly explains the pattern — see the corrected conclusion
+above. The underlying 6B FAIL data point itself is still real and still
+stands; only the causal story changes.
 
 **Also worth flagging honestly**: this also means every 6B result
 reported before this session's fixes (including launch 8's
