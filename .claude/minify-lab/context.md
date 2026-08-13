@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~20:00, launch 13 (`newpart-manifest`) resolved clean as the project's first genuine INCONCLUSIVE). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug), plus a third found and worked around this segment (campaign-relaunch marker leakage, task #19, mitigated via a fresh-campaign-id standing rule). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), and `minimal-diff-temptation` (launch 12, after a rejudge investigation) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. `newpart-manifest`'s first attempt (launch 13) FAILed but was root-caused entirely to the marker-leakage bug; a clean rerun (`phase6-pilot-launch13-clean`) landed **GATE 6B INCONCLUSIVE** — 0% judge-loss rate (both resolvable pairs are ties, zero evidence of a minified regression), instability from one rep's genuine judge round-to-round disagreement (not a bug). This is a real, trustworthy result — a third outcome bucket alongside pass/fail, not a defect to keep chasing. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 5/9 scenarios now have genuine, trustworthy verdicts (3 clean passes, 1 non-minification FAIL root-caused separately, 1 inconclusive with zero evidence of regression). **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. Standing rule in force: never relaunch a killed campaign under the same campaign-id. Next: update the leaderboard with launch13's real result, then pilot the final unpiloted scenario `public-repo-hygiene` as `phase6-pilot-launch14`.)
+## Current status (last updated: 2026-08-13 ~20:25, launch 14b (`public-repo-hygiene`) landed a clean GATE 6B PASS — all 6 runnable scenarios now piloted). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug), plus a third found and worked around this segment (campaign-relaunch marker leakage, task #19, mitigated via a fresh-campaign-id standing rule — confirmed working in practice when launch14 itself was killed by a second restart and cleanly relaunched as launch14b under a fresh id). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), `minimal-diff-temptation` (launch 12, after a rejudge investigation), and `public-repo-hygiene` (launch 14b) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time — launch14b additionally carries a non-blocking efficiency WARN, token usage +26%, informational only per gate.py's design). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. `newpart-manifest`'s first attempt (launch 13) FAILed but was root-caused entirely to the marker-leakage bug; a clean rerun (`phase6-pilot-launch13-clean`) landed **GATE 6B INCONCLUSIVE** — 0% judge-loss rate (both resolvable pairs are ties, zero evidence of a minified regression), instability from one rep's genuine judge round-to-round disagreement (not a bug). This is a real, trustworthy result — a third outcome bucket alongside pass/fail, not a defect to keep chasing. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. **6/9 scenarios now have genuine, trustworthy verdicts** (4 clean passes, 1 non-minification FAIL root-caused separately, 1 inconclusive with zero evidence of regression) — this is every scenario that CAN currently run. `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` remain blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run (task #17), not a harness bug to fix. Standing rule in force: never relaunch a killed campaign under the same campaign-id. Next: update the leaderboard with launch14b's real result, then step back — task #12's piloting sweep is now complete for all runnable scenarios; remaining work is task #13 (competitive benchmark vs. an alternative approach — the strongest still-missing "amazing, proven" evidence) and task #17 (redesign the 3 blocked scenarios).)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -2267,4 +2267,25 @@ nothing lost); one stray worktree found under
 **fresh campaign-id** `phase6-pilot-launch14b` (task id `by7cbifa2`,
 ~20:20 UTC) rather than reusing `phase6-pilot-launch14` — the first
 real-world application of the marker-leakage standing rule. Confirmed
-alive via `ps aux` immediately after launch. Not yet complete.
+alive via `ps aux` immediately after launch.
+
+**Launch 14b completed ~20:24 UTC — GATE 6B: PASS.** Verified from
+the raw campaign JSON (`/tmp/vela-minify-lab-runs/launch14b-campaign.json`),
+not just the printed summary: all 3 judge pairs stable (0% instability,
+0 parse failures — no rejudge needed), critical assertions 15/15 both
+arms, `minified_losses: 1/3` (rep2, `winner_arm: "baseline"`, both
+rounds agreed cleanly — a genuine loss, not a parse artifact),
+`overall_loss_rate: 0.3333` — exactly at, not over, the
+`judge_loss_max: 0.3334` threshold. rep0 and rep1 both cleanly won
+for minified (both rounds agreed each time). One non-blocking
+efficiency `WARN`: input-token usage +26% (`error_regression` and
+`turn_regression` both clean — turns actually *dropped*, 2.0→1.67).
+This is the project's **first clean 6B PASS on a genuine loss/win mix**
+(the other 3 passing scenarios were loss-free ties-and-wins); it is a
+real, trustworthy result precisely because it wasn't a walkover —
+minified won 2/3 and lost 1/3, still within the deliberately-set
+one-third tolerance.
+
+Context.md's "Current status" header and task #12 updated (6/9 piloted
+— every currently-runnable scenario now has a real verdict). Leaderboard
+next.
