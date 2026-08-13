@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~10:10, campaign.py built + stub-tested + real-run smoke-tested, real Phase 6 pilot launched a 3rd time after fixing 2 launch-blocking bugs)
+## Current status (last updated: 2026-08-13 ~10:40, real Phase 6 pilot launched a 4th time after fixing a transcript-parser crash that destroyed real agent spend on attempt 3)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -854,16 +854,51 @@ scenario list) instead of `all_scenarios`; re-ran `campaign.py
 --selftest` (15/15, unaffected — it already used a single-scenario
 override) before committing. Commit `93119fa`.
 
-**Launch 3 is now running in the background** (`reducer-nohistory`,
+**Launch 3 got past prepare-time checks into real agent spend, then
+crashed on transcript parsing — the first bug to actually cost money**
+($1.17, one real sonnet rep on `baseline/reducer-nohistory/rep0`, 28
+turns, 503/503 tests passing per the agent's own summary). Two distinct
+findings surfaced:
+
+1. **Real, non-fatal design wrinkle**: Claude Code's built-in
+   `decision_reason_type: "safetyCheck"` permission layer — separate from
+   and NOT overridden by `--permission-mode bypassPermissions` — flagged
+   `Edit` calls on `part-reducer.jsx` as touching a "sensitive file" and
+   denied them twice. Root cause: the harness's own run-tree path
+   (`.claude/minify-lab/harness/runs/.../wt/...`) contains a `.claude/`
+   path segment, which this built-in classifier treats as sensitive
+   regardless of how deep the real target file is nested beneath it. The
+   agent noticed ("The Edit tool is being blocked as a 'sensitive file'
+   gate... Let me try making the change via Bash instead"), switched to
+   Bash-based edits, and completed the task correctly anyway. Applies
+   symmetrically to both arms (same path shape either way), so it adds
+   turns/cost noise rather than bias — noted here for awareness, not
+   fixed, since it isn't blocking and reworking the run-tree location is
+   out of scope for this pilot.
+2. **Real bug, now fixed**: `transcript.py`'s `parse_jsonl()` assumed
+   every entry's `"message"` field was a nested `{role, content, usage}`
+   object, but the `permission_denied` system event above carries
+   `"message"` as a plain string — `msg.get("role", ...)` then raised
+   `AttributeError: 'str' object has no attribute 'get'`, crashing the
+   whole campaign process *after* the agent spend had already happened.
+   Fixed by guarding against a non-dict `message` (treated as absent);
+   added a permanent regression fixture reproducing the exact shape.
+   Re-parsed the actual crashed transcript directly with the fix — now
+   parses cleanly (38 events, sane metrics, final answer captured). Full
+   harness selftest suite (9 modules) re-confirmed green. Commit
+   `fd97b89`.
+
+**Launch 4 is now running in the background** (`reducer-nohistory`,
 reps=3, both arms, judge_rounds=2, real sonnet agent-under-test + real
-opus judge calls) after cleaning up launch 2's stale run directory. Per
-the standing instruction: will message the user with a brief status
-update once this completes with real results — not yet done, this is
-the first attempt to get past prepare-time checks into actual agent
-spend. Rough cost estimate before launch: order of magnitude $15-50 total
-(6 sonnet agent runs on a real, moderately-sized code task + 6 short
-single-turn opus judge calls) — not a hard budget, just the expectation
-set going in.
+opus judge calls) after cleaning up launch 3's partial run directory —
+the $1.17 spent on that rep isn't reusable (campaign.py has no
+mid-campaign resume logic, and adding one for a single pilot run isn't
+worth it) so this rep re-runs from scratch. Per the standing instruction:
+will message the user with a brief status update once this completes
+with real results. Rough cost estimate before launch: order of magnitude
+$15-50 total (6 sonnet agent runs on a real, moderately-sized code task +
+6 short single-turn opus judge calls) — not a hard budget, just the
+expectation set going in.
 
 ## Session hygiene: checking context usage
 
