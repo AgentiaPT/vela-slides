@@ -10,16 +10,18 @@ Per (scenario, arm) this module drives:
      then `assert_lab_scrubbed` — every remaining file under <wt> mentioning
      "minify-lab" must be exactly `.gitignore`, and only on its known
      whitelisted lines. Any other hit aborts.
-  3. Apply `hooks_mode` (§6.2): `parity` leaves `<wt>/.claude/settings.json`
+  3. `link_node_modules` — symlink <wt>/node_modules -> the main repo's, so
+     the Node-based sub-tests can run; no-ops if the main repo has none.
+  4. Apply `hooks_mode` (§6.2): `parity` leaves `<wt>/.claude/settings.json`
      untouched; `neutralized` rewrites it to a hooks-free copy.
-  4. Apply the scenario's `setup_patch`, if any — identical in both arms.
-  5. Inject the arm's CLAUDE.md variant (`variants/baseline/CLAUDE.md` or
+  5. Apply the scenario's `setup_patch`, if any — identical in both arms.
+  6. Inject the arm's CLAUDE.md variant (`variants/baseline/CLAUDE.md` or
      `variants/<approach>/CLAUDE.md`), after `variant_leak_check` (§6.4)
      against every frozen scenario's `leak_tokens`.
-  6. Freeze: `git add -A && git commit -m "prepared base"` -> prepared-base.sha
-  7. Parity check (caller, after both arms are prepared): `parity_check()`
+  7. Freeze: `git add -A && git commit -m "prepared base"` -> prepared-base.sha
+  8. Parity check (caller, after both arms are prepared): `parity_check()`
      asserts the two prepared trees differ in exactly one path.
-  8. Resolve every scenario anchor (`must_read.section.anchor_regex`)
+  9. Resolve every scenario anchor (`must_read.section.anchor_regex`)
      against the prepared tree -> `anchors.json`.
 
 Also: `preamble_leak_check` (§6.3) — the shared preamble and every scenario
@@ -47,9 +49,9 @@ correctly abort them) — `reducer-nohistory`, `blockfield-safekeys`,
 `newpart-manifest`, and `public-repo-hygiene` are unaffected.
 
 Post-run (called by runner.py, not this module's CLI):
-  9.  `post_run_diff(wt, prepared_base_sha)` -> diff.patch + files-changed.json
-  10. (caller runs `command_succeeds` assertions inside the worktree)
-  11. `cleanup(wt)` -> `git worktree remove --force`, unless `keep=True`
+  10. `post_run_diff(wt, prepared_base_sha)` -> diff.patch + files-changed.json
+  11. (caller runs `command_succeeds` assertions inside the worktree)
+  12. `cleanup(wt)` -> `git worktree remove --force`, unless `keep=True`
 
 Usage:
   python3 prepare.py --scenario <id> --arm baseline|minified \
@@ -217,6 +219,57 @@ def assert_lab_scrubbed(wt_path):
 
     if bad:
         raise PrepareError(f"lab self-leak: {bad}")
+
+
+# ── node_modules bridging ───────────────────────────────────────────────
+#
+# `git worktree add` only checks out git-tracked content, and node_modules/
+# is (correctly) gitignored — so every fresh worktree is missing it, which
+# makes the Node-based sub-tests (test_block_render.cjs, test_css_exfil.cjs)
+# and jsdom-dependent suites in `tests/test_vela.py` fail there regardless of
+# what the agent-under-test does. A real `npm install` per worktree is slow
+# (and this container may have no registry access); node_modules already
+# exists once in the main repo and doesn't need to be duplicated per
+# worktree, so this symlinks it in instead.
+
+def link_node_modules(wt_path, repo_root=REPO_ROOT):
+    """Symlink <wt>/node_modules -> <repo_root>/node_modules.
+
+    Skips silently (returns False) if the main repo itself has no
+    node_modules — some of this repo's tests already soft-skip a missing
+    jsdom/node_modules, and this must not turn that soft skip into a hard
+    failure. Also skips if the worktree already has a node_modules entry
+    of its own.
+
+    A *symlink* named `node_modules` is NOT matched by the project
+    .gitignore's `node_modules/` rule — trailing-slash gitignore patterns
+    only match real directories, not symlinks to one — so left alone,
+    `git add -A` (in freeze() and post_run_diff()) would pick up the
+    symlink itself as a new path and corrupt the prepared-arm parity check
+    / the agent's recorded diff. A slash-less `node_modules` line in the
+    untracked, worktree-shared `.git/info/exclude` closes that gap for
+    every worktree without touching the project .gitignore.
+    """
+    src = Path(repo_root) / "node_modules"
+    if not src.is_dir():
+        return False
+    dest = Path(wt_path) / "node_modules"
+    if dest.exists() or dest.is_symlink():
+        return False
+
+    exclude_path = Path(
+        _git(["rev-parse", "--git-path", "info/exclude"], cwd=repo_root).stdout.strip()
+    )
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+    if "node_modules" not in existing.splitlines():
+        with open(exclude_path, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write("node_modules\n")
+
+    dest.symlink_to(src, target_is_directory=True)
+    return True
 
 
 # ── §6.2 hooks_mode ───────────────────────────────────────────────────────
@@ -408,6 +461,8 @@ def prepare_arm(scenario, arm, run_dir, config=None, approach=None, base_ref=Non
 
     scrub_lab(wt)
     assert_lab_scrubbed(wt)
+
+    link_node_modules(wt, repo_root=repo_root)
 
     apply_hooks_mode(wt, hooks_mode)
 
