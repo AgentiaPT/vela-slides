@@ -10,16 +10,22 @@ Usage:
 
 import sys, os, re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from parts_manifest import load_part_order, manifest_path  # noqa: E402
+
 # ── Constants ────────────────────────────────────────────────────────
 
-PART_ORDER = [
-    "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-    "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-    "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-    "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-pptx.jsx", "part-app.jsx",
-]
+# The part list + build order come from src/parts/MANIFEST.txt (one source of
+# truth, shared with concat.py and tests/test_vela.py). A hardcoded copy here is
+# what once let part-pptx.jsx drop out of every PART_ORDER-driven check while
+# still being built into the bundle.
 
 COPYRIGHT_HEADER = "© 2025-present Rui Quintino"
+
+# Part-file size guard. Big part-files are the main cost a reader pays to make a
+# small change, so oversized ones get flagged — WARNING for now because several
+# existing parts are over the line; this becomes a hard error once they are split.
+PART_MAX_LINES = 900
 
 # Top-level declaration pattern (const/let/function at column 0)
 DECL_RE = re.compile(r'^(?:const|let|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)', re.MULTILINE)
@@ -38,7 +44,7 @@ CONFLICT_RE = re.compile(r'^[<>=]{7}', re.MULTILINE)
 # that drift. The allowlists are parsed from part-imports.jsx so there is exactly
 # one source of truth.
 KEY_SOURCE_FILE = "part-imports.jsx"
-KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+KEY_CONSUMER_FILES = ["part-blocks.jsx", "part-slides.jsx", "part-slidepanel.jsx", "part-canvas.jsx", "part-branding.jsx"]
 
 SET_LITERAL_RE_TPL = r'const\s+{name}\s*=\s*new\s+Set\(\[(.*?)\]\)'
 QUOTED_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
@@ -230,7 +236,7 @@ def check_deck_key_drift(parts_dir):
 # any such sink in the renderer files receives a raw deck color field, or a local
 # variable whose own definition holds one un-encoded. One missed sink is all a
 # beacon needs, so the invariant is verified mechanically, not by review.
-CSS_FETCH_FILES = ["part-blocks.jsx", "part-slides.jsx"]
+CSS_FETCH_FILES = ["part-blocks.jsx", "part-slides.jsx", "part-slidepanel.jsx", "part-canvas.jsx", "part-branding.jsx"]
 FETCH_PROP_RE = re.compile(
     r'\b(background|backgroundImage|maskImage|WebkitMaskImage|borderImage'
     r'|listStyleImage|cursor)\s*:')
@@ -554,18 +560,26 @@ def check_security_tests_not_skippable(parts_dir):
     (the battery is the ground-truth guard: it runs the real module, unlike the
     fragment-extracting node suites)."""
     errors = []
-    fpath = os.path.join(parts_dir, "part-uitest.jsx")
-    if not os.path.exists(fpath):
+    # The battery spans part-uitest.jsx (registry/runner + most suites) and
+    # part-uitest2.jsx (later suites, including the SVG/deck-sanitization security
+    # suites) — read every part-uitest*.jsx in manifest (concat) order so this
+    # guard sees the whole battery regardless of which file a given test lives in.
+    uitest_files = [n for n in load_part_order(parts_dir) if n.startswith("part-uitest")]
+    if not any(os.path.exists(os.path.join(parts_dir, n)) for n in uitest_files):
         return errors
-    with open(fpath, 'r', encoding="utf-8") as f:
-        raw = f.read()
+    raw = ""
+    for fname in uitest_files:
+        fpath = os.path.join(parts_dir, fname)
+        if os.path.exists(fpath):
+            with open(fpath, 'r', encoding="utf-8") as f:
+                raw += f.read()
     # Comment-strip first so a `/*fn:*/`-style padding comment can't fool the scan.
     src = _strip_js_comments(raw)
     if 'cannot restyle/relocate app chrome' not in src:
         errors.append(
             'the SVG-<style> redress regression test ("SECURITY: deck SVG <style> cannot '
-            'restyle/relocate app chrome") is missing from part-uitest.jsx — it is the '
-            'real-runtime guard against the UI-redress / clickjack class and must stay.'
+            'restyle/relocate app chrome") is missing from the part-uitest*.jsx battery — it is '
+            'the real-runtime guard against the UI-redress / clickjack class and must stay.'
         )
     # Bound each test object by the NEXT test's `name:` (not a fixed char window or a
     # split on the first `fn:`), so requiresAI can't hide past a truncation point.
@@ -580,7 +594,7 @@ def check_security_tests_not_skippable(parts_dir):
             errors.append(
                 'security UI test ' + repr(name) + ' must not be requiresAI — it must always run '
                 'in the battery (a skip is treated as non-failing, so requiresAI would let a sanitizer '
-                'regression pass CI). Note the runner also fails such a skip at runtime (part-uitest.jsx).'
+                'regression pass CI). Note the runner also fails such a skip at runtime (part-uitest*.jsx).'
             )
         # A named security test must EXERCISE the real sanitizer — a vacuous body
         # (e.g. `return true`) keeps the required name but neuters the ground-truth
@@ -614,25 +628,42 @@ def check_security_tests_not_skippable(parts_dir):
 
 
 def check_part_order_complete(parts_dir):
-    """PART_ORDER must list every part-*.jsx file. A missing entry (e.g. part-pptx.jsx
-    once was) silently drops that part from every PART_ORDER-driven check — including
-    the security allowlist-tamper scan — so a tamper statement hidden in the unlisted
-    part evades the static guard. Keep the list in sync with the actual files."""
+    """MANIFEST.txt must list every part-*.jsx file. A missing entry (e.g.
+    part-pptx.jsx once was) silently drops that part from the build AND from every
+    manifest-driven check — including the security allowlist-tamper scan — so a
+    tamper statement hidden in the unlisted part evades the static guard. Keep the
+    manifest in sync with the actual files."""
     errors = []
     if not os.path.isdir(parts_dir):
         return errors
+    part_order = load_part_order(parts_dir)
+    manifest = manifest_path(parts_dir)
     actual = sorted(f for f in os.listdir(parts_dir)
                     if f.startswith("part-") and f.endswith(".jsx"))
-    missing = [f for f in actual if f not in PART_ORDER]
-    extra = [f for f in PART_ORDER if f not in actual]
+    missing = [f for f in actual if f not in part_order]
+    extra = [f for f in part_order if f not in actual]
     if missing:
         errors.append(
-            f"PART_ORDER is missing part-file(s): {missing} — add them so every part is "
-            "linted and scanned by the security allowlist-tamper guard."
+            f"{manifest} is missing part-file(s): {missing} — add them so every part is "
+            "built, linted and scanned by the security allowlist-tamper guard."
         )
     if extra:
-        errors.append(f"PART_ORDER lists part-file(s) that don't exist: {extra} — remove them.")
+        errors.append(f"{manifest} lists part-file(s) that don't exist: {extra} — remove them.")
     return errors
+
+
+def check_part_size(source, part_name):
+    """Warn on oversized part-files.
+
+    Every reader of a part-file pays for its whole length, and an oversized part is
+    also where unrelated concerns quietly accumulate. Warning-only today (several
+    parts exceed the cap); it becomes a hard gate once they are split.
+    """
+    lines = source.count("\n") + (0 if source.endswith("\n") else 1)
+    if lines > PART_MAX_LINES:
+        return [f"{part_name}: {lines} lines exceeds the {PART_MAX_LINES}-line "
+                f"part-file size guide — consider splitting it"]
+    return []
 
 
 # ── Main runners ─────────────────────────────────────────────────────
@@ -660,8 +691,10 @@ def lint_parts(parts_dir):
     errors = []
     warnings = []
 
+    part_order = load_part_order(parts_dir)
+
     # Check all expected parts exist
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if not os.path.exists(part_path):
             errors.append(f"Missing part file: {part_name}")
@@ -673,10 +706,11 @@ def lint_parts(parts_dir):
         errors += check_copyright_header(source, part_name)
         errors += check_conflict_markers(source, part_name)
         warnings += check_balanced_braces(source, part_name)
+        warnings += check_part_size(source, part_name)
 
     # Check duplicates across all parts combined
     combined = ""
-    for part_name in PART_ORDER:
+    for part_name in part_order:
         part_path = os.path.join(parts_dir, part_name)
         if os.path.exists(part_path):
             with open(part_path, 'r', encoding="utf-8") as f:

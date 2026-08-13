@@ -7,4 +7,10 @@
 # run_pptx_e2e_tests() opens the produced deck to assert native text boxes,
 # autoshapes, pictures, and tables). Optional at runtime — the suite skips the
 # read-back assertions cleanly when it is not installed.
-python-pptx>=1.0
+#
+# EXACT pin, not a floor. CI installs this with a bare `pip install -r`, so an
+# open range means whatever was published to PyPI minutes ago runs inside the
+# build — no lockfile, no cooldown, no review. Pinning removes that window; the
+# version moves only via a Dependabot PR, which is subject to the `cooldown:`
+# block in .github/dependabot.yml like every other ecosystem here.
+python-pptx==1.0.2

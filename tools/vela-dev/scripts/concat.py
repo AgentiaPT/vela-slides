@@ -12,7 +12,9 @@ Two modes:
      Reads from specified directory
      Outputs to specified file or ./vela-built.jsx
 
-Concatenation order is fixed (matches dependency graph):
+Concatenation order is fixed (matches dependency graph) and is read from
+src/parts/MANIFEST.txt — the single source of truth for the part list, shared
+with lint.py and tests/test_vela.py:
   imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
 
 RELEASE builds (--release):
@@ -34,6 +36,9 @@ RELEASE builds (--release):
 
 import sys, os, re, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from parts_manifest import load_part_order  # noqa: E402  (src/parts/MANIFEST.txt)
+
 # Naming convention for test-only globals, enforced by the release check in
 # concat(). Matching one hardcoded literal proved too narrow — it missed the UI
 # battery's own entry point, so a release build reported "no test hooks" over a
@@ -48,7 +53,7 @@ TEST_GLOBAL_RE = re.compile(r"__vela\w*(?:Test|Mock|Stub|Fixture|Spy)\w*")
 # references (the two test panels mounted in part-app.jsx) sit inside a DEV-ONLY
 # fence and are stripped in the same pass, so nothing else can name them.
 # Verified by tests/test_release_build.cjs, which also Babel-parses the result.
-RELEASE_EXCLUDED_PARTS = {"part-test.jsx", "part-uitest.jsx"}
+RELEASE_EXCLUDED_PARTS = {"part-test.jsx", "part-uitest.jsx", "part-uitest2.jsx"}
 
 # Fence markers for build-time-strippable dev-only code. Both must appear on
 # their own line (leading whitespace allowed); blocks must not nest.
@@ -96,22 +101,10 @@ def strip_dev_only(content, part_name, release):
         sys.exit(1)
     return "\n".join(out), stripped
 
-PART_ORDER = [
-    "part-imports.jsx",
-    "part-icons.jsx",
-    "part-blocks.jsx",
-    "part-reducer.jsx",
-    "part-engine.jsx",
-    "part-slides.jsx",
-    "part-list.jsx",
-    "part-chat.jsx",
-    "part-test.jsx",
-    "part-uitest.jsx",
-    "part-demo.jsx",
-    "part-pdf.jsx",
-    "part-pptx.jsx",
-    "part-app.jsx",
-]
+# The concat order (and the part list itself) lives in src/parts/MANIFEST.txt —
+# one source of truth shared with lint.py and tests/test_vela.py. It is
+# TDZ-sensitive: the monolith has no module system, so a part may only reference
+# top-level bindings from an earlier part. Never reorder the manifest.
 
 # concat.py (dev tooling) lives at tools/vela-dev/scripts/, reads the app source
 # part-files from src/parts/, and writes the built monolith into the lean shipped
@@ -126,7 +119,7 @@ def concat(parts_dir, output_path, release=False):
     total_lines = 0
     total_stripped = 0
 
-    for part_name in PART_ORDER:
+    for part_name in load_part_order(parts_dir):
         if release and part_name in RELEASE_EXCLUDED_PARTS:
             print(f"  {part_name}: skipped (test-only part, release build)")
             continue

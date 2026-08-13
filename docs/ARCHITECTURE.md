@@ -5,7 +5,7 @@
 Vela Slides is a **single-file React application** (18,421 lines, ~1.3 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
 
 ```
-Source (14 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
+Source (16 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
      ↑ edit these                         ↑ monolith                  ↑ with deck data
 ```
 
@@ -30,7 +30,9 @@ The dependency graph is fixed and acyclic. Concatenation is the simplest correct
 ```
 part-imports    → Constants, sanitizers, helpers, storage
 part-icons      → Icon resolution system (270+ icons)
-part-blocks     → All 27 block renderers
+part-blocks     → 27 block-type renderers (RenderBlock switch)
+part-branding   → BrandingOverlay slide chrome (accent bar, footer, slide number, logo)
+part-canvas     → SlideContent slide canvas, per-block editing chrome
 part-reducer    → State management, dispatch actions
 part-engine     → Vera AI engine, system prompts, API calls
 part-slides     → Slide panel, fullscreen, branding overlay
@@ -39,6 +41,7 @@ part-chat       → Chat panel, tool trace cards
 part-test       → Battery tests
 part-uitest     → UI integration tests (185 tests in 33 suites)
 part-demo       → Cinematic demo mode (18 scenes)
+part-pdf-fonts  → Offline font fallback data (compressed TTF blobs)
 part-pdf        → PDF export (raster + vector), markdown export
 part-pptx       → Native editable PowerPoint (.pptx) export
 part-app        → Top-level shell, modals, shortcuts
@@ -48,28 +51,35 @@ Dependencies flow strictly **top-down**. No circular dependencies. Each part can
 
 ### Concatenation Order (fixed, never changes)
 
+`src/parts/MANIFEST.txt` is the single source of truth for the part list, the
+build order, and each part's purpose line — read it directly rather than a
+copy here, which can drift:
+
 ```
-imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
+imports → icons → blocks → canvas → reducer → engine → slides → list → chat → test → uitest → demo → pdf-fonts → pdf → pptx → app
 ```
 
 ### Part Responsibilities
 
 | Part | Lines | What it owns |
 |---|---|---|
-| `part-imports.jsx` | ~1,400 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
+| `part-imports.jsx` | ~1,940 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
 | `part-icons.jsx` | ~290 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
-| `part-blocks.jsx` | ~1,730 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon, icon-row, tag-group, progress, code, image, comparison, funnel, cycle, number-row, matrix, checklist, divider, spacer. Plus `EditableText` for WYSIWYG. |
-| `part-reducer.jsx` | ~300 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
+| `part-blocks.jsx` | ~1,520 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon, icon-row, tag-group, progress, code, image, comparison, funnel, cycle, number-row, matrix, checklist, divider, spacer. Plus `EditableText`/`ItemChrome` for WYSIWYG. |
+| `part-branding.jsx` | ~50 | `BrandingOverlay` (accent bar, footer, slide number, logo) — split out of part-canvas.jsx |
+| `part-canvas.jsx` | ~370 | `SlideContent` (slide canvas + block layout), `renderBlockItem` (per-block hover toolbar/AI-prompt popup), `InlineCommentCard` (review mode) — split out of part-blocks.jsx |
+| `part-reducer.jsx` | ~390 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
 | `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
-| `part-slides.jsx` | ~2,410 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |
-| `part-list.jsx` | ~530 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
-| `part-chat.jsx` | ~440 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
-| `part-test.jsx` | ~330 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~1,860 | 185 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
+| `part-slides.jsx` | ~2,580 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |
+| `part-list.jsx` | ~780 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
+| `part-chat.jsx` | ~450 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
+| `part-test.jsx` | ~410 | `VelaBatteryTest` — automated render tests for block types |
+| `part-uitest.jsx` | ~2,800 | 185 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
 | `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
-| `part-pdf.jsx` | ~3,950 | Canvas-based PDF renderer (raster + vector export path), watermark system, link annotations, markdown export |
-| `part-pptx.jsx` | ~1,180 | Native, editable PowerPoint (.pptx) exporter — a second emitter over the same primitive IR the vector-PDF path produces |
-| `part-app.jsx` | ~1,910 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
+| `part-pdf-fonts.jsx` | ~15 | `COMPRESSED_FONTS` — offline font fallback data (compressed TTF blobs), rarely changes; split out of part-pdf.jsx so its ~242KB of base64 doesn't sit inside the frequently-edited export logic |
+| `part-pdf.jsx` | ~4,040 | Canvas-based PDF renderer (raster + vector export path), watermark system, link annotations, markdown export |
+| `part-pptx.jsx` | ~1,190 | Native, editable PowerPoint (.pptx) exporter — a second emitter over the same primitive IR the vector-PDF path produces |
+| `part-app.jsx` | ~2,070 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
 
 ## Assembly Pipeline
 

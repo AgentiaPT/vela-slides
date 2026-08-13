@@ -24,6 +24,9 @@ DEV_SCRIPTS = os.path.join(DEV_DIR, "scripts")         # concat.py, serve.py, sy
 PARTS_DIR = os.path.join(REPO_ROOT, "src", "parts")    # app source part-files (first-class)
 LOCAL_HTML = os.path.join(DEV_DIR, "local.html")       # dev preview shell (served by serve.py)
 
+sys.path.insert(0, DEV_SCRIPTS)
+from parts_manifest import load_part_order              # src/parts/MANIFEST.txt (single source of truth)
+
 passes = 0
 fails = 0
 skips = 0
@@ -49,13 +52,11 @@ def skip(name, reason=""):
 def test_unit():
     print("\n── Unit Tests ──")
 
-    # 1. All 11 part-files exist
-    expected_parts = [
-        "part-imports.jsx", "part-icons.jsx", "part-blocks.jsx",
-        "part-reducer.jsx", "part-engine.jsx", "part-slides.jsx",
-        "part-list.jsx", "part-chat.jsx", "part-test.jsx",
-        "part-uitest.jsx", "part-demo.jsx", "part-pdf.jsx", "part-app.jsx"
-    ]
+    # 1. Every part-file the manifest lists exists. The list is NOT duplicated
+    #    here: src/parts/MANIFEST.txt is the single source of truth shared with
+    #    concat.py and lint.py (a hardcoded copy here had silently gone stale,
+    #    omitting part-pptx.jsx).
+    expected_parts = load_part_order()
     missing = [p for p in expected_parts if not os.path.exists(os.path.join(PARTS_DIR, p))]
     if not missing:
         ok(f"All {len(expected_parts)} part-files present")
@@ -961,7 +962,12 @@ def test_audit_2025_05_fixes():
 def test_known_bugs():
     print("\n── Known Bug Tests ──")
 
-    slides_jsx = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # these checks span both, so concatenate in build order to search across them.
+    slides_jsx = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     engine_jsx = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
     imports_jsx = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     chat_jsx = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
@@ -1035,7 +1041,12 @@ def test_editor_ux_bugs():
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     blocks  = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # CR3 checks span both, so concatenate in build order to search across them.
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
 
     # ── CR1: opening a deck must default to the first slide of the first
     #        non-empty module in EDITOR mode too — not only presentation mode.
@@ -1092,9 +1103,21 @@ def test_slide_editor_ux_features():
 
     imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # these checks span both (incl. the SectionPicker..SlidePanel slice below),
+    # so concatenate in build order to search across them.
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
-    appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    # part-app.jsx was split (modal/dialog components now live in
+    # part-app-modals.jsx, incl. ShortcutHelp's help text checked below);
+    # concatenate in build order to search across both.
+    appjs   = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-app-modals.jsx", "part-app.jsx")
+    )
 
     # ── Feature 4: multi-slide clipboard ────────────────────────────
     if "velaClipboardWriteSlides" in imports and "velaClipboardReadSlides" in imports:
@@ -1211,7 +1234,14 @@ def test_toc_nav_and_gallery_titlecards():
     print("\n── TOC keyboard tree / collapsed marker / gallery title cards ──")
 
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
-    slides  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (SlidePanel now lives in part-slidepanel.jsx);
+    # the CR2 global-handler guard check spans both, so concatenate in build
+    # order to search across them (the GalleryView..TeacherMessage slice below
+    # stays fully inside part-slides.jsx either way).
+    slides  = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     lst     = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
     appjs   = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
@@ -3478,12 +3508,13 @@ def test_slide_numeric_fields():
     else:
         fail("imageCols missing from BLOCK_REFERENCE")
 
-    # 7. The sink re-clamps too (belt-and-braces at the consumption site)
-    blocks_src = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
-    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in blocks_src:
+    # 7. The sink re-clamps too (belt-and-braces at the consumption site).
+    #    Lives in SlideContent (part-canvas.jsx), split out of part-blocks.jsx.
+    canvas_src = open(os.path.join(PARTS_DIR, "part-canvas.jsx"), encoding="utf-8").read()
+    if "Math.min(6, Math.max(1, slide.imageCols | 0))" in canvas_src:
         ok("imageCols re-clamped at the render sink")
     else:
-        fail("imageCols sink clamp missing in part-blocks.jsx")
+        fail("imageCols sink clamp missing in part-canvas.jsx")
 
 
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
@@ -3532,7 +3563,12 @@ def test_deck_key_allowlist_structure():
 
     # Reconciliation: the two other slide-key lists derive from the allowlists.
     engine_src = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
-    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    # part-slides.jsx was split (the SLIDE_KEYS paste-detection heuristic now
+    # lives in part-slidepanel.jsx); concatenate in build order to search across both.
+    slides_src = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-slides.jsx", "part-slidepanel.jsx")
+    )
     if re.search(r'SLIDE_ONLY_KEYS[\s\S]{0,400}SAFE_SLIDE_KEYS[\s\S]{0,160}SAFE_BLOCK_KEYS', engine_src):
         ok("part-engine SLIDE_ONLY_KEYS derived from the ingress allowlists")
     else:
@@ -3636,7 +3672,13 @@ def test_pdf_title_cards():
 
     imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     slides_src  = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
-    pdf_src     = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    # part-pdf.jsx was split (canvas / extract / vector / markdown+html paths);
+    # these checks span the canvas modal and the vector modal, so concatenate
+    # the split files back in build order to search across all of them.
+    pdf_src     = "".join(
+        open(os.path.join(PARTS_DIR, f), encoding="utf-8").read()
+        for f in ("part-pdf.jsx", "part-pdf-extract.jsx", "part-pdf-vector.jsx", "part-export-md.jsx")
+    )
     app_src     = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
 
     # 1. Shared helper exists and tags its output as a virtual slide
@@ -4106,11 +4148,11 @@ def test_svg_style_recurrence_guards():
          "cross-part aliased .has override (part-app)"),
         ("part-app.jsx", None,
          '\nSet.prototype.has = function () { return true; };\n', "cross-part Set.prototype patch"),
-        ("part-uitest.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
+        ("part-uitest2.jsx", 'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn:',
          'cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", /*fn:*/ requiresAI: true, fn:',
          "requiresAI skip-dodge on flagship security test"),
         # Gap B: a vacuous security-named test (no sanitizeSvgMarkup call) neuters the guard.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _bogusSecTest = { name: "SECURITY: bogus <style> vacuous", fn: async () => { return true; } };\n',
          "vacuous security test (no sanitizeSvgMarkup call)"),
         # R6B: a built-in prototype override the sanitizer's tag lookup trusts.
@@ -4125,11 +4167,11 @@ def test_svg_style_recurrence_guards():
          '\nconst _PP = SVG_ALLOWED_TAGS; _PP.has = (t) => t === "style";\n',
          "cross-part tamper in part-pptx.jsx"),
         # R6B: a chrome-safety test that calls the sanitizer but drops its assertion.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _neuter = { name: "SECURITY: overlay app chrome bogus", fn: async () => { sanitizeSvgMarkup("<rect/>"); return true; } };\n',
          "neutered chrome-safety test (calls sanitizer, no computed-style assertion)"),
         # R7B/R7C: keeps the required tokens as DEAD code but hardcodes the result.
-        ("part-uitest.jsx", None,
+        ("part-uitest2.jsx", None,
          '\nconst _dead = { name: "SECURITY: overlay app chrome deadcode", fn: async () => { const h = document.createElement("div"); sanitizeSvgMarkup("<rect/>"); getComputedStyle(h); return true; } };\n',
          "dead-code-token neuter (getComputedStyle present but return true)"),
     ]

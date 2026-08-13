@@ -1,2 +1,16 @@
+# Never run a dependency's install lifecycle script. Paired with
+# `ignore-scripts=true` in .npmrc so both package managers refuse the same
+# primitive a compromised (or typo-squatted) dep would reach for first.
 onlyBuiltDependencies: []
+
+# Supply-chain cooldown FLOOR, in MINUTES: pnpm refuses to resolve any release
+# younger than this, so a freshly published (or freshly compromised) version
+# cannot enter a lockfile on the day it lands. 10080 = 7 days = the semver-PATCH
+# tier in .github/dependabot.yml.
+#
+# This is a floor, not the whole policy: the wider minor (14d) and major (30d)
+# windows live in dependabot's `cooldown:` block and are applied when a bump is
+# proposed. Both lockfiles are committed and installs are lock-driven
+# (`npm ci` / `pnpm install --frozen-lockfile`), so the pinned versions are what
+# actually ship — resolution limits only bound what a *new* bump may pick up.
 minimumReleaseAge: 10080

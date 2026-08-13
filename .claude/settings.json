@@ -1,5 +1,41 @@
 {
   "enabledPlugins": {
     "security-guidance@claude-plugins-official": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 30,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\" --pre"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 30,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\" --pre-read"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 60,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-lint.py\""
+          }
+        ]
+      }
+    ]
   }
 }

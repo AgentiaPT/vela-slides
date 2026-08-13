@@ -1,10 +1,11 @@
 // Regression test for CR3: ModalBackdrop's inner card must be able to scroll
 // within a short/narrow artifact pane, else dialogs (About/changelog etc.)
 // overflow the viewport with no way to reveal the rest of the content.
+// ModalBackdrop lives in part-app-modals.jsx (split out of part-app.jsx).
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-app.jsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-app-modals.jsx"), "utf8");
 
 function extractFn(name) {
   const start = src.indexOf(`function ${name}(`);

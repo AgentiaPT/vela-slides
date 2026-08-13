@@ -1,11 +1,11 @@
 // Regression test for CR1: export crash "str.includes is not a function".
-// Extracts parseLinearGradient from part-pdf.jsx and exercises it with
+// Extracts parseLinearGradient from part-pdf-extract.jsx and exercises it with
 // truthy non-string inputs that previously slipped past the `!str` guard
 // and threw when `.includes` was called on a number/object/bool/array.
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf.jsx"), "utf8");
+const src = fs.readFileSync(path.join(__dirname, "..", "src/parts/part-pdf-extract.jsx"), "utf8");
 
 function extract(name) {
   const start = src.indexOf(`function ${name}(`);

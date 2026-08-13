@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Record job start time
         id: jobtimer
@@ -85,7 +85,7 @@ jobs:
         run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -96,14 +96,14 @@ jobs:
         run: pip install -r tests/requirements-test.txt
 
       - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.22"
+          go-version: "1.26"
 
       - name: Install npm devDependencies (locked)
         # Uses `npm ci` so the install is driven by package-lock.json — exact
@@ -129,6 +129,20 @@ jobs:
         # runs this drift check (plus the existing structural checks) against
         # src/parts and fails the build (exit 1) on any drift.
         run: python3 tools/vela-dev/scripts/lint.py --parts src/parts
+
+      - name: Routing-table freshness (CLAUDE.md "Where does X live")
+        # The routing table is a discovery index for coding agents; a stale
+        # row (file/symbol that no longer exists) was measured to cost MORE
+        # than having no index. Verify every path and symbol claim against
+        # the tree, so renames/moves must update the table in the same commit.
+        run: python3 tools/vela-dev/scripts/check-routing.py
+
+      - name: Code-map freshness (src/parts/CODEMAP.md)
+        # CODEMAP.md is the generated, complete discovery index (every top-level
+        # symbol, reducer action + dispatch sites, Vera tool, UI suite). A stale
+        # discovery index measurably costs more than none, so it must regenerate
+        # in the same commit as the code it indexes — same rule as concat sync.
+        run: python3 tools/vela-dev/scripts/gen-codemap.py --check
 
       - name: Release-build hardening assertions
         # Phase 6.2: proves `concat.py --release` strips every test/debug hook
@@ -666,7 +680,7 @@ jobs:
             const fmtDur = (s) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
             const billedMin = Math.ceil(wallSecs / 60);
 
-            let body = `## 🧪 CI Test Results — Python 3.12 + Node 22 + Go 1.22\n\n`;
+            let body = `## 🧪 CI Test Results — Python 3.12 + Node 22 + Go 1.26\n\n`;
             body += `**Overall: ${overall}** — ${totalPassed}/${totalTests} tests passed`;
             if (totalFailed > 0) body += `, ${totalFailed} failed`;
             body += `\n\n`;
