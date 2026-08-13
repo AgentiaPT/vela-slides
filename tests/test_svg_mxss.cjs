@@ -72,11 +72,12 @@ const schemeMatch = extractOne(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME
 const allowedMatch = extractOne(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/, "SVG_ALLOWED_TAGS");
 const refAttrsMatch = extractOne(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/, "SVG_URL_REF_ATTRS");
 const stylePropsMatch = extractOne(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS");
+const rootBlockedMatch = extractOne(/const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/, "SVG_ROOT_BLOCKED");
 const valueFnsMatch = extractOne(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/, "SVG_VALUE_FNS");
 const paintKeyMatch = extractOne(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY");
 const keyStemMatch = extractOne(/const cssKeyStem = .+;/, "cssKeyStem");
 const isSafeMatch  = extractOne(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/, "isSvgStyleSafe");
-const isInlineSafeMatch = extractOne(/function isSvgInlineStyleSafe\(css\) \{[\s\S]*?\n\}/, "isSvgInlineStyleSafe");
+const isInlineSafeMatch = extractOne(/function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/, "isSvgInlineStyleSafe");
 const sanitizeMatch = extractOne(/function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/, "sanitizeSvgMarkup");
 
 const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");
@@ -92,6 +93,7 @@ ${schemeMatch[0]}
 ${allowedMatch[0]}
 ${refAttrsMatch[0]}
 ${stylePropsMatch[0]}
+${rootBlockedMatch[0]}
 ${valueFnsMatch[0]}
 ${paintKeyMatch[0]}
 ${keyStemMatch[0]}
@@ -522,6 +524,43 @@ runNoVar("bare unquoted scheme in an inline-style value",
   const dropped = mustAllow.filter((v) => !isSvgStyleSafe(v));
   if (dropped.length === 0) { passed++; console.log("  ✅ real SVG paint/transform/filter functions still accepted (no false reject)"); }
   else { failed++; console.log("  ❌ legitimate CSS function rejected: " + JSON.stringify(dropped)); }
+}
+// UI-integrity, boundary element: the outer <svg> establishes the clip that keeps
+// deck content inside its block, so a property applied to THAT element acts
+// outside it. transform relocates the box and its HIT-TESTING while painting
+// nothing — an invisible click interceptor over sibling blocks and the branding
+// layer — and a filter region is not limited to the border box. Both spellings.
+// Inner elements must keep all of them: <g transform> builds every real diagram.
+{
+  const escapes = [
+    '<svg xmlns="http://www.w3.org/2000/svg" style="transform:scale(20)"><rect width="9" height="9"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" transform="scale(20)"><rect width="9" height="9"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" style="transform-origin:0 0;transform-box:fill-box"><rect width="9" height="9"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" style="filter:url(#f)"><rect width="9" height="9"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" filter="drop-shadow(-160px -120px 0 red)"><rect width="9" height="9"/></svg>',
+  ];
+  const leaked = escapes.filter((e) => {
+    const out = sanitizeSvgMarkup(e);
+    return /<svg[^>]*\s(?:transform|filter|overflow)[=:]/i.test(out) || /<svg[^>]*style="[^"]*(?:transform|filter|overflow)/i.test(out);
+  });
+  // Positive control: the same properties on INNER elements are load-bearing for
+  // real diagrams and must survive, or this gate would be passing by rejecting all.
+  const inner = sanitizeSvgMarkup('<g transform="translate(5,5)" filter="url(#f)" style="transform-origin:0 0"><rect width="9" height="9" style="filter:blur(2px)"/></g>');
+  const innerOk = /transform="translate\(5,5\)"/.test(inner) && /filter="url\(#f\)"/.test(inner) &&
+                  /transform-origin:0 0/.test(inner) && /filter:blur\(2px\)/.test(inner);
+  if (leaked.length === 0 && innerOk) {
+    passed++; console.log("  ✅ transform/filter/overflow blocked on the boundary <svg>, preserved on inner elements");
+  } else {
+    failed++; console.log("  ❌ boundary-element rule — leaked=" + JSON.stringify(leaked.map((e) => sanitizeSvgMarkup(e))) + " innerOk=" + innerOk);
+  }
+}
+// pointer-events is named in the UI-integrity denylist for CSS but was reachable
+// as a presentation attribute, where it makes an element that paints nothing at
+// all still take clicks — an amplifier for any relocation primitive.
+{
+  const out = sanitizeSvgMarkup('<rect width="9" height="9" fill="none" pointer-events="all"/><g pointer-events="stroke"><rect width="9" height="9" fill="red"/></g>');
+  if (!/pointer-events/i.test(out) && /fill="red"/.test(out)) { passed++; console.log("  ✅ pointer-events stripped in the attribute spelling too"); }
+  else { failed++; console.log("  ❌ pointer-events attribute survived — " + out); }
 }
 // UI-integrity: overflow on an <svg> un-clips its own viewport, letting a child
 // with negative geometry paint and hit-test over sibling blocks and the branding

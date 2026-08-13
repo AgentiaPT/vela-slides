@@ -201,6 +201,33 @@ uiSuite("SVG Sanitizer (XSS)", [
       return !covered && !/overflow/i.test(host.innerHTML) && rendered;
     } finally { sib.remove(); host.remove(); }
   }},
+  { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
+    // transform on the BOUNDARY <svg> relocates the box and its hit-testing while
+    // painting nothing — deck content silently takes clicks meant for a neighbour.
+    // Victim is static and precedes the host so it cannot out-rank the attacker in
+    // paint order (a positioned victim would mask a real escape).
+    const victim = document.createElement("div");
+    victim.style.cssText = "width:300px;height:60px;background:#dde";
+    const host = document.createElement("div");
+    host.style.cssText = "width:240px;height:90px";
+    document.body.appendChild(victim); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" transform="scale(20)" style="transform:scale(20)">' +
+        '<rect width="240" height="90" fill="none" pointer-events="all"/></svg>');
+      const r = victim.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const intercepts = !!(hit && host.contains(hit));
+      const clean = !/transform|pointer-events/i.test(host.innerHTML);
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !intercepts && clean && rendered;
+    } finally { victim.remove(); host.remove(); }
+  }},
+  { name: "SVG inner transform/filter preserved (diagram layout still works)", fn: async () => {
+    const out = sanitizeSvgMarkup('<g transform="translate(5,5)" filter="url(#f)" style="transform-origin:0 0"><rect width="9" height="9" style="filter:blur(2px)"/></g>');
+    return /transform="translate\(5,5\)"/.test(out) && /filter="url\(#f\)"/.test(out) &&
+           /transform-origin:0 0/.test(out) && /filter:blur\(2px\)/.test(out);
+  }},
   { name: "SVG marker overflow=visible preserved (arrowhead idiom)", fn: async () => {
     const out = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
     return /overflow="visible"/.test(out) && /url\(#a\)/.test(out);

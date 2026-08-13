@@ -14,7 +14,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Startup Patch System: STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
-- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
+- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding validateAndSanitizeDeck
 - Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
@@ -305,11 +305,11 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 833-line unbannered stretch after line 476
+- part-imports.jsx: 860-line unbannered stretch after line 476
 - part-blocks.jsx: 748-line unbannered stretch after line 769
 - part-slidepanel.jsx: 405-line unbannered stretch after line 175
 - part-slidepanel.jsx: 378-line unbannered stretch after line 860
-- part-uitest2.jsx: 421-line unbannered stretch after line 2
+- part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-demo.jsx: 577-line unbannered stretch after line 194
 - part-pdf.jsx: 390-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2

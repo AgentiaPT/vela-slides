@@ -358,7 +358,8 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       grab(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS"),
       grab(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/, "SVG_VALUE_FNS"),
       grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe"),
-      grab(/function isSvgInlineStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgInlineStyleSafe"),
+      grab(/const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/, "SVG_ROOT_BLOCKED"),
+      grab(/function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/, "isSvgInlineStyleSafe"),
     ].join("\n");
     // eslint-disable-next-line no-new-func
     const api = new Function(fn + "\nreturn { isSvgStyleSafe, isSvgInlineStyleSafe };")();

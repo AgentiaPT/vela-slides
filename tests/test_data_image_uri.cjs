@@ -40,7 +40,8 @@ const grabs = {
   paintKey: source.match(/const CSS_PAINT_KEY = .+;/),
   keyStem: source.match(/const cssKeyStem = .+;/),
   isSafe:   source.match(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/),
-  isInlineSafe: source.match(/function isSvgInlineStyleSafe\(css\) \{[\s\S]*?\n\}/),
+  rootBlocked: source.match(/const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/),
+  isInlineSafe: source.match(/function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/),
   svg:      source.match(/function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/),
   raster:   source.match(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/),
   dataUri:  source.match(/function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/),
@@ -52,7 +53,7 @@ for (const [k, re] of Object.entries({
   scheme: /const CSS_FETCH_SCHEME = .+;/g, allowed: /const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/g,
   refAttrs: /const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/g, styleProps: /const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/g, valueFns: /const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/g,
   paintKey: /const CSS_PAINT_KEY = .+;/g, keyStem: /const cssKeyStem = .+;/g,
-  isSafe: /function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/g, isInlineSafe: /function isSvgInlineStyleSafe\(css\) \{[\s\S]*?\n\}/g,
+  isSafe: /function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/g, rootBlocked: /const SVG_ROOT_BLOCKED = new Set\(\[[\s\S]*?\]\);/g, isInlineSafe: /function isSvgInlineStyleSafe\(css[\s\S]*?\n\}/g,
   svg: /function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/g, raster: /const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/g,
   dataUri: /function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/g,
 })) {
@@ -89,6 +90,7 @@ ${grabs.valueFns[0]}
 ${grabs.paintKey[0]}
 ${grabs.keyStem[0]}
 ${grabs.isSafe[0]}
+${grabs.rootBlocked[0]}
 ${grabs.isInlineSafe[0]}
 ${grabs.svg[0]}
 ${grabs.raster[0]}

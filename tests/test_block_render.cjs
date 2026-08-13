@@ -109,6 +109,7 @@ ${extractConst(importsSrc, "SVG_URL_REF_ATTRS")}
 ${extractConst(importsSrc, "SVG_STYLE_PROPS")}
 ${extractConst(importsSrc, "SVG_VALUE_FNS")}
 ${extractFn(importsSrc, "isSvgStyleSafe")}
+${extractConst(importsSrc, "SVG_ROOT_BLOCKED")}
 ${extractFn(importsSrc, "isSvgInlineStyleSafe")}
 ${extractFn(importsSrc, "sanitizeSvgMarkup")}
 // STUBS — browser-bound, off the static render path:

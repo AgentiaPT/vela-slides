@@ -370,7 +370,8 @@ def test_security():
     #     test_svg_mxss.cjs / test_css_exfil.cjs; this only pins the wiring.
     if 'SVG_URL_REF_ATTRS' in all_jsx and 'urlRefAttr && !cssOk(a.value)' in all_jsx \
        and 'SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name))' in all_jsx \
-       and 'name === "style" ? isSvgInlineStyleSafe : isSvgStyleSafe' in all_jsx:
+       and 'name === "style" ? (v) => isSvgInlineStyleSafe(v, tag) : isSvgStyleSafe' in all_jsx \
+       and 'SVG_ROOT_BLOCKED' in all_jsx:
         ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS (style= takes the property allowlist)")
     else:
         fail("SVG presentation-attr URL filter",

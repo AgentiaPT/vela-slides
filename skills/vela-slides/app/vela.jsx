@@ -716,6 +716,23 @@ const SVG_STYLE_PROPS = new Set([
   "display", "visibility", "cursor",
 ]);
 
+// Properties that must not be applied to an <svg> ELEMENT. The outer <svg> IS the
+// deck's containment boundary — the viewport clip that keeps every inner element
+// inside the block — so a property applied to THAT element takes effect outside
+// the clip it establishes: `transform` relocates the whole box AND its hit-testing
+// over sibling blocks and the branding layer while painting nothing (an invisible
+// click interceptor — the classic redress shape), a `filter` region is explicitly
+// not limited to the border box so a large filterUnits region repaints the slide,
+// and `overflow` removes the clip outright. Verified in-browser, in both the CSS
+// and presentation-attribute spellings.
+//
+// Inner elements keep all of these and need them: <g transform="…"> is how every
+// real diagram is built, and an inner filter/overflow is bounded by this same
+// viewport. The rule is therefore about WHERE the property sits, not what it is —
+// which is why it cannot live in SVG_STYLE_PROPS, a per-value gate with no
+// knowledge of the element. (v13.46)
+const SVG_ROOT_BLOCKED = new Set(["transform", "transform-origin", "transform-box", "filter", "overflow"]);
+
 // SVG CSS-value filter for the inline style="" attribute and url-ref
 // presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
 // The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
@@ -839,14 +856,18 @@ function isSvgStyleSafe(css) {
 // first — escapes, comments and '<' are already gone — and where it is not (a ';'
 // inside a quoted string or a url()), the split yields a fragment with no
 // property and the attribute is rejected, which is the safe direction. (v13.46)
-function isSvgInlineStyleSafe(css) {
+function isSvgInlineStyleSafe(css, tag) {
   if (!isSvgStyleSafe(css)) return false;
   for (const decl of css.split(";")) {
     const d = decl.trim();
     if (!d) continue;
     const i = d.indexOf(":");
     if (i <= 0) return false;
-    if (!SVG_STYLE_PROPS.has(d.slice(0, i).trim().toLowerCase())) return false;
+    const prop = d.slice(0, i).trim().toLowerCase();
+    if (!SVG_STYLE_PROPS.has(prop)) return false;
+    // …and on the boundary element itself, not even an allowlisted property may
+    // be one that acts outside the clip that element establishes.
+    if (tag === "svg" && SVG_ROOT_BLOCKED.has(prop)) return false;
   }
   return true;
 }
@@ -946,7 +967,7 @@ function sanitizeSvgMarkup(raw) {
             // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
             // style="" is a declaration LIST, so it takes the stricter gate, which
             // adds the property allowlist on top of that value filter. (v13.46)
-            const cssOk = name === "style" ? isSvgInlineStyleSafe : isSvgStyleSafe;
+            const cssOk = name === "style" ? (v) => isSvgInlineStyleSafe(v, tag) : isSvgStyleSafe;
             // SVG_URL_REF_ATTRS names the attributes that fetch TODAY. SVG 2 lets
             // more CSS properties be written as presentation attributes, so an
             // attribute named after a fetching CSS property (mask-image,
@@ -964,7 +985,13 @@ function sanitizeSvgMarkup(raw) {
             // sibling blocks and the branding layer. Strip it there. Inner
             // viewport-establishing elements keep it: <marker overflow="visible">
             // is the standard arrowhead idiom and cannot escape the root's clip.
-            if (name === "overflow" && tag === "svg") { child.removeAttribute(a.name); continue; }
+            if (tag === "svg" && SVG_ROOT_BLOCKED.has(name)) { child.removeAttribute(a.name); continue; }
+            // pointer-events is named in isSvgStyleSafe's UI-integrity denylist but
+            // was reachable as a presentation attribute — the same asymmetry the
+            // property allowlist exists to remove. It makes an interceptor that
+            // paints nothing at all (fill="none"/opacity:0) still take clicks, so
+            // it amplifies any relocation primitive. Strip it in both spellings.
+            if (name === "pointer-events") { child.removeAttribute(a.name); continue; }
             const urlRefAttr = SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name));
             if (urlRefAttr && !cssOk(a.value)) { child.removeAttribute(a.name); continue; }
           }
@@ -11901,6 +11928,33 @@ uiSuite("SVG Sanitizer (XSS)", [
       const rendered = /<rect/i.test(host.innerHTML);
       return !covered && !/overflow/i.test(host.innerHTML) && rendered;
     } finally { sib.remove(); host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
+    // transform on the BOUNDARY <svg> relocates the box and its hit-testing while
+    // painting nothing — deck content silently takes clicks meant for a neighbour.
+    // Victim is static and precedes the host so it cannot out-rank the attacker in
+    // paint order (a positioned victim would mask a real escape).
+    const victim = document.createElement("div");
+    victim.style.cssText = "width:300px;height:60px;background:#dde";
+    const host = document.createElement("div");
+    host.style.cssText = "width:240px;height:90px";
+    document.body.appendChild(victim); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" transform="scale(20)" style="transform:scale(20)">' +
+        '<rect width="240" height="90" fill="none" pointer-events="all"/></svg>');
+      const r = victim.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const intercepts = !!(hit && host.contains(hit));
+      const clean = !/transform|pointer-events/i.test(host.innerHTML);
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !intercepts && clean && rendered;
+    } finally { victim.remove(); host.remove(); }
+  }},
+  { name: "SVG inner transform/filter preserved (diagram layout still works)", fn: async () => {
+    const out = sanitizeSvgMarkup('<g transform="translate(5,5)" filter="url(#f)" style="transform-origin:0 0"><rect width="9" height="9" style="filter:blur(2px)"/></g>');
+    return /transform="translate\(5,5\)"/.test(out) && /filter="url\(#f\)"/.test(out) &&
+           /transform-origin:0 0/.test(out) && /filter:blur\(2px\)/.test(out);
   }},
   { name: "SVG marker overflow=visible preserved (arrowhead idiom)", fn: async () => {
     const out = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
