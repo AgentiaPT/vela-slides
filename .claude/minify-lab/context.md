@@ -237,7 +237,12 @@ Phase 1b); this-repo's own CLAUDE.md exempt at 1.5% (pre-densified);
 100% constraint survival; two open gates blocking a clean win — 6A
 structure FAIL (net delta −5) and 6B INCONCLUSIVE (100% judge instability)
 — both from launch 8, both explained on the page as real measured
-findings, not harness bugs.
+findings, not harness bugs. **STALE as of 2026-08-13 ~14:05 — pending
+next redeploy**: both open gates above are now resolved (6A fixed at
++3, 6B judge-invocation bug fixed); real content should now be 2/9
+scenarios piloted, `reducer-nohistory` FULL CLEAN PASS (6A+6B both
+pass), `security-changelog-discipline` real 6B FAIL (changelog-shape
+regression). Next step in this session.
 
 ## Locked decisions (2026-08-13, reconfirmed unchanged on this redo)
 
@@ -824,7 +829,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~13:40, LAUNCH 9 RE-JUDGED — two real harness bugs found and fixed today (judge invocation silently failing under root; a gate-threshold rounding bug that misfiled exact-2/3 rates as "scenario bug"). With both fixed, 6B produced its first-ever genuine, non-bug verdict: **FAILED** on `security-changelog-discipline` — the minified CLAUDE.md's changelog-shape discipline does not reliably hold in real trials even though 6A structure says the rule text survived. 6A: SIZE PASS, STRUCTURE PASS (both reproduced a 3rd time). Launch 8's earlier "100% judge instability" diagnosis (task #11) is now in doubt — likely the same invocation bug, not real disagreement, but not re-confirmable. See the dated entries below for full detail; next: decide whether/how to address the found regression, keep piloting task #12's remaining scenarios)
+## Current status (last updated: 2026-08-13 ~14:05, BOTH launch 8 and launch 9 RE-JUDGED with the fully-fixed harness — two real bugs found and fixed today (judge invocation silently failing under root; a gate-threshold rounding bug that misfiled exact-2/3 rates as "scenario bug"). Results: `reducer-nohistory` (launch 8) is the project's first-ever FULL CLEAN PASS — 6A structure PASS (net_delta +3) AND 6B quality gate PASS (0% instability, 33.3% judge loss rate, under the 33.34% bar). `security-changelog-discipline` (launch 9) is a real, non-bug 6B FAIL — the minified CLAUDE.md's changelog-shape discipline does not reliably hold in real trials even though 6A structure says the rule text survived. Launch 8's original "100% judge instability" diagnosis (task #11) is now DEFINITIVELY explained: it was the same invocation bug, not real disagreement — re-judging the identical stored diffs with the fix produced 0% instability. 2/9 scenarios now have genuine, trustworthy verdicts. See the dated entries below for full detail; next: update the leaderboard with real numbers, decide whether/how to address the changelog-shape regression (task #16), keep piloting task #12's remaining 7 scenarios)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1256,6 +1261,41 @@ independently read the raw output JSON (not just the printed summary),
 determine whether launch 8's original "100% judge instability" was the
 same invocation-failure bug or genuine disagreement, and update task
 #11's description with a definitive conclusion either way.
+
+**Launch 8 re-judge landed — DEFINITIVE answer, and it's the project's
+first-ever full clean pass (2026-08-13, ~14:05).** Read the raw
+`launch8-campaign-rejudged.json` directly (not just the script's printed
+summary): **all 3 judge pairs are now `stable: true`** —
+`raw_winner_per_round` agrees across both rounds on every single rep
+(`['minified','minified']`, `['tie','tie']`, `['baseline','baseline']`),
+zero `parse_failure`, zero quarantined pairs. `unstable_rate: 0.0`. This
+is a complete reversal of the original launch-8 report ("100% unstable,
+0/3 stable pairs") using the exact same stored diffs — the only thing
+that changed is the judge invocation bug fix, which proves **launch 8's
+original judge-instability diagnosis was, in fact, entirely the same
+invocation-failure bug found and fixed this session, not genuine
+round-to-round disagreement.** Task #11's original hypotheses (n=3
+arithmetic, missing temperature control, ~50% order-swap noise) were
+sound reasoning but were never actually operative here — with real
+judge output, this scenario shows *zero* instability at n=3, not the
+"structurally expected" partial instability that diagnosis predicted.
+Updated task #11's status to reflect this definitive conclusion (see
+TaskList).
+
+**Full 6B verdict for `reducer-nohistory`: GATE 6B PASSED** —
+`judge_info: {total_pairs: 3, stable_pairs: 3, minified_losses: 1,
+overall_loss_rate: 0.3333}`, under `judge_loss_max: 0.3334`;
+`scenario_invalid: []`; `failures: []`; `efficiency_warnings: []`. One
+judge round split baseline/minified per rep: minified won rep0, tied
+rep1, lost rep2 to baseline — a genuine mixed result, not a clean sweep
+either way, which is exactly the kind of real, non-lopsided outcome a
+trustworthy judge should produce. Combined with the already-fixed 6A
+structure PASS (net_delta +3) for this same scenario/variant: **this is
+the project's first-ever fully clean result — both 6A and 6B pass, on
+real data, with a fully-verified harness.** `reducer-nohistory` is now
+piloted end-to-end successfully; `security-changelog-discipline` is
+piloted with a real, non-bug 6B FAIL (see above). 2/9 scenarios now have
+genuine, trustworthy verdicts.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
