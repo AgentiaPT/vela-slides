@@ -44,8 +44,10 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 HARNESS_DIR = Path(__file__).resolve().parent
@@ -96,6 +98,59 @@ def compose_prompt(scenario):
 
 # ── §8.1 step 3 — agent-under-test invocation ──────────────────────────────
 
+# Env vars this container preseeds to make a bare `claude -p` call attach to
+# THIS orchestrator's own running session (confirmed by direct observation,
+# 2026-08-13: an unrelated test call inherited these and silently billed
+# ~$0.29 / ~48.9k tokens against the orchestrator's own 5-hour window instead
+# of running standalone). The agent-under-test must run in a genuinely fresh,
+# isolated session — never the orchestrator's — so both mitigations below are
+# applied together rather than trusting CLI-flag precedence alone: an
+# explicit fresh --session-id, AND stripping the inherited attachment vars.
+_SESSION_ATTACHMENT_ENV_VARS = (
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_REMOTE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "CLAUDE_PID",
+)
+
+
+def isolated_agent_env():
+    """A copy of the current environment with this container's session-
+    attachment vars removed, so a spawned `claude` subprocess cannot inherit
+    or resume the orchestrator's own session. Exposed as its own function so
+    --selftest can assert on it without spawning a real process."""
+    env = os.environ.copy()
+    for var in _SESSION_ATTACHMENT_ENV_VARS:
+        env.pop(var, None)
+    return env
+
+
+def _build_invoke_command(prompt, model, max_turns, timeout_s, allowed_tools, permission_mode,
+                           session_id=None):
+    """Pure command-construction, split out from default_invoke so --selftest
+    can assert on it (session-id present, no-session-persistence present)
+    without spawning a real `claude` process. `session_id` is injectable for
+    tests; default_invoke always generates a fresh one at call time."""
+    session_id = session_id or str(uuid.uuid4())
+    cmd = [
+        "timeout", f"{timeout_s}s",
+        "claude", "-p", prompt,
+        "--session-id", session_id,
+        "--no-session-persistence",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--model", model,
+        "--max-turns", str(max_turns),
+        "--permission-mode", permission_mode,
+        "--allowedTools", *allowed_tools,
+    ]
+    return cmd, session_id
+
+
 def default_invoke(prompt, wt, run_dir, model, max_turns, timeout_s, allowed_tools, permission_mode):
     """Real agent-under-test call. Returns
     (transcript_path, runner_err_path, timed_out, returncode).
@@ -104,22 +159,18 @@ def default_invoke(prompt, wt, run_dir, model, max_turns, timeout_s, allowed_too
     `timeout`-killed process still leaves a usable (truncated) transcript.jsonl
     on disk — transcript.parse_jsonl treats a truncated final line as
     non-fatal (see its JSONDecodeError branch), matching §8.1's "the run
-    still produces a diff (whatever the agent had written)"."""
+    still produces a diff (whatever the agent had written)".
+
+    Runs with a fresh --session-id and a stripped environment (see
+    isolated_agent_env) so this call can never attach to the orchestrator's
+    own session — see _SESSION_ATTACHMENT_ENV_VARS above."""
     transcript_path = Path(run_dir) / "transcript.jsonl"
     err_path = Path(run_dir) / "runner.err"
-    cmd = [
-        "timeout", f"{timeout_s}s",
-        "claude", "-p", prompt,
-        "--output-format", "stream-json",
-        "--verbose",
-        "--model", model,
-        "--max-turns", str(max_turns),
-        "--permission-mode", permission_mode,
-        "--allowedTools", *allowed_tools,
-    ]
+    cmd, _ = _build_invoke_command(prompt, model, max_turns, timeout_s, allowed_tools, permission_mode)
     with open(transcript_path, "w", encoding="utf-8") as out_f, \
          open(err_path, "w", encoding="utf-8") as err_f:
-        cp = subprocess.run(cmd, cwd=str(wt), stdout=out_f, stderr=err_f)
+        cp = subprocess.run(cmd, cwd=str(wt), stdout=out_f, stderr=err_f,
+                             env=isolated_agent_env())
     timed_out = cp.returncode == 124  # `timeout`'s own exit code for "killed"
     return str(transcript_path), str(err_path), timed_out, cp.returncode
 
@@ -372,6 +423,40 @@ def _selftest():
     preamble_text = (HARNESS_DIR / "prompts" / "harness-preamble.md").read_text(encoding="utf-8")
     check("compose_prompt prepends the byte-identical preamble", composed.startswith(preamble_text))
     check("compose_prompt appends the scenario prompt", composed.endswith("Do the thing.\n"))
+
+    # Session-isolation regression checks (2026-08-13 fix — see
+    # _SESSION_ATTACHMENT_ENV_VARS above for the incident this guards
+    # against). Zero model spend: pure functions only, no subprocess.
+    sentinel_env = dict(os.environ)
+    for var in _SESSION_ATTACHMENT_ENV_VARS:
+        sentinel_env[var] = "sentinel-value-should-be-stripped"
+    old_environ = os.environ
+    try:
+        os.environ = sentinel_env  # noqa: B003 — temporary swap for this check only
+        cleaned = isolated_agent_env()
+    finally:
+        os.environ = old_environ
+    check("isolated_agent_env strips every session-attachment var",
+          all(var not in cleaned for var in _SESSION_ATTACHMENT_ENV_VARS),
+          json.dumps({v: cleaned.get(v) for v in _SESSION_ATTACHMENT_ENV_VARS}))
+
+    fixed_id = "11111111-1111-1111-1111-111111111111"
+    built_cmd, returned_id = _build_invoke_command(
+        "prompt text", "sonnet", 30, 900, ["Bash"], "acceptEdits", session_id=fixed_id,
+    )
+    check("_build_invoke_command includes --session-id", "--session-id" in built_cmd)
+    check("_build_invoke_command's --session-id value is the injected id",
+          built_cmd[built_cmd.index("--session-id") + 1] == fixed_id, " ".join(built_cmd))
+    check("_build_invoke_command includes --no-session-persistence",
+          "--no-session-persistence" in built_cmd)
+    check("_build_invoke_command returns the same session id it embedded",
+          returned_id == fixed_id)
+
+    auto_cmd, auto_id = _build_invoke_command("p", "sonnet", 30, 900, ["Bash"], "acceptEdits")
+    check("_build_invoke_command auto-generates a fresh session id when none is passed",
+          auto_id != fixed_id and len(auto_id) == 36)
+    check("...and embeds that same auto-generated id in the command",
+          built_cmd is not auto_cmd and auto_cmd[auto_cmd.index("--session-id") + 1] == auto_id)
 
     # A minimal, self-contained scenario for the real-worktree pipeline
     # checks below. Deliberately avoids `command_succeeds` /
