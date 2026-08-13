@@ -56,7 +56,9 @@ catch (e) { console.error("Could not require vendored babel.min.js:", e.message)
 
 const pdfSource = fs.readFileSync(PDF_SRC_PATH, "utf8");
 const m = pdfSource.match(/STANDALONE_HTML_PURE_START([\s\S]*?)STANDALONE_HTML_PURE_END/);
-if (!m) { console.error("Could not locate STANDALONE_HTML_PURE_START/_END markers in part-export-md.jsx"); process.exit(2); }
+// Exit 3, NOT the environment-missing code 2: the driver maps 2 to SKIP, so a
+// renamed/reshaped marker would silently delete this entire suite with CI green.
+if (!m) { console.error("Could not locate STANDALONE_HTML_PURE_START/_END markers in part-export-md.jsx"); process.exit(3); }
 
 const sandbox = { window: { Babel }, console, module: { exports: {} } };
 vm.createContext(sandbox);
@@ -66,8 +68,10 @@ ${m[1]}
 module.exports = { VELA_STANDALONE_LIBS, escapeForScriptContext, stripEsmImportsForStandalone, spliceStartupPatch, MADE_WITH_VELA_FOOTER_HTML, escapeHtmlText, buildStandaloneHtml };
 `, sandbox);
 } catch (e) {
+  // Exit 3: the block was found but does not run — that is a failure of the code
+  // under test, not a missing dependency.
   console.error("Failed to evaluate the extracted pure block:", e.message);
-  process.exit(2);
+  process.exit(3);
 }
 const { VELA_STANDALONE_LIBS, spliceStartupPatch, buildStandaloneHtml } = sandbox.module.exports;
 check("extracted VELA_STANDALONE_LIBS has 3 entries", Array.isArray(VELA_STANDALONE_LIBS) && VELA_STANDALONE_LIBS.length === 3);

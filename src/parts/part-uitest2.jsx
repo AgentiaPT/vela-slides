@@ -132,6 +132,148 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
     return /#grad/.test(out) && /url\(#c\)/.test(out);
   }},
+  // v13.46 — CSS custom-property indirection. A lexical value filter inspects the
+  // DECLARED text; a custom property is an untyped token bag substituted at
+  // computed-value time, i.e. after those checks have run, so an indirected value
+  // can re-assemble a fetching primitive the filter never saw. Custom properties
+  // also inherit, so the store and the load can sit on different elements.
+  { name: "SVG custom-property indirection into an image source removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style=\'--p:"https:attacker.invalid/b";background-image:image-set(var(--p) 1x)\'/>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out) && !/--p/.test(out);
+  }},
+  { name: "SVG custom property inherited across elements (store on <g>, load on child) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<g style=\'--p:"https:attacker.invalid/b"\'><rect style="mask-image:image-set(var(--p) 1x)"/></g>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out);
+  }},
+  { name: "SVG attr()/env() indirection removed (whole substitution family)", fn: async () => {
+    // attr() reads a DOM attribute the sanitizer preserves verbatim, so the URL
+    // never appears in the CSS text; env() binds at the same late stage as var().
+    const a = sanitizeSvgMarkup('<rect data-u="https://attacker.invalid/b" style="fill:attr(data-u url)"/>');
+    const b = sanitizeSvgMarkup('<rect data-u="url(https://attacker.invalid/b)" fill="attr(data-u)"/>');
+    const c = sanitizeSvgMarkup('<rect style="background-image:image-set(env(x) 1x)"/>');
+    return !/attr\s*\(|env\s*\(/i.test(a + b + c) && !/\sstyle=/i.test(a) && !/\sfill=/i.test(b);
+  }},
+  { name: "SVG transform allowlisted in inline style (parity with the transform attribute)", fn: async () => {
+    // The transform ATTRIBUTE was never gated, so rejecting only the CSS spelling
+    // removed real exported-diagram layout without removing any capability.
+    const out = sanitizeSvgMarkup('<g style="transform:translate(10px,10px)"><rect width="10" height="10" fill="red"/></g>');
+    return /transform:translate\(10px,10px\)/.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SECURITY: neither transform spelling escapes the clipped render sink", fn: async () => {
+    // The UI-integrity invariant that makes the line above safe: transform cannot
+    // leave an overflow:hidden ancestor (position, which can, stays rejected).
+    const host = document.createElement("div");
+    host.style.cssText = "width:120px;height:80px;overflow:hidden;position:relative";
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<g style="transform:translate(-900px,-900px) scale(60)" transform="translate(-900,-900) scale(60)">' +
+        '<rect width="20" height="20" fill="red"/></g>');
+      const hb = host.getBoundingClientRect();
+      // Hit-test, not bounding rects: SVG clips paint, so a rect over-reports.
+      const probes = [[hb.right + 40, hb.bottom + 40], [Math.floor(innerWidth / 2), Math.floor(innerHeight / 2)]];
+      const escaped = probes.some(([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        return !!(el && host.contains(el));
+      });
+      const noPositioning = !/position\s*:/i.test(host.innerHTML);
+      const rendered = /fill="red"/.test(host.innerHTML);
+      return !escaped && noPositioning && rendered;
+    } finally { host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot un-clip its own viewport to cover sibling content", fn: async () => {
+    // overflow on an <svg> overrides the UA viewport clip, so a negative-geometry
+    // child paints and hit-tests outside the deck's box. Prove it against a real
+    // sibling: the escaped rect must not become the element at the sibling's point.
+    const sib = document.createElement("div");
+    sib.style.cssText = "width:200px;height:60px;background:#ddd";
+    const host = document.createElement("div");
+    host.style.cssText = "width:60px;height:60px";
+    document.body.appendChild(sib); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" overflow="visible" style="overflow:visible">' +
+        '<rect x="-300" y="-300" width="900" height="900" fill="red"/></svg>');
+      const r = sib.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const covered = !!(hit && host.contains(hit));
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !covered && !/overflow/i.test(host.innerHTML) && rendered;
+    } finally { sib.remove(); host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
+    // transform on the BOUNDARY <svg> relocates the box and its hit-testing while
+    // painting nothing — deck content silently takes clicks meant for a neighbour.
+    // Victim is static and precedes the host so it cannot out-rank the attacker in
+    // paint order (a positioned victim would mask a real escape).
+    const victim = document.createElement("div");
+    victim.style.cssText = "width:300px;height:60px;background:#dde";
+    const host = document.createElement("div");
+    host.style.cssText = "width:240px;height:90px";
+    document.body.appendChild(victim); document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="90" transform="scale(20)" style="transform:scale(20)">' +
+        '<rect width="240" height="90" fill="none" pointer-events="all"/></svg>');
+      const r = victim.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.floor(r.left + r.width / 2), Math.floor(r.top + r.height / 2));
+      const intercepts = !!(hit && host.contains(hit));
+      const clean = !/transform|pointer-events/i.test(host.innerHTML);
+      const rendered = /<rect/i.test(host.innerHTML);
+      return !intercepts && clean && rendered;
+    } finally { victim.remove(); host.remove(); }
+  }},
+  { name: "SVG inner transform/filter preserved (diagram layout still works)", fn: async () => {
+    const out = sanitizeSvgMarkup('<g transform="translate(5,5)" filter="url(#f)" style="transform-origin:0 0"><rect width="9" height="9" style="filter:blur(2px)"/></g>');
+    return /transform="translate\(5,5\)"/.test(out) && /filter="url\(#f\)"/.test(out) &&
+           /transform-origin:0 0/.test(out) && /filter:blur\(2px\)/.test(out);
+  }},
+  { name: "SVG marker overflow=visible preserved (arrowhead idiom)", fn: async () => {
+    const out = sanitizeSvgMarkup('<defs><marker id="a" overflow="visible" markerWidth="4" markerHeight="4"><path d="M0,-5L10,0L0,5"/></marker></defs><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#a)"/>');
+    return /overflow="visible"/.test(out) && /url\(#a\)/.test(out);
+  }},
+  { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG inline-style property allowlist drops image-loading/overlay properties", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="red" style="background-image:url(#a);cursor:url(#c),auto;transform:scale(500)"/>');
+    return !/style=/i.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SVG legitimate paint/text inline style preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8;text-transform:uppercase;cursor:pointer">A</text>');
+    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out) &&
+           /text-transform:uppercase/.test(out) && /cursor:pointer/.test(out);
+  }},
+  { name: "SVG double-hyphen fragment ids preserved (custom-property reject is declaration-anchored)", fn: async () => {
+    // `--` inside url(#id) is ordinary id naming, not a custom property: a store
+    // can only be introduced at the start of a declaration.
+    const out = sanitizeSvgMarkup('<rect fill="url(#grad--blue)" clip-path="url(#clip--1)" style="stroke:url(#s--2)"/>');
+    return /url\(#grad--blue\)/.test(out) && /url\(#clip--1\)/.test(out) && /url\(#s--2\)/.test(out);
+  }},
+  { name: "SECURITY: browser-truth — indirected deck SVG CSS makes no outbound request", fn: async () => {
+    // Real-sink proof: render the sanitizer's OUTPUT the way the app does and watch
+    // the browser's own resource timeline. A source-level "the regex rejects it" is
+    // not evidence that nothing fetched; a PerformanceObserver entry is.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const seen = [];
+    const obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) seen.push(e.name); });
+    try {
+      obs.observe({ entryTypes: ["resource"] });
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" style=\'--p:"https:attacker.invalid/b1";background-image:image-set(var(--p) 1x)\'>' +
+        '<rect style=\'--q:"https:attacker.invalid/b2";mask-image:image-set(var(--q) 1x)\'/></svg>');
+      // Poll rather than sleep a fixed window: a failed request to an unresolvable
+      // host lands as a resource entry at an unpredictable delay, and a window too
+      // short lets the observer see nothing — which would silently reduce this to
+      // the string check below and stop it detecting a regression. Bail out early
+      // the moment an entry appears (the failing direction needs no waiting).
+      for (let i = 0; i < 30 && !seen.length; i++) await new Promise((r) => setTimeout(r, 100));
+      for (const e of obs.takeRecords()) seen.push(e.name);
+      return !seen.some((u) => /attacker\.invalid/i.test(u)) && !/attacker\.invalid/i.test(host.innerHTML);
+    } finally { obs.disconnect(); host.remove(); }
+  }},
   { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
     // The load-bearing regression test for the UI-integrity family: render a
     // hostile deck SVG the SAME way the app does (sanitize -> innerHTML) and prove

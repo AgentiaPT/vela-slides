@@ -101,9 +101,16 @@ ${extractConst(importsSrc, "CSS_COLOR_OK")}
 ${extractFn(importsSrc, "linkPreview")}
 ${extractFn(importsSrc, "sanitizeUrl")}
 ${extractFn(importsSrc, "cssColor")}
+${extractConst(importsSrc, "CSS_FETCH_SCHEME")}
+${extractConst(importsSrc, "CSS_PAINT_KEY")}
+${extractConst(importsSrc, "cssKeyStem")}
 ${extractConst(importsSrc, "SVG_ALLOWED_TAGS")}
 ${extractConst(importsSrc, "SVG_URL_REF_ATTRS")}
+${extractConst(importsSrc, "SVG_STYLE_PROPS")}
+${extractConst(importsSrc, "SVG_VALUE_FNS")}
 ${extractFn(importsSrc, "isSvgStyleSafe")}
+${extractConst(importsSrc, "SVG_ROOT_BLOCKED")}
+${extractFn(importsSrc, "isSvgInlineStyleSafe")}
 ${extractFn(importsSrc, "sanitizeSvgMarkup")}
 // STUBS — browser-bound, off the static render path:
 function openExternalLink() {}
@@ -124,8 +131,10 @@ try {
   // eslint-disable-next-line no-eval
   factory = (0, eval)(code);
 } catch (e) {
+  // Exit 3, not the missing-devDependency code 2: the source is present but does
+  // not compile, which must fail rather than be reported as a skipped suite.
   console.error("Failed to transpile/evaluate part-blocks.jsx:", e.stack || e.message);
-  process.exit(2);
+  process.exit(3);
 }
 let RenderBlock, realSanitizeSvg;
 try {
@@ -135,7 +144,7 @@ try {
   if (typeof RenderBlock !== "function") throw new Error("RenderBlock is not a function");
 } catch (e) {
   console.error("Block module did not initialize:", e.stack || e.message);
-  process.exit(2);
+  process.exit(3);
 }
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -282,8 +291,14 @@ renders("render <bullets> in presenting mode", BASE_BLOCKS.bullets, { presenting
 // High-level security assertion only (no payload/bypass detail). Confirms the svg
 // branch runs the production sanitizer rather than passing markup through raw.
 {
-  const cleaned = realSanitizeSvg("<svg xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8'/><script>1</script></svg>");
-  if (typeof cleaned === "string" && cleaned.indexOf("<script") === -1 && cleaned.indexOf("rect") !== -1) ok("svg sanitizer keeps benign shapes, drops <script>");
+  // The benign half of this probe deliberately carries a PAINT reference: it is
+  // also this suite's liveness check, and the sanitizer swallows every exception
+  // and returns "". A probe with no paint/style attribute never reaches the CSS
+  // filters, so a helper missing from the extraction preamble above would leave
+  // this suite passing against a sanitizer that is dead for all real content.
+  const cleaned = realSanitizeSvg("<svg xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='8' height='8' fill='url(#g)' style='stroke:#888'/><script>1</script></svg>");
+  if (typeof cleaned === "string" && cleaned.indexOf("<script") === -1 && cleaned.indexOf("rect") !== -1
+      && cleaned.indexOf("url(#g)") !== -1 && cleaned.indexOf("stroke:#888") !== -1) ok("svg sanitizer keeps benign shapes + paint refs, drops <script>");
   else bad("svg sanitizer did not behave as expected", JSON.stringify(cleaned).slice(0, 80));
 }
 

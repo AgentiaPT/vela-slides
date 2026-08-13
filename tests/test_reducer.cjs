@@ -492,6 +492,20 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const out = innerReducer(present([]), { type: "SET_BRANDING", branding: { footerColor: "#fff", accentColor: "url(http://x)" } });
   assert("SET_BRANDING merges safe branding fields", out.branding.footerColor === "#fff");
   assert("SET_BRANDING scrubs unsafe color scalar", !("accentColor" in out.branding) || out.branding.accentColor !== "url(http://x)");
+  // v13.46: branding is merged from an arbitrary object, so this dispatch is a
+  // full ingress point — the reserved key namespaces are dropped, and `logo` (an
+  // IMAGE SOURCE, matched by none of the CSS key patterns) is clamped to an inline
+  // data:image the same way the deck-ingress and storage-reload paths clamp it.
+  // Without the clamp an external URL here reaches an <img src> on render.
+  const PNG1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const keys = innerReducer(present([]), { type: "SET_BRANDING", branding: { "--p": "https:a.invalid/b", _priv: 1, footerLeft: "Acme" } });
+  assert("SET_BRANDING drops `--` custom-property keys", !("--p" in keys.branding));
+  assert("SET_BRANDING drops `_` private keys", !("_priv" in keys.branding));
+  assert("SET_BRANDING keeps real branding fields", keys.branding.footerLeft === "Acme");
+  const badLogo = innerReducer(present([]), { type: "SET_BRANDING", branding: { logo: "https://a.invalid/beacon.png" } });
+  assert("SET_BRANDING drops an external logo URL (no <img src> beacon)", !("logo" in badLogo.branding));
+  const okLogo = innerReducer(present([]), { type: "SET_BRANDING", branding: { logo: PNG1 } });
+  assert("SET_BRANDING keeps a legitimate inline data:image logo", okLogo.branding.logo === PNG1);
 }
 {
   assert("SET_GUIDELINES sets guidelines", innerReducer(present([]), { type: "SET_GUIDELINES", guidelines: "be terse" }).guidelines === "be terse");

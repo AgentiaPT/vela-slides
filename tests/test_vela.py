@@ -364,12 +364,18 @@ def test_security():
     else:
         fail("isSvgStyleSafe string-source function reject",
              "must reject any non-url() CSS function fed a quoted string (image-set bypass)")
-    # (2) presentation/style attributes routed through the same filter.
-    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)' in all_jsx:
-        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS + isSvgStyleSafe")
+    # (2) presentation/style attributes routed through the same filter, with the
+    #     style="" DECLARATION LIST taking the stricter property-allowlist gate
+    #     (isSvgInlineStyleSafe) on top of it. Behavior is executed by
+    #     test_svg_mxss.cjs / test_css_exfil.cjs; this only pins the wiring.
+    if 'SVG_URL_REF_ATTRS' in all_jsx and 'urlRefAttr && !cssOk(a.value)' in all_jsx \
+       and 'SVG_URL_REF_ATTRS.has(name) || CSS_PAINT_KEY.test(cssKeyStem(name))' in all_jsx \
+       and 'name === "style" ? (v) => isSvgInlineStyleSafe(v, tag) : isSvgStyleSafe' in all_jsx \
+       and 'SVG_ROOT_BLOCKED' in all_jsx:
+        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS (style= takes the property allowlist)")
     else:
         fail("SVG presentation-attr URL filter",
-             "fill/filter/mask/marker/clip-path/cursor/style values must pass isSvgStyleSafe")
+             "fill/filter/mask/marker/clip-path/cursor values must pass isSvgStyleSafe; style= must pass isSvgInlineStyleSafe")
     # (3) non-anchor href/xlink:href is #fragment-only; <a> keeps the scheme allowlist.
     if 'name === "href" && tag === "a"' in all_jsx:
         ok("SVG href policy split: <a> click-nav allowlist vs #fragment-only auto-load refs")
@@ -645,7 +651,15 @@ def test_css_color_exfil():
 
     # (2) STYLE_VALUE_REJECT is function-name-agnostic (catches image()/cross-fade()/
     #     src(), not just image-set()) — the v12.59 bypass class, on this surface too.
-    rej = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^\n]+?)/[a-z]*;', imports)
+    # STYLE_VALUE_REJECT is composed (a regex literal + CSS_FETCH_SCHEME.source),
+    # so match the whole definition line rather than a bare /…/ literal.
+    _rejm = re.search(r'const STYLE_VALUE_REJECT = (.+);', imports)
+    rej = _rejm
+    if rej and "CSS_FETCH_SCHEME" in rej.group(1) and re.search(r'const CSS_FETCH_SCHEME = /', imports):
+        ok("STYLE_VALUE_REJECT reuses CSS_FETCH_SCHEME (one scheme pattern, both CSS surfaces)")
+    else:
+        fail("STYLE_VALUE_REJECT scheme reuse",
+             "must append CSS_FETCH_SCHEME.source so a slashless authority is rejected here too")
     if rej and "[a-z]" in rej.group(1) and "['\"]" in rej.group(1):
         ok("STYLE_VALUE_REJECT rejects any string-source CSS function (name-agnostic)")
     else:
@@ -703,10 +717,13 @@ def test_css_color_exfil():
     #      src; the new-slide / startup-patch paths were otherwise uncovered.
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
-    if "scrubColorFields(b)" in setb:
-        ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
+    # scrubSubObject supersedes scrubColorFields here (v13.46): branding is a raw
+    # spread that keeps arbitrary KEYS, so it needs the `_`/`--` namespace drops and
+    # the paint/layout scrubbers too, not just colour-value scrubbing.
+    if "scrubSubObject(b)" in setb:
+        ok("SET_BRANDING scrubs the merged branding via the canonical sub-object scrubber")
     else:
-        fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+        fail("SET_BRANDING scrub", "branding dispatch must run scrubSubObject on the merged object")
     # Each slide-mutating action must funnel its incoming slide(s) through sanitizeSlide
     # (covers style objects + bgImage data: clamp + image src + svg markup + color scrub).
     for action, end in [('case "SET_SLIDES"', 'case "ADD_SLIDE"'),
@@ -863,7 +880,7 @@ def test_audit_2025_05_fixes():
     # could expose content: which accepts url()). Assert the real mechanism
     # — the STYLE_VALUE_REJECT regex and its use in the style sanitizer —
     # rather than proximity to prose, so changelog wording can't affect it.
-    reject_def = re.search(r'STYLE_VALUE_REJECT\s*=\s*/([^/]+)/', imports)
+    reject_def = re.search(r'const STYLE_VALUE_REJECT = (.+);', imports)
     if reject_def and 'url' in reject_def.group(1) and 'STYLE_VALUE_REJECT.test(' in imports:
         ok("H2 sanitizeStyle rejects values containing url( (via STYLE_VALUE_REJECT)")
     else:
