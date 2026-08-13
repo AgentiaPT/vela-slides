@@ -107,6 +107,10 @@ def parse_jsonl(path, pricing=None, hooks_mode="parity"):
             via_subagent = bool(entry.get("parentToolUseId") or entry.get("isSidechain"))
 
             msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                # some system events (e.g. permission_denied) carry a plain-string
+                # "message" field instead of a nested {role, content, ...} object.
+                msg = {}
             role = msg.get("role", entry.get("type", ""))
             model = msg.get("model", "")
             usage = msg.get("usage", {})
@@ -422,6 +426,33 @@ def _selftest():
         _write_jsonl(p7, committed)
         _, metrics7, _ = parse_jsonl(p7)
         check("agent_committed flag set on git commit", metrics7["agent_committed"] is True)
+
+        # 8. permission_denied system event: "message" is a plain string here,
+        # not a nested {role, content} object like assistant/user entries.
+        perm_denied = [
+            _msg("pd1", "assistant", [
+                {"type": "tool_use", "id": "t1", "name": "Edit",
+                 "input": {"file_path": "src/parts/part-reducer.jsx"}},
+            ], usage={"input_tokens": 40, "output_tokens": 8}),
+            {
+                "type": "system", "subtype": "permission_denied", "tool_name": "Edit",
+                "tool_use_id": "t1", "decision_reason_type": "safetyCheck",
+                "decision_reason": "Claude requested permissions to edit a sensitive file.",
+                "message": "Claude requested permissions to edit a sensitive file.",
+                "uuid": "pd2",
+            },
+            _msg("pd3", "assistant", [{"type": "text", "text": "Falling back to Bash."}],
+                 usage={"input_tokens": 5, "output_tokens": 3}),
+        ]
+        p8 = tmp / "permdenied.jsonl"
+        _write_jsonl(p8, perm_denied)
+        events8, metrics8, final8 = parse_jsonl(p8)
+        check("permission_denied string-message event does not crash the parser",
+              len(events8) >= 1)
+        check("tokens around a permission_denied event still sum correctly",
+              metrics8["input_tokens"] == 45 and metrics8["output_tokens"] == 11, str(metrics8))
+        check("final answer still captured past a permission_denied event",
+              final8 == "Falling back to Bash.", final8)
 
         # out-dir writing
         out_dir = tmp / "rundir"
