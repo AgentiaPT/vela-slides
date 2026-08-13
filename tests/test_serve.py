@@ -1735,6 +1735,28 @@ class TestDeckFileAccessContainment(FolderServerTestBase):
         status, _, _ = fetch(self._port, "GET", "/deck/balias.vela")
         self.assertNotEqual(status, 200)
 
+    def test_served_root_is_resolved_once_at_startup(self):
+        """O_NOFOLLOW guards the leaf, not a parent component.
+
+        If the served root stayed a symlink it would be re-resolved on every
+        request, and re-pointing it between the containment check and the open
+        redirects reads and writes elsewhere — demonstrated before this was
+        pinned. Asserting the resolved root is the deterministic form of that
+        race test.
+        """
+        real_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, real_dir, ignore_errors=True)
+        link_dir = os.path.join(tempfile.mkdtemp(), "served-link")
+        self.addCleanup(shutil.rmtree, os.path.dirname(link_dir), ignore_errors=True)
+        try:
+            os.symlink(real_dir, link_dir)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+
+        srv = VelaLocalServer(link_dir, port=0, no_open=True, channel_port=0)
+        self.assertEqual(srv.folder_path, os.path.realpath(real_dir),
+                         "served root must be resolved, not left as a symlink")
+
     def test_write_still_creates_a_new_deck(self):
         """The hardening must not break save-as-new (O_CREAT path)."""
         status, _, _ = fetch(self._port, "POST", "/save/brand-new.vela",

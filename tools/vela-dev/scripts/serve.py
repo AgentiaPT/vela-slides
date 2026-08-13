@@ -900,8 +900,15 @@ class VelaLocalServer:
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
-        # Always folder mode — if a file is passed, use its parent directory
-        abs_path = os.path.abspath(path)
+        # Always folder mode — if a file is passed, use its parent directory.
+        # SECURITY: resolve the served root ONCE, here, with realpath rather than
+        # abspath. O_NOFOLLOW in _open_deck_fd() refuses a symlinked LEAF, but it
+        # cannot protect a parent component: if the root itself stayed a symlink it
+        # would be re-resolved on every request, and a local process could re-point
+        # it between the containment check and the open to redirect reads and
+        # writes into another directory. Pinning the resolved root closes that
+        # window for every path derived from it.
+        abs_path = os.path.realpath(path)
         if os.path.isfile(abs_path):
             self.folder_path = os.path.dirname(abs_path)
         else:
