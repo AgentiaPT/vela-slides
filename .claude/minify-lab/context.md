@@ -221,6 +221,71 @@ Orchestrate only — sub-agents do the actual work.
 8. **[ ]** Continuous bias/leak audit per watchlist; fix and re-run as
    issues surface.
 
+## Backlog / possible improvements (NOT authorized, NOT scheduled — ideas only)
+
+Distinct from the Phase plan above, which is locked. Items here are
+future-work candidates raised in conversation; do not act on them without
+either an explicit user go-ahead or a deliberate orchestrator decision
+logged the same way Phase 1b/Autonomous-decisions were.
+
+**Research-agent content-proxy / gisting layer (raised by user 2026-08-13,
+prompted by seeing phases 1/1b/2 — all opus, all research-heavy — account
+for over half of the ~$112 spent so far).**
+
+*The idea:* research agents currently receive raw WebFetch/WebSearch
+output directly into their (expensive, opus) context. Route large
+external content through a cheap intermediate step first — either (a) a
+**deterministic script** (fast, free, no model call — boilerplate/nav
+stripping, main-content extraction, truncation) or (b) a **cheap sub-agent
+"gist" pass** (e.g. sonnet/haiku reads the raw page against the specific
+research question and returns a condensed extraction) — before it reaches
+the expensive research agent's context. This is the same
+compress-without-losing-needed-semantics problem `/minify` already solves
+for instruction files, aimed instead at ephemeral research material.
+
+*Why it's plausible:* directly explains this session's own cost profile
+(opus research phases dominate spend) and is a known, general pattern —
+cheap-filter-in-front-of-expensive-model cascades, and structurally the
+same role LLMLingua plays in a prompt pipeline (cited in Phase 1's
+research) — just moved from "compress the instruction prompt" to
+"compress the fetched material before it becomes part of the prompt."
+
+*Why it needs real caution before building, not just building it:*
+- **(a) deterministic-script variant** risks silently dropping the one
+  fact/number the agent actually needed — generic boilerplate-stripping
+  doesn't know what's query-relevant. Same semantic-loss risk class this
+  whole project exists to guard against, just on a different content type.
+- **(b) gisting sub-agent variant** adds a second lossy hop between
+  primary source and the claim that ends up in a doc. Phase 3 already
+  found real citation misattribution (Findings A/B/C) happening *without*
+  this extra hop, at full-content granularity — a paraphrasing gist step
+  is a plausible new source of exactly that failure mode, possibly a
+  worse one. Any prototype would need the same calibration discipline
+  Phase 3 used (a fabricated-citation control test) applied to the gist
+  step itself, and should almost certainly forbid paraphrasing numbers/
+  quotes/citation IDs — treat those as C1-style byte-frozen spans that
+  pass through verbatim with a source pointer, gist only the surrounding
+  prose.
+- **Net cost is not guaranteed positive.** A gisting call is itself a
+  model call; for small pages the extra hop can cost more than it saves.
+  Would need a size threshold (only gist above N tokens) and an actual
+  before/after cost measurement — the same reduction.py-style measurement
+  discipline already built for the minify skill — not an assumed win.
+- **Scope creep risk for this project specifically.** `/minify`'s locked
+  scope is instruction files (CLAUDE.md/SKILL.md/references), not a
+  general research-ingestion tool. This would be a related but separate
+  utility — worth keeping decoupled rather than folding into `/minify`
+  itself, even though it could reuse pieces of `minify_lib.py` (frozen-
+  span detection generalizes; the constraint-inventory extractor does not
+  — research gisting needs a "claim inventory" analog, not a rule
+  inventory, since the content being preserved is factual claims/citations
+  rather than imperative rules).
+
+*Status:* idea only, not designed, not built, not costed. If picked up
+later, it should get its own research-and-design pass (mirroring Phase
+1/2's structure: measure the actual failure/cost tradeoff before
+committing to an approach) rather than being built ad hoc.
+
 ## Artifacts index
 
 - `.claude/minify-lab/research-encoding-formats.md` — **DONE**
