@@ -900,6 +900,35 @@ true` instead of `nohup ... & disown` — a genuine mechanism change, not
 just another check-in-cadence tweak, since two different cadences (25
 min, 10 min) both failed to prevent reclaim under the nohup approach.
 
+**Delegation round (2026-08-13, ~10:50, after the goal pivot and
+leaderboard publish)**: per "manage and delegate," launched two
+background subagents rather than investigating directly —
+1. `ae68e07778fea37f8` — fix the 6A structure FAIL on
+   `.claude/minify-lab/harness/variants/telegraphic/CLAUDE.md` (the 7
+   weakened constraints listed above) without regressing size, and
+   explain the 57 (skill's own `minify.py verify`) vs 67 (harness
+   `reduction.py`/`constraint_inventory.py`) constraint-count
+   discrepancy. Told explicitly: don't commit, don't touch
+   context.md, don't touch anything outside that one variant file —
+   orchestrator reviews the diff and commits.
+2. `a33496ea0bc7f30f0` — diagnose the 100%/0-of-3 judge instability
+   from launch 8 by reading `judge.py`'s `compare_stability()`,
+   `gate.py`'s `evaluate_instability()`, and the `reducer-nohistory`
+   scenario config — code-only, explicitly forbidden from spending
+   real money on a new paid campaign run. Asked to rank hypotheses
+   (rubric too subjective / sample too small to expect stability by
+   chance / a concrete bug like unpinned judge temperature) and
+   propose but not apply a fix.
+Both are tracked as tasks #10/#11 in TaskList. Task list also gained
+#12 (expand piloting to the remaining 8/9 scenarios) and #13 (run a
+real competitive benchmark vs. an alternative approach) for later,
+sequenced after #10/#11 land — not yet started, not yet delegated.
+**When their notifications land: independently verify (re-run the
+commands they report, read the actual diff) before trusting either
+report, per the standing "verify before trusting a self-report" rule
+— then commit good fixes myself, update this file and the leaderboard
+artifact with the real outcome, and only then decide next steps.**
+
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
 are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous
