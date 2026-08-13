@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~14:30, launch 12 (`minimal-diff-temptation`) fully investigated and resolved as a THIRD clean pass). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), and `minimal-diff-temptation` (launch 12, after a rejudge investigation) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 4/9 scenarios piloted with genuine, trustworthy verdicts (3/4 piloted scenarios pass cleanly, 1/4 root-caused to non-minification noise). Leaderboard update pending (this session). **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. Separately, launch 12's investigation surfaced a real harness reliability finding — the judge model has a ~1/3 transient response-parse-failure rate that can flip a thin-sample (n=3) gate verdict; retrying resolved it every time but changing the harness's deliberate no-retry behavior needs its own scoped review (task #18), not a drive-by fix. Next: update the leaderboard with launch 12's result, then pilot the 2 confirmed-runnable remaining scenarios (`newpart-manifest`, `public-repo-hygiene`).)
+## Current status (last updated: 2026-08-13 ~20:15, launch 13 (`newpart-manifest`) fully investigated — FAIL retired as a harness artifact, not a real result). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8), `blockfield-safekeys` (launch10c), and `minimal-diff-temptation` (launch 12, after a rejudge investigation) are ALL full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs every time). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. `newpart-manifest` (launch 13) produced a FAIL that was root-caused to TWO compounding harness artifacts — the known judge-parse-failure pattern (task #18) plus a NEW finding: relaunching a killed campaign under the same campaign-id inherits stale `/tmp` security-gate markers asymmetrically across arms, manufacturing a fake `error_regression` (task #19) — the verdict is retired as invalid and does not count toward the piloted tally. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 3/9 scenarios have genuine, trustworthy verdicts (3/3 clean passes; the 1 non-minification FAIL is `security-changelog-discipline`, root-caused separately). Leaderboard update pending (this session). **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. New standing rule adopted: never relaunch a killed campaign under the same campaign-id — always use a fresh one. Next: update the leaderboard, relaunch `newpart-manifest` clean as `phase6-pilot-launch13-clean` (fresh campaign-id, avoids the marker-leakage bug), then pilot `public-repo-hygiene`.)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -2078,3 +2078,116 @@ already-resolved launch-12 investigation fired late (stale by the
 time it arrived — that investigation was already fully documented and
 committed before this restart); its trigger was deleted rather than
 acted on literally.
+
+## Launch 13 (`newpart-manifest`) — real FAIL, investigated, root-caused as a harness artifact (2026-08-13, ~19:35-20:10)
+
+`bp0uwhunf` completed: **VERDICT 6B FAIL** — `error_regression` (tool
+errors +200%), `judge_loss_overall`, `judge_loss_scenario`. Critical
+assertions tied 24/27 both arms. Blind A/B only 1/3 stable pairs
+(66.7% unstable, `inconclusive: true`). WARN token +14% (not a fail).
+One correctly-excluded `scenario_invalid` (`command_succeeds`: both
+arms fail identically — a scenario-authoring CLI-usage bug, not
+minification). Applied the same root-cause-before-documenting
+discipline as launches 9 and 12. Two independent failure channels,
+investigated separately:
+
+**Channel 1 — judge instability (2/3 unstable).** Read
+`judge_pairs` straight from `launch13-campaign.json`: rep0 stable
+(baseline win, both rounds agreed), rep1 and rep2 both hit the exact
+same judge-response parse-failure pattern already root-caused in
+launch 12 (`raw_winner_per_round: ["tie", None]`, second round
+never parsed) — leaving only n=1 genuine stable pair. A 100%
+judge-loss rate on a single data point is not trustworthy standalone;
+this is the same known, already-tracked reliability gap (task #18),
+not a new finding.
+
+**Channel 2 — error_regression (the real puzzle).** `gate.py`'s
+`evaluate_efficiency()` is judge-independent — a plain percentage
+delta on raw metrics (baseline mean `error_count` 0.333 vs minified
+1.0, i.e. 1 error total across 3 baseline reps vs 3 across 3 minified
+reps). Read all 6 reps' `metrics.json` directly: every error traced to
+a single `hook_firing` — the repo's own real `post-edit-lint.py`
+PreToolUse `--pre` gate (`SECURITY GATE (one-time per checkout...)`)
+blocking a `Write` under `src/parts/`. Rate: baseline 1/3 reps hit it
+(rep2 only), minified 3/3 reps hit it (every rep) — looked exactly
+like a minification-attributable quality regression (the compressed
+CLAUDE.md failing to convey "read the secure-coding skill first" as
+reliably).
+
+**It is not.** Read `post-edit-lint.py` itself: the `--pre` gate is
+**not** conditioned on whether the agent read the skill file — it is a
+pure one-shot marker-file gate (`tempfile.gettempdir()`, keyed by
+`sha1(checkout_root)`), unconditionally blocking the FIRST in-scope
+edit per checkout root, regardless of prior reads, then never firing
+again for that same root. Both `baseline/rep1` and `baseline/rep2`
+independently *read* the skill file before their first `Write`
+(confirmed via `events.json`) — yet rep1 sailed through and rep2 got
+blocked. Reading the file has zero effect on this gate; only the
+marker's existence does.
+
+Computed each rep's marker path directly
+(`sha1(realpath(worktree_root))[:16]`) and checked `/tmp` for
+matching marker files and their mtimes:
+
+| rep | marker created (UTC) | which attempt |
+|---|---|---|
+| baseline/rep0 | 2026-08-13T14:49:53 | **first** (`bzhp7tb2i`) |
+| baseline/rep1 | 2026-08-13T14:52:26 | **first** (`bzhp7tb2i`) |
+| baseline/rep2 | 2026-08-13T19:27:46 | **second** (`bp0uwhunf`) |
+| minified/rep0 | 2026-08-13T19:29:36 | **second** (`bp0uwhunf`) |
+| minified/rep1 | 2026-08-13T19:31:38 | **second** (`bp0uwhunf`) |
+| minified/rep2 | 2026-08-13T19:33:47 | **second** (`bp0uwhunf`) |
+
+Conclusive: the killed first attempt (started ~14:49 UTC) ran
+`baseline/rep0` and `rep1` to completion — including their first
+in-scope edit, which spent the one-time marker for those two
+worktree roots — before the container restart killed it sometime
+after 14:52 and before it reached `rep2`. Worktree paths are
+deterministic (`campaign_id`/scenario/arm/rep), so the relaunch at
+19:23 UTC reused the identical paths under the identical campaign-id
+`phase6-pilot-launch13`. `baseline/rep0` and `rep1` inherited
+already-spent markers from the dead first attempt and sailed through
+free; every other rep (`baseline/rep2`, all of `minified`) got a
+fresh marker and paid the one-time block exactly once, as designed.
+
+**Conclusion: this FAIL is not a minification-quality signal at
+all.** It is a harness operational-hygiene bug: relaunching a killed
+campaign under the *same* campaign-id silently inherits out-of-repo
+`/tmp` state (the security-gate markers) from the dead attempt,
+which — purely by which reps the dead attempt happened to reach
+before being killed — lands asymmetrically across arms and can
+manufacture an `error_regression` with a real, reproducible
+mechanism that has nothing to do with either CLAUDE.md variant's
+wording. Both failure channels this launch trace to harness
+artifacts (thin-judge-sample noise + relaunch marker leakage), not to
+the minified CLAUDE.md. Neither is evidence the compressed variant is
+worse.
+
+**Process fix adopted (no harness code change needed):** when a
+background campaign is killed mid-run (container restart or
+otherwise) and must be relaunched, **always relaunch under a new
+campaign-id**, never reuse the dead attempt's id. A fresh id gets
+fresh worktree paths, which get fresh markers for every rep — the
+only way to guarantee symmetric environment state across arms. Added
+as a standing rule below. A harder fix (namespacing markers by
+campaign-id+attempt inside the harness itself, so even a same-id
+relaunch is clean) is real but not blocking — filed as task #19,
+same non-blocking treatment as #18.
+
+`newpart-manifest` will be relaunched clean as a fresh campaign-id
+(`phase6-pilot-launch13-clean`) rather than reusing `launch13`, so
+this pilot is not yet resolved pass/fail — the current FAIL verdict
+is retired as invalid, not counted toward the 4/9 piloted tally.
+
+## Standing rule: never relaunch a killed campaign under the same campaign-id (added 2026-08-13, ~20:10, after launch 13's root cause)
+
+If a background campaign run is killed before completion (container
+restart, interrupt, crash) and needs to be relaunched: **use a new,
+distinct campaign-id**, even though the scenario/config is identical.
+Reusing the dead attempt's id reuses its deterministic worktree paths,
+which can silently inherit spent `/tmp` one-time security-gate markers
+from the reps the dead attempt reached before dying — corrupting the
+`error_count` metric asymmetrically across arms/reps in a way that
+looks like a real quality signal but is pure execution-order noise.
+This is a process rule, not a code change (task #19 tracks the
+optional harness-side hardening).
