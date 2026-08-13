@@ -72,6 +72,41 @@ work — verifying Phase 5's output, fixing the citation misattributions
 background agents unless something breaks. Resume Phase 6 after ~07:15
 UTC or when the user confirms the limit has recovered, whichever first.
 
+**Investigated (2026-08-13, ~04:55): can the orchestrator check the
+5-hour/weekly plan-usage % itself, instead of needing the user to paste a
+screenshot?** Short answer: **no free/safe way found from inside this
+session; do not re-attempt without a real new idea.**
+- Found via `strings` on the installed CLI binary that Claude Code has a
+  documented `statusLine` feature whose script receives a JSON payload on
+  stdin containing exactly this data (`rate_limits.five_hour.used_percentage`,
+  `rate_limits.seven_day.used_percentage`, etc.) — this is genuinely the
+  same data the user's screenshot UI renders.
+- But that JSON is only generated when the **interactive terminal UI**
+  redraws the status line. This session's entrypoint is `remote`
+  (headless) — there is no interactive TUI here to trigger it.
+- Tested whether `claude -p --output-format json` (a plain CLI call, no
+  TUI) surfaces `rate_limits` anywhere in its structured result: **it does
+  not** — the result JSON has cost/token/model usage but no rate_limits
+  key. Checked debug/diagnostic logs on disk for the same field from
+  calls already made: also absent — the raw rate-limit response headers
+  never touch disk outside the live TUI-rendering path.
+- **Cost of finding this out: real, not free.** The `claude -p` test
+  call was not sandboxed — `CLAUDE_CODE_SESSION_ID` is preset in this
+  container's environment, so the bare `claude -p` subprocess silently
+  attached to and billed against **this same session**: confirmed via
+  matching `session_id` in its own JSON result and a new turn pair
+  appearing in this session's transcript. It cost **~$0.29** (per its own
+  `total_cost_usd`) and ~48.9k real tokens (mostly cache-creation) against
+  the 5-hour window this exact section exists to protect. Flagged
+  transparently to the user rather than glossed over.
+- **Conclusion for future reference:** there is no in-session, no-cost way
+  to read the live 5-hour/weekly percentage. What remains available for
+  free: `check-context.py` (exact context-window %, from transcript
+  `usage` fields — unaffected by this issue) and post-hoc token/cost
+  accounting from transcripts (see Cost tracking section) — but not the
+  account-level rate-limit meter itself. That still requires the user to
+  share it (chat message or screenshot) when it matters.
+
 ## Standing rule: never go idle without updating this file (reinforced 2026-08-13)
 
 Every time the orchestrator is about to wait — for a background agent's
