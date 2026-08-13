@@ -18,6 +18,46 @@ to 300k tokens for this session; context.md, not agent memory, is the
 durable record. Given to any fresh session, this file must be enough to
 resume without re-asking the user anything already answered below.
 
+## Standing rule: keep the main session alive during long background runs (added 2026-08-13, after a container restart killed phase 5 mid-flight)
+
+A container restart killed the phase-5 background agent about 19 minutes
+into a wait with zero foreground activity from the orchestrator (no tool
+calls, nothing but waiting on one notification). Root cause is **not
+confirmed** — no infra logs are visible from inside the session — but the
+best-supported explanation given this environment's documented behavior
+("container reclaimed after a period of inactivity") is that a long,
+silent wait looks idle to the platform even though real work is
+happening inside a background agent.
+
+**Mitigation — best available tool, not proven sufficient, treat as
+defense-in-depth alongside the git-commit persistence policy above, never
+as a replacement for it:**
+- Whenever a background agent is expected to run longer than ~10-15
+  minutes, use `send_later` (`mcp__Claude_Code_Remote__send_later`) to
+  schedule a self check-in message back into this same session, roughly
+  12-15 minutes out. Its delivery is explicitly documented to survive
+  container restarts, unlike a silent wait.
+- When a check-in fires: check agent status (`ListAgents`, and read any
+  notifications that already arrived), update this file if anything
+  landed and commit/push per the rule below, and — if background agents
+  are still running — schedule the *next* check-in before going idle
+  again. This is a self-renewing chain, not a one-shot.
+- Stop the chain once nothing is left running in the background.
+- This does not replace committing WIP to git — if the mitigation fails
+  and the container is reclaimed anyway, committed disk state is still
+  the real safety net (as it was this time: everything phase 5 had
+  written survived on disk and was recovered).
+
+**User instruction (2026-08-13): "we want to avoid container restarts."**
+Noted, but this session has no visibility into or control over the
+platform's reclaim/restart policy — there is no infra API or setting
+reachable from inside the session to change it. The `send_later`
+check-in chain above plus the commit-before-waiting policy are the only
+levers available from in here; both are already active. If restarts are
+happening on a predictable cadence rather than pure idle-timeout, that
+would need to be diagnosed/changed outside this session (host/platform
+level) — flagging for the user rather than guessing further.
+
 ## Standing rule: never go idle without updating this file (reinforced 2026-08-13)
 
 Every time the orchestrator is about to wait — for a background agent's

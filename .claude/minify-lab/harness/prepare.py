@@ -100,6 +100,18 @@ class PrepareError(RuntimeError):
     this (scenario, arm) pair. Never silently degrades."""
 
 
+# Scenario ids whose leak_tokens[] collide with the REAL repo's baseline
+# CLAUDE.md (see this module's "KNOWN FINDING" docstring section above) —
+# their probe token is a pre-existing routing-table symbol, not a
+# scenario-invented one. `variant_leak_check` correctly aborts on them; a
+# real campaign must exclude these three until the scenarios are redesigned.
+# Used by this module's own selftest so it exercises exactly the scenarios
+# the docstring claims are runnable today; a real campaign driver should
+# apply the same filter to `scenarios_for_leak_check` (and skip these ids
+# entirely) until that redesign lands.
+KNOWN_LEAK_COLLISION_SCENARIOS = {"routing-lookup", "exporter-encoder-reuse", "docs-only-versionbump"}
+
+
 # ── git plumbing ─────────────────────────────────────────────────────────
 
 def _git(args, cwd, check=True):
@@ -140,14 +152,29 @@ def worktree_remove(wt_path, repo_root=REPO_ROOT, force=True):
 
 LAB_DIR_REL = Path(".claude") / "minify-lab"
 
-# The exact lines .gitignore is allowed to carry (verified against this
-# repo's real .gitignore — a mismatch means something else got smuggled
-# into that file and the scrub-assert must abort).
-GITIGNORE_ALLOWED_LINES = {
-    "# minify-lab: WIP research/harness for the /minify project — tracked so",
-    "# container reclaim can't wipe it again (see .claude/minify-lab/context.md)",
-    "!.claude/minify-lab",
+# Repo-relative paths that may legitimately mention "minify-lab" in real,
+# shipped content, each mapped to the EXACT line(s) allowed — never a
+# per-file exemption, still a per-line allowlist, so a DIFFERENT mention in
+# an already-known file (or any mention in a file not listed here) still
+# aborts the campaign (§6.1 stays fail-closed).
+#
+# `.gitignore`: verified against this repo's real .gitignore.
+# `.claude/skills/minify/scripts/minify_lib.py`: a citation to the research
+# doc its calibration numbers came from (found by prepare.py's own selftest
+# once `.claude/skills/minify/` landed — a real shipped skill file, not lab
+# content, so the old bare-.gitignore allowlist mis-flagged it as a leak).
+KNOWN_SAFE_MENTIONS = {
+    ".gitignore": {
+        "# minify-lab: WIP research/harness for the /minify project — tracked so",
+        "# container reclaim can't wipe it again (see .claude/minify-lab/context.md)",
+        "!.claude/minify-lab",
+    },
+    ".claude/skills/minify/scripts/minify_lib.py": {
+        "`.claude/minify-lab/research-encoding-formats.md` so numbers stay comparable",
+    },
 }
+# Back-compat alias — tests/tools that only know about the .gitignore case.
+GITIGNORE_ALLOWED_LINES = KNOWN_SAFE_MENTIONS[".gitignore"]
 
 
 def scrub_lab(wt_path):
@@ -156,9 +183,9 @@ def scrub_lab(wt_path):
 
 def assert_lab_scrubbed(wt_path):
     """§6.1: after scrubbing, no file under <wt> may mention "minify-lab"
-    except .gitignore, and only on its whitelisted lines. Raises
-    PrepareError on any other hit — this is the single highest-severity
-    leak in the design, so it fails closed."""
+    except the paths/lines in KNOWN_SAFE_MENTIONS. Raises PrepareError on
+    any other hit — this is the single highest-severity leak in the design,
+    so it fails closed."""
     wt_path = Path(wt_path)
     if (wt_path / LAB_DIR_REL).exists():
         raise PrepareError(f"lab scrub failed: {LAB_DIR_REL} still present under {wt_path}")
@@ -179,12 +206,13 @@ def assert_lab_scrubbed(wt_path):
 
     bad = []
     for rel, text in hits:
-        if str(rel) != ".gitignore":
+        allowed_lines = KNOWN_SAFE_MENTIONS.get(str(rel).replace("\\", "/"))
+        if allowed_lines is None:
             bad.append(str(rel))
             continue
-        offending = [ln for ln in text.splitlines() if "minify-lab" in ln and ln not in GITIGNORE_ALLOWED_LINES]
+        offending = [ln for ln in text.splitlines() if "minify-lab" in ln and ln not in allowed_lines]
         if offending:
-            bad.append(f".gitignore (unexpected line: {offending[0]!r})")
+            bad.append(f"{rel} (unexpected line: {offending[0]!r})")
 
     if bad:
         raise PrepareError(f"lab self-leak: {bad}")
@@ -403,7 +431,13 @@ def prepare_arm(scenario, arm, run_dir, config=None, approach=None, base_ref=Non
     prepared_base_sha = freeze(wt)
 
     anchors = resolve_all_anchors(wt, scenarios_for_leak_check)
-    write_anchors(wt, anchors)
+    # Written to run_dir (the wt's PARENT), not inside the worktree itself:
+    # assertions.py's RunData loads "anchors.json" from run_dir directly
+    # (worktree_dir defaults to run_dir/"wt", a SEPARATE path) — see its
+    # __init__. Writing it inside wt would also pollute the agent's own
+    # diff, since it lands there only after the prepared-base freeze/commit
+    # and post_run_diff() would see it as an untracked addition.
+    write_anchors(run_dir, anchors)
 
     return {"wt": wt, "prepared_base_sha": prepared_base_sha, "anchors": anchors, "hooks_mode": hooks_mode}
 
@@ -549,12 +583,39 @@ def _selftest():
         assert_lab_scrubbed(tmp)  # must not raise
         all_ok &= check("assert_lab_scrubbed passes a clean tree with only the whitelisted .gitignore hit", True)
 
-        (tmp / ".gitignore").write_text("!.claude/minify-lab\n# SET_TOC_FILTER leaked here\n", encoding="utf-8")
+        # NOTE: the fixture line must itself mention "minify-lab" — the
+        # check's whole job is spotting an UNEXPECTED minify-lab mention,
+        # not generic content (that is variant_leak_check's job, tested
+        # separately above).
+        (tmp / ".gitignore").write_text("!.claude/minify-lab\n# minify-lab: unexpected extra note\n", encoding="utf-8")
         try:
             assert_lab_scrubbed(tmp)
             all_ok &= check("assert_lab_scrubbed raises on an unexpected .gitignore line", False)
         except PrepareError:
             all_ok &= check("assert_lab_scrubbed raises on an unexpected .gitignore line", True)
+
+        # reset .gitignore back to the clean whitelisted state before the
+        # next checks (the previous fixture deliberately poisoned it).
+        (tmp / ".gitignore").write_text("\n".join(sorted(GITIGNORE_ALLOWED_LINES)) + "\n", encoding="utf-8")
+
+        # regression check: a real shipped skill file citing the lab dir in
+        # its own docstring (KNOWN_SAFE_MENTIONS) must NOT be flagged, but a
+        # DIFFERENT mention in that same file still must be.
+        skill_dir = tmp / ".claude" / "skills" / "minify" / "scripts"
+        skill_dir.mkdir(parents=True)
+        safe_line = "`.claude/minify-lab/research-encoding-formats.md` so numbers stay comparable"
+        (skill_dir / "minify_lib.py").write_text('"""\n' + safe_line + '\n"""\n', encoding="utf-8")
+        assert_lab_scrubbed(tmp)  # must not raise
+        all_ok &= check(
+            "assert_lab_scrubbed allows minify_lib.py's known-safe citation line", True
+        )
+        (skill_dir / "minify_lib.py").write_text('"""\nunexpected minify-lab reference\n"""\n', encoding="utf-8")
+        try:
+            assert_lab_scrubbed(tmp)
+            all_ok &= check("assert_lab_scrubbed still flags a DIFFERENT mention in that same file", False)
+        except PrepareError:
+            all_ok &= check("assert_lab_scrubbed still flags a DIFFERENT mention in that same file", True)
+        shutil.rmtree(tmp / ".claude", ignore_errors=True)
 
         # apply_hooks_mode: neutralized strips hooks, keeps everything else
         claude_dir = tmp / ".claude"
@@ -592,14 +653,19 @@ def _selftest():
             raise PrepareError("variant fixtures missing — skipping worktree pipeline checks")
 
         s1 = next(s for s in scenarios if s["id"] == "reducer-nohistory")
+        # scoped to the scenarios NOT flagged by the module docstring's
+        # "KNOWN FINDING" — s1 itself is one of the six documented as
+        # runnable today; the other three collide with the real repo's own
+        # CLAUDE.md and are excluded here rather than silently reworked.
+        leak_check_scenarios = [s for s in scenarios if s["id"] not in KNOWN_LEAK_COLLISION_SCENARIOS]
 
         base_result = prepare_arm(s1, "baseline", run_root / "baseline", config=config,
-                                   scenarios_for_leak_check=scenarios)
+                                   scenarios_for_leak_check=leak_check_scenarios)
         all_ok &= check(".claude/minify-lab is gone from the prepared baseline worktree",
                          not (base_result["wt"] / ".claude" / "minify-lab").exists())
 
         min_result = prepare_arm(s1, "minified", run_root / "minified", config=config, approach="telegraphic",
-                                  scenarios_for_leak_check=scenarios)
+                                  scenarios_for_leak_check=leak_check_scenarios)
         all_ok &= check(".claude/minify-lab is gone from the prepared minified worktree",
                          not (min_result["wt"] / ".claude" / "minify-lab").exists())
 
@@ -615,8 +681,9 @@ def _selftest():
             anchor is not None and anchor[0] <= expected_line <= anchor[1],
             f"anchor={anchor} expected_line={expected_line}",
         )
-        all_ok &= check("anchors.json was written to disk in the worktree",
-                         (base_result["wt"] / "anchors.json").exists())
+        all_ok &= check("anchors.json was written to run_dir, NOT inside the worktree",
+                         (run_root / "baseline" / "anchors.json").exists()
+                         and not (base_result["wt"] / "anchors.json").exists())
 
         # post_run_diff on an untouched prepared tree -> empty diff, empty file list
         diff_text, changed = post_run_diff(base_result["wt"], base_result["prepared_base_sha"], run_root / "baseline")
