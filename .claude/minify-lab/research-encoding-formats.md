@@ -158,24 +158,38 @@ under compound negation — a 317% increase over affirmative framing"*, with
 commercial models showing *"swings of 19-128%"*. A separate line of work argues
 negation-processing mechanisms are *"overshadowed by other mechanisms at later
 layers"*.
-**⚠️ UNVERIFIED — pending citation-check, snippet-level only.**
+**✅ VERIFIED (main statistic), citation corrected 2026-08-13 — see
+`citation-verification.md` Finding C.** The 77%/100%/317%/19-128% figures are
+confirmed against arXiv 2601.21433. The "overshadowed... at later layers"
+quote does **not** come from that paper or from the MIT News article (which
+covers a different, vision-language negation study) — it traces to an
+uncited third paper, arXiv 2605.03052 ("How Language Models Process
+Negation"), now cited below in its place.
 *Relevance:* **the single highest-value literature input for the risk list.**
 Our corpus is negation-dense — measured `never` counts: CLAUDE.md 14,
 secure-coding 20, hyper-sprint 30. Any rewrite that touches a prohibition's
 polarity or nests it under another negation is high-risk. Drives risks R3 and
 R14.
-Sources: [arXiv 2601.21433](https://arxiv.org/html/2601.21433),
-[MIT News on negation](https://news.mit.edu/2025/study-shows-vision-language-models-cant-handle-negation-words-queries-0514).
+Sources: [arXiv 2601.21433](https://arxiv.org/html/2601.21433) (statistic),
+[arXiv 2605.03052](https://arxiv.org/abs/2605.03052) ("overshadowed" quote,
+corrected attribution).
 
 **Position bias / "lost in the middle".** Accuracy follows a U-shaped serial
 position curve; primacy and recency dominate, mid-context material is
 down-weighted; snippets note the effect *"is strongest when inputs occupy up to
 50% of a model's context window"*.
-**⚠️ UNVERIFIED — pending citation-check, snippet-level only.**
+**✅ VERIFIED, citation corrected 2026-08-13 — see `citation-verification.md`
+Finding A.** The U-shaped-curve finding belongs to arXiv 2510.10276. The
+specific "up to 50% of a model's context window" figure is the headline
+finding of a different paper, arXiv 2508.07479 ("Positional Biases Shift as
+Inputs Approach Context Window Limits," Veseli et al., COLM 2025), now cited
+below in its place.
 *Relevance:* **reordering is a semantic operation.** hyper-sprint deliberately
 places its cost-economy banner at the primacy slot (§3, probe E). Moving a rule
 out of that slot can reduce adherence with byte-identical text. Drives risk R4/R19.
-Source: [arXiv 2510.10276](https://arxiv.org/html/2510.10276v1).
+Sources: [arXiv 2510.10276](https://arxiv.org/html/2510.10276v1) (U-shaped
+curve), [arXiv 2508.07479](https://arxiv.org/abs/2508.07479) ("50% of context
+window" figure, corrected attribution).
 
 **Tone/register sensitivity.** *"Mind Your Tone"* reports ChatGPT-4o accuracy
 ranging *"from 80.8% for Very Polite prompts to 84.8% for Very Rude prompts"* on
@@ -195,18 +209,29 @@ learned linguistic conventions"*.
 followed the rule.** Sources: [The Personality Illusion, arXiv 2509.03730](https://arxiv.org/pdf/2509.03730),
 [Rethinking Psychometric Evaluation of LLMs, arXiv 2606.12730](https://arxiv.org/html/2606.12730v1).
 
-**Agent Skills discovery mechanics (Anthropic platform docs).** At startup only
-each skill's `name` + `description` are loaded (*"median discovery cost near 80
-tokens each"*); the `description` *"is what Claude matches your request against
-when determining whether to trigger the Skill"*; SKILL.md body and referenced
-files load only after triggering.
-**⚠️ UNVERIFIED — pending citation-check, snippet-level only.**
+**Agent Skills discovery mechanics.** At startup only each skill's `name` +
+`description` are loaded; the `description` *"is what Claude matches your
+request against when determining whether to trigger the Skill"* (Anthropic
+platform docs, verified verbatim); SKILL.md body and referenced files load
+only after triggering. Per-skill discovery cost has been independently
+measured (third-party, not Anthropic) at *"median... near 80 tokens... ranging
+from about 55 to 235"* across 17 official skills.
+**✅ VERIFIED, citation corrected 2026-08-13 — see `citation-verification.md`
+Finding B.** The description-as-retrieval-key quote is confirmed verbatim on
+Anthropic's own docs page, which itself states a flat "~100 tokens per Skill"
+estimate with no median/range. The "median near 80 tokens, 55-235 range"
+figure is **not** on that page — it is a third-party measurement (SwirlAI
+newsletter, "State of Context Engineering in 2026") now cited separately
+below rather than attributed to Anthropic.
 *Relevance:* this is a **structural constraint on the minifier, not a nice-to-have.**
 The frontmatter `description` is a *retrieval key*, not prose — compressing it
 changes what the skill matches. Drives risk R7. Also: the SKILL.md **body** only
 costs tokens when triggered, whereas **CLAUDE.md is always resident** — so
 CLAUDE.md is worth several times more per byte saved than a SKILL.md body.
-Source: [Agent Skills overview](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
+Sources: [Agent Skills overview](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)
+(retrieval-key mechanics, ~100 tokens/skill estimate), SwirlAI, "State of
+Context Engineering in 2026" (median ~80 token / 55-235 range figure,
+third-party measurement, corrected attribution).
 
 ---
 

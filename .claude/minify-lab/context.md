@@ -58,6 +58,20 @@ happening on a predictable cadence rather than pure idle-timeout, that
 would need to be diagnosed/changed outside this session (host/platform
 level) — flagging for the user rather than guessing further.
 
+## Rate-limit throttle (2026-08-13, ~04:40)
+
+User shared usage: 5-hour limit **91%**, resets in ~2h33m (~07:15); weekly
+(all models) 70%; weekly Fable 75%; context window fine (78k/300k, 26%).
+**Decision: hold off spawning Phase 6's pilot-run agents (3 reps ×
+sonnet-under-test + opus judge, multiplied across scenarios — the most
+agent-heavy phase in the plan) until the 5-hour limit resets.** Letting
+the already-running Phase 5 completion agent (`a2caefbe6e75c35bb`) finish
+since it's sunk cost and nearly done. Between now and reset: only cheap
+work — verifying Phase 5's output, fixing the citation misattributions
+(A/B/C, doc edits, no agents needed), context.md upkeep, no new
+background agents unless something breaks. Resume Phase 6 after ~07:15
+UTC or when the user confirms the limit has recovered, whichever first.
+
 ## Standing rule: never go idle without updating this file (reinforced 2026-08-13)
 
 Every time the orchestrator is about to wait — for a background agent's
@@ -319,12 +333,14 @@ Orchestrate only — sub-agents do the actual work.
   - **C**: the negation "mechanisms overshadowed at later layers" quote
     is attached to two sources that don't contain it; appears to
     originate in an uncited third paper (arXiv 2605.03052).
-  - **Action item, not yet done**: re-attribute or drop these three
-    numbers/quotes before they appear in the `/minify` skill's own docs,
-    a PR body, or any other public-facing text. None of this touches
-    research-encoding-formats.md's actual recommendation (rests on §3's
-    measured probes, not the literature) — this only clears the
-    literature review itself for eventual citation.
+  - **Action item — DONE (2026-08-13, orchestrator, no agent needed).** All
+    three re-attributed directly in `research-encoding-formats.md` §1.3
+    (negation, position-bias, and Agent-Skills-discovery entries): each
+    now cites the correct source for its specific number/quote, flips
+    from UNVERIFIED to VERIFIED, and links back to this doc's Finding
+    A/B/C. None of this touches the file's actual recommendation (rests
+    on §3's measured probes, not the literature) — this only clears the
+    literature review itself for eventual public citation.
 - `.claude/skills/minify/` — **DONE, independently verified** (2026-08-13,
   opus). This is the actual `/minify` skill, live and discoverable (it
   now appears in the session's skill listing). Orchestrator ran its
