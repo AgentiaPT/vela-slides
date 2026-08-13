@@ -161,8 +161,14 @@ for (const f of COLOR_FIELDS) {
 {
   const mustReject = ['image-set("x")', 'image("x")', 'cross-fade("x")', 'src("x")', "url(x)", "EXPRESSION(1)",
     // v12.66: comment token-splitting must be rejected on the style/color surface.
-    'image-set(/**/"//x" 1x)', 'image(/**/"//x")', 'src(/* */"//x")', 'url/**/("//x")', "url/**/(//x)"];
-  const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc"];
+    'image-set(/**/"//x" 1x)', 'image(/**/"//x")', 'src(/* */"//x")', 'url/**/("//x")', "url/**/(//x)",
+    // v13.46: var() indirection. A custom property is substituted at computed-value
+    // time — after every lexical alternative above has been evaluated — so an
+    // indirected value can re-assemble a primitive none of them matched. This
+    // surface must reject the load half for the same reason isSvgStyleSafe does.
+    "image-set(var(--p) 1x)", "var(--p)", "VAR( --p )", "linear-gradient(var(--p),#000)"];
+  const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc",
+    "calc(100% - 8px)", "1px solid #ccc", "linear-gradient(90deg,#fff 0%,#000 100%)"];
   const r1 = mustReject.filter((v) => !STYLE_VALUE_REJECT.test(v));
   const r2 = mustAllow.filter((v) => STYLE_VALUE_REJECT.test(v));
   if (r1.length === 0) ok("STYLE_VALUE_REJECT catches every string-source CSS function (name-agnostic)");
@@ -273,11 +279,22 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
 //    paint-server refs and plain colors. (Same root-cause bug as the color surface;
 //    both surfaces fixed together so they can't drift.)
 {
-  let isSvgStyleSafe;
+  let isSvgStyleSafe, isSvgInlineStyleSafe;
   try {
-    const fn = grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe");
+    // Extract every helper the predicates close over. A missing one would throw at
+    // CALL time, inside the .filter() below and outside this try — so extract-time
+    // success is not by itself proof the predicate runs; the liveness assertion
+    // right after this block is.
+    const fn = [
+      grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME"),
+      grab(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS"),
+      grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe"),
+      grab(/function isSvgInlineStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgInlineStyleSafe"),
+    ].join("\n");
     // eslint-disable-next-line no-new-func
-    isSvgStyleSafe = new Function(fn + "\nreturn isSvgStyleSafe;")();
+    const api = new Function(fn + "\nreturn { isSvgStyleSafe, isSvgInlineStyleSafe };")();
+    isSvgStyleSafe = api.isSvgStyleSafe;
+    isSvgInlineStyleSafe = api.isSvgInlineStyleSafe;
   } catch (e) { isSvgStyleSafe = null; }
   if (typeof isSvgStyleSafe !== "function") {
     bad("extract isSvgStyleSafe", "not found in part-imports.jsx");
@@ -289,6 +306,14 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       'background:url/**/("//a.invalid")',
       "background:url/**/(//a.invalid)",
       'background:cross-fade(/**/"//a.invalid", red)',
+      // v13.46: custom-property indirection (substitution happens after every
+      // lexical check) and an authority written without its slashes (the URL
+      // parser canonicalizes `https:host/p` for the special schemes).
+      '--p:"https:a.invalid/b"',
+      "background-image:image-set(var(--p) 1x)",
+      "fill:url(var(--p))",
+      "background-image:url(https:a.invalid/b)",
+      'background-image:image-set("https:a.invalid/b" 1x)',
     ];
     const svgAllow = [
       "fill:url(#grad)", "fill:#3b82f6", "stroke:rgb(1,2,3)",
@@ -303,6 +328,33 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
     // Any CSS comment is rejected outright (the token-splitting primitive).
     if (!isSvgStyleSafe("fill:/**/red")) ok("isSvgStyleSafe rejects any CSS comment outright");
     else bad("isSvgStyleSafe allowed a CSS comment");
+
+    // v13.46: style="" is a declaration LIST, so the PROPERTY half is allowlisted
+    // too — an image-loading or overlay property is rejected on its name alone,
+    // independently of any value cleverness (defense in depth against the next
+    // value-filter bypass). Whole-attribute rejection: fail closed, never filter.
+    if (typeof isSvgInlineStyleSafe !== "function") {
+      bad("extract isSvgInlineStyleSafe", "not found in part-imports.jsx");
+    } else {
+      const propReject = [
+        "background-image:url(#a)", "background:red", "mask-image:url(#a)",
+        "cursor:url(#a),auto", "border-image:url(#a)", "list-style-image:url(#a)",
+        "offset-path:url(#a)", "shape-outside:url(#a)", "content:'x'",
+        "transform:scale(500)", "position:fixed", "fill:red;background-image:url(#a)",
+      ];
+      const propAllow = [
+        "fill:#3b82f6", "fill:url(#grad);stroke:#888;stroke-width:2",
+        "font-family:Inter,sans-serif;font-size:14px;text-anchor:middle",
+        "opacity:0.5;mix-blend-mode:multiply", "clip-path:url(#c);mask:url(#m);filter:url(#f)",
+        "fill:red;", " stroke : blue ",
+      ];
+      const pr = propReject.filter((v) => isSvgInlineStyleSafe(v));
+      const pa = propAllow.filter((v) => !isSvgInlineStyleSafe(v));
+      if (pr.length === 0) ok("isSvgInlineStyleSafe allowlists inline-style properties (image/overlay families rejected)");
+      else bad("isSvgInlineStyleSafe accepted a non-paint property", JSON.stringify(pr));
+      if (pa.length === 0) ok("isSvgInlineStyleSafe preserves legitimate SVG paint/text declarations");
+      else bad("isSvgInlineStyleSafe dropped a legit declaration", JSON.stringify(pa));
+    }
   }
 }
 

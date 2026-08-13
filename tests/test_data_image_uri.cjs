@@ -27,10 +27,17 @@ const REPO = path.resolve(__dirname, "..");
 const SRC = path.join(REPO, "src/parts/part-imports.jsx");
 const source = fs.readFileSync(SRC, "utf8");
 
+// Every helper sanitizeSvgMarkup closes over must be listed here. A missing one
+// throws inside its own try/catch and turns the sanitizer into a constant "" —
+// which passes every negative assertion vacuously. The "benign svg survives"
+// positive control below is what makes that failure visible; keep it.
 const grabs = {
+  scheme:   source.match(/const CSS_FETCH_SCHEME = .+;/),
   allowed:  source.match(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/),
   refAttrs: source.match(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/),
+  styleProps: source.match(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/),
   isSafe:   source.match(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/),
+  isInlineSafe: source.match(/function isSvgInlineStyleSafe\(css\) \{[\s\S]*?\n\}/),
   svg:      source.match(/function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/),
   raster:   source.match(/const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/),
   dataUri:  source.match(/function sanitizeImageDataUri\(s\) \{[\s\S]*?\n\}/),
@@ -50,9 +57,12 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(`
+${grabs.scheme[0]}
 ${grabs.allowed[0]}
 ${grabs.refAttrs[0]}
+${grabs.styleProps[0]}
 ${grabs.isSafe[0]}
+${grabs.isInlineSafe[0]}
 ${grabs.svg[0]}
 ${grabs.raster[0]}
 ${grabs.dataUri[0]}

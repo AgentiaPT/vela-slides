@@ -364,12 +364,16 @@ def test_security():
     else:
         fail("isSvgStyleSafe string-source function reject",
              "must reject any non-url() CSS function fed a quoted string (image-set bypass)")
-    # (2) presentation/style attributes routed through the same filter.
-    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)' in all_jsx:
-        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS + isSvgStyleSafe")
+    # (2) presentation/style attributes routed through the same filter, with the
+    #     style="" DECLARATION LIST taking the stricter property-allowlist gate
+    #     (isSvgInlineStyleSafe) on top of it. Behavior is executed by
+    #     test_svg_mxss.cjs / test_css_exfil.cjs; this only pins the wiring.
+    if 'SVG_URL_REF_ATTRS' in all_jsx and 'SVG_URL_REF_ATTRS.has(name) && !cssOk(a.value)' in all_jsx \
+       and 'name === "style" ? isSvgInlineStyleSafe : isSvgStyleSafe' in all_jsx:
+        ok("SVG presentation/style attrs filtered via SVG_URL_REF_ATTRS (style= takes the property allowlist)")
     else:
         fail("SVG presentation-attr URL filter",
-             "fill/filter/mask/marker/clip-path/cursor/style values must pass isSvgStyleSafe")
+             "fill/filter/mask/marker/clip-path/cursor values must pass isSvgStyleSafe; style= must pass isSvgInlineStyleSafe")
     # (3) non-anchor href/xlink:href is #fragment-only; <a> keeps the scheme allowlist.
     if 'name === "href" && tag === "a"' in all_jsx:
         ok("SVG href policy split: <a> click-nav allowlist vs #fragment-only auto-load refs")

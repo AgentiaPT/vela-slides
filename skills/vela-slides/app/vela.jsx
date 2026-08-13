@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.45";
+const VELA_VERSION = "13.46";
 const VELA_CHANGELOG = [
+  { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
   { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },
@@ -597,6 +598,52 @@ const SVG_URL_REF_ATTRS = new Set([
   "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile",
 ]);
 
+// A URL scheme token that the browser will fetch. Used by isSvgStyleSafe below:
+// the `//` reject there assumes an authority is written with its slashes, but the
+// URL parser canonicalizes the SPECIAL schemes without them (`https:host/p` is
+// parsed as `https://host/p` — same outbound request, no `//` anywhere in the
+// source text), so scanning for `//` alone under-approximates "contains an
+// absolute URL". Matches the scheme token itself, which is the part that cannot
+// be spelled any other way once CSS escapes and comments are already rejected.
+// data:/blob: are deliberately absent — neither fetches, and data:image is
+// legitimate elsewhere under its own gate (sanitizeImageDataUri). (v13.46)
+const CSS_FETCH_SCHEME = /\b(?:https?|ftps?|wss?|file)\s*:/i;
+
+// CSS properties permitted in a deck SVG's inline style="" attribute. ALLOWLIST,
+// because the alternative — enumerating the properties that are dangerous — is a
+// bet that no CSS property we forgot can fetch a resource or escape its box, and
+// that bet has to be re-won with every CSS spec revision. Only SVG paint and text
+// presentation properties are listed; the whole image-loading family
+// (background*, mask-image, border-image, list-style-image, cursor, offset-path,
+// shape-outside, content …) is absent BY CONSTRUCTION rather than by a named
+// reject, so a property nobody thought of is rejected by default. Positioning
+// (position/inset/z-index) and transform-family properties are likewise absent:
+// both let a deck element leave its container and overlay trusted app chrome
+// (UI-redress invariant), and SVG geometry uses the transform ATTRIBUTE, which
+// this path does not touch. The reference paints below (fill/mask/filter/marker/
+// clip-path) are additionally value-restricted to url(#fragment) by
+// isSvgStyleSafe. (v13.46)
+const SVG_STYLE_PROPS = new Set([
+  // paint
+  "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width",
+  "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray",
+  "stroke-dashoffset", "paint-order", "vector-effect", "opacity", "color",
+  "stop-color", "stop-opacity", "flood-color", "flood-opacity", "lighting-color",
+  "color-interpolation", "color-interpolation-filters", "shape-rendering",
+  "image-rendering", "mix-blend-mode", "isolation",
+  // same-document reference paints (value guard restricts these to url(#frag))
+  "marker", "marker-start", "marker-mid", "marker-end",
+  "clip-path", "clip-rule", "mask", "filter",
+  // text
+  "font", "font-family", "font-size", "font-size-adjust", "font-stretch",
+  "font-style", "font-variant", "font-weight", "letter-spacing", "word-spacing",
+  "text-anchor", "text-decoration", "text-overflow", "text-rendering",
+  "dominant-baseline", "alignment-baseline", "baseline-shift", "direction",
+  "unicode-bidi", "writing-mode", "white-space",
+  // element-local visibility (cannot affect anything outside the deck subtree)
+  "display", "visibility",
+]);
+
 // SVG CSS-value filter for the inline style="" attribute and url-ref
 // presentation attributes (fill/stroke/filter/mask/clip-path/marker/cursor).
 // The <style> ELEMENT is no longer allowed (see SVG_ALLOWED_TAGS) — a
@@ -623,6 +670,18 @@ function isSvgStyleSafe(css) {
   // paint CSS never needs comments; reject outright, mirroring the backslash reject
   // above. (Pairs with the same reject in STYLE_VALUE_REJECT.)
   if (css.indexOf("/*") !== -1) return false;
+  // Reject CSS custom properties (the `--name` store) and var() (the load). Every
+  // token-level check in this function inspects the DECLARED text, but a custom
+  // property is an untyped token bag whose contents are substituted into another
+  // declaration at computed-value time — after all of those checks have run. So a
+  // URL parked in a custom property as a plain string, then pulled into an
+  // image-accepting function by var(), reaches the network without ever presenting
+  // the adjacency (function-name + quote) or url( shapes those checks look for:
+  // indirection defeats any purely lexical filter. Legit deck paint CSS never
+  // needs either half; reject both, so neither store nor load alone reopens it.
+  // `--` covers the property name wherever it appears (declaration or var() arg).
+  if (css.indexOf("--") !== -1) return false;
+  if (/var\s*\(/i.test(css)) return false;
   if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   // Reject any at-rule outright: @import pulls an external sheet and @font-face
   // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
@@ -632,6 +691,11 @@ function isSvgStyleSafe(css) {
   // `://` guard (which this filter previously lacked) and also catches scheme-relative
   // `//host`. Legit paint CSS (colors, url(#frag), sizes) never contains `//`.
   if (css.indexOf("//") !== -1) return false;
+  // …and the same reject for an authority written WITHOUT its slashes: for the
+  // special schemes the URL parser canonicalizes `https:host/p` to `https://host/p`,
+  // so the `//` scan above is not by itself a complete "contains an absolute URL"
+  // test. See CSS_FETCH_SCHEME.
+  if (CSS_FETCH_SCHEME.test(css)) return false;
   // Every url() must be a same-document #fragment paint reference (url(#grad)).
   // Match the OPENING url( token and require its first meaningful char (past an
   // optional quote and whitespace) to be '#'. Crucially this does NOT depend on a
@@ -665,6 +729,34 @@ function isSvgStyleSafe(css) {
   // Viewport-relative sizing is itself an overlay primitive (a 100vw×100vh element);
   // legit SVG paint never needs it.
   if (/\b[\d.]+(?:vw|vh|vmin|vmax|vi|vb|dvw|dvh|dvi|dvb|svw|svh|lvw|lvh|cqw|cqh|cqi|cqb)\b/i.test(css)) return false;
+  return true;
+}
+
+// Gate for the inline style="" ATTRIBUTE specifically: isSvgStyleSafe judges a
+// CSS *value*, which is the right shape for the url-ref presentation attributes
+// (fill/stroke/filter/…) that carry one bare value — but style="" is a whole
+// DECLARATION LIST, where the attacker also chooses the properties. Judging only
+// the values there leaves the property side ungoverned, and it is the property
+// that decides whether a value is painted or FETCHED. So parse the declarations
+// and require every property to be in SVG_STYLE_PROPS: allowlist over the
+// structural half (§ "allowlist, never denylist"), value filter over the other.
+// Both must pass — this is an additional gate, never a replacement.
+//
+// FAIL CLOSED: the whole attribute is rejected if any declaration is unparsable
+// or carries an unknown property; nothing is silently filtered out and kept.
+// Splitting on ';' is exact enough here precisely because the value filter ran
+// first — escapes, comments and '<' are already gone — and where it is not (a ';'
+// inside a quoted string or a url()), the split yields a fragment with no
+// property and the attribute is rejected, which is the safe direction. (v13.46)
+function isSvgInlineStyleSafe(css) {
+  if (!isSvgStyleSafe(css)) return false;
+  for (const decl of css.split(";")) {
+    const d = decl.trim();
+    if (!d) continue;
+    const i = d.indexOf(":");
+    if (i <= 0) return false;
+    if (!SVG_STYLE_PROPS.has(d.slice(0, i).trim().toLowerCase())) return false;
+  }
   return true;
 }
 
@@ -761,7 +853,10 @@ function sanitizeSvgMarkup(raw) {
             // isSvgStyleSafe allows only url(#fragment); rejects external url(),
             // image-set()/image()/cross-fade()/src() string sources, @import and CSS-
             // escape obfuscation. Supersedes the prior style-only js/data check. (v12.59)
-            if (SVG_URL_REF_ATTRS.has(name) && !isSvgStyleSafe(a.value)) { child.removeAttribute(a.name); continue; }
+            // style="" is a declaration LIST, so it takes the stricter gate, which
+            // adds the property allowlist on top of that value filter. (v13.46)
+            const cssOk = name === "style" ? isSvgInlineStyleSafe : isSvgStyleSafe;
+            if (SVG_URL_REF_ATTRS.has(name) && !cssOk(a.value)) { child.removeAttribute(a.name); continue; }
           }
           walk(child);
         }
@@ -856,7 +951,12 @@ const SAFE_STYLE_KEYS = new Set([
 // token and let a string-source URL slip past the function-string and `://` checks
 // — a zero-click exfil beacon on render. Color/gradient/layout values never contain
 // a comment; reject outright (pairs with the same reject in isSvgStyleSafe).
-const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*/i;
+// The trailing `var\(` reject is the same indirection defence isSvgStyleSafe
+// carries: a custom property is an untyped token bag substituted at
+// computed-value time, i.e. AFTER every lexical check in this regex has run, so
+// var() can re-assemble a rejected primitive out of pieces none of these
+// alternatives match. Deck colour/gradient/layout values never reference one.
+const STYLE_VALUE_REJECT = /url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*|var\s*\(/i;
 function sanitizeStyle(style) {
   if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
   const out = {};
@@ -11577,6 +11677,49 @@ uiSuite("SVG Sanitizer (XSS)", [
     // isSvgStyleSafe still guards url-ref presentation attrs; url( #frag ) must not false-reject.
     const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
     return /#grad/.test(out) && /url\(#c\)/.test(out);
+  }},
+  // v13.46 — CSS custom-property indirection. A lexical value filter inspects the
+  // DECLARED text; a custom property is an untyped token bag substituted at
+  // computed-value time, i.e. after those checks have run, so an indirected value
+  // can re-assemble a fetching primitive the filter never saw. Custom properties
+  // also inherit, so the store and the load can sit on different elements.
+  { name: "SVG custom-property indirection into an image source removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style=\'--p:"https:attacker.invalid/b";background-image:image-set(var(--p) 1x)\'/>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out) && !/--p/.test(out);
+  }},
+  { name: "SVG custom property inherited across elements (store on <g>, load on child) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<g style=\'--p:"https:attacker.invalid/b"\'><rect style="mask-image:image-set(var(--p) 1x)"/></g>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out);
+  }},
+  { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG inline-style property allowlist drops image-loading/overlay properties", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="red" style="background-image:url(#a);cursor:url(#c),auto;transform:scale(500)"/>');
+    return !/style=/i.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SVG legitimate paint/text inline style preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8">A</text>');
+    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out);
+  }},
+  { name: "SECURITY: browser-truth — indirected deck SVG CSS makes no outbound request", fn: async () => {
+    // Real-sink proof: render the sanitizer's OUTPUT the way the app does and watch
+    // the browser's own resource timeline. A source-level "the regex rejects it" is
+    // not evidence that nothing fetched; a PerformanceObserver entry is.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const seen = [];
+    const obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) seen.push(e.name); });
+    try {
+      obs.observe({ entryTypes: ["resource"] });
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" style=\'--p:"https:attacker.invalid/b1";background-image:image-set(var(--p) 1x)\'>' +
+        '<rect style=\'--q:"https:attacker.invalid/b2";mask-image:image-set(var(--q) 1x)\'/></svg>');
+      await new Promise((r) => setTimeout(r, 400));
+      obs.takeRecords();
+      return !seen.some((u) => /attacker\.invalid/i.test(u)) && !/attacker\.invalid/i.test(host.innerHTML);
+    } finally { obs.disconnect(); host.remove(); }
   }},
   { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
     // The load-bearing regression test for the UI-integrity family: render a

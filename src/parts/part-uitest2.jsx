@@ -132,6 +132,49 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<rect fill="url( #grad )" clip-path="url(#c)"/>');
     return /#grad/.test(out) && /url\(#c\)/.test(out);
   }},
+  // v13.46 — CSS custom-property indirection. A lexical value filter inspects the
+  // DECLARED text; a custom property is an untyped token bag substituted at
+  // computed-value time, i.e. after those checks have run, so an indirected value
+  // can re-assemble a fetching primitive the filter never saw. Custom properties
+  // also inherit, so the store and the load can sit on different elements.
+  { name: "SVG custom-property indirection into an image source removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style=\'--p:"https:attacker.invalid/b";background-image:image-set(var(--p) 1x)\'/>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out) && !/--p/.test(out);
+  }},
+  { name: "SVG custom property inherited across elements (store on <g>, load on child) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<g style=\'--p:"https:attacker.invalid/b"\'><rect style="mask-image:image-set(var(--p) 1x)"/></g>');
+    return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out);
+  }},
+  { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
+    return !/attacker\.invalid/i.test(out);
+  }},
+  { name: "SVG inline-style property allowlist drops image-loading/overlay properties", fn: async () => {
+    const out = sanitizeSvgMarkup('<rect fill="red" style="background-image:url(#a);cursor:url(#c),auto;transform:scale(500)"/>');
+    return !/style=/i.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SVG legitimate paint/text inline style preserved (no false reject)", fn: async () => {
+    const out = sanitizeSvgMarkup('<text style="fill:#3b82f6;font-family:Inter,sans-serif;text-anchor:middle;opacity:0.8">A</text>');
+    return /fill:#3b82f6/.test(out) && /text-anchor:middle/.test(out);
+  }},
+  { name: "SECURITY: browser-truth — indirected deck SVG CSS makes no outbound request", fn: async () => {
+    // Real-sink proof: render the sanitizer's OUTPUT the way the app does and watch
+    // the browser's own resource timeline. A source-level "the regex rejects it" is
+    // not evidence that nothing fetched; a PerformanceObserver entry is.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const seen = [];
+    const obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) seen.push(e.name); });
+    try {
+      obs.observe({ entryTypes: ["resource"] });
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg" style=\'--p:"https:attacker.invalid/b1";background-image:image-set(var(--p) 1x)\'>' +
+        '<rect style=\'--q:"https:attacker.invalid/b2";mask-image:image-set(var(--q) 1x)\'/></svg>');
+      await new Promise((r) => setTimeout(r, 400));
+      obs.takeRecords();
+      return !seen.some((u) => /attacker\.invalid/i.test(u)) && !/attacker\.invalid/i.test(host.innerHTML);
+    } finally { obs.disconnect(); host.remove(); }
+  }},
   { name: "SECURITY: deck SVG <style> cannot restyle/relocate app chrome (S16/S17 redress+clickjack)", fn: async () => {
     // The load-bearing regression test for the UI-integrity family: render a
     // hostile deck SVG the SAME way the app does (sanitize -> innerHTML) and prove
