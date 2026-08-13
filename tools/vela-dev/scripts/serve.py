@@ -26,7 +26,6 @@ import socket
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unicodedata
@@ -339,6 +338,8 @@ def build_browser_html():
 _UMASK = os.umask(0)
 os.umask(_UMASK)
 DECK_FILE_MODE = 0o666 & ~_UMASK  # what a plain open(path, "w") would have made
+SAVE_TMP_PREFIX = ".vela-save-"   # write_deck_json's temp; swept at startup
+SAVE_TMP_SUFFIX = ".tmp"
 
 
 def console_safe(text, limit=160):
@@ -447,7 +448,7 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
     # DESCRIPTOR. A by-path chmod here would follow a link planted at the temp
     # name in the (untrusted) folder and change the mode of a file elsewhere.
     for attempt in range(8):
-        cand = f".vela-save-{secrets.token_hex(8)}.tmp"
+        cand = f"{SAVE_TMP_PREFIX}{secrets.token_hex(8)}{SAVE_TMP_SUFFIX}"
         tmp_arg = cand if dir_fd is not None else os.path.join(folder, cand)
         try:
             fd = os.open(tmp_arg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, **kwargs)
@@ -1149,7 +1150,7 @@ class VelaLocalServer:
             return
         kwargs = {"dir_fd": self.folder_fd} if self.folder_fd is not None else {}
         for name in names:
-            if name.startswith(".vela-save-") and name.endswith(".tmp"):
+            if name.startswith(SAVE_TMP_PREFIX) and name.endswith(SAVE_TMP_SUFFIX):
                 try:
                     os.unlink(name if self.folder_fd is not None
                               else os.path.join(self.folder_path, name), **kwargs)
@@ -1460,9 +1461,6 @@ class VelaLocalServer:
 
     RUNTIME_FILE = ".vela.env"
     RUNTIME_MAX_BYTES = 64 * 1024  # ours is ~200 B; cap what we will parse
-
-    def _runtime_path(self):
-        return os.path.join(os.getcwd(), self.RUNTIME_FILE)
 
     def _runtime_dir_fd(self):
         """Descriptor for the directory the runtime file lives in, resolved once
