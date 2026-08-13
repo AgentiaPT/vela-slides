@@ -2053,3 +2053,13 @@ still unpiloted and confirmed runnable.
 **Next**: update the leaderboard with launch 12's result, then continue
 task #12 with `newpart-manifest` (next in the frozen scenario order)
 as launch 13, same proven launch pattern.
+
+Leaderboard updated and redeployed (commit `92e1afa`): 4/9 piloted,
+3/4 clean passes. Context.md's "Current status" header updated to
+match. New backlog task #18 created for the retry-on-parse-failure
+harness review (deliberately not folded into this investigation).
+
+**Launch 13 (`newpart-manifest`) started** ~14:49 UTC as
+`phase6-pilot-launch13` (task id `bzhp7tb2i`), same pattern:
+`run_in_background: true` directly, no nohup, 1800s inner timeout.
+Confirmed alive via `ps aux` shortly after launch. Not yet complete.
