@@ -88,6 +88,35 @@ background run actually completes — a single long wait, even one
 `send_later` call, is not enough on its own for a run expected to take
 20-30+ minutes.
 
+**Third incident, same session, ~09:53-10:11 (launch 7) — the tightened
+10-min mitigation did NOT help.** Immediately relaunched `campaign.py`
+the same way (`nohup ... & disown`), this time with the ~10-min
+check-in chain as designed. Baseline rep0/rep1 completed and survived
+on disk again, but the container was reclaimed **before the 10-minute
+check-in even had a chance to fire** — the scheduled trigger's own
+delivery was delayed until a fresh container spun back up, and `uptime`
+again showed "up 0 min" at that point. This falsifies the working
+theory that shortening the check-in interval prevents reclaim: reclaim
+can happen well under 10 minutes after the orchestrator goes idle, at
+least sometimes, not on a stable ~19-20 minute clock — the earlier
+two-data-point "~19-20 min" estimate should be read as "an upper bound
+observed twice," not a safe interval. **`send_later` alone cannot
+prevent this** — it only lets the *session* resume; it doesn't keep the
+*container* (and the local subprocess tree running inside it) alive
+while unfired.
+
+**Changed approach for launch 8**: stop using `nohup ... & disown`
+(fully detaches the process from anything the harness can see or track)
+and instead launch `campaign.py` via the Bash tool's own
+`run_in_background: true` flag. That makes it a harness-tracked
+background task — eligible for an automatic task-notification on
+completion, and plausibly counted as outstanding active work by
+whatever mechanism decides idle-reclaim (untested hypothesis, but a
+reasonable next thing to try given nohup+disown has now failed twice
+under two different check-in cadences). Still keeping the git-commit/
+disk-persistence net as the real safety layer regardless of whether
+this helps.
+
 ## Rate-limit throttle (2026-08-13, ~04:40)
 
 User shared usage: 5-hour limit **91%**, resets in ~2h33m (~07:15); weekly
@@ -756,7 +785,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~09:52, launch 6 killed mid-run by a container reclaim — see the standing-rule section above for the full incident — relaunching as launch 7 with a tightened ~10-min check-in chain; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
+## Current status (last updated: 2026-08-13 ~10:11, launches 6 AND 7 both killed mid-run by container reclaim — see the standing-rule section above — switching to Bash tool `run_in_background: true` for launch 8 instead of nohup/disown; real minified CLAUDE.md's own structure verdict is a genuine FAIL worth attention separately)
 
 **Launch 6 did not produce a usable result** — not a harness bug, a
 container reclaim (see "Standing rule: keep the main session alive"
@@ -767,10 +796,16 @@ rep0/rep1's data looks sane, no re-occurrence of either symptom, but
 n=2 baseline-only isn't a campaign result). Cleaned up the stray rep2
 worktree; left the partial run directory
 (`/tmp/vela-minify-lab-runs/phase6-pilot-launch6/`) on disk as-is (not
-git-tracked, no cleanup required, kept for reference). Relaunching as
-**launch 7** (`--campaign-id phase6-pilot-launch7`, same parameters)
-with a self-renewing `send_later` check-in chain at ~10-minute
-intervals instead of a single 25-minute wait.
+git-tracked, no cleanup required, kept for reference).
+
+**Launch 7 also died the same way, even faster** — see the "Third
+incident" entry in the standing-rule section above. Cleaned up its
+stray rep2 worktree too; left
+`/tmp/vela-minify-lab-runs/phase6-pilot-launch7/` on disk for reference.
+**Relaunching as launch 8** using the Bash tool's `run_in_background:
+true` instead of `nohup ... & disown` — a genuine mechanism change, not
+just another check-in-cadence tweak, since two different cadences (25
+min, 10 min) both failed to prevent reclaim under the nohup approach.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
