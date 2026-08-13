@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~08:40, /minify verify bug fixed + real minified CLAUDE.md ready, campaign.py driver not yet built)
+## Current status (last updated: 2026-08-13 ~09:20, campaign.py built + stub-tested + real-run smoke-tested, real Phase 6 pilot about to launch)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -775,22 +775,48 @@ covered by a new permanent regression fixture, and verified against both
 
 **What's ready now**: a real minified `variants/telegraphic/CLAUDE.md`
 that verifies cleanly (57/57 present, 0 review, structure PASS, size
-MET-PREDICTION at 1.0-1.5%). **What's still needed before the pilot can
-run**: the `campaign.py` driver script does not exist yet — `runner.py`
-only runs one `(scenario, arm, rep)` at a time; looping over arms/reps,
-wiring a real opus judge call, assembling the `campaign.json` shape (see
-the reverse-engineered contract in the prior "Session-isolation bug"
-section's surrounding context), and calling `gate.py`/`report.py` is
-unbuilt. Plan: build it, stub-test it at zero cost first (mirroring
-`runner.py`'s own `--selftest` pattern), then run ONE scenario
-(`reducer-nohistory` is the leading candidate — well-scoped, moderate
-complexity, strong assertion coverage), 3 reps, both arms, 2 judging
-rounds — real sonnet agent-under-test + real opus judge calls — and
-confirm from the pilot's own transcript/session-id that the isolation
-fix holds in a real run, not just `--selftest`, before scaling to the
-rest of the 9-scenario fleet. Per the last check-in's standing
-instruction: message the user with a brief status update once this
-actually kicks off (not a silent reschedule).
+MET-PREDICTION at 1.0-1.5%), AND `campaign.py` (the driver script —
+loops `(scenario, arm, rep)` through `runner.run_one()`, runs the
+redacted blind A/B judge per `(scenario, rep)` pair across
+`judge_rounds`, calls `prepare.parity_check()` once per scenario,
+aggregates metrics, assembles the `campaign.json` contract
+`gate.py`/`report.py` consume). Committed at `f6f8ed9`. Verified in two
+independent ways before any real scenario spend:
+
+1. `campaign.py --selftest` (both the agent-under-test call AND the judge
+   model call stubbed, zero API spend) — 15/15 checks pass, including a
+   forced-quarantine path (an agent diff that itself touches `CLAUDE.md`
+   correctly quarantines the pair instead of reaching the judge) and a
+   full `gate.gate()` + `report.two_panel_report()` round-trip on the
+   assembled campaign dict.
+2. A real, non-stub smoke test — `runner.run_one()` called directly
+   (bypassing `campaign.py`) with a tiny scratch-file scenario
+   (max_turns=5, timeout=60s) and the REAL `claude -p` subprocess
+   (`invoke=None` → `default_invoke`). Cost $0.207, completed in 1.9s,
+   critical assertion passed. **Confirmed the session-isolation fix holds
+   in a real run** (the standing instruction from the prior check-in): the
+   sub-agent's transcript recorded `session_id
+   e7f77fbe-e3d5-4e65-bfb9-6d4c7b6ecc50`, completely distinct from this
+   orchestrator's own `CLAUDE_CODE_SESSION_ID=ea05cf82-...` — no
+   attachment leak. `runner.err` was empty, no stray git worktree left
+   behind afterward.
+
+Also added `.claude/minify-lab/harness/runs/` to `.gitignore` (commit
+`2f38246`) before running anything real — the blanket `!.claude/minify-lab`
+un-ignore would otherwise force-track every campaign's raw transcripts/
+diffs/cost data into this public repo; same treatment `evals/output/` etc.
+already get.
+
+**Next: the real Phase 6 pilot** — `reducer-nohistory` (well-scoped,
+moderate complexity, strong assertion coverage), reps=3, both arms,
+judge_rounds=2 — real sonnet agent-under-test + real opus judge calls,
+launching now via `campaign.py`'s CLI in the background. Per the last
+check-in's standing instruction: message the user with a brief status
+update once this actually kicks off (not a silent reschedule) — done in
+this same turn. Rough cost estimate before launch: order of magnitude
+$15-50 total (6 sonnet agent runs on a real, moderately-sized code task +
+6 short single-turn opus judge calls) — not a hard budget, just the
+expectation set going in.
 
 ## Session hygiene: checking context usage
 
