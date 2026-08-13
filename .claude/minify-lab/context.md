@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~10:40, real Phase 6 pilot launched a 4th time after fixing a transcript-parser crash that destroyed real agent spend on attempt 3)
+## Current status (last updated: 2026-08-13 ~10:55, launch 4 caught a real worktree-isolation breach — sub-agent edited THIS live repo directly — root-caused, fixed (delegated), verified, repo restored to clean; Phase 6 pilot not yet relaunched)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -806,6 +806,74 @@ Also added `.claude/minify-lab/harness/runs/` to `.gitignore` (commit
 un-ignore would otherwise force-track every campaign's raw transcripts/
 diffs/cost data into this public repo; same treatment `evals/output/` etc.
 already get.
+
+**Launch 4 (after the transcript.py fix) got further than any prior
+attempt — 3 full baseline reps completed with real assertions/metrics —
+then surfaced the most serious finding of this project so far: a real
+worktree-isolation breach, not a harness bug that merely blocks a run.**
+While `minified/rep0`'s real sub-agent was mid-flight, `git status` on
+*this* repo (the live one this orchestrator session itself works in)
+showed uncommitted edits to `src/parts/part-reducer.jsx`,
+`src/parts/part-imports.jsx`, `skills/vela-slides/app/vela.jsx`, and
+`skills/vela-slides/SKILL.md` — exactly the pilot scenario's own task,
+landing in the wrong place. The sub-agent had genuinely edited this live
+repo instead of its isolated worktree copy.
+
+Root cause, confirmed directly from the sub-agent's own transcript: the
+worktree lived at `.claude/minify-lab/harness/runs/.../wt` — nested
+*inside* this repo's own `.claude/` tree. Very early in the run (before
+any edits), the agent read `.claude/skills/vela-secure-coding/SKILL.md`
+using the absolute path `/home/user/vela-slides/.claude/skills/...` (the
+live repo) rather than its own worktree's checked-out copy — Claude
+Code's own skill discovery walks up ancestor directories from cwd, and
+since the worktree is a descendant of this live repo, that walk reached
+the wrong `.claude/skills`. Having that live-repo absolute path in
+context, the agent then used the same `/home/user/vela-slides/...`
+prefix for every subsequent Read/Grep/Edit for the rest of the session —
+editing the real files, not the sandboxed copy. This also explains
+launch 3's "sensitive file" Edit-permission finding from the section
+above: that built-in classifier (not overridable via
+`--permission-mode`) fires on any path containing a `.claude/` segment,
+which the *correct* worktree path always has — an agent using its own
+correct path gets blocked; one that drifts to the live-repo path (no
+`.claude/` in it) sails through and writes for real. Both symptoms trace
+to the same design flaw: nesting the run-tree inside the repo's own
+`.claude/` directory.
+
+**Immediate response**: killed the live campaign driver and sub-agent
+processes (SIGTERM then SIGKILL) the moment this was noticed, before any
+further damage — `git status` confirmed only those 4 files were touched,
+all unstaged, so `git restore` was safe and sufficient; `git worktree
+remove --force` + `git worktree prune` cleared the stray registration.
+Repo confirmed clean before any further action.
+
+**Fix (delegated to a subagent, not done inline — course-correction after
+explicit user feedback this session that orchestration work should be
+delegated, not done hands-on)**: move the harness's run-tree default
+entirely outside this repo's directory ancestry, so no worktree path can
+ever be a descendant of it and Claude Code's ancestor-walk can't reach
+back into the live repo. `runner.py` gained `DEFAULT_RUNS_ROOT =
+tempfile.gettempdir() / "vela-minify-lab-runs"`; `campaign.py`'s
+default now reuses it (both still overridable via `--runs-root`).
+Independently re-verified after the subagent's report (not just
+trusting its self-report): all 9 harness modules' `--selftest` pass
+directly; a direct `run_campaign()` call with no `runs_root` override
+confirms the resolved worktree path no longer starts with
+`/home/user/vela-slides`; grepped the harness source for any other
+`HARNESS_DIR / "runs"` reference the subagent might have missed — none
+found; `.gitignore` confirmed untouched (still correct, just now covers
+an unused local fallback rather than the real default). Commit `2c9a045`.
+The stale in-repo `runs/` directory (launch 4's partial baseline data,
+generated before this fix) was deleted — no resume support exists in
+`campaign.py`, and data collected before an isolation fix can't be
+trusted regardless, so a clean re-run is required either way.
+
+**Not yet done**: the actual Phase 6 pilot re-launch (launch 5) — this
+finding took priority. Next step once resumed: relaunch the same
+`reducer-nohistory` campaign now that the isolation fix is in place, and
+this time also treat "does `git status` on this repo stay clean
+throughout" as a first-class pass/fail signal for the run, not just the
+campaign's own assertions.
 
 **The real Phase 6 pilot launch found two more real bugs before it ever
 reached agent spend** — the smoke test above only exercised
