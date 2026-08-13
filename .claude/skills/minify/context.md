@@ -340,6 +340,24 @@ Note: for the 4 files with both a v1 and v2 candidate, the harness
 should use the v2 (best) file as "the minified variant" — v1s stay in
 repo as intermediate data/history, not part of the eval pairs.
 
+## Status log (cont. 5) — eval harness built (task #5 complete)
+
+Built under `.claude/skills/minify/eval-harness/`: `file_pairs.json` (the
+8 locked pairs above), `tasks.json` (all 17 tasks from eval-task-set.md
+with mechanical regex `checks`), `prepare_trial.py` (isolates a git
+worktree per trial, swaps in baseline/minified file keeping the same
+filename so the agent-under-test can't infer condition from filename —
+important anti-leakage property), `score_trial.py` (applies mechanical
+checks to a captured result -> pass/violation/unclear verdict, appends to
+`results.jsonl`), `cleanup_trial.py`, `README.md`. Smoke-tested on task
+A1 both conditions — worktree isolation confirmed clean (real repo
+untouched), byte-exact file swap confirmed, scorer verdicts confirmed
+against synthetic pass/violation inputs. The actual "run an agent against
+the prepared prompt" step is NOT automated inside the harness — it's the
+outer orchestration layer's job (this session, using the Agent tool) per
+design, since spawning agents needs this session's own tooling.
+Committed.
+
 ## Next action
 
 1. Re-apply the cross-file-dedup-via-pointer approach specifically
