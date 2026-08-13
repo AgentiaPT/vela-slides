@@ -18,6 +18,27 @@ to 300k tokens for this session; context.md, not agent memory, is the
 durable record. Given to any fresh session, this file must be enough to
 resume without re-asking the user anything already answered below.
 
+## Standing rule: never go idle without updating this file (reinforced 2026-08-13)
+
+Every time the orchestrator is about to wait — for a background agent's
+task-notification, for user input, for anything — **this file must
+already reflect current reality first**: which phases are dispatched vs.
+landed, what each landed agent actually produced (verified, not just its
+self-reported summary), any decision made, any file committed. Waiting
+with a stale context.md is exactly the failure mode that caused the
+Incident above: the wait itself is when a container reclaim can hit.
+Concretely, before ending a turn or going idle:
+1. Update the relevant sections here (Phase plan, Artifacts index,
+   Current status, Open questions/Autonomous decisions as applicable).
+2. `git add`/`commit`/`push` this file, plus any new artifact — even
+   partial/in-flight output from agents still running (see the WIP-
+   snapshot commits in git log for the pattern: label them clearly as
+   unreviewed/in-progress, review and re-commit properly once the
+   producing agent's notification lands).
+3. Only then wait/end the turn.
+This is not optional busywork — it is the reason this project survived
+being wiped once and must not need a third rebuild.
+
 ## Goal
 
 Build a `/minify` skill that compresses instruction files (CLAUDE.md,

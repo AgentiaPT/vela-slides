@@ -65,15 +65,21 @@ _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 # quantifiers) sized to 84 entries, built independently from that
 # definition rather than copied from an inaccessible source.
 FUNCTION_WORDS = frozenset("""
-a an the of to in on at for and or but nor so yet with without into onto
-from by as is are was were be been being am do does did doing have has had
-having will would shall should can could may might must not no nor
-this that these those it its it's they them their theirs he him his she
-her hers we us our ours you your yours i me my mine there here what which
-who whom whose when where why how than then thus if unless while although
-because since until up down out over under again further once more most
-other some such only own same too very just also both either neither each
-every all any few many much most
+a an the
+of to in on at for with from by as
+and or but nor so yet because
+if unless while when where
+is are was were be been being am
+do does did doing
+have has had having
+will would can could may might must
+not no never
+i you he she it we they
+me him her us them
+my your his our their its
+mine yours hers ours theirs
+this that these those which
+all any each every some
 """.split())
 assert len(FUNCTION_WORDS) == 84, f"expected 84 function words, got {len(FUNCTION_WORDS)}"
 
@@ -261,7 +267,11 @@ def load_manifest(approach_id, manifest_path=None):
     return data
 
 
-def resolve_pair_paths(pair, harness_dir=HARNESS_DIR, repo_root=REPO_ROOT):
+def resolve_pair_paths(pair, harness_dir=None, repo_root=None):
+    # NOTE: defaults are resolved from the module globals at CALL time (not
+    # bound at def time) so tests can monkeypatch HARNESS_DIR/REPO_ROOT.
+    harness_dir = harness_dir if harness_dir is not None else HARNESS_DIR
+    repo_root = repo_root if repo_root is not None else REPO_ROOT
     base = repo_root / pair["baseline"]
     minified = harness_dir / pair["minified"]
     return base, minified
@@ -476,8 +486,17 @@ def _selftest():
         check("0% reduction pair measures ~0", abs(r["reduction"]["tok_regex"]) < 0.01,
               str(r["reduction"]))
 
-        # golden pair: ~20% word-count reduction (below/above 20% boundary)
-        words = (["word"] * 100)
+        # golden pair: ~20% word-count reduction (below/above 20% boundary).
+        # Alternate function/content words so function_word_ratio stays high
+        # (~50%) and the pair is NOT accidentally exempted as pre-densified —
+        # this fixture is meant to exercise the ordinary (non-exempt) path.
+        content_words = ["apple", "river", "mountain", "engine", "garden",
+                          "rocket", "castle", "forest", "bridge", "lantern"]
+        function_cycle = ["the", "and", "of", "to", "in", "for", "with", "as"]
+        words = []
+        for i in range(100):
+            words.append(function_cycle[i % len(function_cycle)] if i % 2 == 0
+                         else content_words[i % len(content_words)])
         base_20 = " ".join(words)
         min_199 = " ".join(words[:81])   # cut 19 of 100 words -> 19% cut (< bar)
         min_201 = " ".join(words[:79])   # cut 21 of 100 words -> 21% cut (> bar)
