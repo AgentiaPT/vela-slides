@@ -2254,4 +2254,17 @@ rerun" (resolved) sub-entries.
 Confirmed alive via `ps aux` immediately after launch. This is the
 final remaining runnable scenario in the original 9 — once resolved,
 6/9 scenarios will have real behavioral data (3 blocked pending
-scenario redesign, task #17). Not yet complete.
+scenario redesign, task #17).
+
+**Killed almost immediately by a second container restart** (~20:09
+UTC, before any real progress accumulated) — same external-event
+pattern seen twice already this session, not a harness bug. Recovery
+followed the standing playbook plus the NEW standing rule adopted
+just above: git state verified intact (`38e8e7a`, already pushed,
+nothing lost); one stray worktree found under
+`/tmp/vela-minify-lab-runs/phase6-pilot-launch14/.../wt` and removed
+(`git worktree remove --force` + `prune`); relaunched under a
+**fresh campaign-id** `phase6-pilot-launch14b` (task id `by7cbifa2`,
+~20:20 UTC) rather than reusing `phase6-pilot-launch14` — the first
+real-world application of the marker-leakage standing rule. Confirmed
+alive via `ps aux` immediately after launch. Not yet complete.
