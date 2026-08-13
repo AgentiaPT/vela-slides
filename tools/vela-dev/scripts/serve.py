@@ -15,6 +15,7 @@ Usage:
 """
 
 import hashlib
+import errno
 import hmac
 import http.cookies
 import http.server
@@ -328,6 +329,22 @@ def build_browser_html():
 </html>"""
 
 
+def token_equal(a, b):
+    """Constant-time credential compare that cannot be crashed by its input.
+
+    hmac.compare_digest raises TypeError for a str with any non-ASCII character,
+    and this runs before routing — so an unauthenticated request could drop the
+    connection and print a traceback instead of getting 403. Compare the UTF-8
+    bytes, which accept anything."""
+    if not isinstance(a, (str, bytes)) or not isinstance(b, (str, bytes)):
+        return False
+    if isinstance(a, str):
+        a = a.encode("utf-8", "surrogatepass")
+    if isinstance(b, str):
+        b = b.encode("utf-8", "surrogatepass")
+    return hmac.compare_digest(a, b)
+
+
 # ── Deck file I/O ─────────────────────────────────────────────────────
 # The umask is process-global, so reading it (the only way to sample it) is a
 # read-modify-write that cannot be made thread-safe. Do it ONCE here, at import,
@@ -338,6 +355,8 @@ def build_browser_html():
 _UMASK = os.umask(0)
 os.umask(_UMASK)
 DECK_FILE_MODE = 0o666 & ~_UMASK  # what a plain open(path, "w") would have made
+MAX_DECK_BYTES = 32 * 1024 * 1024    # a deck file we are willing to read
+MAX_DECK_PAYLOAD = 64 * 1024 * 1024  # ...and to serialise into a page after expansion
 SAVE_TMP_PREFIX = ".vela-save-"   # write_deck_json's temp; swept at startup
 SAVE_TMP_SUFFIX = ".tmp"
 
@@ -409,6 +428,10 @@ def read_deck_json(path, dir_fd=None):
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
             raise OSError(f"Not a plain, single-linked file: {path}")
+        # Size-gate on the descriptor: parsing is what costs memory, and the
+        # folder chooses the file. A real deck is orders of magnitude smaller.
+        if st.st_size > MAX_DECK_BYTES:
+            raise OSError(f"Deck file exceeds {MAX_DECK_BYTES} bytes: {path}")
         f = os.fdopen(fd, "r", encoding="utf-8")
     except BaseException:
         # fdopen takes ownership, so the fd may already be closed here; a second
@@ -466,9 +489,9 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(deck, f, ensure_ascii=False, indent=2)
-            # Restore the mode a plain open(path, "w") would have produced, so
-            # saved decks stay as readable as the user's other files. fchmod, so
-            # it can only ever apply to the file we just created.
+            # Apply the mode decided above — the replaced file's own mode, or
+            # what a plain open(path, "w") would have produced for a new file.
+            # fchmod, so it can only ever apply to the file we just created.
             if hasattr(os, "fchmod"):
                 os.fchmod(f.fileno(), mode)
         if dir_fd is not None:
@@ -573,7 +596,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
         url_token = qs.get("token", [None])[0]
         if url_token:
-            if hmac.compare_digest(url_token, srv._auth_token):
+            if token_equal(url_token, srv._auth_token):
                 session_id = secrets.token_urlsafe(24)
                 with srv._sessions_lock:
                     srv._sessions.add(session_id)
@@ -595,7 +618,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. Authorization header: Bearer xxx (for API/programmatic access)
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            if hmac.compare_digest(auth_header[7:], srv._auth_token):
+            if token_equal(auth_header[7:], srv._auth_token):
                 return True
             self.send_error(403, "Invalid token")
             return False
@@ -704,19 +727,20 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                                       else srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
-            # SECURITY (containment + no check/use race, CWE-22/59/367): every
-            # other file-touching handler realpath-validates then opens by PATH,
-            # which follows a symlink at the leaf and re-resolves it independently
-            # of the check — so a deck-named symlink to a file outside the served
-            # folder leaks its size and (for JSON) its deckTitle, and swapping the
-            # symlink between the check and the open wins a TOCTOU race even after a
-            # static-containment check. Open with O_NOFOLLOW so a symlinked entry is
-            # refused ATOMICALLY at the leaf (both the static escape and the race),
-            # and fstat the returned fd so size AND content come from the very object
-            # we opened, never a re-resolved path. Realpath containment still guards
-            # the parent directories; O_NONBLOCK avoids blocking on a fifo entry, and
-            # the S_ISREG check drops anything that is not a plain file.
+            # SECURITY (containment + no check/use race, CWE-22/59/367): a
+            # deck-named symlink to a file outside the served folder would leak
+            # its size and (for JSON) its deckTitle, and swapping the entry
+            # between a check and an open wins a TOCTOU race that no static
+            # containment test can close. Open with O_NOFOLLOW so a linked entry
+            # is refused ATOMICALLY at the leaf, and fstat the returned fd so
+            # size AND content come from the very object we opened, never a
+            # re-resolved path — the same shape read_deck_json uses, with the
+            # listing's extra need for st_size/st_mtime. The open is relative to
+            # the pinned folder descriptor, so the directories above it cannot be
+            # swapped either; O_NONBLOCK avoids blocking on a fifo entry, and the
+            # S_ISREG check drops anything that is not a plain file.
             if not self._validate_deck_name(name):
+                srv.note_skipped_deck(name, "name contains characters that are not allowed")
                 continue
             open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
             fd_kwargs = {"dir_fd": srv.folder_fd} if srv.folder_fd is not None else {}
@@ -729,6 +753,10 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 continue
             try:
                 st = os.fstat(fd)
+                if stat.S_ISREG(st.st_mode) and st.st_size > MAX_DECK_BYTES:
+                    os.close(fd)
+                    srv.note_skipped_deck(name, "larger than the deck size limit")
+                    continue
                 if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
                     os.close(fd)
                     srv.note_skipped_deck(
@@ -835,7 +863,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be polled")
             return
 
-        tracker = srv.get_tracker(deck_name)
+        # create=False: a poll for a name nobody has opened must not allocate
+        # per-name state (it made this 404 unreachable, too).
+        tracker = srv.get_tracker(deck_name, create=False)
         if not tracker:
             self.send_error(404, "Deck not tracked")
             return
@@ -1164,8 +1194,10 @@ class VelaLocalServer:
 
     # ── Per-deck state management (folder mode) ──────────────────────
 
-    def get_tracker(self, deck_name):
+    def get_tracker(self, deck_name, create=True):
         with self._lock:
+            if deck_name not in self._deck_trackers and not create:
+                return None
             if deck_name not in self._deck_trackers:
                 self._deck_trackers[deck_name] = DeckVersionTracker()
             return self._deck_trackers[deck_name]
@@ -1212,9 +1244,12 @@ class VelaLocalServer:
                 except Exception as e:
                     print(f"[sync] Error reading {console_safe(name)}: {console_safe(e)}")
 
+            # Claim the slot under the lock, but do NOT start the watcher here:
+            # start() reads and hashes the file, and holding the lock across that
+            # I/O blocks every deck endpoint (get_tracker/get_deck_data/save).
             watcher = FileWatcher(deck_path, on_change)
-            watcher.start()
             self._deck_watchers[deck_name] = watcher
+        watcher.start()
 
     # ── HTML building ────────────────────────────────────────────────
 
@@ -1251,6 +1286,11 @@ class VelaLocalServer:
 
         # Inject deck data into STARTUP_PATCH
         deck_json_str = json.dumps(deck_data, ensure_ascii=False, separators=(",", ":"))
+        # Expansion (compact → full, alias resolution) is a multiplier, so the
+        # input cap alone does not bound this. Check the expanded payload before
+        # it is escaped and spliced into a ~1.5 MB template.
+        if len(deck_json_str) > MAX_DECK_PAYLOAD:
+            raise ValueError(f"Expanded deck exceeds {MAX_DECK_PAYLOAD} bytes")
         marker = "const STARTUP_PATCH = null;"
         if marker not in vela_jsx:
             raise RuntimeError("STARTUP_PATCH marker not found in template")
@@ -1383,7 +1423,8 @@ class VelaLocalServer:
         # SECURITY: never signal the file-supplied PID on the file's say-so —
         # this runs on the ordinary busy-port path, not just under --replace.
         # Anything unverified falls through to the OS-discovered port holder
-        # below, where the PID comes from netstat/lsof rather than the file.
+        # below — which applies the same verification, because "the OS named it"
+        # says nothing about whether the process is ours to kill.
         if (info.get("port") == self.port
                 and self._is_our_stale_server(stale_pid, self.port)):
             try:
@@ -1392,7 +1433,13 @@ class VelaLocalServer:
                 print(f"  [port]   Killed stale PID {stale_pid}")
             except OSError:
                 pass
-        # Fallback: find PID by port (platform-aware)
+        # Fallback: ask the OS who holds the port. SECURITY/SAFETY: a PID from
+        # the OS is not automatically ours — the query can name an unrelated
+        # service, and (without a listen filter) even a CLIENT connected to that
+        # port, such as the user's browser. Signal only what verifies as a
+        # previous Vela server; otherwise leave it alone and let the caller fall
+        # back to the next free port. --replace is the operator's explicit
+        # opt-out for the unverified case.
         if not killed:
             try:
                 if sys.platform == "win32":
@@ -1403,24 +1450,46 @@ class VelaLocalServer:
                             parts = line.split()
                             pid_str = parts[-1]
                             try:
-                                subprocess.run(["taskkill", "/PID", pid_str, "/F"],
+                                pid = int(pid_str)
+                            except ValueError:
+                                break
+                            if not (self._force_kill
+                                    or self._is_our_stale_server(pid, self.port)):
+                                print(f"  [port]   Port {self.port} is held by PID {pid}, "
+                                      f"which is not a Vela server — leaving it alone "
+                                      f"(use --replace to override).")
+                                break
+                            try:
+                                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
                                                capture_output=True, timeout=5)
                                 killed = True
-                                print(f"  [port]   Killed stale PID {pid_str}")
+                                print(f"  [port]   Killed stale PID {pid}")
                             except (subprocess.TimeoutExpired, ValueError):
                                 pass
                             break
                 else:
-                    result = subprocess.run(["lsof", "-ti", f":{self.port}"],
-                                            capture_output=True, text=True, timeout=3)
+                    result = subprocess.run(
+                        ["lsof", "-ti", "-a", "-sTCP:LISTEN", "-i", f":{self.port}"],
+                        capture_output=True, text=True, timeout=3)
                     for pid_str in result.stdout.strip().split("\n"):
-                        if pid_str.strip():
-                            try:
-                                os.kill(int(pid_str.strip()), 9)
-                                killed = True
-                                print(f"  [port]   Killed stale PID {pid_str.strip()}")
-                            except (ProcessLookupError, ValueError):
-                                pass
+                        if not pid_str.strip():
+                            continue
+                        try:
+                            pid = int(pid_str.strip())
+                        except ValueError:
+                            continue
+                        if not (self._force_kill
+                                or self._is_our_stale_server(pid, self.port)):
+                            print(f"  [port]   Port {self.port} is held by PID {pid}, "
+                                  f"which is not a Vela server — leaving it alone "
+                                  f"(use --replace to override).")
+                            continue
+                        try:
+                            os.kill(pid, 9)
+                            killed = True
+                            print(f"  [port]   Killed stale PID {pid}")
+                        except OSError:
+                            pass
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
         if not killed:
@@ -1444,7 +1513,9 @@ class VelaLocalServer:
         try:
             return ThreadedHTTPServer((self.host, requested), handler_class)
         except OSError as e:
-            if e.errno not in (98, 10048, 10013):  # not EADDRINUSE (98/10048) or EACCES (10013)
+            # errno names, not numbers: EADDRINUSE is 98 on Linux, 48 on macOS,
+            # 10048 on Windows — a hardcoded list aborts instead of reclaiming.
+            if e.errno not in (errno.EADDRINUSE, errno.EACCES, 10048, 10013):
                 raise
         # Requested port busy — try to reclaim it from a stale process.
         httpd = self._retry_after_stale_kill(handler_class)
@@ -1679,7 +1750,13 @@ class VelaLocalServer:
                     if f":{port}" in line and "LISTENING" in line and line.strip().endswith(str(pid)):
                         return True
             else:
-                r = _sp.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=3)
+                # The state filter matters: a bare port selection also matches
+                # sockets whose REMOTE port is `port` — i.e. every client
+                # connected to the server, which is not holding the port at all.
+                # -a is required: lsof ORs selection filters without it, and the
+                # state filter needs -i to apply.
+                r = _sp.run(["lsof", "-ti", "-a", "-sTCP:LISTEN", "-i", f":{port}"],
+                            capture_output=True, text=True, timeout=3)
                 return str(pid) in r.stdout.split()
         except (OSError, subprocess.TimeoutExpired):
             pass

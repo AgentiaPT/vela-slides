@@ -417,18 +417,30 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         # and /events carry nothing sensitive and stay open. Preflight OPTIONS
         # cannot carry the header, so it is checked here on the real POST only.
         token = getattr(self.server, "_token", None)
-        if token and not hmac.compare_digest(self.headers.get("x-vela-token", ""), token):
+        # Bytes, not str: compare_digest raises TypeError on a non-ASCII str,
+        # which would drop the connection instead of answering 401.
+        if token and not hmac.compare_digest(
+                self.headers.get("x-vela-token", "").encode("utf-8", "surrogatepass"),
+                token.encode("utf-8", "surrogatepass")):
             self._json(401, {"ok": False, "error": "unauthorized"})
             return
         if self.path != "/action":
             self._json(404, {"ok": False, "error": "not found"})
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 16 * 1024 * 1024:
+        # Clamp before comparing: a bare int() lets a malformed header raise
+        # (dropping the connection) and lets a negative one slip past the cap and
+        # park the thread in read(-1). Same rule as serve.py's parser.
+        MAX_BODY = 16 * 1024 * 1024
+        try:
+            length = max(int(self.headers.get("Content-Length") or 0), 0)
+        except (ValueError, TypeError):
+            self._json(400, {"ok": False, "error": "bad content-length"})
+            return
+        if length > MAX_BODY:
             self._json(413, {"ok": False, "error": "payload too large"})
             return
         try:
-            req = json.loads(self.rfile.read(length) or b"{}")
+            req = json.loads(self.rfile.read(min(length, MAX_BODY)) or b"{}")
         except (ValueError, TypeError):
             self._json(400, {"ok": False, "error": "bad json"})
             return

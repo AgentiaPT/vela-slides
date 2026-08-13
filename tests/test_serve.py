@@ -669,6 +669,31 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(serve_mod.console_safe("Präsentation-📊"), "Präsentation-📊")
         self.assertLess(len(serve_mod.console_safe("x" * 500)), 200)
 
+    def test_oversized_deck_is_refused_not_parsed(self):
+        big = os.path.join(self._tmpdir, "huge.vela")
+        with open(big, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "H", "lanes": [], "pad": "x" * (serve_mod.MAX_DECK_BYTES + 1024)}, f)
+        self.addCleanup(os.unlink, big)
+        status, _, body = fetch(self._port, "GET", "/deck/huge.vela")
+        self.assertEqual(status, 409)
+        status, _, listing = fetch(self._port, "GET", "/api/decks")
+        self.assertNotIn(b"huge.vela", listing)
+
+    def test_poll_for_an_unknown_deck_allocates_nothing(self):
+        before = len(self._server._deck_trackers)
+        for i in range(25):
+            status, _, _ = fetch(self._port, "GET", f"/poll/ghost{i}.vela?v=0")
+            self.assertEqual(status, 404)
+        self.assertEqual(len(self._server._deck_trackers), before,
+                         "polling unknown names allocated per-name state")
+
+    def test_non_ascii_token_is_rejected_not_crashed(self):
+        # hmac.compare_digest raises TypeError on a non-ASCII str, before routing.
+        self.assertFalse(serve_mod.token_equal("é", "secret"))
+        self.assertFalse(serve_mod.token_equal(None, "secret"))
+        self.assertFalse(serve_mod.token_equal("secret", "sécret"))
+        self.assertTrue(serve_mod.token_equal("s3cret", "s3cret"))
+
     # -- Deck file mode / atomicity --
 
     def test_save_preserves_a_private_decks_mode(self):
@@ -734,7 +759,9 @@ class TestSecurity(FolderServerTestBase):
         for t in threads:
             t.join(timeout=20)
         modes = {os.stat(os.path.join(self._tmpdir, n)).st_mode & 0o777 for n in names}
-        self.assertFalse([m for m in modes if m & 0o022], f"widened modes: {modes}")
+        # Compare against what the server decided once at import — asserting a
+        # hardcoded 0o644 would fail on a machine with a different umask.
+        self.assertEqual(modes, {serve_mod.DECK_FILE_MODE}, f"unexpected modes: {modes}")
 
     def test_vendor_js_is_not_loaded_from_the_served_folder(self):
         # /vendor/babel.min.js is executed in the authenticated page origin, so
@@ -1917,19 +1944,13 @@ class TestRuntimeFileLinks(unittest.TestCase):
         # POSIX unlink removes symlinks itself, so a failed unlink is never "it
         # was a link" — running rmdir anyway deletes a real directory that raced
         # into place after the stat.
+        from unittest import mock
         os.symlink(self.tmp, self._rt)
-        calls = []
-        real_unlink, real_rmdir = os.unlink, os.rmdir
-
-        def refuse(*a, **k):
-            raise PermissionError("simulated race")
-
-        os.unlink, os.rmdir = refuse, lambda *a, **k: calls.append(a)
-        try:
+        with mock.patch.object(serve_mod.os, "unlink",
+                               side_effect=PermissionError("simulated race")), \
+                mock.patch.object(serve_mod.os, "rmdir") as rmdir:
             self.server._discard_runtime_entry(".vela.env")
-        finally:
-            os.unlink, os.rmdir = real_unlink, real_rmdir
-        self.assertEqual(calls, [], "rmdir fallback ran on POSIX")
+        self.assertEqual(rmdir.call_args_list, [], "rmdir fallback ran on POSIX")
 
     def test_missing_cwd_never_raises(self):
         # Startup and atexit cleanup both address the runtime file; if the
