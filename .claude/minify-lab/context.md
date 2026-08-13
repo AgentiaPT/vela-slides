@@ -979,9 +979,24 @@ directly against the code (not taken on trust):
   (`swap_per_round`, `raw_winner_per_round`, `parse_failure`) so any
   future INCONCLUSIVE run is actually diagnosable instead of leaving
   the next investigation as blind as this one. Explicitly told not to
-  touch `gate.py`/`config.yaml`/thresholds. Awaiting completion,
-  will independently verify (`--selftest` on all three modules +
-  `tests/test_vela.py`) before committing.
+  touch `gate.py`/`config.yaml`/thresholds.
+
+**Landed and committed (2026-08-13, ~11:25) — commit `d589424`.** Agent
+`a10fbb4a8699fbdbb`'s diff reviewed line-by-line (not just its self-report)
+and independently re-run by the orchestrator, not just trusted: `git diff`
+matched the report exactly (only `judge.py` + `campaign.py` touched, as
+scoped); re-ran `judge.py --selftest` / `campaign.py --selftest` /
+`gate.py --selftest` / `tests/test_vela.py` myself from a clean shell —
+all pass (503/503 on the repo suite). `parse_ab_response` now validates
+against the scenario's real `judge_dimensions`, not its own response
+keys; `judge_pairs` entries now carry `swap_per_round`,
+`raw_winner_per_round`, `parse_failure`. Next time a real pilot produces
+an INCONCLUSIVE 6B, these fields will say whether it was an order-swap
+effect, genuine re-judgement disagreement, or a silent parse failure —
+this run's 0/3 result stays undiagnosed (transcripts gone), but the
+next one won't be. **Judge-instability workstream (task #11/#14) is
+now fully closed** for this round; the remaining open item is the
+deliberate reps/judge_rounds sizing decision, deferred to task #12.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
