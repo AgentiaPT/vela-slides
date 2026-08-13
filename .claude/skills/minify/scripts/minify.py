@@ -7,11 +7,12 @@ You do the minifying; this proves whether the result kept every constraint.
 
     minify.py plan      <source>                    per-class compression budget
     minify.py inventory <source> [-o inv.json]      enumerated constraint inventory
+    minify.py predict   <source>                    predicted yield for this file
     minify.py measure   <source> <minified>         size verdict only
     minify.py verify    <source> <minified>         both verdicts + all gates
     minify.py selftest                              fixture battery
 
-Exit codes (repo convention): 0 ok · 1 size verdict below bar · 2 usage
+Exit codes (repo convention): 0 ok · 1 size below this file's prediction · 2 usage
 · 3 file not found · 4 structure/gate rejection (do not ship) · 5 conflict.
 """
 
@@ -40,11 +41,21 @@ def _n(x: float) -> str:
 def render_plan(doc: ml.Doc, plan: dict) -> str:
     out = [f"BUDGET PLAN — {doc.path}", "=" * 72]
     m = ml.file_metrics(doc)
+    p = ml.predict_reduction(doc)
+    lo, hi = p["predicted_cut_pct"]
+    spans = m["frozen_spans"]
     out.append(f"  {_n(m['bytes'])} B · {_n(m['lines'])} lines · "
-               f"verbatim {m['verbatim_fraction_pct']}% · function-word {m['function_word_ratio_pct']}%")
-    if m["verbatim_fraction_pct"] > ml.PRE_DENSIFIED_VERBATIM_PCT or \
-       m["function_word_ratio_pct"] < ml.PRE_DENSIFIED_FUNCWORD_PCT:
-        out.append("  PRE-DENSIFIED — this file is already telegraphic; expect a small size verdict.")
+               f"frozen {m['frozen_fraction_pct']}% (code-only {m['verbatim_fraction_pct']}%) · "
+               f"function-word {m['function_word_ratio_pct']}%")
+    out.append(f"  frozen spans: " + " · ".join(f"{k} {v}" for k, v in spans.items() if v))
+    out.append(f"  PREDICTED YIELD FOR THIS FILE: {lo:.1f}-{hi:.1f}%  "
+               f"= (1 - frozen {p['frozen_fraction_pct']}%) x prose-rate "
+               f"{p['prose_rate_band_pct'][0]:.0f}-{p['prose_rate_band_pct'][1]:.0f}%")
+    out.append("  State this range before you start. The size verdict asks whether you hit")
+    out.append("  it — not whether you hit some flat percentage that ignores this file.")
+    if p["extrapolated"]:
+        out.append("  NOTE prediction is extrapolated below the calibrated band — this file is")
+        out.append("       denser than any probe the model was fitted on. Expect the low end.")
     out.append("")
     out.append("  class  content                        bytes   budget   allowed cut")
     out.append("  " + "-" * 68)
@@ -89,6 +100,8 @@ def render_inventory(inv: dict) -> str:
 
 
 def render_size(v: dict) -> str:
+    p = v["prediction"]
+    lo, hi = p["predicted_cut_pct"]
     out = ["=" * 72, "VERDICT 1/2 — SIZE", "=" * 72,
            f"  bytes         {_n(v['bytes_before'])} -> {_n(v['bytes_after'])}  "
            f"({v['byte_cut_pct']:+.1f}% cut)",
@@ -96,17 +109,23 @@ def render_size(v: dict) -> str:
            f"({v['token_cut_pct']['wordpunct']:.1f}%)   "
            f"byterate {_n(v['tokens_byterate'][0])} -> {_n(v['tokens_byterate'][1])} "
            f"({v['token_cut_pct']['byterate']:.1f}%)",
-           f"  reported cut  {v['token_cut_reported_pct']:.1f}%  "
+           f"  achieved cut  {v['token_cut_reported_pct']:.1f}%  "
            f"(lower of two stdlib proxies; not a real tokenizer)",
-           f"  bar           >= {v['bar_pct']:.0f}%",
-           f"  density       verbatim {v['verbatim_fraction_pct']}% · "
-           f"function-word {v['function_word_ratio_pct']}%"]
+           f"  predicted     {lo:.1f}-{hi:.1f}%  = (1 - frozen {p['frozen_fraction_pct']}%) "
+           f"x prose-rate {p['prose_rate_band_pct'][0]:.0f}-{p['prose_rate_band_pct'][1]:.0f}% "
+           f"at function-word {p['function_word_ratio_pct']}%",
+           f"  density       frozen {v['frozen_fraction_pct']}% "
+           f"(code-only {v['verbatim_fraction_pct']}%) · "
+           f"function-word {v['function_word_ratio_pct']}%",
+           f"  reference     the flat >= {v['reference_bar_pct']:.0f}% bar is reported, not "
+           f"gated on: {'met' if v['meets_reference_bar'] else 'not met'}"]
+    if v["exemption_note"]:
+        out.append(f"                {v['exemption_note']}")
     for f in v["flags"]:
         out.append(f"  FLAG          {f}")
-    line = f"  RESULT        {v['result']}"
-    if v["exemption_note"]:
-        line += f" — {v['exemption_note']}"
-    out.append(line)
+    out.append(f"  RESULT        {v['result']}  "
+               f"(this file was predicted to give up {lo:.1f}-{hi:.1f}%; it gave up "
+               f"{v['token_cut_reported_pct']:.1f}%)")
     return "\n".join(out)
 
 
@@ -193,11 +212,28 @@ def cmd_inventory(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_predict(a: argparse.Namespace) -> int:
+    doc = _load(a.source)
+    p = ml.predict_reduction(doc)
+    if a.json:
+        print(json.dumps({"metrics": ml.file_metrics(doc), "prediction": p}, indent=2))
+        return EXIT_OK
+    lo, hi = p["predicted_cut_pct"]
+    print(f"PREDICTED YIELD — {doc.path}")
+    print(f"  frozen {p['frozen_fraction_pct']}% · function-word {p['function_word_ratio_pct']}%"
+          f" -> prose-rate band {p['prose_rate_band_pct'][0]:.0f}-{p['prose_rate_band_pct'][1]:.0f}%")
+    print(f"  predicted reduction: {lo:.1f}-{hi:.1f}%")
+    print(f"  basis: {p['basis']}")
+    if p["extrapolated"]:
+        print("  NOTE extrapolated below the calibrated band — expect the low end.")
+    return EXIT_OK
+
+
 def cmd_measure(a: argparse.Namespace) -> int:
     o, m = _load(a.source), _load(a.minified)
     v = ml.size_verdict(o, m)
     print(json.dumps(v, indent=2) if a.json else render_size(v))
-    return EXIT_OK if v["result"] in ("PASS", "EXEMPT") else EXIT_SIZE
+    return EXIT_OK if v["result"] in ("MET-PREDICTION", "ABOVE-PREDICTION") else EXIT_SIZE
 
 
 def _run_verify(source: str, minified: str, inv_path: str = None,
@@ -238,7 +274,7 @@ def cmd_verify(a: argparse.Namespace) -> int:
                 or r["frontmatter"]["result"] == "REJECTED")
     if rejected:
         return EXIT_REJECT
-    return EXIT_OK if r["size"]["result"] in ("PASS", "EXEMPT") else EXIT_SIZE
+    return EXIT_OK if r["size"]["result"] in ("MET-PREDICTION", "ABOVE-PREDICTION") else EXIT_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +290,10 @@ CASES = [
     ("probe-a known-good", "probe-a.before.md", "probe-a.after.md", "accept", None),
     ("probe-b known-good", "probe-b.before.md", "probe-b.after.md", "accept", None),
     ("probe-c known-good", "probe-c.before.md", "probe-c.after.md", "accept", None),
+    # link-heavy source: URLs / link destinations / link-reference definitions are
+    # byte-frozen too, so this file's compressible share is much smaller than a
+    # code-span-only reading of it suggests
+    ("links known-good", "links.before.md", "links.after.md", "accept", None),
     # one deliberate defect per semantic-loss class
     ("probe-a dropped exception", "probe-a.before.md", "probe-a.lossy-exception.md", "reject", None),
     ("probe-b flattened quantifier", "probe-b.before.md", "probe-b.lossy-quantifier.md",
@@ -269,6 +309,8 @@ CASES = [
      "frontmatter.lossy-description.md", "frontmatter", None),
     ("output grew instead of shrinking", "probe-a.before.md", "probe-a.grown.md",
      "FAIL-GREW", None),
+    ("tidied URL / dropped link title", "links.before.md", "links.lossy-url.md",
+     "verbatim-span-lost", None),
     # attestation path: unattested rework is rejected, a valid attestation clears
     # it, and an attestation pointing at an unrelated line does not
     ("reworded rule, unattested", "probe-a.before.md", "probe-a.reworded.md", "reject", None),
@@ -333,6 +375,10 @@ def main(argv: list) -> int:
     si.add_argument("-o", "--out", help="write inventory JSON here")
     si.add_argument("--all", action="store_true", help="include non-normative statements")
     si.set_defaults(fn=cmd_inventory)
+
+    spr = sub.add_parser("predict", help="predicted yield for this file, before minifying")
+    spr.add_argument("source")
+    spr.set_defaults(fn=cmd_predict)
 
     sm = sub.add_parser("measure", help="size verdict only")
     sm.add_argument("source")

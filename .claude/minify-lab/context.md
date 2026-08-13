@@ -153,11 +153,8 @@ Orchestrate only — sub-agents do the actual work.
 3. **[DONE]** Citation verification pass on phase 1's external
    citations. Agent: sonnet, background. Output:
    `.claude/minify-lab/citation-verification.md` — see Artifacts index.
-4. **[dispatched]** Build `.claude/skills/minify/` itself, applying TRB
-   (phase 1's top-ranked approach) + a self-check constraint-inventory
-   extractor. Agent: opus. Constraints: don't apply to real repo files
-   yet, don't touch `VELA_VERSION`, don't `git commit` (orchestrator
-   reviews + commits).
+4. **[DONE, independently verified]** Build `.claude/skills/minify/`.
+   Agent: opus. Output: `.claude/skills/minify/` — see Artifacts index.
 5. **[dispatched]** Build harness scripts under `.claude/minify-lab/
    harness/` per phase 2's design, amended with the split size/structure
    6a verdict (see Autonomous decisions). Agent: sonnet. Constraints: no
@@ -288,6 +285,55 @@ Orchestrate only — sub-agents do the actual work.
     research-encoding-formats.md's actual recommendation (rests on §3's
     measured probes, not the literature) — this only clears the
     literature review itself for eventual citation.
+- `.claude/skills/minify/` — **DONE, independently verified** (2026-08-13,
+  opus). This is the actual `/minify` skill, live and discoverable (it
+  now appears in the session's skill listing). Orchestrator ran its
+  selftest directly rather than trusting the self-report: **16/16
+  fixture cases pass**, confirmed firsthand. Spot-checked
+  `minify_lib.py` directly for the frozen_ext correction — confirmed
+  present: `frozen_fraction()` explicitly covers 5 span kinds ("fence,
+  inline (code), url (bare or `[text](url)`)..."), docstring cites the
+  exact "5.0% -> 37.5% frozen" example from the phase 1b study. No real
+  repo file touched, no `VELA_VERSION` bump, no `git commit` by the
+  agent — all constraints honored.
+  - **Structure**: `SKILL.md` (frontmatter matches this repo's
+    `hyper-sprint`/`dependency-sweep` convention) + `scripts/
+    minify_lib.py` (1245 lines, stdlib only) + `scripts/minify.py` (CLI:
+    `plan · inventory · predict · measure · verify · selftest`, exit
+    codes 0-5 matching this repo's own `vela.py` convention) +
+    `references/{trb-format,content-classes,failure-modes}.md` +
+    `fixtures/` (22 files: 3 hand-verified probes from research §3, a
+    link-heavy pair testing the frozen_ext fix, one deliberately-damaged
+    variant per failure class, 2 attestation JSONs).
+  - **The tool never edits or decides — it measures, enumerates, and
+    verifies.** The rewriting is left to whoever (agent or human) runs
+    it; the tool's job is to make dropping a constraint impossible to
+    ship unnoticed.
+  - **Constraint-inventory extractor** (the top build priority flagged
+    by research): splits source into units, freezes verbatim spans
+    (fence/inline-code/URL/link-destination/link-reference-definition —
+    the frozen_ext fix), emits one record per normative statement
+    (stable id, modality with strength, quantifier set, content class,
+    distinctive-token keys, atoms: verbatim spans/numeric literals/
+    reference edges/parentheticals/exceptions), sha256-bound to its
+    source. After minifying, `verify` locates each constraint's best
+    window in the output and reports per-constraint defects
+    (`verbatim-missing`, `numeric-drift`, `reference-dropped`,
+    `enum-item-missing`, `modality-weakened:X->Y`, `polarity-flipped`,
+    `hedge-hardened`, `quantifier-erosion`) plus global atom failures.
+    Any `lost`/`review` status or atom failure rejects the run.
+  - **Two verdicts, never merged** (exactly the shape locked in
+    Autonomous decisions): SIZE reports bytes, both token proxies,
+    achieved cut, **the predicted range with its formula** `(1 −
+    frozen) × prose-rate(function-word)` (not a flat percentage claim —
+    matches the correction sent), density, the flat 20% bar as
+    reported-not-gated, and a result of FAIL-GREW / IMPLAUSIBLE /
+    BELOW-, MET-, or ABOVE-PREDICTION. STRUCTURE reports constraint
+    tally, atom failures, reference edges, frontmatter PASS/REJECTED,
+    and `structure_score = explicit_gain − constraints_lost` (must be
+    ≥0) with a PASS/REJECTED result.
+  - Frontmatter `description` is in a hard-frozen key set, confirmed in
+    code (`FROZEN_FRONTMATTER_KEYS`).
 - `.claude/minify-lab/harness-design.md` — **DONE** (2026-08-13, opus,
   ~1600 lines). Implementation-ready spec for `.claude/minify-lab/
   harness/`. Key points:
@@ -341,24 +387,27 @@ authorized proceeding on best judgment without asking further questions**
 minifying skill") — see "Autonomous decisions" above for exactly what was
 decided and why.
 
-Phases 3 (citation verification) and 1b (normal-density corroboration)
-are now **DONE**, both reviewed — see Artifacts index. Phase 1b's finding
-was significant enough to actively correct the two still-running builder
-agents (phase 4: skill, phase 5: harness) mid-flight rather than wait —
-correction messages queued for both, covering the `frozen_ext` bug and
-the continuous-prediction gate refinement. **Phase 4 and phase 5 are
-still running** (not yet landed as of this update). Their in-flight
-output has been periodically snapshotted to git as unreviewed WIP commits
-per the Standing rule above — do not assume those files are correct or
-finished; review properly once each agent's actual completion
-notification lands, and confirm the frozen_ext correction was applied
-(check for it explicitly — it was sent as a message, not guaranteed to be
-incorporated).
+Phases 1, 1b, 2, 3, and now **4 are all DONE**, each independently
+verified (not just self-report — ran phase 4's own selftest firsthand:
+16/16 pass; spot-checked its code for the frozen_ext fix: present). The
+`/minify` skill is real, live, and discoverable in the skill listing.
 
-Remaining: resolve the flagged constraint-extractor duplication between
-phase 4 and 5 once both exist; then phase 6 (first real pilot, budget
-already locked: 3 reps, sonnet agent-under-test, opus judge) becomes
-unblocked.
+**Phase 5 (harness scripts) is still running** — not yet landed. It has
+already picked up further progress on `constraint_inventory.py` and
+`reduction.py` since the frozen_ext correction was sent; not yet verified
+whether the correction was actually incorporated there too (only
+confirmed for phase 4 so far) — check explicitly when phase 5's
+completion notification lands, don't assume symmetry. In-flight output
+continues to be snapshotted to git as unreviewed WIP commits per the
+Standing rule.
+
+Remaining after phase 5 lands: resolve the flagged constraint-extractor
+duplication between the skill's own (`.claude/skills/minify/`, now the
+canonical, verified implementation) and the harness's
+`constraint_inventory.py` — the harness should very likely import/reuse
+the skill's version rather than keep a second one; check what phase 5
+actually did. Then phase 6 (first real pilot — budget already locked: 3
+reps, sonnet agent-under-test, opus judge) becomes unblocked.
 
 ## Session hygiene: checking context usage
 

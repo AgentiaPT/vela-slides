@@ -5,9 +5,10 @@ reduction.py — VERDICT 6A (harness-design.md §7), amended per context.md's
 sub-verdicts, `size` and `structure`, which are NEVER merged into one score:
 
   size      — >=20% mean bytes/token reduction across an approach's file
-              manifest, with a documented exemption for pre-densified files
-              (verbatim fraction >25% OR function-word ratio <30%, exact
-              definitions from research-encoding-formats.md's Appendix). An
+              manifest (all pairs; §6.3 point 1 of the corroboration study).
+              A pair's exemption from that mean is now a CONTINUOUS
+              prediction, not the old binary "verbatim >25% OR fw <30%" rule
+              — see the "corroboration-study patch" section below. An
               exempted file's size result is still computed and reported —
               it just cannot fail the size gate on its own.
   structure — a constraint-explicitness score (see constraint_inventory.py):
@@ -26,6 +27,48 @@ Usage:
 
 Exit codes (aligned with vela.py / gate.py conventions):
   0 pass · 1 below bar · 2 usage · 3 file not found · 4 integrity/implausible
+
+── Corroboration-study patch (research-normal-density-corroboration.md §6.2-
+6.3, applied as a follow-up after the rest of this harness was already
+self-tested) ───────────────────────────────────────────────────────────────
+Two changes, both scoped to this file only:
+
+ 1. `verbatim_fraction` (fences + inline code) undercounts frozen content:
+    URLs and markdown link-reference-definition targets are just as
+    byte-frozen — you cannot reword a URL — but were counted as compressible
+    prose. Measured effect on a real file: 5.0% -> 37.5% frozen, which flips
+    whether the file is projected to clear the size bar. `frozen_ext_fraction`
+    extends the same span-accounting approach to also blank out and count
+    URL spans (this also catches inline-link destinations and
+    reference-style `[label]: url` lines, since both are `https?://...`
+    substrings once fences/inline-code are already blanked).
+ 2. The old binary pre-densification exemption is replaced with a continuous
+    per-file prediction: `expected_reduction = (1 - frozen_ext) *
+    prose_reduction_rate(fw)`, where `prose_reduction_rate` is a linear fit
+    to the four-probe (fw-before, aggressive-tier cut) table in that study's
+    §4.4 (kept as raw calibration points in code, not just fitted
+    coefficients, so the fit is reproducible and self-tested against the
+    paper's claimed r=0.978). A pair is now excluded from the mean-reduction
+    bar when its OWN predicted ceiling falls below the bar (continuous),
+    replacing the old crude "verbatim>25% or fw<30%" heuristic — same role
+    (`exempt_from_size_bar`, `gating_pair_count`, `exempt_pair_count` keep
+    their names and meaning), different, calibrated computation. Each pair
+    additionally reports whether its *actual* reduction hit its *own*
+    predicted ceiling (`prediction.hit_prediction`) — a diagnostic the flat
+    bar alone cannot give you: a file can fail the flat 20% bar while still
+    hitting 100% of what the model says it could ever give up.
+ 3. Section-level (rules-only) numbers are reported alongside the file-level
+    number when an approach manifest supplies `section_pairs` (optional) —
+    §6.3 point 4's point that merging file-level and section-level numbers
+    hides real signal, the same lesson as the size/structure split itself.
+
+# TODO(orchestrator): reconcile with .claude/skills/minify/'s own
+# `frozen_fraction()`/`prose_rate()`/`predict_reduction()` (in
+# `.claude/skills/minify/scripts/minify_lib.py`, which landed after this
+# patch was written). That module independently built overlapping logic for
+# the same problem this patch solves — the two were NOT cross-checked and
+# may use different calibration constants. See constraint_inventory.py's
+# header for the same flag on the structure sub-verdict's extractor.
 """
 
 import argparse
@@ -142,10 +185,103 @@ def function_word_ratio(text):
 
 
 def is_pre_densified(text, verbatim_gt=0.25, fw_ratio_lt=0.30):
+    """LEGACY binary rule. Kept only to populate `density`'s old fields for
+    back-compat; no longer drives the exemption decision (see
+    `frozen_ext_fraction` / `predicted_reduction` below, and the module
+    docstring's "corroboration-study patch" section)."""
     vf = verbatim_fraction(text)
     fw = function_word_ratio(text)
     exempt = vf > verbatim_gt or fw < fw_ratio_lt
     return exempt, {"verbatim_fraction": round(vf, 4), "function_word_ratio": round(fw, 4)}
+
+
+# ── corroboration-study patch: frozen_ext + continuous prediction ─────────
+# See the module docstring's "Corroboration-study patch" section for the
+# full rationale and citations (research-normal-density-corroboration.md
+# §6.2-6.3).
+
+_URL_RE = re.compile(r"https?://[^\s\)\]\"'<>]+")
+
+
+def frozen_ext_fraction(text):
+    """Extended frozen-content fraction: fenced code + inline code (outside
+    fences) + URLs (outside both), all divided by file bytes. Supersedes
+    `verbatim_fraction` for exemption/prediction purposes — URLs and
+    link-reference-definition targets are just as byte-frozen as code but
+    `verbatim_fraction` misses them."""
+    total = bytes_len(text)
+    if total == 0:
+        return 0.0
+    fenced_spans = [m.span() for m in _FENCE_RE.finditer(text)]
+    frozen_bytes = sum(len(text[a:b].encode("utf-8")) for a, b in fenced_spans)
+    non_fenced = _FENCE_RE.sub(lambda m: " " * len(m.group(0)), text)
+    inline_spans = [m.span() for m in _INLINE_CODE_RE.finditer(non_fenced)]
+    frozen_bytes += sum(len(non_fenced[a:b].encode("utf-8")) for a, b in inline_spans)
+    non_fenced_non_inline = _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), non_fenced)
+    url_spans = [m.span() for m in _URL_RE.finditer(non_fenced_non_inline)]
+    frozen_bytes += sum(len(non_fenced_non_inline[a:b].encode("utf-8")) for a, b in url_spans)
+    return frozen_bytes / total
+
+
+# Raw calibration points: (function-word ratio BEFORE compression, aggressive
+# -tier byte cut), both as fractions, for the four probes in
+# research-normal-density-corroboration.md §4.4 ("fw before -> after" and
+# "Aggressive"/"Cut" columns). fw-BEFORE is used (not after) because the
+# prediction must be computable from the file as found, before any
+# minification has happened.
+_PROSE_RATE_CALIBRATION = (
+    (0.332, 0.144),  # P1 atom/atom bug-report precheck
+    (0.451, 0.272),  # P2 nodejs/node discuss & update
+    (0.422, 0.275),  # P3 kubernetes/community why no review
+    (0.329, 0.116),  # P4 openai/codex TUI styling
+)
+
+
+def _least_squares_fit(points):
+    n = len(points)
+    mean_x = sum(x for x, _ in points) / n
+    mean_y = sum(y for _, y in points) / n
+    num = sum((x - mean_x) * (y - mean_y) for x, y in points)
+    den = sum((x - mean_x) ** 2 for x, _ in points)
+    slope = num / den if den else 0.0
+    intercept = mean_y - slope * mean_x
+    return slope, intercept
+
+
+def _pearson_r(points):
+    n = len(points)
+    mean_x = sum(x for x, _ in points) / n
+    mean_y = sum(y for _, y in points) / n
+    num = sum((x - mean_x) * (y - mean_y) for x, y in points)
+    den_x = math.sqrt(sum((x - mean_x) ** 2 for x, _ in points))
+    den_y = math.sqrt(sum((y - mean_y) ** 2 for _, y in points))
+    return num / (den_x * den_y) if den_x and den_y else 0.0
+
+
+_PROSE_RATE_SLOPE, _PROSE_RATE_INTERCEPT = _least_squares_fit(_PROSE_RATE_CALIBRATION)
+
+# The four calibration probes span fw 32.9%-45.1%. Outside that range (e.g.
+# heavily code-heavy files near fw~18%, or unusually verbose prose >51%) the
+# linear fit is an extrapolation, not a measurement -- clamp to a sane,
+# documented band rather than let it run negative or implausibly high.
+PROSE_RATE_FLOOR = 0.0
+PROSE_RATE_CEILING = 0.45
+
+
+def prose_reduction_rate(fw_ratio):
+    """Predicted prose-only reduction rate for a file with the given
+    function-word ratio, per the linear relationship measured in
+    research-normal-density-corroboration.md §6.2 (r=0.978, aggressive
+    tier, n=4). Fraction in, fraction out, clamped to
+    [PROSE_RATE_FLOOR, PROSE_RATE_CEILING]."""
+    rate = _PROSE_RATE_SLOPE * fw_ratio + _PROSE_RATE_INTERCEPT
+    return max(PROSE_RATE_FLOOR, min(PROSE_RATE_CEILING, rate))
+
+
+def predicted_reduction(frozen_ext, fw_ratio):
+    """expected_reduction = (1 - frozen_ext) * prose_reduction_rate(fw), per
+    research-normal-density-corroboration.md §6.3 recommendation 2."""
+    return max(0.0, min(1.0, (1 - frozen_ext) * prose_reduction_rate(fw_ratio)))
 
 
 def heading_count(text):
@@ -194,9 +330,16 @@ def _decode_utf8_or_raise(path):
 
 
 def measure_pair(baseline_path, minified_path, proxy_disagreement_pp=5, implausible=0.95,
-                  exemption_verbatim_gt=0.25, exemption_fw_lt=0.30):
+                  exemption_verbatim_gt=0.25, exemption_fw_lt=0.30, bar=0.20):
     """Run one pair through the full guard+measurement pipeline. Raises
-    IntegrityError on any hard-fail guard. Returns the pair result dict."""
+    IntegrityError on any hard-fail guard. Returns the pair result dict.
+
+    `exemption_verbatim_gt`/`exemption_fw_lt` are kept only to compute the
+    LEGACY `density` fields for back-compat/reporting; the exemption
+    decision itself (`exempt_from_size_bar`) now comes from the continuous
+    `predicted_reduction(...) < bar` test — see the module docstring's
+    "corroboration-study patch" section.
+    """
     base_text = _decode_utf8_or_raise(baseline_path)
     min_text = _decode_utf8_or_raise(minified_path)
 
@@ -235,7 +378,33 @@ def measure_pair(baseline_path, minified_path, proxy_disagreement_pp=5, implausi
     if base_headings > 0 and min_headings < base_headings * 0.5:
         flags.append("structure_loss_suspected")
 
-    exempt, density = is_pre_densified(base_text, exemption_verbatim_gt, exemption_fw_lt)
+    # LEGACY binary rule — kept only to populate density's old fields.
+    _legacy_exempt, density = is_pre_densified(base_text, exemption_verbatim_gt, exemption_fw_lt)
+
+    # corroboration-study patch: continuous prediction supersedes the binary
+    # rule above for the actual exemption decision.
+    frozen_ext = frozen_ext_fraction(base_text)
+    fw_ratio = function_word_ratio(base_text)
+    rate = prose_reduction_rate(fw_ratio)
+    expected_reduction = predicted_reduction(frozen_ext, fw_ratio)
+    actual_reduction = reduction["tok_regex"]
+    exempt = expected_reduction < bar
+
+    density["frozen_ext"] = round(frozen_ext, 4)
+
+    prediction = {
+        "prose_reduction_rate": round(rate, 4),
+        "expected_reduction": round(expected_reduction, 4),
+        "actual_reduction": actual_reduction,
+        "hit_prediction": actual_reduction >= expected_reduction,
+        "note": ("Per-file continuous target (research-normal-density-"
+                 "corroboration.md §6.3): did THIS file's actual reduction "
+                 "reach the ceiling predicted from its own frozen_ext + "
+                 "function-word ratio? Independent of, and may disagree "
+                 "with, the flat approach-level bar below — a file can miss "
+                 "the flat bar while still hitting 100% of its own "
+                 "achievable ceiling, or vice versa."),
+    }
 
     structure = ci.score_pair(base_text, min_text)
 
@@ -248,6 +417,7 @@ def measure_pair(baseline_path, minified_path, proxy_disagreement_pp=5, implausi
         "flags": flags,
         "exempt_from_size_bar": exempt,
         "density": density,
+        "prediction": prediction,
         "structure": structure,
     }
 
@@ -305,16 +475,35 @@ def run_approach(approach_id, manifest_path=None, config=None):
             implausible=implausible,
             exemption_verbatim_gt=ex_verbatim,
             exemption_fw_lt=ex_fw,
+            bar=bar,
         )
         pair_results.append(result)
         for f in result["flags"]:
             warnings.append(f"{f}: {Path(result['minified']).name} retains "
                              f"{heading_ratio_text(result)}")
 
+    # ── section-level (rules-only) numbers, informational, "where available"
+    # (corroboration-study §6.3 point 4) — only computed if the manifest
+    # supplies section_pairs; empty otherwise, never required.
+    section_pairs_cfg = manifest.get("section_pairs", [])
+    section_level = []
+    for pair in section_pairs_cfg:
+        base_path, min_path = resolve_pair_paths(pair)
+        result = measure_pair(
+            base_path, min_path,
+            proxy_disagreement_pp=disagreement_pp,
+            implausible=implausible,
+            exemption_verbatim_gt=ex_verbatim,
+            exemption_fw_lt=ex_fw,
+            bar=bar,
+        )
+        section_level.append(result)
+
     # ── size sub-verdict ──
     # only non-exempt pairs count toward the mean bar (exemption 1 of
-    # context.md's amendment); exempt pairs are measured & reported but
-    # cannot fail the gate.
+    # context.md's amendment, recalibrated per the corroboration-study patch
+    # — see measure_pair's docstring); exempt pairs are measured & reported
+    # but cannot fail the gate.
     gating_pairs = [p for p in pair_results if not p["exempt_from_size_bar"]]
     exempt_pairs = [p for p in pair_results if p["exempt_from_size_bar"]]
 
@@ -335,22 +524,43 @@ def run_approach(approach_id, manifest_path=None, config=None):
         for p in pair_results if p["reduction"][metric] < weak_warn
     ]
 
+    prediction_misses = [
+        {"file": p["minified"], "actual": p["prediction"]["actual_reduction"],
+         "expected": p["prediction"]["expected_reduction"]}
+        for p in pair_results if not p["prediction"]["hit_prediction"]
+    ]
+    mean_expected_reduction = (
+        sum(p["prediction"]["expected_reduction"] for p in pair_results) / len(pair_results)
+        if pair_results else 0.0
+    )
+
     size_verdict = {
         "verdict_kind": "6a-size",
         "approach": approach_id,
         "bar": bar,
         "metric": metric,
         "mean_reduction": round(mean_reduction, 4),
+        "mean_expected_reduction": round(mean_expected_reduction, 4),
         "pass": size_pass,
         "gating_pair_count": len(gating_pairs),
         "exempt_pair_count": len(exempt_pairs),
         "pairs": pair_results,
+        "section_level": section_level,
         "weak_files": weak_files,
+        "prediction_misses": prediction_misses,
         "warnings": warnings,
         "note": ("Screening filter only. Says nothing about output quality. "
                  "See verdict-6b.json. Exempt (pre-densified) files are "
                  "measured and reported but excluded from the mean-reduction "
-                 "bar per context.md's documented exemption."),
+                 "bar; exemption is now a continuous per-file prediction "
+                 "(expected_reduction < bar), not the old binary verbatim/fw "
+                 "heuristic — see research-normal-density-corroboration.md "
+                 "§6.3. `prediction_misses` lists pairs whose actual "
+                 "reduction fell short of their OWN predicted ceiling "
+                 "(independent of whether they gated the flat bar above). "
+                 "`section_level` is informational only, populated only "
+                 "when the manifest supplies section_pairs; never part of "
+                 "mean_reduction."),
     }
 
     # ── structure sub-verdict ──
@@ -419,6 +629,10 @@ def main():
         else:
             print(f"{args.pair[0]} -> {args.pair[1]}")
             print(f"  tok_regex reduction: {result['reduction']['tok_regex']:.1%}")
+            print(f"  frozen_ext: {result['density']['frozen_ext']:.1%}  "
+                  f"(verbatim_fraction legacy: {result['density']['verbatim_fraction']:.1%})")
+            print(f"  predicted ceiling: {result['prediction']['expected_reduction']:.1%}  "
+                  f"hit_prediction: {result['prediction']['hit_prediction']}")
             print(f"  exempt from size bar: {result['exempt_from_size_bar']}")
             print(f"  structure net delta: {result['structure']['net_delta']:+d}")
         sys.exit(0)
@@ -439,10 +653,17 @@ def main():
     else:
         print(f"VERDICT 6A-SIZE — approach: {args.approach}")
         print(f"  {'PASS' if size_verdict['pass'] else 'FAIL'}  mean reduction "
-              f"{size_verdict['mean_reduction']:.1%} (bar >= {size_verdict['bar']:.0%})")
+              f"{size_verdict['mean_reduction']:.1%} (bar >= {size_verdict['bar']:.0%})  "
+              f"mean predicted ceiling {size_verdict['mean_expected_reduction']:.1%}")
         for p in size_verdict["pairs"]:
-            exempt_tag = " [EXEMPT: pre-densified]" if p["exempt_from_size_bar"] else ""
-            print(f"    {Path(p['minified']).name:40s} {p['reduction']['tok_regex']:>7.1%}{exempt_tag}")
+            exempt_tag = " [EXEMPT: predicted ceiling < bar]" if p["exempt_from_size_bar"] else ""
+            miss_tag = "" if p["prediction"]["hit_prediction"] else "  ⚠ missed own predicted ceiling"
+            print(f"    {Path(p['minified']).name:40s} {p['reduction']['tok_regex']:>7.1%}"
+                  f"  (predicted {p['prediction']['expected_reduction']:>6.1%}){exempt_tag}{miss_tag}")
+        if size_verdict["section_level"]:
+            print("  section-level (rules-only, informational, not in mean_reduction):")
+            for p in size_verdict["section_level"]:
+                print(f"    {Path(p['minified']).name:40s} {p['reduction']['tok_regex']:>7.1%}")
         print()
         print(f"VERDICT 6A-STRUCTURE — approach: {args.approach}")
         print(f"  {'PASS' if structure_verdict['pass'] else 'FAIL'}  net constraint delta "
@@ -640,6 +861,90 @@ def _selftest():
                 HARNESS_DIR, REPO_ROOT = saved_harness_dir, saved_repo_root
         else:
             print("  [SKIP] manifest-level test — PyYAML not installed")
+
+        # ── corroboration-study patch regression tests (research-normal-
+        # density-corroboration.md §6.2-6.3) ──
+
+        # frozen_ext_fraction must count URL bytes that verbatim_fraction
+        # misses (the study's "atom/atom" defect: 5.0% -> 37.5% frozen).
+        plain_prose = ("The team has decided that we should always try to "
+                       "keep the documentation clear and easy to read.") * 3
+        check("frozen_ext == verbatim_fraction on URL/code-free prose",
+              abs(red_frozen := frozen_ext_fraction(plain_prose)) < 0.001
+              and abs(verbatim_fraction(plain_prose)) < 0.001,
+              f"frozen_ext={red_frozen}")
+
+        link_heavy_item = (
+            "* **Check the [debugging guide %d](https://flight-manual.example.io/"
+            "hacking/sections/debugging/detail/path/segment/%d).** You might be "
+            "able to find the cause of the problem and fix things yourself. Most "
+            "importantly, check if you can reproduce it.\n"
+        )
+        link_heavy_text = "".join(link_heavy_item % (i, i) for i in range(8))
+        vf_link = verbatim_fraction(link_heavy_text)
+        fx_link = frozen_ext_fraction(link_heavy_text)
+        fw_link = function_word_ratio(link_heavy_text)
+        check("frozen_ext_fraction is substantially higher than verbatim_fraction "
+              "on a link-heavy file (the atom/atom defect class)",
+              fx_link > vf_link + 0.10, f"verbatim={vf_link} frozen_ext={fx_link}")
+        check("verbatim_fraction alone stays ~0 on a fence/inline-code-free, "
+              "link-heavy file (proving frozen_ext, not verbatim_fraction, is "
+              "what catches this case)",
+              vf_link < 0.01, f"verbatim={vf_link}")
+
+        # calibration sanity: the fitted line should reproduce the paper's
+        # claimed aggressive-tier r=0.978 to within a small transcription
+        # tolerance, and stay a strong positive correlation regardless.
+        r = _pearson_r(_PROSE_RATE_CALIBRATION)
+        check("prose-rate calibration fit reproduces the paper's claimed "
+              "r~=0.978 (aggressive tier, n=4) within tolerance",
+              abs(r - 0.978) < 0.02, f"r={r}")
+        check("prose-rate calibration is a strong positive correlation",
+              r > 0.9, f"r={r}")
+
+        # clamping behaviour at the extremes
+        check("prose_reduction_rate clamps to the floor for fw=0",
+              prose_reduction_rate(0.0) == PROSE_RATE_FLOOR)
+        check("prose_reduction_rate clamps to the ceiling for fw=1",
+              prose_reduction_rate(1.0) == PROSE_RATE_CEILING)
+        check("prose_reduction_rate is monotonically non-decreasing across "
+              "the calibration range",
+              prose_reduction_rate(0.45) >= prose_reduction_rate(0.33))
+
+        # predicted_reduction: always in [0,1]; a near-fully-frozen file
+        # predicts ~0 regardless of its fw ratio.
+        check("predicted_reduction stays in [0,1] across a fw sweep",
+              all(0.0 <= predicted_reduction(0.0, fw / 10) <= 1.0 for fw in range(11)))
+        check("predicted_reduction is ~0 for a near-fully-frozen file "
+              "even with a high function-word ratio",
+              predicted_reduction(0.95, 0.50) < 0.05,
+              str(predicted_reduction(0.95, 0.50)))
+
+        # end-to-end regression: the OLD binary rule would call the
+        # link-heavy file NON-exempt (verbatim<=25% and fw>=30%), but the
+        # continuous prediction correctly identifies it as capped below the
+        # bar (this is the exact "atom/atom" bug the study reports: a file
+        # that reads as compressible under the old instrument but isn't).
+        old_rule_would_exempt = vf_link > 0.25 or fw_link < 0.30
+        check("OLD binary rule would NOT have exempted the link-heavy file "
+              "(the bug being fixed)", old_rule_would_exempt is False,
+              f"verbatim={vf_link} fw={fw_link}")
+
+        (tmp / "a9.md").write_text(link_heavy_text, encoding="utf-8")
+        (tmp / "b9.md").write_text(link_heavy_text, encoding="utf-8")  # 0% actual cut
+        r9 = measure_pair(tmp / "a9.md", tmp / "b9.md", bar=0.20)
+        check("NEW continuous prediction correctly marks the link-heavy file "
+              "exempt (its own predicted ceiling is below the bar)",
+              r9["exempt_from_size_bar"] is True, str(r9["prediction"]))
+        check("density reports both frozen_ext and the legacy verbatim_fraction "
+              "so the two can be compared directly",
+              r9["density"]["frozen_ext"] > r9["density"]["verbatim_fraction"] + 0.10,
+              str(r9["density"]))
+        check("prediction block reports hit_prediction, expected_reduction, "
+              "actual_reduction, and never a combined key",
+              set(r9["prediction"]) >= {"expected_reduction", "actual_reduction", "hit_prediction"}
+              and not any(re.match(r"^(combined|overall|total)_?(score|verdict)$", k, re.IGNORECASE)
+                          for k in r9["prediction"]))
 
     # separation invariant: neither verdict dict may contain a combined-score key
     combined_re = re.compile(r"^(combined|overall|total)_?(score|verdict)$", re.IGNORECASE)

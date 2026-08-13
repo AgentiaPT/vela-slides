@@ -4,17 +4,21 @@ constraint_inventory.py — extract a constraint inventory from an instruction
 file and score how many of a baseline's constraints survive (explicit) in a
 minified counterpart.
 
-# TODO(orchestrator): reconcile with .claude/skills/minify/'s extractor once
-# both exist. This module was built by the phase-5 harness agent under a
-# time-boxed, no-agent-run constraint; context.md's "Autonomous decisions"
-# section flagged the *same* extractor as being requested in parallel from
-# phase 4 (the /minify skill's own self-check). At the time this file was
-# written, `.claude/skills/minify/` did not exist yet on disk (checked:
-# `ls .claude/skills/` — absent), so this is a fresh, minimal implementation,
-# not a copy of anything. Do not let both copies silently diverge — when
-# phase 4's version lands, either import it from here or fold this file's
-# harness-specific bits (weighting for 6a's structure sub-verdict, the
-# `min_net_delta` gate hookup) into it and delete this one.
+# TODO(orchestrator): reconcile with .claude/skills/minify/'s extractor —
+# BOTH NOW EXIST. This module was built by the phase-5 harness agent under a
+# time-boxed, no-agent-run constraint, at a point when `.claude/skills/minify/`
+# did not exist yet on disk (checked: `ls .claude/skills/` — absent). It has
+# since landed: `.claude/skills/minify/scripts/minify_lib.py` now has its own
+# `Constraint`/`inventory()`/`survival()` (constraint extraction + survival
+# scoring) plus its own `frozen_fraction()`/`prose_rate()`/
+# `predict_reduction()` — i.e. independently-built overlapping logic for
+# BOTH this file's job AND reduction.py's corroboration-study patch (see that
+# file's module docstring). The two implementations were NOT cross-checked
+# against each other and may use different calibration constants/thresholds.
+# Do not let them silently diverge — reconcile by either importing phase 4's
+# version from here or folding this file's harness-specific bits (weighting
+# for 6a's structure sub-verdict, the `min_net_delta` gate hookup) into it
+# and deleting this one.
 
 Purpose (harness-design.md §7, context.md's amended verdict-6a "structure"
 sub-verdict): a size-only reduction metric hides the exact signal probe B

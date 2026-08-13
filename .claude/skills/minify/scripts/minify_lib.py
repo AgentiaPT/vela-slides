@@ -128,12 +128,25 @@ _PLACEHOLDER_RE = re.compile(r"\x00[Fc](\d+)\x00")
 
 @dataclass
 class Verbatim:
-    """A byte-frozen span: fenced block or inline-code span. Budget = 0%."""
+    """A byte-frozen span. Budget = 0%.
+
+    Five kinds, all equally frozen: `fence`, `inline` (code), `url` (bare or
+    autolinked), `linkdest` (the destination inside `[text](dest)`), and
+    `linkdef` (a `[label]: url` reference-definition line). URLs and link
+    machinery are not prose — you cannot reword a URL — and counting them as
+    compressible badly misreads how much of a file is actually available.
+    """
     vid: str
-    kind: str          # "fence" | "inline"
+    kind: str
     text: str          # exact bytes, fence markers excluded for fences
-    raw: str           # exact bytes including fence/backtick markers
+    raw: str           # exact bytes including fence/backtick/paren markers
     line: int
+
+
+#: Kinds that make up the narrow `verbatim_fraction` (phase-1 definition).
+CODE_KINDS = ("fence", "inline")
+#: Kinds added by the extended `frozen_fraction`.
+LINK_KINDS = ("url", "linkdest", "linkdef")
 
 
 @dataclass
@@ -237,16 +250,29 @@ def _extract_verbatims(body: str) -> Tuple[str, List[Verbatim]]:
 
     masked = "\n".join(out)
 
-    # inline code spans (runs of N backticks), on the fence-masked text
-    inline_re = re.compile(r"(?P<t>`+)(?P<c>[^`]+?)(?P=t)")
+    def _freezer(kind: str, group: str):
+        def _sub(m: re.Match) -> str:
+            line = masked_ref[0][: m.start()].count("\n") + 1
+            vid = f"V{len(verbatims) + 1:03d}"
+            verbatims.append(Verbatim(vid, kind, m.group(group), m.group(0), line))
+            return CODE_PLACEHOLDER.format(len(verbatims))
+        return _sub
 
-    def _sub(m: re.Match) -> str:
-        line = masked[: m.start()].count("\n") + 1
-        vid = f"V{len(verbatims) + 1:03d}"
-        verbatims.append(Verbatim(vid, "inline", m.group("c"), m.group(0), line))
-        return CODE_PLACEHOLDER.format(len(verbatims))
-
-    masked = inline_re.sub(_sub, masked)
+    masked_ref = [masked]
+    for kind, rx, grp in (
+            # inline code spans (runs of N backticks), on the fence-masked text
+            ("inline", re.compile(r"(?P<t>`+)(?P<c>[^`]+?)(?P=t)"), "c"),
+            # link-reference definitions:  [label]: https://example/x "title"
+            ("linkdef", re.compile(r"^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*(?P<c>\S+)"
+                                   r"(?:[ \t]+\"[^\"\n]*\")?[ \t]*$", re.M), "c"),
+            # destination inside [text](dest)
+            ("linkdest", re.compile(r"\]\((?P<c>[^)\s]+)(?:[ \t]+\"[^\"\n]*\")?\)"), "c"),
+            # autolinks and bare URLs
+            ("url", re.compile(r"<(?P<c>(?:https?|mailto|ftp)://[^>\s]+)>"), "c"),
+            ("url", re.compile(r"(?<![\w(<])(?P<c>(?:https?://|www\.)[^\s<>\)\]\"'`]+)"), "c"),
+    ):
+        masked_ref[0] = masked
+        masked = rx.sub(_freezer(kind, grp), masked)
     return masked, verbatims
 
 
@@ -354,7 +380,24 @@ def function_word_ratio(doc: Doc) -> float:
 
 
 def verbatim_fraction(doc: Doc) -> float:
-    """Bytes inside fences plus bytes inside inline-code spans, / file bytes."""
+    """Narrow definition: bytes inside fences + inline-code spans, / file bytes.
+
+    Kept because phase-1's published per-file numbers use it. For anything that
+    decides how much of a file is *available* to compress, use `frozen_fraction`.
+    """
+    total = len(doc.text.encode("utf-8"))
+    if not total:
+        return 0.0
+    vb = sum(len(v.raw.encode("utf-8")) for v in doc.verbatims if v.kind in CODE_KINDS)
+    return 100.0 * vb / total
+
+
+def frozen_fraction(doc: Doc) -> float:
+    """Extended definition: code spans PLUS URLs, link destinations, link defs.
+
+    This is the fraction the yield prediction uses. Measured effect of the
+    extension on a link-heavy real file: 5.0% -> 37.5% frozen.
+    """
     total = len(doc.text.encode("utf-8"))
     if not total:
         return 0.0
@@ -385,9 +428,59 @@ def file_metrics(doc: Doc) -> Dict[str, float]:
         "bytes": len(doc.text.encode("utf-8")),
         "lines": doc.text.count("\n") + (0 if doc.text.endswith("\n") else 1),
         "verbatim_fraction_pct": round(verbatim_fraction(doc), 2),
+        "frozen_fraction_pct": round(frozen_fraction(doc), 2),
         "function_word_ratio_pct": round(function_word_ratio(doc), 2),
         "tokens_wordpunct": tokens_wordpunct(doc.text),
         "tokens_byterate": tokens_byterate(doc.text),
+        "frozen_spans": {k: sum(1 for v in doc.verbatims if v.kind == k)
+                         for k in CODE_KINDS + LINK_KINDS},
+    }
+
+
+# --- yield prediction -------------------------------------------------------
+#
+# `expected_reduction = (1 - frozen_fraction) x prose_rate(function_word_ratio)`.
+#
+# `prose_rate` bands are calibrated on 9 measured hand-minification probes (5
+# from the phase-1 study on this repo's files, 4 from the normal-density
+# corroboration study on public instruction files), each at 100% constraint
+# survival. Both source studies used their own function-word list; their probe
+# values are shifted onto THIS module's list before banding (+7.8 for phase 1,
+# +2.9 for the corroboration study, from the three files all three instruments
+# measured). Bands are wide on purpose: rewriting technique moved the observed
+# rate by more than 3x at constant density, so a point estimate would be false
+# precision.
+PROSE_RATE_BANDS: Sequence[Tuple[float, float, float]] = (
+    # (min function-word ratio, low rate %, high rate %)
+    (45.0, 24.0, 35.0),   # verbose normative prose
+    (40.0, 12.0, 30.0),
+    (35.0, 5.0, 26.0),
+    (30.0, 0.0, 16.0),    # already-telegraphic
+    (0.0, 0.0, 12.0),     # extrapolation — no probe observed below here
+)
+
+
+def prose_rate(fw_pct: float) -> Tuple[float, float]:
+    for lo_fw, lo, hi in PROSE_RATE_BANDS:
+        if fw_pct >= lo_fw:
+            return lo, hi
+    return 0.0, 12.0
+
+
+def predict_reduction(doc: Doc) -> Dict[str, object]:
+    """Predict what THIS file can give up, before any of it is rewritten."""
+    fz = frozen_fraction(doc)
+    fw = function_word_ratio(doc)
+    lo, hi = prose_rate(fw)
+    avail = 1.0 - fz / 100.0
+    return {
+        "frozen_fraction_pct": round(fz, 1),
+        "function_word_ratio_pct": round(fw, 1),
+        "prose_rate_band_pct": [lo, hi],
+        "predicted_cut_pct": [round(avail * lo, 1), round(avail * hi, 1)],
+        "extrapolated": fw < 30.0,
+        "basis": "(1 - frozen_fraction) x prose_rate(function-word ratio); "
+                 "bands from 9 measured probes at 100% constraint survival",
     }
 
 
@@ -1068,6 +1161,10 @@ def frontmatter_check(original: Doc, minified: Doc) -> Dict[str, object]:
 # 8. Verdicts — size and structure, emitted separately
 # ---------------------------------------------------------------------------
 
+#: Reference bar only. Reported for continuity with the phase-1 gate; it is NOT
+#: what the size verdict is decided on — a flat percentage was wrong on four of
+#: six real files measured. The verdict is "did this file hit its own predicted
+#: range", computed per file from frozen fraction + function-word ratio.
 SIZE_BAR_PCT = 20.0
 PRE_DENSIFIED_VERBATIM_PCT = 25.0
 PRE_DENSIFIED_FUNCWORD_PCT = 30.0
@@ -1089,7 +1186,10 @@ def size_verdict(original: Doc, minified: Doc) -> Dict[str, object]:
     cut_b = 100.0 * (tb_o - tb_m) / tb_o if tb_o else 0.0
     spread = abs(cut_a - cut_b)
     vf = verbatim_fraction(original)
+    fz = frozen_fraction(original)
     fw = function_word_ratio(original)
+    pred = predict_reduction(original)
+    p_lo, p_hi = pred["predicted_cut_pct"]                # type: ignore[misc]
 
     exempt_reasons: List[str] = []
     if vf > PRE_DENSIFIED_VERBATIM_PCT:
@@ -1098,25 +1198,31 @@ def size_verdict(original: Doc, minified: Doc) -> Dict[str, object]:
         exempt_reasons.append(f"function-word ratio {fw:.1f}% < {PRE_DENSIFIED_FUNCWORD_PCT:.0f}%")
     exempt = bool(exempt_reasons)
 
+    reported = min(cut_a, cut_b)
     flags: List[str] = []
     if spread > PROXY_SPREAD_FLAG_PTS:
         flags.append(f"proxy-disagreement: {cut_a:.1f}% vs {cut_b:.1f}% ({spread:.1f} pts apart)")
-    if byte_cut - min(cut_a, cut_b) > PROXY_SPREAD_FLAG_PTS:
-        flags.append(f"byte cut ({byte_cut:.1f}%) overstates token cut ({min(cut_a, cut_b):.1f}%)")
-    if min(cut_a, cut_b) > IMPLAUSIBLE_CUT_PCT:
+    if byte_cut - reported > PROXY_SPREAD_FLAG_PTS:
+        flags.append(f"byte cut ({byte_cut:.1f}%) overstates token cut ({reported:.1f}%)")
+    if reported > IMPLAUSIBLE_CUT_PCT:
         flags.append(f"implausible reduction >{IMPLAUSIBLE_CUT_PCT:.0f}% — verify nothing was deleted wholesale")
+    if pred["extrapolated"]:
+        flags.append(f"prediction extrapolated: function-word ratio {fw:.1f}% sits below "
+                     "the lowest band any calibration probe covered")
+    if fz > 50.0:
+        flags.append(f"{fz:.0f}% of this file is frozen content — the reachable prize is small "
+                     "however well it is rewritten")
 
-    reported = min(cut_a, cut_b)
     if mb > ob:
         result = "FAIL-GREW"
-    elif min(cut_a, cut_b) > IMPLAUSIBLE_CUT_PCT:
+    elif reported > IMPLAUSIBLE_CUT_PCT:
         result = "IMPLAUSIBLE"
-    elif exempt:
-        result = "EXEMPT"
-    elif reported >= SIZE_BAR_PCT:
-        result = "PASS"
+    elif reported > p_hi:
+        result = "ABOVE-PREDICTION"
+    elif reported >= p_lo:
+        result = "MET-PREDICTION"
     else:
-        result = "BELOW-BAR"
+        result = "BELOW-PREDICTION"
 
     return {
         "verdict_kind": "size",
@@ -1126,8 +1232,11 @@ def size_verdict(original: Doc, minified: Doc) -> Dict[str, object]:
         "token_cut_reported_pct": round(reported, 1),
         "proxy_spread_pts": round(spread, 1),
         "verbatim_fraction_pct": round(vf, 1),
+        "frozen_fraction_pct": round(fz, 1),
         "function_word_ratio_pct": round(fw, 1),
-        "bar_pct": SIZE_BAR_PCT,
+        "prediction": pred,
+        "reference_bar_pct": SIZE_BAR_PCT,
+        "meets_reference_bar": reported >= SIZE_BAR_PCT,
         "pre_densified": exempt,
         "exemption_note": ("pre-densified, exempt from the 20% bar (" + "; ".join(exempt_reasons) + ")")
                           if exempt else "",
