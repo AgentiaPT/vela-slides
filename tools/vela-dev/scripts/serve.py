@@ -359,6 +359,30 @@ def read_deck_json(path, dir_fd=None):
         return json.load(f)
 
 
+def entry_writable(path, dir_fd=None, folder=None):
+    """Report whether the current user may write the existing entry.
+
+    Advisory pre-check for write_deck_json (the write itself is an atomic
+    replace, which only needs directory permission): it preserves what
+    open(path, "w") used to enforce. os.access honours group/other write bits
+    and root — checking only the owner bit (S_IWUSR) would wrongly refuse a
+    deck writable via group/other permissions. faccessat flags are applied
+    only where the platform supports them; the caller has already stat'd the
+    entry no-follow and rejected links, so this stays a permissions check.
+    """
+    kwargs = {}
+    if dir_fd is not None:
+        if os.access in os.supports_dir_fd:
+            kwargs["dir_fd"] = dir_fd
+        else:
+            path = os.path.join(folder or ".", path)
+    if os.access in os.supports_effective_ids:
+        kwargs["effective_ids"] = True
+    if os.access in os.supports_follow_symlinks:
+        kwargs["follow_symlinks"] = False
+    return os.access(path, os.W_OK, **kwargs)
+
+
 def write_deck_json(path, deck, dir_fd=None, folder=None):
     """Write a deck file by atomic replace, never through the existing entry.
 
@@ -388,7 +412,7 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
             # but silently detaching a link the user made is its own surprise —
             # refuse, matching the read path's multiply-linked refusal.
             raise PermissionError(f"Deck file is multiply-linked: {path}")
-        if not dst.st_mode & stat.S_IWUSR:
+        if not entry_writable(path, dir_fd=dir_fd, folder=folder):
             raise PermissionError(f"Deck file is read-only: {path}")
         mode = stat.S_IMODE(dst.st_mode) & 0o777  # never carry setuid/setgid/sticky
     # Create the temp exclusively ourselves rather than via mkstemp, so it can be
@@ -965,6 +989,13 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         try:
             html = srv._build_html_for_deck(raw_deck, deck_name)
             self._serve(html, "text/html; charset=utf-8")
+        except ValueError as e:
+            # Normalization/expansion rejecting the deck (bad structure, or the
+            # expanded payload blowing the size cap) is a property of the FILE,
+            # not a server fault — 409, mirroring the read-path refusals.
+            print(f"[error] Refusing to serve {console_safe(deck_name)}: {console_safe(e)}")
+            self.send_error(409, "Deck not served: the deck data is too large "
+                                 "or is not a valid deck.")
         except Exception as e:
             print(f"[error] Building HTML for {console_safe(deck_name)}: {console_safe(e)}")
             self.send_error(500, "Error loading deck")
@@ -1429,8 +1460,11 @@ class VelaLocalServer:
         deck_json_str = json.dumps(deck_data, ensure_ascii=False, separators=(",", ":"))
         # Expansion (compact → full, alias resolution) is a multiplier, so the
         # input cap alone does not bound this. Check the expanded payload before
-        # it is escaped and spliced into a ~1.5 MB template.
-        if len(deck_json_str) > MAX_DECK_PAYLOAD:
+        # it is escaped and spliced into a ~1.5 MB template. The cap is in
+        # BYTES: the character-length test alone would undercount multi-byte
+        # UTF-8 content, so it only short-circuits the (up to 4×) encode.
+        if (len(deck_json_str) > MAX_DECK_PAYLOAD
+                or len(deck_json_str.encode("utf-8")) > MAX_DECK_PAYLOAD):
             raise ValueError(f"Expanded deck exceeds {MAX_DECK_PAYLOAD} bytes")
         marker = "const STARTUP_PATCH = null;"
         if marker not in vela_jsx:

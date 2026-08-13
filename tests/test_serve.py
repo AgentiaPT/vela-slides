@@ -625,15 +625,17 @@ class TestSecurity(FolderServerTestBase):
                              "save wrote through a symlink into another deck")
 
     def test_serving_a_hardlinked_deck_does_not_leak_it(self):
-        secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
-        self._link_deck(os.link, "hl-read.vela", "hl-read-secret.json", secret)
+        # The planted content is a canary MARKER, not a real credential — the
+        # test writes it outside the folder on purpose to prove it never leaks.
+        canary = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-read.vela", "hl-read-victim.json", canary)
         status, _, body = fetch(self._port, "GET", "/deck/hl-read.vela")
         self.assertNotIn(b"SUPERSECRET", body)
         self.assertEqual(status, 409)  # refused at the reader, with a reason
 
     def test_listing_skips_hardlinked_decks(self):
-        secret = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
-        self._link_deck(os.link, "hl-list.vela", "hl-list-secret.json", secret)
+        canary = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-list.vela", "hl-list-victim.json", canary)
         status, _, body = fetch(self._port, "GET", "/api/decks")
         self.assertEqual(status, 200)
         self.assertNotIn(b"SUPERSECRET", body)
@@ -685,6 +687,42 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 409)
         status, _, listing = fetch(self._port, "GET", "/api/decks")
         self.assertNotIn(b"huge.vela", listing)
+
+    def test_payload_cap_counts_bytes_not_characters(self):
+        # The expanded-payload cap is a BYTE limit; multi-byte UTF-8 content
+        # must not slip past a character-length check.
+        deck = self._write_temp_deck("bytes.vela",
+                                     {"deckTitle": "€" * 64, "lanes": []})
+        self.addCleanup(os.unlink, deck)
+        old = serve_mod.MAX_DECK_PAYLOAD
+        serve_mod.MAX_DECK_PAYLOAD = 100  # < byte length, > char length of the JSON
+        self.addCleanup(setattr, serve_mod, "MAX_DECK_PAYLOAD", old)
+        status, _, _ = fetch(self._port, "GET", "/deck/bytes.vela")
+        self.assertEqual(status, 409)
+
+    def test_deck_too_large_after_expansion_is_409_not_500(self):
+        # A deck refused during HTML building (size cap, bad structure) is a
+        # property of the FILE, not a server fault.
+        deck = self._write_temp_deck("expands.vela")
+        self.addCleanup(os.unlink, deck)
+        old = serve_mod.MAX_DECK_PAYLOAD
+        serve_mod.MAX_DECK_PAYLOAD = 4
+        self.addCleanup(setattr, serve_mod, "MAX_DECK_PAYLOAD", old)
+        status, _, _ = fetch(self._port, "GET", "/deck/expands.vela")
+        self.assertEqual(status, 409)
+
+    def test_entry_writable_honours_more_than_the_owner_bit(self):
+        # os.access-based check: owner-writable file is writable, an all-bits-off
+        # file is not (S_IWUSR alone would also wrongly refuse group/other-writable
+        # decks owned by someone else, which cannot be simulated single-uid).
+        path = self._write_temp_deck("perm.vela")
+        self.addCleanup(os.unlink, path)
+        self.addCleanup(os.chmod, path, 0o644)
+        os.chmod(path, 0o200)  # write-only for owner: still writable
+        self.assertTrue(serve_mod.entry_writable(path))
+        if getattr(os, "geteuid", lambda: 1)() != 0:  # root bypasses permission bits
+            os.chmod(path, 0o444)
+            self.assertFalse(serve_mod.entry_writable(path))
 
     def test_poll_for_an_unknown_deck_allocates_nothing(self):
         before = len(self._server._deck_trackers)
