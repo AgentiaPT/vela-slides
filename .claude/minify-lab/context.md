@@ -92,6 +92,23 @@ Orchestrate only — sub-agents do the actual work.
   generalizing).
 - Judge instability: if a single blind judge shows inconsistent verdicts
   across re-runs, escalate to multi-judge or self-consistency.
+- **Lab-leak confounder (found by phase 2 agent, 2026-08-13)**: because
+  `.claude/minify-lab/` is now git-tracked (our own persistence fix), a
+  `git worktree`-isolated eval run would otherwise let the agent-under-
+  test literally read the harness's own scenario answer keys. Harness
+  design's `prepare.py` scrubs the lab dir out of every worktree and
+  asserts (`grep -rl "minify-lab"`) it's gone before any run starts.
+- **PreToolUse hook confounder (found by phase 2 agent)**: this repo's
+  own `.claude/hooks/post-edit-lint.py` forces the secure-coding-skill
+  read on the first in-scope edit per checkout, in worktrees too. An
+  agent running on minified CLAUDE.md that dropped the secure-coding
+  mandate would still comply — because the *hook*, not the instructions,
+  forces it — masking real drift as "no drift". Harness design handles
+  this with two modes: `hooks_mode: parity` (default, hooks left on,
+  ecologically valid, gate decision made here) vs `hooks_mode:
+  neutralized` (hooks stripped from both arms identically, diagnostic-
+  only, isolates the instruction file's own contribution). Never mix
+  modes within one baseline/minified pair.
 
 ## Phase plan (reset — redoing from scratch)
 
@@ -101,12 +118,12 @@ Orchestrate only — sub-agents do the actual work.
    grounded in real prompt-compression literature + hand-minification
    probes on this repo's actual CLAUDE.md/SKILL.md sections. Agent: opus,
    background. Output: `.claude/minify-lab/research-encoding-formats.md`
-2. **[dispatched]** Design the eval harness: new "real change-request
+2. **[DONE]** Design the eval harness: new "real change-request
    task, baseline vs minified instructions" harness, porting judge/
    report/gate/harvest patterns from `evals/scripts/`; 7+ fully-specified
    CLAUDE.md scenarios; keep 6a (reduction pre-filter) and 6b (quality
    gate) as separate verdicts, never merged. Agent: opus, background.
-   Output: `.claude/minify-lab/harness-design.md`
+   Output: `.claude/minify-lab/harness-design.md` — see Artifacts index.
 3. **[ ]** Citation verification pass on phase 1's external citations
    (WebSearch snippet-level — arXiv itself is egress-blocked in-
    container). Agent: sonnet, background, dispatched after phase 1
@@ -128,18 +145,59 @@ Orchestrate only — sub-agents do the actual work.
 
 ## Artifacts index
 
-*(empty — prior run's docs were lost before landing; rebuilding now)*
+- `.claude/minify-lab/harness-design.md` — **DONE** (2026-08-13, opus,
+  ~1600 lines). Implementation-ready spec for `.claude/minify-lab/
+  harness/`. Key points:
+  - **6a `reduction.py`**: judge-free, zero model calls, bytes/lines +
+    two independent stdlib token proxies across an approach's file
+    manifest, gates on ≥20% mean reduction, with implausible-reduction /
+    proxy-disagreement / structure-loss integrity guards.
+  - **6b quality gate**: per (approach, target file); **9 scenarios × 2
+    arms × 3 reps** (matches the locked pilot budget); each arm frozen in
+    its own `git worktree add --detach`; blind A/B judged by opus; plus
+    critical assertions and tokens/turns/errors. 6a/6b verdicts kept
+    structurally separate (`verdict_kind` fields; `report.py --selftest`
+    rejects any combined score; two-panel report).
+  - **Judge**: tool-less, repo-less, sees only a redacted diff/answer —
+    never transcript/turns/tokens/cost; randomized order + recorded seed;
+    fail-closed redaction + post-scan quarantine; ties are a legitimate
+    verdict; 2 judgings per pair, >20% disagreement ⇒ `inconclusive`.
+  - **`read_before_edit`** (new mechanism): proves consultation purely
+    from tool-call history (Read window/anchor intersection, Grep, shell
+    readers, Skill loads) ordered before the first mutation — assistant
+    text is never inspected; a fixture where the agent merely *claims* a
+    read must fail the check.
+  - **3 confounder controls found during design** (see Anti-bias
+    watchlist for full detail): lab-dir self-leak (worktrees scrub
+    `.claude/minify-lab`), the repo's `PreToolUse` secure-coding hook
+    masking instruction drift (parity vs neutralized run modes), and
+    harness-preamble/scenario-prompt leak checks so the prompt itself
+    never re-teaches a rule minification might have deleted.
+  - **9 frozen CLAUDE.md scenarios**: S1 `reducer-nohistory`, S2
+    `blockfield-safekeys`, S3 `routing-lookup`, S4
+    `exporter-encoder-reuse`, S5 `docs-only-versionbump`, S6
+    `minimal-diff-temptation`, S7 `security-changelog-discipline`, S8
+    `newpart-manifest`, S9 `public-repo-hygiene`. Frozen before any
+    results exist — adding/editing one later requires a new campaign id,
+    old results stay published.
+  - Not yet reviewed line-by-line by the orchestrator beyond structure +
+    the confounder-control sections (§6, spot-checked — sound). Full
+    review still pending before phase 5 (implementation) starts.
 
-## Current status (last updated: 2026-08-13, restore-session start)
+## Current status (last updated: 2026-08-13, phase 2 landed)
 
-Container reclaim wiped all prior artifacts (research doc, harness-design
-doc, citation verification, in-progress skill + harness-script builds) —
-none had been committed. Rebuilding from scratch per the user's explicit
-choice (full re-run, not summary-reconstruction). Just dispatched phase 1
-(research) and phase 2 (harness design) as parallel background agents.
-Waiting on task-notifications, not polling. This file + directory get
-committed and pushed right after this initial scaffold, then again after
-each phase lands.
+Container reclaim wiped all prior artifacts; rebuilt from scratch per the
+user's choice (full re-run, not summary-reconstruction). Phase 1
+(research) and phase 2 (harness design) were dispatched in parallel as
+background agents. **Phase 2 is DONE** — `harness-design.md` written, see
+Artifacts index; 3 new confounder controls folded into the watchlist.
+Phase 1 (research-encoding-formats.md) still running. Not polling —
+waiting on its task-notification. Phase 3 (citation verification) is
+blocked on phase 1 landing, not yet dispatched. Phases 4-5 (build skill,
+build harness scripts) are blocked on phases 1 and 2 respectively — phase
+5 can be dispatched now that phase 2 is done, but holding it until phase 1
+lands too so both builder agents can start together as in the original
+plan. This file gets committed and pushed after every phase lands.
 
 ## Session hygiene: checking context usage
 
