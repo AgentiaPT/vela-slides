@@ -830,7 +830,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~13:50, blockfield-safekeys landed as a second clean pass, leaderboard update pending). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) and `blockfield-safekeys` (launch10c) are BOTH full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs both times). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification (governing rule text byte-identical/reinforced between arms; baseline itself fails the same assertion once) — not editing the minified variant over it. `blockfield-safekeys` additionally exercised the same both-arms-fail scenario_invalid mechanism a second time, correctly excluding two assertions that fail on both arms (a real but pre-existing routing-table-adherence weakness, not a minification artifact). Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 3/9 scenarios piloted with genuine, trustworthy verdicts (2/3 piloted scenarios pass cleanly, 1/3 root-caused to non-minification noise). Next: update the leaderboard to reflect launch10c, commit/push, then continue piloting the remaining 6 scenarios (routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, newpart-manifest, public-repo-hygiene))
+## Current status (last updated: 2026-08-13 ~13:58, launch 11 hit a known non-bug wall, redirecting to the 3 actually-runnable remaining scenarios). Summary: two real harness bugs found and fixed earlier today (judge invocation silently failing under root; a gate-threshold rounding bug). `reducer-nohistory` (launch 8) and `blockfield-safekeys` (launch10c) are BOTH full clean GATE 6B passes (33.3% minified loss rate each, 0% instability, 3/3 stable pairs both times). `security-changelog-discipline` (launch 9) has a real, mechanically-genuine 6B FAIL that was root-caused and found NOT attributable to minification. Task #11's launch-8 "100% judge instability" is definitively resolved as the same invocation bug, not real disagreement. 3/9 scenarios piloted with genuine, trustworthy verdicts (2/3 piloted scenarios pass cleanly, 1/3 root-caused to non-minification noise). Leaderboard current as of commit `8f1583e`. **Only 6 of the 9 frozen scenarios can currently produce real data** — `routing-lookup`, `exporter-encoder-reuse`, `docs-only-versionbump` are blocked by a known, pre-documented scenario-authoring issue (their own probe tokens collide with real CLAUDE.md routing-table symbols; `prepare.py`'s own docstring says so) and need redesign before they can ever run, not a harness bug to fix. Next: pilot the 3 confirmed-runnable remaining scenarios (`minimal-diff-temptation`, `newpart-manifest`, `public-repo-hygiene`); separately, consider delegating a scenario-redesign task for the 3 blocked ones once the runnable set is done.)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1887,3 +1887,46 @@ minification (task #16). 3/9 scenarios have real, trustworthy verdicts.
 
 **Next**: update the leaderboard, then continue task #12 with
 `routing-lookup` (next in the frozen scenario order).
+
+Leaderboard redeployed (commit `8f1583e`) with launch10c's results: 3/9
+piloted, 2/3 clean passes, both hero stats and the ledger updated.
+
+**Launch 11 (`routing-lookup`) started** ~13:56 UTC as
+`phase6-pilot-launch11` (task id `b9v2i67gk`), `run_in_background: true`
+directly (no nohup), 1800s inner timeout — same budget that comfortably
+covered `blockfield-safekeys` (which took ~1064s wall-clock end to end,
+well under the 1800s ceiling), used here as the new default per-scenario
+budget until evidence says otherwise.
+
+**Launch 11 FAILED FAST (exit 1, `leak_check`, 0/0 everything) — not a
+harness bug, a known, already-documented scenario-authoring limitation.**
+`prepare.py`'s own module docstring ("KNOWN FINDING") and its
+`KNOWN_LEAK_COLLISION_SCENARIOS` constant explicitly name **3 of the 9
+frozen scenarios — `routing-lookup`, `exporter-encoder-reuse`,
+`docs-only-versionbump`** — as scenarios whose probe token is a
+*pre-existing* CLAUDE.md routing-table symbol (not a scenario-invented
+identifier), so `variant_leak_check` correctly aborts them **even when
+run in isolation as the actual scenario under test** — this is a
+sharper confirmation of something context.md already knew about only in
+a different shape (the launch-2 bug where *unrelated* scenarios'
+tokens polluted a campaign that didn't even include them, fixed by
+scoping to `chosen`). That fix does not and cannot help here: these 3
+scenarios collide with the real CLAUDE.md on their *own* probe tokens.
+The docstring is explicit that this "is NOT something this module
+should silently work around by editing the frozen scenario data" —
+fixing it means redesigning those 3 scenarios' probes/leak_tokens so
+they no longer name pre-existing repo symbols, a scenario-authoring
+task, not a bug fix. **Until that redesign happens, only 6 of the 9
+frozen scenarios can ever produce real behavioral data**:
+`reducer-nohistory` (done, clean pass), `blockfield-safekeys` (done,
+clean pass), `security-changelog-discipline` (done, root-caused FAIL),
+`minimal-diff-temptation`, `newpart-manifest`, `public-repo-hygiene`
+(all three still unpiloted, all confirmed unaffected per the
+docstring's own list).
+
+**Decision**: don't burn more launches hitting the same documented wall
+on the other two blocked scenarios (`exporter-encoder-reuse`,
+`docs-only-versionbump`) right now — skip straight to the 3 scenarios
+confirmed runnable. Flagged the redesign work as a new backlog item
+(not blocking task #12's remaining runnable scenarios) rather than
+silently dropping it.
