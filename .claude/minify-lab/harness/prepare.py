@@ -168,6 +168,7 @@ KNOWN_SAFE_MENTIONS = {
         "# minify-lab: WIP research/harness for the /minify project — tracked so",
         "# container reclaim can't wipe it again (see .claude/minify-lab/context.md)",
         "!.claude/minify-lab",
+        ".claude/minify-lab/harness/runs/",
     },
     ".claude/skills/minify/scripts/minify_lib.py": {
         "`.claude/minify-lab/research-encoding-formats.md` so numbers stay comparable",
@@ -555,10 +556,14 @@ def _selftest():
         "variant_leak_check reproduces the known baseline/leak_tokens collision on the real CLAUDE.md",
         real_hits2 == expected_collisions, str(real_hits2),
     )
+    # variants/telegraphic/CLAUDE.md is now the real minified output (Phase 6),
+    # not the earlier placeholder stub — a faithful minification preserves the
+    # routing table, so it inherits the SAME baseline/leak_tokens collision,
+    # not a clean bill of health.
     all_ok &= check(
-        "the real telegraphic-placeholder fixture has no such collision",
-        variant_leak_check((HARNESS_DIR / "variants" / "telegraphic" / "CLAUDE.md").read_text(encoding="utf-8"),
-                            scenarios) == [],
+        "the real minified telegraphic/CLAUDE.md reproduces the same collision as the baseline",
+        set(variant_leak_check((HARNESS_DIR / "variants" / "telegraphic" / "CLAUDE.md").read_text(encoding="utf-8"),
+                                scenarios)) == expected_collisions,
     )
 
     # ── real .gitignore / lab-scrub-assert checks against THIS repo's tree
