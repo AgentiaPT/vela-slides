@@ -1241,6 +1241,22 @@ remaining evidence it was actually launch 8's operative cause. Not
 re-confirmable now; recording the uncertainty rather than either
 retracting or re-asserting that diagnosis.
 
+**Correction — actually now re-confirmable, launch 8 re-judge in
+progress (2026-08-13, ~13:55).** Re-checked disk state directly (`ls`/
+`find`) rather than trusting the "not re-confirmable" assumption above:
+launch 8's raw run directories
+(`/tmp/vela-minify-lab-runs/phase6-pilot-launch8/reducer-nohistory/
+{baseline,minified}/rep{0,1,2}/`, real `diff.patch`/`final-answer.txt`/
+`assertions.json`) and `reports/launch8-campaign.json` **still exist**
+— they were never actually lost. Wrote a re-judge script mirroring the
+launch-9 one (`_judge_pairs_for_rep` against the real stored diffs, full
+`gate.gate()` re-run) and launched it via the Bash tool's
+`run_in_background: true` (task `bk77pndfk`). On completion:
+independently read the raw output JSON (not just the printed summary),
+determine whether launch 8's original "100% judge instability" was the
+same invocation-failure bug or genuine disagreement, and update task
+#11's description with a definitive conclusion either way.
+
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
 are both **DONE** — full summaries in Artifacts index. Phase 1's rigorous
