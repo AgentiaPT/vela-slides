@@ -145,6 +145,42 @@ uiSuite("SVG Sanitizer (XSS)", [
     const out = sanitizeSvgMarkup('<g style=\'--p:"https:attacker.invalid/b"\'><rect style="mask-image:image-set(var(--p) 1x)"/></g>');
     return !/attacker\.invalid/i.test(out) && !/var\s*\(/i.test(out);
   }},
+  { name: "SVG attr()/env() indirection removed (whole substitution family)", fn: async () => {
+    // attr() reads a DOM attribute the sanitizer preserves verbatim, so the URL
+    // never appears in the CSS text; env() binds at the same late stage as var().
+    const a = sanitizeSvgMarkup('<rect data-u="https://attacker.invalid/b" style="fill:attr(data-u url)"/>');
+    const b = sanitizeSvgMarkup('<rect data-u="url(https://attacker.invalid/b)" fill="attr(data-u)"/>');
+    const c = sanitizeSvgMarkup('<rect style="background-image:image-set(env(x) 1x)"/>');
+    return !/attr\s*\(|env\s*\(/i.test(a + b + c) && !/\sstyle=/i.test(a) && !/\sfill=/i.test(b);
+  }},
+  { name: "SVG transform allowlisted in inline style (parity with the transform attribute)", fn: async () => {
+    // The transform ATTRIBUTE was never gated, so rejecting only the CSS spelling
+    // removed real exported-diagram layout without removing any capability.
+    const out = sanitizeSvgMarkup('<g style="transform:translate(10px,10px)"><rect width="10" height="10" fill="red"/></g>');
+    return /transform:translate\(10px,10px\)/.test(out) && /fill="red"/.test(out);
+  }},
+  { name: "SECURITY: neither transform spelling escapes the clipped render sink", fn: async () => {
+    // The UI-integrity invariant that makes the line above safe: transform cannot
+    // leave an overflow:hidden ancestor (position, which can, stays rejected).
+    const host = document.createElement("div");
+    host.style.cssText = "width:120px;height:80px;overflow:hidden;position:relative";
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<g style="transform:translate(-900px,-900px) scale(60)" transform="translate(-900,-900) scale(60)">' +
+        '<rect width="20" height="20" fill="red"/></g>');
+      const hb = host.getBoundingClientRect();
+      // Hit-test, not bounding rects: SVG clips paint, so a rect over-reports.
+      const probes = [[hb.right + 40, hb.bottom + 40], [Math.floor(innerWidth / 2), Math.floor(innerHeight / 2)]];
+      const escaped = probes.some(([x, y]) => {
+        const el = document.elementFromPoint(x, y);
+        return !!(el && host.contains(el));
+      });
+      const noPositioning = !/position\s*:/i.test(host.innerHTML);
+      const rendered = /fill="red"/.test(host.innerHTML);
+      return !escaped && noPositioning && rendered;
+    } finally { host.remove(); }
+  }},
   { name: "SVG slashless authority (scheme without //) removed", fn: async () => {
     const out = sanitizeSvgMarkup('<rect style="background-image:url(https:attacker.invalid/b)" fill="url(https:attacker.invalid/p)"/>');
     return !/attacker\.invalid/i.test(out);

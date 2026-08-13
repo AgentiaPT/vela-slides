@@ -173,7 +173,13 @@ for (const f of COLOR_FIELDS) {
     // time — after every lexical alternative above has been evaluated — so an
     // indirected value can re-assemble a primitive none of them matched. This
     // surface must reject the load half for the same reason isSvgStyleSafe does.
-    "image-set(var(--p) 1x)", "var(--p)", "VAR( --p )", "linear-gradient(var(--p),#000)"];
+    "image-set(var(--p) 1x)", "var(--p)", "VAR( --p )", "linear-gradient(var(--p),#000)",
+    // Slashless authority: for the special schemes the URL parser supplies the
+    // authority slashes, so `:\/\/` alone is not a complete absolute-URL test.
+    // These are what make the appended CSS_FETCH_SCHEME load-bearing on THIS
+    // surface — every other alternative in the regex passes them.
+    "https:a.invalid/beacon", "HTTPS:a.invalid/b", "file:/etc/passwd",
+    "ftp:a.invalid/x", "wss:a.invalid/x", "1px solid https:a.invalid/x"];
   const mustAllow = ['"Times New Roman", serif', "0 2px 4px rgba(0,0,0,.3)", "rgba(0,0,0,.5)", "#abc",
     "calc(100% - 8px)", "1px solid #ccc", "linear-gradient(90deg,#fff 0%,#000 100%)"];
   const r1 = mustReject.filter((v) => !STYLE_VALUE_REJECT.test(v));
@@ -302,6 +308,14 @@ else bad("sanitizeBlock does not scrub quadrants (wiring missing)");
   const st = sanitizeStyle({ "--p": "https:a.invalid/b", color: "red" });
   if (!("--p" in st) && st.color === "red") ok("sanitizeStyle never emits a custom property (key allowlist)");
   else bad("sanitizeStyle emitted a custom property", JSON.stringify(st));
+  // The value filter's substitution-function family: var() is one member, attr()
+  // and env() resolve at the same late stage and are equally good re-assembly
+  // primitives. All three must be rejected, or the class is only half closed.
+  const subst = ["attr(data-u url)", "ATTR( data-u )", "env(safe-area-inset-top)", "var(--p)",
+                 "image-set(attr(data-u url) 1x)", "linear-gradient(env(x),#000)"];
+  const passed2 = subst.filter((v) => !STYLE_VALUE_REJECT.test(v));
+  if (passed2.length === 0) ok("STYLE_VALUE_REJECT rejects the whole CSS substitution family (var/attr/env)");
+  else bad("substitution function accepted", JSON.stringify(passed2));
 }
 // scrubSubObject itself must apply both scrubbers and drop the `_` namespace.
 if (/function scrubSubObject\(/.test(src) &&
@@ -367,6 +381,11 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       // passes these, so they are what makes CSS_FETCH_SCHEME load-bearing here
       // rather than a rule that merely shadows the ones above it.
       "fill:image-set(https:a.invalid/x)",
+      // attr()/env() are the other CSS substitution functions: same late binding
+      // as var(), and attr() reads a DOM attribute this sanitizer keeps verbatim.
+      "fill:attr(data-u url)",
+      "background-image:image-set(attr(data-u url) 1x)",
+      "fill:env(x)",
       "background-image:src(https:a.invalid/b)",
       "background-image:image-set(https:a.invalid/x 1x)",
       "font-family:https:a.invalid",
@@ -396,13 +415,18 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
         "background-image:url(#a)", "background:red", "mask-image:url(#a)",
         "border-image:url(#a)", "list-style-image:url(#a)",
         "offset-path:url(#a)", "shape-outside:url(#a)", "content:'x'",
-        "transform:scale(500)", "position:fixed", "fill:red;background-image:url(#a)",
+        "position:fixed", "fill:red;background-image:url(#a)",
       ];
       const propAllow = [
         "fill:#3b82f6", "fill:url(#grad);stroke:#888;stroke-width:2",
         "font-family:Inter,sans-serif;font-size:14px;text-anchor:middle",
         "opacity:0.5;mix-blend-mode:multiply", "clip-path:url(#c);mask:url(#m);filter:url(#f)",
         "fill:red;", " stroke : blue ", "cursor:pointer", "fill:url(#grad--blue)",
+        // transform/overflow/max-width: emitted by real SVG exporters, and the
+        // transform ATTRIBUTE spelling was never gated, so rejecting the CSS one
+        // removed content without removing a capability.
+        "transform:translate(10px,10px)", "overflow:visible", "max-width:704px",
+        "background-color:white", "enable-background:new 0 0 10 10",
         "text-transform:uppercase;text-shadow:0 1px 2px #000", "line-height:1.4",
       ];
       const pr = propReject.filter((v) => isSvgInlineStyleSafe(v));
@@ -816,6 +840,18 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
           grab(/function scrubColorFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubColorFields (branding)"),
           grab(/const CSS_COLOR_OK = .+;/, "CSS_COLOR_OK (branding)"),
           grab(/function cssColor\(c\)\s*\{[\s\S]*?\n\}/, "cssColor (branding)"),
+          // v13.46: the branding reload path now runs the canonical scrubSubObject
+          // (key-namespace drops + all three scrubbers), so its whole dependency
+          // chain must be present or the slice throws at call time.
+          grab(/const CSS_LAYOUT_KEY = .+;/, "CSS_LAYOUT_KEY (branding)"),
+          grab(/function scrubLayoutFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubLayoutFields (branding)"),
+          grab(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY (branding)"),
+          grab(/const cssKeyStem = .+;/, "cssKeyStem (branding)"),
+          grab(/function scrubPaintFields\(obj\)\s*\{[\s\S]*?\n\}/, "scrubPaintFields (branding)"),
+          grab(/const SAFE_STYLE_KEYS = new Set\(\[[\s\S]*?\]\);/, "SAFE_STYLE_KEYS (branding)"),
+          grab(/function sanitizeStyle\(style\)\s*\{[\s\S]*?\n\}/, "sanitizeStyle (branding)"),
+          grab(/const MAX_SUBOBJECT_DEPTH = .+;/, "MAX_SUBOBJECT_DEPTH (branding)"),
+          grab(/function scrubSubObject\(obj, depth = 0\)\s*\{[\s\S]*?\n\}/, "scrubSubObject (branding)"),
           grab(/function resanitizeLoadedBranding\(branding\)\s*\{[\s\S]*?\n\}/, "resanitizeLoadedBranding"),
           "module.exports = { resanitizeLoadedBranding, cssColor };"].join("\n"),
         ctx6, { filename: "part-imports-slice-branding.js" });
@@ -872,6 +908,16 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
       // to data:image/* on the same reload path, mirroring the import-time clamp.
       {
         const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        // v13.46: branding is a raw spread that keeps arbitrary KEYS, so the
+        // reload path must drop the reserved namespaces too — a `--x` key here
+        // would DECLARE a CSS custom property if branding were ever spread into a
+        // style object, which is the store half of the indirection class.
+        {
+          const keyed = resanitizeLoadedBranding({ enabled: true, "--p": "https:a.invalid/b", _priv: 1, footerText: "Acme" });
+          if (!("--p" in keyed) && !("_priv" in keyed) && keyed.footerText === "Acme" && keyed.enabled === true)
+            ok("resanitizeLoadedBranding drops `--`/`_` key namespaces, keeps real branding fields");
+          else bad("branding reload key-namespace drop", JSON.stringify(keyed));
+        }
         const legitLogo = resanitizeLoadedBranding({ enabled: true, logo: PNG });
         if (legitLogo.logo === PNG) ok("resanitizeLoadedBranding preserves a legit data:image/* logo");
         else bad("resanitizeLoadedBranding altered a legit data:image logo", JSON.stringify(legitLogo.logo));

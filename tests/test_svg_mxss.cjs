@@ -406,6 +406,30 @@ runNoVar("custom-property indirection on a url-ref presentation attr",
     `<rect style='--p:"https:attacker.invalid/b"' fill="image-set(var(--p))"/>`);
 runNoVar("var() into url() on a presentation attr",
     `<rect style='--p:"https:attacker.invalid/b"' filter="url(var(--p))"/>`);
+// attr() is the same class as var(): late binding, and it reads a DOM attribute
+// this sanitizer preserves verbatim, so the URL never appears in the CSS text at
+// all. env() resolves at the same stage. The whole family is rejected, not just
+// the one function that shipped a bug.
+// A data-* attribute may legitimately CONTAIN a URL as inert text — it is only a
+// leak if something dereferences it, which is precisely what attr() would do. So
+// assert the dereference is gone, not that the string is absent.
+{
+  const cases = [
+    ['<rect data-u="https://attacker.invalid/b" style="fill:attr(data-u url)"/>', "style"],
+    ['<rect data-u="url(https://attacker.invalid/b)" fill="attr(data-u)"/>', "fill"],
+  ];
+  // (hasNetworkRef is not usable here: it scans raw text and would flag a URL
+  // sitting inert inside the data-* value itself. What matters is that the
+  // dereferencing construct and the attribute that would apply it are gone.)
+  const leaked = cases.filter(([payload, attr]) => {
+    const out = sanitizeSvgMarkup(payload);
+    return /attr\s*\(/i.test(out) || new RegExp(`\\s${attr}=`, "i").test(out);
+  });
+  if (leaked.length === 0) { passed++; console.log("  ✅ attr() dereference of a preserved data-* attribute removed"); }
+  else { failed++; console.log("  ❌ attr() dereference survived: " + JSON.stringify(leaked.map((c) => sanitizeSvgMarkup(c[0])))); }
+}
+runNoVar("env() indirection into an image source",
+    `<rect style="background-image:image-set(env(x) 1x)"/>`);
 // These two carry a slashless authority in a shape that the url()-token and
 // function-name+quote rules ALREADY reject, so they pin the invariant but not the
 // scheme guard specifically…
@@ -429,7 +453,7 @@ runNoVar("bare unquoted scheme in an inline-style value",
     ['<rect fill="red" style="mask-image:url(#a)"/>', "mask-image"],
     ['<rect fill="red" style="border-image:url(#a)"/>', "border-image"],
     ['<rect fill="red" style="offset-path:url(#a)"/>', "offset-path"],
-    ['<rect fill="red" style="transform:scale(500)"/>', "transform (overlay escape)"],
+    ['<rect fill="red" style="position:fixed;top:0;left:0"/>', "position (the real overlay escape)"],
   ];
   // Collect EVERY failing case: a single `bad` variable is overwritten by later
   // iterations and reports only the last one, which understates a regression.

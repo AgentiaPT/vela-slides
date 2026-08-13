@@ -716,10 +716,13 @@ def test_css_color_exfil():
     #      src; the new-slide / startup-patch paths were otherwise uncovered.
     reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
     setb = reducer[reducer.index('case "SET_BRANDING"'):reducer.index('case "SET_GUIDELINES"')] if 'case "SET_BRANDING"' in reducer else ""
-    if "scrubColorFields(b)" in setb:
-        ok("SET_BRANDING scrubs the merged branding (footerBg/accentColor)")
+    # scrubSubObject supersedes scrubColorFields here (v13.46): branding is a raw
+    # spread that keeps arbitrary KEYS, so it needs the `_`/`--` namespace drops and
+    # the paint/layout scrubbers too, not just colour-value scrubbing.
+    if "scrubSubObject(b)" in setb:
+        ok("SET_BRANDING scrubs the merged branding via the canonical sub-object scrubber")
     else:
-        fail("SET_BRANDING color scrub", "branding dispatch must scrub color scalars")
+        fail("SET_BRANDING scrub", "branding dispatch must run scrubSubObject on the merged object")
     # Each slide-mutating action must funnel its incoming slide(s) through sanitizeSlide
     # (covers style objects + bgImage data: clamp + image src + svg markup + color scrub).
     for action, end in [('case "SET_SLIDES"', 'case "ADD_SLIDE"'),

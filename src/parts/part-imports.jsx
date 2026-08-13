@@ -614,15 +614,28 @@ const CSS_FETCH_SCHEME = /\b(?:https?|ftps?|wss?|file)\s*:/i;
 // bet that no CSS property we forgot can fetch a resource or escape its box, and
 // that bet has to be re-won with every CSS spec revision. Only SVG paint and text
 // presentation properties are listed; the whole image-loading family
-// (background*, mask-image, border-image, list-style-image, cursor, offset-path,
-// shape-outside, content …) is absent BY CONSTRUCTION rather than by a named
-// reject, so a property nobody thought of is rejected by default. Positioning
-// (position/inset/z-index) and transform-family properties are likewise absent:
-// both let a deck element leave its container and overlay trusted app chrome
-// (UI-redress invariant), and SVG geometry uses the transform ATTRIBUTE, which
-// this path does not touch. The reference paints below (fill/mask/filter/marker/
-// clip-path) are additionally value-restricted to url(#fragment) by
-// isSvgStyleSafe. (v13.46)
+// (background/background-image, mask-image, border-image, list-style-image,
+// cursor's image form, offset-path, shape-outside, content …) is absent BY
+// CONSTRUCTION rather than by a named reject, so a property nobody thought of is
+// rejected by default.
+//
+// THIS LIST IS LOAD-BEARING FOR MORE THAN EXTERNAL URLS. isSvgStyleSafe rejects
+// an external authority, but a RELATIVE reference ("a.png", no scheme, no //, no
+// quote) is not a URL by its lexical rules and passes. Nothing fetches it today
+// only because no property here accepts an image. Adding one would reopen a fetch
+// channel that the value filter cannot close — so an image-accepting property
+// must never be added to this set.
+//
+// Positioning (position/inset/z-index) stays out: it escapes the render sink's
+// overflow:hidden and can overlay trusted app chrome (UI-redress invariant); it
+// is also rejected by isSvgStyleSafe's own denylist, so this is belt and braces.
+// transform-family IS included, deliberately: SVG geometry has an equivalent
+// `transform` ATTRIBUTE that this path passes through untouched, so rejecting
+// only the CSS spelling denied real exported diagrams their layout while buying
+// nothing. Verified in-browser: neither spelling escapes the clipped sink, and
+// unlike position it cannot leave an overflow:hidden ancestor at all.
+// The reference paints below (fill/mask/filter/marker/clip-path) are additionally
+// value-restricted to url(#fragment) by isSvgStyleSafe. (v13.46)
 const SVG_STYLE_PROPS = new Set([
   // paint
   "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width",
@@ -630,7 +643,11 @@ const SVG_STYLE_PROPS = new Set([
   "stroke-dashoffset", "paint-order", "vector-effect", "opacity", "color",
   "stop-color", "stop-opacity", "flood-color", "flood-opacity", "lighting-color",
   "color-interpolation", "color-interpolation-filters", "shape-rendering",
-  "image-rendering", "mix-blend-mode", "isolation",
+  "image-rendering", "text-rendering", "color-rendering", "mix-blend-mode",
+  "isolation", "mask-type", "enable-background",
+  // background-COLOR only: it paints a colour and cannot reference an image. The
+  // `background` shorthand and background-image stay out — see the note above.
+  "background-color",
   // same-document reference paints (value guard restricts these to url(#frag))
   "marker", "marker-start", "marker-mid", "marker-end",
   "clip-path", "clip-rule", "mask", "filter",
@@ -640,14 +657,24 @@ const SVG_STYLE_PROPS = new Set([
   "font-kerning", "font-weight", "letter-spacing", "line-height", "word-spacing",
   "text-anchor", "text-decoration", "text-decoration-color",
   "text-decoration-line", "text-decoration-style", "text-overflow",
-  "text-rendering", "text-shadow", "text-transform",
+  "text-shadow", "text-transform",
   "dominant-baseline", "alignment-baseline", "baseline-shift", "direction",
   "unicode-bidi", "writing-mode", "white-space", "word-break", "overflow-wrap",
+  "kerning", "glyph-orientation-horizontal", "glyph-orientation-vertical",
   // SVG2 geometry properties (the CSS spelling of the geometry ATTRIBUTES this
   // path already passes through untouched). Inert: they size and place a shape
   // WITHIN its <svg> viewport, which clips them — viewport units, the one way to
   // size against the window instead, are rejected by the value filter.
-  "x", "y", "width", "height", "r", "cx", "cy", "rx", "ry", "d",
+  // (`d` is deliberately absent: its only useful value form is path("…"), which
+  // the value filter rejects as a quoted function argument, so listing it would
+  // be a dead entry implying support that does not exist.)
+  "x", "y", "width", "height", "r", "cx", "cy", "rx", "ry",
+  "max-width", "min-width", "max-height", "min-height",
+  // Geometry/layout spellings third-party exporters emit on the root <svg>.
+  // overflow only un-clips within the deck's own subtree — the render sinks are
+  // themselves overflow:hidden — and its siblings (shape/image/text-rendering)
+  // are already here, so excluding it was an inconsistency, not a defence.
+  "overflow", "transform", "transform-origin", "transform-box",
   // element-local visibility / hit-testing (cannot affect anything outside the
   // deck subtree). cursor's url() form is value-restricted to url(#frag) like the
   // other reference paints; listing it also keeps this consistent with the
@@ -696,7 +723,13 @@ function isSvgStyleSafe(css) {
   // (url(#grad--blue)) that this filter must keep. Comments are already rejected
   // above, so nothing but whitespace can sit between the `;` and the name.
   if (/(?:^|;)\s*--/.test(css)) return false;
-  if (/var\s*\(/i.test(css)) return false;
+  // The load half is the whole SUBSTITUTION family, not var() alone. attr() reads
+  // a DOM attribute this sanitizer preserves verbatim, and env() reads a UA value;
+  // both are resolved at the same late stage as var(), so each is an equally good
+  // way to re-assemble a value out of pieces no lexical rule here ever sees.
+  // Naming the family rather than the one function that shipped a bug: any future
+  // CSS substitution primitive belongs on this line.
+  if (/(?:var|attr|env)\s*\(/i.test(css)) return false;
   if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(css)) return false;
   // Reject any at-rule outright: @import pulls an external sheet and @font-face
   // (with unicode-range) is a per-character font-exfil beacon. Legit Vela paint
@@ -987,7 +1020,7 @@ const SAFE_STYLE_KEYS = new Set([
 // an authority written without its slashes, and that pattern must stay identical
 // on both CSS surfaces — two hand-maintained copies of a scheme list is exactly
 // how the earlier filters drifted apart. (v13.46)
-const STYLE_VALUE_REJECT = new RegExp(/url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*|var\s*\(/.source + "|" + CSS_FETCH_SCHEME.source, "i");
+const STYLE_VALUE_REJECT = new RegExp(/url\s*\(|expression\s*\(|@import|:\/\/|[a-z][\w-]*\s*\(\s*['"]|<|\\|\/\*|(?:var|attr|env)\s*\(/.source + "|" + CSS_FETCH_SCHEME.source, "i");
 function sanitizeStyle(style) {
   if (!style || typeof style !== "object" || Array.isArray(style)) return undefined;
   const out = {};
@@ -1657,7 +1690,11 @@ function resanitizeLoadedLanes(lanes) {
 function resanitizeLoadedBranding(branding) {
   if (!branding || typeof branding !== "object") return branding;
   const b = { ...branding };
-  scrubColorFields(b);
+  // Same canonical scrub as the SET_BRANDING reducer path: branding reloaded from
+  // storage is exactly as untrusted as branding arriving in a deck, and it is a
+  // raw spread that keeps arbitrary KEYS, so it needs the key-namespace drops too
+  // — not only value scrubbing. Both paths must stay on one helper. (v13.46)
+  scrubSubObject(b);
   if ("logo" in b) {
     const clamped = sanitizeImageDataUri(typeof b.logo === "string" ? b.logo : "");
     if (clamped) b.logo = clamped; else delete b.logo;

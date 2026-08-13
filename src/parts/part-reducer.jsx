@@ -309,7 +309,14 @@ function innerReducer(state, a) {
     // SECURITY (v12.67): the Vera set_branding tool (and the branding modal) dispatch
     // here, bypassing the import-time scrub in validateAndSanitizeDeck. footerBg/
     // accentColor/footerColor feed inline CSS, so scrub the merged branding too.
-    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubColorFields(b); return { ...state, branding: b }; }
+    // SECURITY: branding is merged from an arbitrary caller-supplied object, so it
+    // is a raw-spread surface like the deck sub-objects — it keeps whatever KEY the
+    // input chose, and scrubColorFields only ever inspected values on keys it
+    // recognises. Route it through the canonical scrubSubObject instead: same
+    // colour/layout/paint scrubbing, plus the reserved `_` and `--` key namespaces
+    // dropped, so a caller can neither forge a renderer-private flag nor park a CSS
+    // custom property here. (v13.46)
+    case "SET_BRANDING": { const b = { ...state.branding, ...a.branding }; scrubSubObject(b); return { ...state, branding: b }; }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
