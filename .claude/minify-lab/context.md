@@ -2063,3 +2063,18 @@ harness review (deliberately not folded into this investigation).
 `phase6-pilot-launch13` (task id `bzhp7tb2i`), same pattern:
 `run_in_background: true` directly, no nohup, 1800s inner timeout.
 Confirmed alive via `ps aux` shortly after launch. Not yet complete.
+
+**Container restart killed that first attempt** (system-reported;
+task `bzhp7tb2i` stopped, not a harness bug). Verified on resume: git
+log/remote both intact at commit `c3f13a5` (nothing lost — every
+commit so far had already been pushed), one stray worktree left under
+`phase6-pilot-launch13/newpart-manifest/baseline/rep1/wt` from the
+killed run, cleaned with `git worktree remove --force` + `prune -v`.
+Relaunched cleanly as the same `phase6-pilot-launch13` campaign-id
+(task id `bp0uwhunf`), same `run_in_background: true` / no-nohup /
+1800s pattern, confirmed alive via `ps aux` immediately after launch.
+Not yet complete. A `send_later` check-in scheduled earlier for the
+already-resolved launch-12 investigation fired late (stale by the
+time it arrived — that investigation was already fully documented and
+committed before this restart); its trigger was deleted rather than
+acted on literally.
