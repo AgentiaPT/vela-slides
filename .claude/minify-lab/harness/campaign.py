@@ -130,15 +130,32 @@ def _judge_pairs_for_rep(scenario, campaign_id, rep, base_dir, min_dir, judge_ro
         return None, {"scenario": scenario["id"], "rep": rep,
                        "baseline_reasons": reasons_a, "minified_reasons": reasons_b}
 
+    # dims used both to build the judge prompt (mirrored inside
+    # `_judge_prompt`) and to validate the response actually covers what
+    # this scenario requires — must be the SAME set both places.
+    dims = scenario.get("judge_dimensions") or judge_mod.DIMENSIONS
+
     resolved_rounds = []
+    # diagnostic fields (additive only — do not change `stable`/`winner_arm`
+    # meaning below): per-round presentation-order swap, per-round raw
+    # resolved winner before stability collapses them to one boolean, and
+    # whether any round's judge response failed to parse.
+    swap_per_round = []
+    raw_winner_per_round = []
+    parse_failure = False
     for jround in range(1, judge_rounds + 1):
         prompt, mapping = _judge_prompt(scenario, bundle_baseline, bundle_minified,
                                          scenario_prompt_r, campaign_id, rep, jround)
+        swap_per_round.append(mapping.get("swapped"))
         response_text = judge_invoke(prompt, judge_model)
-        ab_result = judge_mod.parse_ab_response(response_text)
+        ab_result = judge_mod.parse_ab_response(response_text, expected_dims=dims)
         if "error" in ab_result:
+            parse_failure = True
+            raw_winner_per_round.append(None)
             continue
-        resolved_rounds.append(judge_mod.resolve_ab_result(ab_result, mapping))
+        resolved = judge_mod.resolve_ab_result(ab_result, mapping)
+        resolved_rounds.append(resolved)
+        raw_winner_per_round.append(resolved["winner_arm"])
 
     if len(resolved_rounds) >= 2:
         stable = judge_mod.compare_stability(resolved_rounds[0], resolved_rounds[1])
@@ -146,7 +163,13 @@ def _judge_pairs_for_rep(scenario, campaign_id, rep, base_dir, min_dir, judge_ro
         stable = False  # can't establish agreement from <2 usable roundings — excluded from win-rate
     winner_arm = resolved_rounds[0]["winner_arm"] if resolved_rounds else "tie"
 
-    return {"scenario": scenario["id"], "rep": rep, "stable": stable, "winner_arm": winner_arm}, None
+    pair = {
+        "scenario": scenario["id"], "rep": rep, "stable": stable, "winner_arm": winner_arm,
+        "swap_per_round": swap_per_round,
+        "raw_winner_per_round": raw_winner_per_round,
+        "parse_failure": parse_failure,
+    }
+    return pair, None
 
 
 # ── full campaign ────────────────────────────────────────────────────────
@@ -386,6 +409,16 @@ def _selftest():
         check("campaign recorded a judge pair per rep", len(pairs) == 2, json.dumps(campaign["judge_pairs"]))
         check("stub judge ties are recorded as stable ties",
               all(p["stable"] and p["winner_arm"] == "tie" for p in pairs), json.dumps(pairs))
+        check("judge pairs carry the new diagnostic fields, additively",
+              all({"scenario", "rep", "stable", "winner_arm", "swap_per_round",
+                   "raw_winner_per_round", "parse_failure"} <= set(p.keys()) for p in pairs),
+              json.dumps(pairs))
+        check("swap_per_round has one entry per judge round (2) and raw_winner_per_round agrees with winner_arm",
+              all(len(p["swap_per_round"]) == 2 and len(p["raw_winner_per_round"]) == 2
+                  and p["raw_winner_per_round"][0] == p["winner_arm"] for p in pairs),
+              json.dumps(pairs))
+        check("no parse failures recorded on a clean stub judge run",
+              all(p["parse_failure"] is False for p in pairs), json.dumps(pairs))
         check("no pairs quarantined on a clean stub run (no stoplist terms in stub content)",
               campaign["quarantined_pairs"] == [], json.dumps(campaign["quarantined_pairs"]))
         check("no prepare errors recorded on a clean stub run", "prepare_errors" not in campaign,
@@ -429,6 +462,43 @@ def _selftest():
                   json.dumps(campaign2["quarantined_pairs"]))
         finally:
             shutil.rmtree(run_root2, ignore_errors=True)
+            subprocess.run(["git", "worktree", "prune"], cwd=str(REPO_ROOT), capture_output=True, text=True)
+
+        # a judge round that fails to parse must surface via `parse_failure`
+        # (and leave `stable=False`, unchanged) instead of being silently
+        # swallowed — round 1 returns unparseable text, round 2 a real tie.
+        def _make_flaky_judge_invoke():
+            calls = {"n": 0}
+
+            def invoke(prompt, model, timeout_s=60):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    return "not json at all { broken"
+                return stub_judge_invoke(prompt, model, timeout_s)
+            return invoke
+
+        run_root3 = Path(tempfile.mkdtemp(prefix="minify-lab-campaign-selftest-flaky-"))
+        try:
+            campaign3 = run_campaign(
+                ["campaign-selftest-mini"], "selftest-campaign-flaky", config=config, approach="telegraphic",
+                reps=1, judge_rounds=2, runs_root=run_root3, scenarios_override=[mini_scenario],
+                invoke=stub_invoke, judge_invoke=_make_flaky_judge_invoke(), keep_worktree=False,
+            )
+            flaky_pairs = [p for p in campaign3["judge_pairs"] if p["scenario"] == "campaign-selftest-mini"]
+            check("a judge round that fails to parse is surfaced via parse_failure",
+                  len(flaky_pairs) == 1 and flaky_pairs[0]["parse_failure"] is True,
+                  json.dumps(flaky_pairs))
+            check("raw_winner_per_round records None for the failed round, the real winner for the other",
+                  bool(flaky_pairs) and flaky_pairs[0]["raw_winner_per_round"] == [None, "tie"],
+                  json.dumps(flaky_pairs))
+            check("swap_per_round is still recorded for the failed round (mapping exists before the parse)",
+                  bool(flaky_pairs) and len(flaky_pairs[0]["swap_per_round"]) == 2,
+                  json.dumps(flaky_pairs))
+            check("only 1 of 2 usable roundings still yields stable=False, unchanged from before this fix",
+                  bool(flaky_pairs) and flaky_pairs[0]["stable"] is False,
+                  json.dumps(flaky_pairs))
+        finally:
+            shutil.rmtree(run_root3, ignore_errors=True)
             subprocess.run(["git", "worktree", "prune"], cwd=str(REPO_ROOT), capture_output=True, text=True)
     finally:
         shutil.rmtree(run_root, ignore_errors=True)

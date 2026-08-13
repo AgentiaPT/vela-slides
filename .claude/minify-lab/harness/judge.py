@@ -118,10 +118,18 @@ def generate_ab_prompt(bundle_baseline, bundle_minified, scenario_prompt_redacte
     return prompt, mapping
 
 
-def parse_ab_response(response_text):
+def parse_ab_response(response_text, expected_dims=None):
     """Ported parsing rules: markdown-fence stripping, missing-dimension
     error, winner normalization to '1'|'2'|'tie', tally-based fallback for
-    overall_winner."""
+    overall_winner.
+
+    `expected_dims`: the dimension set the response is required to cover —
+    normally a scenario's `judge_dimensions` (campaign.py threads its own
+    override through here). Defaults to the global `DIMENSIONS` when the
+    caller has no scenario-specific override, matching this module's
+    standalone CLI usage. The response is validated against THIS set, not
+    against its own `dimensions` keys — a response can't declare itself
+    complete just by omitting the dimensions it didn't answer."""
     text = response_text.strip()
     if "```json" in text:
         start = text.index("```json") + 7
@@ -138,9 +146,10 @@ def parse_ab_response(response_text):
         return {"error": "Failed to parse A/B judge response as JSON", "raw": response_text[:500]}
 
     dims = result.get("dimensions", {})
-    # only dimensions the caller declared as applicable are required, but if
-    # the caller doesn't tell us, fall back to the full set for validation.
-    expected = set(dims.keys()) if dims else set(DIMENSIONS)
+    # expected is the scenario's (or global) required set, NOT derived from
+    # the response's own keys — otherwise a response can trivially "cover"
+    # every dimension it decided to answer by simply not mentioning the rest.
+    expected = set(expected_dims) if expected_dims else set(DIMENSIONS)
     missing = expected - set(dims.keys())
     if missing:
         return {"error": f"Missing dimensions: {missing}", "partial": result}
@@ -352,12 +361,35 @@ def _selftest():
     malformed = parse_ab_response("not json at all { broken")
     check("malformed JSON response returns an error dict", "error" in malformed)
 
-    # missing-dimension handling
+    # missing-dimension handling: a scenario requiring 4 dimensions gets a
+    # response that only scores 1 of them — this must be REJECTED (an
+    # error dict), not silently accepted just because the response's own
+    # `dimensions` object happens to be internally "complete". This is the
+    # regression the dead-code bug let through: reverting `expected` to be
+    # derived from `dims.keys()` instead of `expected_dims` makes `missing`
+    # tautologically empty and this check fails.
+    scenario_required_dims = ["requirement_coverage", "scope_discipline",
+                               "obligation_completeness", "communication_quality"]
     incomplete = json.dumps({"dimensions": {"requirement_coverage": {"winner": "1"}}})
-    missing_result = parse_ab_response(incomplete)
-    check("missing dimensions produces no crash (returns dict)", isinstance(missing_result, dict))
+    missing_result = parse_ab_response(incomplete, expected_dims=scenario_required_dims)
+    check("response scoring only 1 of 4 required dimensions is rejected as an error",
+          "error" in missing_result, str(missing_result))
 
-    # tally-based fallback when overall_winner is malformed/absent
+    # a response covering exactly its scenario's (smaller-than-global)
+    # required set must NOT be rejected — the check is against the
+    # scenario's expected set, not the global DIMENSIONS list.
+    complete_subset = json.dumps({
+        "dimensions": {d: {"winner": "1"} for d in scenario_required_dims},
+        "overall_winner": "1",
+    })
+    complete_result = parse_ab_response(complete_subset, expected_dims=scenario_required_dims)
+    check("response covering exactly the scenario's smaller required set is accepted",
+          "error" not in complete_result, str(complete_result))
+
+    # tally-based fallback when overall_winner is malformed/absent — scoped
+    # to its own 3-dimension expected set so this stays a pure test of the
+    # tally logic, independent of the missing-dimension check above.
+    tally_dims = ["requirement_coverage", "scope_discipline", "communication_quality"]
     tally_resp = json.dumps({
         "dimensions": {
             "requirement_coverage": {"winner": "1"},
@@ -365,7 +397,7 @@ def _selftest():
             "communication_quality": {"winner": "2"},
         },
     })
-    tallied = parse_ab_response(tally_resp)
+    tallied = parse_ab_response(tally_resp, expected_dims=tally_dims)
     check("tally-based fallback picks the majority winner", tallied["overall_winner"] == "1", str(tallied))
 
     # stability comparator flags a disagreeing pair
