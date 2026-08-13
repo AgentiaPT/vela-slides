@@ -156,15 +156,45 @@ to that constraint, minimize tokens as much as possible.
   pass, report tier breakdown + token counts, do NOT commit (left for
   orchestrator).
 
+## Status log (cont. 3) — all 4 minify pairs done
+
+All four real-repo minify runs complete, gate PASS on every one, all
+committed:
+
+| Target | Tokens before -> after | Reduction | Gate |
+|---|---|---|---|
+| `CLAUDE.md` | 4644 -> 4425 | 4.7% | PASS (56/56 Tier N) |
+| `skills/vela-slides/SKILL.md` | 2814 -> 2772 | 1.5% | PASS (12/12) |
+| `.claude/skills/vela-secure-coding/SKILL.md` | 4542 -> 4519 | 0.5% | PASS (54/54) |
+| `.claude/skills/hyper-sprint/SKILL.md` | 8310 -> 8291 | 0.2% | PASS (108/108) |
+
+**Important finding, flag to user**: every real file in this repo came in
+FAR below the research doc's 20-30% first-pass target (0.2-4.7% actual).
+Cause: this repo's instruction files are unusually dense/rule-heavy
+already (high Tier N ratio, 70-90%+ in the security/sprint skills) —
+little Tier M/E filler exists to cut. This is itself a valid, useful eval
+signal (the skill correctly refuses to force cuts into Tier N — see each
+agent's "already optimal" self-report) but means the token-reduction
+upside on well-maintained repos may be small. Two implications to raise
+with the user before investing more in the harness:
+  1. The no-regression eval is still worth running (does even a small
+     ~1-5% cut cause ANY compliance regression on the trap tasks?), but
+     expected effect sizes on "cost/speed win" are now small for these
+     specific files.
+  2. Might be worth a 5th, deliberately looser/more verbose instruction
+     file (something NOT already hand-tuned) to demonstrate the skill's
+     upside ceiling — open question, not yet actioned.
+
 ## Next action
 
-Once the 3 parallel minify agents return: review each `.min.md` + gate
-result, spot check Tier N preservation, commit all together. Then build
-the eval harness (task #5): run a task against baseline file vs
-`/minify`-produced file, fresh session each time, capture tokens/turns/
-tool-errors/success signal per eval-task-set.md's mechanical checks —
-now runnable across 4 targets (CLAUDE.md, hyper-sprint, vela-slides base
-skill, vela-secure-coding). Then build the blind randomized-order judge
-(task #6, separate model — leaning Opus — from the Sonnet task-executor).
-Then run first directional pass, and audit results for bias per the
-checklist above.
+1. Surface the above finding to the user briefly (small-effect-size
+   result on this repo's files) — do NOT silently proceed as if 20-30%
+   was achieved.
+2. Build the eval harness (task #5): run a task against baseline file vs
+   `/minify`-produced file, fresh session each time, capture tokens/turns/
+   tool-errors/success signal per eval-task-set.md's mechanical checks —
+   runnable across all 4 committed target pairs now.
+3. Build the blind randomized-order judge (task #6, separate model —
+   leaning Opus — from the Sonnet task-executor).
+4. Run first directional pass, audit results for bias per the checklist
+   above.
