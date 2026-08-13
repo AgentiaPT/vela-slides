@@ -287,10 +287,82 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return False
         if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
             return False
+        # Reject lone surrogates. os.listdir() surfaces undecodable filename bytes
+        # as surrogates (surrogateescape), and such a name cannot be encoded into
+        # a request path or valid JSON at all — so it could be LISTED but never
+        # fetched, and encodeURIComponent() throws on it client-side, taking the
+        # whole listing down with it. Listing only what can actually be served is
+        # the invariant; drop these at the same gate as every other bad name.
+        if any(0xD800 <= ord(c) <= 0xDFFF for c in name):
+            return False
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
                 and bool(name.strip()))
+
+    # Deck titles are attacker-controlled: unlike the filename, `deckTitle` comes
+    # from inside the deck JSON and passes through no name validation at all.
+    # It is the listing's most prominent label, so it is a spoofing surface —
+    # bidi/format controls can make a row read as a different, benign file, and a
+    # non-string value breaks the client's search/sort. Normalize it here, at the
+    # one place titles enter the listing.
+    _TITLE_MAX = 200
+
+    @classmethod
+    def _display_label(cls, value, fallback):
+        """Return a safe display label for the deck listing.
+
+        Drops Unicode format/bidi controls (RTLO spoofing) and surrogates, collapses
+        whitespace runs so a label cannot push its real extension off-screen, caps
+        length, and falls back when the value is not a usable string. The client
+        renders labels via textContent, so this is anti-spoofing, not anti-XSS.
+        """
+        if not isinstance(value, str):
+            return fallback  # numbers/objects/lists are not labels
+        cleaned = "".join(
+            ch for ch in value
+            if unicodedata.category(ch) != "Cf" and not 0xD800 <= ord(ch) <= 0xDFFF
+        )
+        cleaned = " ".join(cleaned.split())  # collapse runs, incl. exotic spaces
+        cleaned = cleaned[:cls._TITLE_MAX]
+        return cleaned or fallback
+
+    @classmethod
+    def _open_deck_fd(cls, folder, name, write=False):
+        """Open a deck file by NAME and return an OS file descriptor.
+
+        SINGLE FILE-ACCESS POINT for deck reads and writes.
+
+        SECURITY (CWE-22/59/367): _safe_deck_path() realpath-validates but returns
+        the UNRESOLVED join path, so any caller that then opens BY PATH resolves the
+        leaf a second time — a local process can swap a deck-named symlink between
+        the check and the open and redirect the read or write outside the served
+        folder. Realpath containment alone cannot close that window; only refusing
+        the symlink atomically at open() can. The listing handler already did this;
+        every name-taking route now shares this helper so the guarantee cannot hold
+        in one place and not another.
+
+        Callers MUST operate on the returned descriptor and MUST NOT re-open by
+        path — re-opening reintroduces the exact race this closes.
+
+        Raises ValueError if the name escapes the folder; OSError if the entry is a
+        symlink (ELOOP), is missing, or is not a regular file.
+        """
+        path = cls._safe_deck_path(folder, name)  # containment for the parent dirs
+        if write:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        else:
+            # O_NONBLOCK so a fifo entry cannot hang the handler.
+            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
+        fd = os.open(path, flags, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"not a regular file: {name}")
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
 
     def _deck_name_from_path(self, prefix):
         """Decode the deck name out of a request path beginning with `prefix`.
@@ -482,36 +554,21 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         for name in sorted(os.listdir(srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
-            # SECURITY (containment + no check/use race, CWE-22/59/367): every
-            # other file-touching handler realpath-validates then opens by PATH,
-            # which follows a symlink at the leaf and re-resolves it independently
-            # of the check — so a deck-named symlink to a file outside the served
-            # folder leaks its size and (for JSON) its deckTitle, and swapping the
-            # symlink between the check and the open wins a TOCTOU race even after a
-            # static-containment check. Open with O_NOFOLLOW so a symlinked entry is
-            # refused ATOMICALLY at the leaf (both the static escape and the race),
-            # and fstat the returned fd so size AND content come from the very object
-            # we opened, never a re-resolved path. Realpath containment still guards
-            # the parent directories; O_NONBLOCK avoids blocking on a fifo entry, and
-            # the S_ISREG check drops anything that is not a plain file.
             if not self._validate_deck_name(name):
                 continue
-            fpath = os.path.join(srv.folder_path, name)
-            open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            # Shared symlink-proof open (see _open_deck_fd for why by-path opens
+            # are unsafe here). Metadata comes from the SAME descriptor we read, so
+            # size and content can never describe two different objects.
             try:
-                self._safe_deck_path(srv.folder_path, name)
-                fd = os.open(fpath, open_flags)
+                fd = self._open_deck_fd(srv.folder_path, name)
             except (ValueError, OSError):
                 continue  # escapes the folder, is a symlink (ELOOP), or unreadable
             try:
                 st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode):
-                    os.close(fd)
-                    continue
             except OSError:
                 os.close(fd)
                 continue
-            # Read metadata from the SAME fd (os.fdopen takes ownership and closes it).
+            # os.fdopen takes ownership of the fd and closes it.
             title = name
             slide_count = 0
             is_compact = False
@@ -520,7 +577,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                     data = json.load(f)
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
-                title = data.get("deckTitle") or data.get("n") or name
+                title = self._display_label(data.get("deckTitle") or data.get("n") or name, name)
                 is_compact = "n" in data and ("G" in data or "S" in data)
                 if "lanes" in data:
                     for lane in data["lanes"]:
@@ -563,18 +620,27 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be served")
             return
 
+        # Read through a symlink-proof descriptor and hand the PARSED deck on, so
+        # nothing downstream re-opens by path (see _open_deck_fd).
         try:
-            deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+            fd = self._open_deck_fd(srv.folder_path, deck_name)
         except ValueError:
             self.send_error(403, "Access denied")
             return
-
-        if not os.path.isfile(deck_path):
+        except OSError:
             self.send_error(404, "Deck not found")
             return
 
         try:
-            html = srv._build_html_for_deck(deck_path, deck_name)
+            with os.fdopen(fd, "r", encoding="utf-8") as f:  # fdopen owns the fd
+                raw_deck = json.load(f)
+        except Exception as e:
+            print(f"[error] Reading {deck_name}: {e}")
+            self.send_error(500, "Error loading deck")
+            return
+
+        try:
+            html = srv._build_html_for_deck(raw_deck, deck_name)
             self._serve(html, "text/html; charset=utf-8")
         except Exception as e:
             print(f"[error] Building HTML for {deck_name}: {e}")
@@ -623,16 +689,20 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                try:
-                    deck_path = self._safe_deck_path(srv.folder_path, deck_name)
-                except ValueError:
-                    self.send_error(403, "Access denied")
-                    return
                 srv.set_deck_data(deck_name, deck)
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w", encoding="utf-8") as f:
+                # Open symlink-proof and write through THAT descriptor. Opening by
+                # path here is what let a racing symlink swap redirect the write
+                # outside the served folder (see _open_deck_fd). O_CREAT keeps
+                # save-as-new working; O_NOFOLLOW refuses an existing symlink.
+                try:
+                    fd = self._open_deck_fd(srv.folder_path, deck_name, write=True)
+                except (ValueError, OSError):
+                    self.send_error(403, "Access denied")
+                    return
+                with os.fdopen(fd, "w", encoding="utf-8") as f:  # fdopen owns the fd
                     json.dump(deck, f, ensure_ascii=False, indent=2)
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
@@ -873,17 +943,17 @@ class VelaLocalServer:
 
             def on_change(name=deck_name):
                 try:
-                    # Re-validate folder containment on every re-read. The watched
-                    # path may resolve differently than when the watcher was armed,
-                    # so apply the same realpath guard the HTTP read/write paths use
-                    # (_safe_deck_path) instead of a bare open() — keeps this read
-                    # path consistent with the rest of the server.
+                    # Re-open through the shared symlink-proof descriptor on every
+                    # re-read. The watched path may resolve differently than when the
+                    # watcher was armed, and this fires on filesystem events an
+                    # attacker can trigger — so it needs the same atomic guarantee as
+                    # the HTTP routes, not just a realpath check followed by open().
                     try:
-                        fpath = VelaHTTPHandler._safe_deck_path(self.folder_path, name)
-                    except ValueError:
+                        fd = VelaHTTPHandler._open_deck_fd(self.folder_path, name)
+                    except (ValueError, OSError):
                         print(f"[sync] {name} no longer resolves inside the folder — skipping")
                         return
-                    with open(fpath, "r", encoding="utf-8") as f:
+                    with os.fdopen(fd, "r", encoding="utf-8") as f:  # fdopen owns the fd
                         new_data = json.load(f)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
@@ -982,10 +1052,14 @@ class VelaLocalServer:
 
         return html
 
-    def _build_html_for_deck(self, deck_path, deck_name):
-        """Build the Vela app HTML for a specific deck file (folder mode)."""
-        with open(deck_path, "r", encoding="utf-8") as f:
-            deck_data = self._normalize_deck(json.load(f))
+    def _build_html_for_deck(self, raw_deck, deck_name):
+        """Build the Vela app HTML for a deck already read from disk (folder mode).
+
+        Takes the PARSED deck rather than a path: the caller reads it through
+        _open_deck_fd()'s symlink-proof descriptor, so this must never re-open by
+        path (that would resolve the leaf again and reopen the TOCTOU window).
+        """
+        deck_data = self._normalize_deck(raw_deck)
 
         self.set_deck_data(deck_name, deck_data)
         self._ensure_watcher(deck_name)

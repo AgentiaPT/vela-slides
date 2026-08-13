@@ -48,7 +48,22 @@
     // URL encoder in a genuine URL sink — the correct pairing. This value is
     // only ever assigned to `a.href` / `location.assign()`, never embedded in
     // markup or a script context.
-    return '/deck/' + encodeURIComponent(name);
+    // encodeURIComponent throws URIError on a lone surrogate, which a filename
+    // with undecodable bytes can carry. The server drops those names, but this
+    // must not depend on that: an unhandled throw here escapes renderList and
+    // blanks the entire listing, so one bad name would hide every good deck.
+    try {
+      return '/deck/' + encodeURIComponent(name);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sortKey(deck) {
+    // Titles come from deck JSON and can be any type. `(d.title || '').toLowerCase()`
+    // throws on a truthy non-string, which silently kills search and sorting.
+    var t = typeof deck.title === 'string' ? deck.title : '';
+    return (t || (typeof deck.name === 'string' ? deck.name : '')).toLowerCase();
   }
 
   function formatSize(bytes) {
@@ -71,8 +86,8 @@
     var col = sortCol;
     return decks.slice().sort(function (a, b) {
       var va, vb;
-      if (col === 'title') { va = (a.title || a.name).toLowerCase(); vb = (b.title || b.name).toLowerCase(); }
-      else if (col === 'name') { va = a.name.toLowerCase(); vb = b.name.toLowerCase(); }
+      if (col === 'title') { va = sortKey(a); vb = sortKey(b); }
+      else if (col === 'name') { va = String(a.name).toLowerCase(); vb = String(b.name).toLowerCase(); }
       else if (col === 'slides') { va = a.slides; vb = b.slides; }
       else if (col === 'size') { va = a.size; vb = b.size; }
       else { va = a.modified; vb = b.modified; }
@@ -119,8 +134,10 @@
     tr.dataset.name = deck.name;  // identity as data — never interpolated into code
 
     var tdTitle = el('td', 'col-title');
-    var link = el('a', null, deck.title || deck.name);
-    link.href = deckUrl(deck.name);
+    var label = typeof deck.title === 'string' && deck.title ? deck.title : deck.name;
+    var href = deckUrl(deck.name);
+    var link = el(href ? 'a' : 'span', null, label);
+    if (href) link.href = href;   // un-encodable name: render inert, never a dead link
     tdTitle.appendChild(link);
     tr.appendChild(tdTitle);
 
@@ -142,8 +159,8 @@
   function renderList() {
     var q = searchEl.value.toLowerCase().trim();
     var filtered = q ? allDecks.filter(function (d) {
-      return (d.title || '').toLowerCase().indexOf(q) !== -1 ||
-             (d.name || '').toLowerCase().indexOf(q) !== -1;
+      return sortKey(d).indexOf(q) !== -1 ||
+             String(d.name).toLowerCase().indexOf(q) !== -1;
     }) : allDecks;
 
     var sorted = sortDecks(filtered);
@@ -174,7 +191,8 @@
     var row = e.target.closest('tr.deck-row');
     if (!row) return;
     if (e.target.closest('a')) return;  // let the anchor handle its own navigation
-    window.location.assign(deckUrl(row.dataset.name));
+    var href = deckUrl(row.dataset.name);
+    if (href) window.location.assign(href);
   });
 
   searchEl.addEventListener('input', renderList);

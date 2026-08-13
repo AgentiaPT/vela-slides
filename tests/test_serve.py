@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import unittest
 from urllib.parse import quote
 
@@ -970,11 +971,10 @@ class TestHTMLGeneration(unittest.TestCase):
 
     def test_build_html_for_deck_vela_export_unwrapped(self):
         """Deck in _vela export format should be unwrapped automatically."""
-        deck_path = os.path.join(self._tmpdir, "export.vela")
-        with open(deck_path, "w", encoding="utf-8") as f:
-            json.dump(VELA_EXPORT_DECK, f)
+        # _build_html_for_deck takes the PARSED deck: the caller reads it through
+        # the symlink-proof descriptor so nothing downstream re-opens by path.
         server = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
-        html = server._build_html_for_deck(deck_path, "export.vela").decode("utf-8")
+        html = server._build_html_for_deck(VELA_EXPORT_DECK, "export.vela").decode("utf-8")
         self.assertIn("Test Deck", html)
 
     def test_prepare_html_channel_port_injected_when_ai_enabled(self):
@@ -1663,6 +1663,144 @@ class TestDeckNameCodeDataSeparation(FolderServerTestBase):
             self.assertNotIn(sink, code, f"browser.js must not use {sink}")
         self.assertIn("addEventListener", code)
         self.assertIn("textContent", code)
+
+
+class TestDeckFileAccessContainment(FolderServerTestBase):
+    """Deck reads and writes must refuse a symlinked leaf ATOMICALLY.
+
+    Realpath containment alone is check-then-use: a local process can swap a
+    deck-named symlink between the check and the open and redirect the operation
+    outside the served folder (CWE-22/59/367). These pin the atomic guarantee, so
+    a future by-path open cannot quietly reopen that window.
+    """
+
+    def _outside(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _link(self, link_name, target):
+        path = os.path.join(self._tmpdir, link_name)
+        if os.path.lexists(path):
+            os.unlink(path)
+        try:
+            os.symlink(target, path)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+        self.addCleanup(lambda: os.path.lexists(path) and os.unlink(path))
+        return path
+
+    def test_open_deck_fd_refuses_symlink_even_when_target_is_inside(self):
+        """The leaf itself must be refused — not merely targets that escape.
+
+        This is the property that closes the race: if an in-folder symlink were
+        accepted, it could be re-pointed outside after the containment check.
+        """
+        self._link("alias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        with self.assertRaises(OSError):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "alias.vela")
+
+    def test_open_deck_fd_refuses_symlink_for_write(self):
+        """Two independent layers refuse this: realpath containment rejects an
+        outward target (ValueError) and O_NOFOLLOW rejects the symlink itself
+        (OSError). Accept either — what must never happen is the write landing."""
+        outside = self._outside()
+        self._link("wlink.vela", os.path.join(outside, "target.json"))
+        with self.assertRaises((ValueError, OSError)):
+            VelaHTTPHandler._open_deck_fd(self._tmpdir, "wlink.vela", write=True)
+        self.assertFalse(os.path.exists(os.path.join(outside, "target.json")),
+                         "write followed a symlink out of the served folder")
+
+    def test_save_through_symlink_is_refused_over_http(self):
+        outside = self._outside()
+        target = os.path.join(outside, "PWNED.json")
+        self._link("race.vela", target)
+        status, _, _ = fetch(self._port, "POST", "/save/race.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertNotEqual(status, 200)
+        self.assertFalse(os.path.exists(target), "arbitrary write escaped the folder")
+
+    def test_serve_through_symlink_is_refused_over_http(self):
+        self._link("ralias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        status, _, _ = fetch(self._port, "GET", "/deck/ralias.vela")
+        self.assertNotEqual(status, 200, "a symlinked deck was served")
+
+    def test_listing_and_serving_agree_about_symlinks(self):
+        """Neither lists nor serves them — the two views cannot diverge."""
+        self._link("balias.vela", os.path.join(self._tmpdir, "sample.vela"))
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        listed = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertNotIn("balias.vela", listed)
+        status, _, _ = fetch(self._port, "GET", "/deck/balias.vela")
+        self.assertNotEqual(status, 200)
+
+    def test_write_still_creates_a_new_deck(self):
+        """The hardening must not break save-as-new (O_CREAT path)."""
+        status, _, _ = fetch(self._port, "POST", "/save/brand-new.vela",
+                             body=json.dumps({"type": "deck_save", "deck": SAMPLE_DECK}),
+                             headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 200)
+        self.assertTrue(os.path.isfile(os.path.join(self._tmpdir, "brand-new.vela")))
+
+
+class TestDeckLabelSpoofing(FolderServerTestBase):
+    """`deckTitle` comes from inside the deck JSON and passes no name validation,
+    yet it is the listing's most prominent label — so it is a spoofing surface."""
+
+    _extra_files = {
+        "rtlo-title.vela": {"deckTitle": "Q3-report‮gpj.vela", "lanes": []},
+        "pad-title.vela": {"deckTitle": "harmless.pdf" + " " * 40 + "​.vela", "lanes": []},
+        "num-title.vela": {"deckTitle": 5, "lanes": []},
+        "obj-title.vela": {"deckTitle": {"a": 1}, "lanes": []},
+        "long-title.vela": {"deckTitle": "A" * 5000, "lanes": []},
+    }
+
+    def _titles(self):
+        _, _, body = fetch(self._port, "GET", "/api/decks")
+        return {d["name"]: d["title"] for d in json.loads(body)["decks"]}
+
+    def test_titles_carry_no_format_or_bidi_controls(self):
+        for name, title in self._titles().items():
+            self.assertIsInstance(title, str, f"{name}: non-string title reached the client")
+            for ch in title:
+                self.assertNotEqual(unicodedata.category(ch), "Cf",
+                                    f"{name}: format/bidi control survived in {title!r}")
+
+    def test_whitespace_runs_collapsed(self):
+        self.assertNotIn("   ", self._titles()["pad-title.vela"])
+
+    def test_non_string_titles_fall_back_to_the_filename(self):
+        t = self._titles()
+        self.assertEqual(t["num-title.vela"], "num-title.vela")
+        self.assertEqual(t["obj-title.vela"], "obj-title.vela")
+
+    def test_title_length_is_bounded(self):
+        self.assertLessEqual(len(self._titles()["long-title.vela"]), 200)
+
+
+class TestUnservableNamesNeverListed(FolderServerTestBase):
+    """A name that cannot be turned into a request path must not be listed:
+    the client throws on it and the whole listing would go down with it."""
+
+    def test_undecodable_filename_is_not_listed(self):
+        raw = os.path.join(os.fsencode(self._tmpdir), b"bad\xd8\xff.vela")
+        try:
+            with open(raw, "wb") as f:
+                f.write(b'{"deckTitle":"weird","lanes":[]}')
+        except OSError:
+            self.skipTest("filesystem rejects undecodable names")
+        self.addCleanup(lambda: os.path.exists(raw) and os.unlink(raw))
+
+        status, _, body = fetch(self._port, "GET", "/api/decks")
+        self.assertEqual(status, 200)
+        names = [d["name"] for d in json.loads(body)["decks"]]
+        self.assertIn("sample.vela", names, "healthy decks must still be listed")
+        for n in names:
+            n.encode("utf-8")  # raises if a surrogate slipped through
+
+    def test_validator_rejects_surrogates(self):
+        self.assertFalse(VelaHTTPHandler._validate_deck_name("bad\udcd8.vela"))
 
 
 if __name__ == "__main__":
