@@ -36,6 +36,7 @@ const grabs = {
   allowed:  source.match(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/),
   refAttrs: source.match(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/),
   styleProps: source.match(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/),
+  valueFns: source.match(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/),
   paintKey: source.match(/const CSS_PAINT_KEY = .+;/),
   keyStem: source.match(/const cssKeyStem = .+;/),
   isSafe:   source.match(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/),
@@ -49,7 +50,7 @@ const grabs = {
 // Mirrors extractOne in tests/test_svg_mxss.cjs.
 for (const [k, re] of Object.entries({
   scheme: /const CSS_FETCH_SCHEME = .+;/g, allowed: /const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/g,
-  refAttrs: /const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/g, styleProps: /const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/g,
+  refAttrs: /const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/g, styleProps: /const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/g, valueFns: /const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/g,
   paintKey: /const CSS_PAINT_KEY = .+;/g, keyStem: /const cssKeyStem = .+;/g,
   isSafe: /function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/g, isInlineSafe: /function isSvgInlineStyleSafe\(css\) \{[\s\S]*?\n\}/g,
   svg: /function sanitizeSvgMarkup\(raw\) \{[\s\S]*?\n\}/g, raster: /const SAFE_RASTER_DATA_IMAGE = \/.*?\/i;/g,
@@ -84,6 +85,7 @@ ${grabs.scheme[0]}
 ${grabs.allowed[0]}
 ${grabs.refAttrs[0]}
 ${grabs.styleProps[0]}
+${grabs.valueFns[0]}
 ${grabs.paintKey[0]}
 ${grabs.keyStem[0]}
 ${grabs.isSafe[0]}

@@ -137,7 +137,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.46";
 const VELA_CHANGELOG = [
-  { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
+  { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
   { v: "13.43", d: "internal: split SlidePanel out of part-slides.jsx into part-slidepanel.jsx, no functional change" },
@@ -609,6 +609,34 @@ const SVG_URL_REF_ATTRS = new Set([
 // legitimate elsewhere under its own gate (sanitizeImageDataUri). (v13.46)
 const CSS_FETCH_SCHEME = /\b(?:https?|ftps?|wss?|file)\s*:/i;
 
+// CSS functions permitted in a deck SVG value. ALLOWLIST, for the same reason the
+// property side is one: the rules around it reject the ways a URL can be SPELLED
+// (scheme, //, quoted string, url() to anything but a #fragment), but a RELATIVE
+// reference — image-set(a.png 1x) — is none of those and passes them all. Rather
+// than name the image functions (a denylist that the next CSS revision reopens),
+// admit only the functions SVG paint, text and transform values actually need;
+// image-set/image/cross-fade/src/paint/element and anything not yet invented are
+// then rejected because they are not on the list, not because we thought of them.
+// url() stays here and is separately restricted to a #fragment below. (v13.46)
+const SVG_VALUE_FNS = new Set([
+  "url",
+  // colour
+  "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color",
+  "color-mix", "light-dark",
+  // numeric
+  "calc", "min", "max", "clamp", "round", "abs", "mod", "rem",
+  // transform
+  "translate", "translatex", "translatey", "translatez", "translate3d",
+  "scale", "scalex", "scaley", "scalez", "scale3d",
+  "rotate", "rotatex", "rotatey", "rotatez", "rotate3d",
+  "skew", "skewx", "skewy", "matrix", "matrix3d", "perspective",
+  // filter primitives (pixel ops only — url() filters go through the url rule)
+  "blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate",
+  "invert", "opacity", "saturate", "sepia",
+  // geometry
+  "path", "polygon", "circle", "ellipse", "inset", "rect", "xywh",
+]);
+
 // CSS properties permitted in a deck SVG's inline style="" attribute. ALLOWLIST,
 // because the alternative — enumerating the properties that are dangerous — is a
 // bet that no CSS property we forgot can fetch a resource or escape its box, and
@@ -765,6 +793,15 @@ function isSvgStyleSafe(css) {
   // image-set() bypass of the v12.53 url() exfil fix.
   const fnStr = css.match(/[a-z][\w-]*\s*\(\s*['"]/gi);
   if (fnStr && fnStr.some((m) => !/^url\s*\(/i.test(m))) return false;
+  // Function ALLOWLIST (see SVG_VALUE_FNS). The rules above reject the ways a URL
+  // can be SPELLED; this rejects the functions that can DEREFERENCE one. Without
+  // it a relative reference — no scheme, no //, no quote, no url() token — is
+  // invisible to every check here, and only the property allowlist keeps it from
+  // being fetched. Two independent gates instead of one, so neither has to be
+  // perfect. Escapes and comments are already rejected, so a function token cannot
+  // be obfuscated past this scan.
+  const fnNames = css.match(/[a-z][\w-]*(?=\s*\()/gi);
+  if (fnNames && fnNames.some((n) => !SVG_VALUE_FNS.has(n.toLowerCase()))) return false;
   // UI-integrity: reject CSS layout/positioning properties. SVG paint via inline
   // style is fine (fill/stroke/opacity/stroke-width/…), but position/inset/z-index/
   // pointer-events let a deck element ESCAPE its container and overlay, hide, or

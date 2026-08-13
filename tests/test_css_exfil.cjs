@@ -356,6 +356,7 @@ else bad("scrubSubObject missing scrubber/`_`-drop wiring");
     const fn = [
       grab(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME"),
       grab(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS"),
+      grab(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/, "SVG_VALUE_FNS"),
       grab(/function isSvgStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgStyleSafe"),
       grab(/function isSvgInlineStyleSafe\(css\)\s*\{[\s\S]*?\n\}/, "isSvgInlineStyleSafe"),
     ].join("\n");

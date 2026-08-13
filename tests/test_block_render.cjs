@@ -107,6 +107,7 @@ ${extractConst(importsSrc, "cssKeyStem")}
 ${extractConst(importsSrc, "SVG_ALLOWED_TAGS")}
 ${extractConst(importsSrc, "SVG_URL_REF_ATTRS")}
 ${extractConst(importsSrc, "SVG_STYLE_PROPS")}
+${extractConst(importsSrc, "SVG_VALUE_FNS")}
 ${extractFn(importsSrc, "isSvgStyleSafe")}
 ${extractFn(importsSrc, "isSvgInlineStyleSafe")}
 ${extractFn(importsSrc, "sanitizeSvgMarkup")}

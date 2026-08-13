@@ -72,6 +72,7 @@ const schemeMatch = extractOne(/const CSS_FETCH_SCHEME = .+;/, "CSS_FETCH_SCHEME
 const allowedMatch = extractOne(/const SVG_ALLOWED_TAGS = new Set\(\[[\s\S]*?\]\);/, "SVG_ALLOWED_TAGS");
 const refAttrsMatch = extractOne(/const SVG_URL_REF_ATTRS = new Set\(\[[\s\S]*?\]\);/, "SVG_URL_REF_ATTRS");
 const stylePropsMatch = extractOne(/const SVG_STYLE_PROPS = new Set\(\[[\s\S]*?\]\);/, "SVG_STYLE_PROPS");
+const valueFnsMatch = extractOne(/const SVG_VALUE_FNS = new Set\(\[[\s\S]*?\]\);/, "SVG_VALUE_FNS");
 const paintKeyMatch = extractOne(/const CSS_PAINT_KEY = .+;/, "CSS_PAINT_KEY");
 const keyStemMatch = extractOne(/const cssKeyStem = .+;/, "cssKeyStem");
 const isSafeMatch  = extractOne(/function isSvgStyleSafe\(css\) \{[\s\S]*?\n\}/, "isSvgStyleSafe");
@@ -91,6 +92,7 @@ ${schemeMatch[0]}
 ${allowedMatch[0]}
 ${refAttrsMatch[0]}
 ${stylePropsMatch[0]}
+${valueFnsMatch[0]}
 ${paintKeyMatch[0]}
 ${keyStemMatch[0]}
 ${isSafeMatch[0]}
@@ -495,6 +497,31 @@ runNoVar("bare unquoted scheme in an inline-style value",
   const keeps = /maskUnits="userSpaceOnUse"/i.test(out) && /maskContentUnits="userSpaceOnUse"/i.test(out);
   if (keeps) { passed++; console.log("  ✅ real SVG attributes sharing a paint-key stem preserved (maskUnits/…)"); }
   else { failed++; console.log("  ❌ legit SVG attribute dropped — output: " + out); }
+}
+// Function ALLOWLIST. The rules elsewhere reject how a URL is SPELLED; this
+// rejects the functions that could DEREFERENCE one. A relative reference carries
+// no scheme, no //, no quote and no url() token, so it is invisible to all of
+// them — only the property allowlist stood between it and a fetch. Two gates now.
+{
+  const mustReject = [
+    'fill:image-set(a.png 1x)', 'fill:-webkit-image-set(a.png 1x)',
+    'background-image:image(a.png)', 'fill:cross-fade(a.png,red)',
+    'fill:src(a.png)', 'fill:paint(worklet)', 'fill:element(#a)',
+    'fill:-moz-element(#a)', 'fill:notAFunctionWeKnow(a.png)',
+  ];
+  const leaked = mustReject.filter((v) => isSvgStyleSafe(v));
+  if (leaked.length === 0) { passed++; console.log("  ✅ unknown/image-source CSS functions rejected by name-allowlist (relative refs too)"); }
+  else { failed++; console.log("  ❌ non-allowlisted CSS function accepted: " + JSON.stringify(leaked)); }
+  // Positive control: the functions real SVG paint/text/transform values use.
+  const mustAllow = [
+    'fill:rgb(1,2,3)', 'fill:rgba(1,2,3,.5)', 'stroke:hsl(1,2%,3%)',
+    'fill:url(#g)', 'width:calc(100% - 8px)', 'transform:translate(4px,2px) scale(2) rotate(45deg)',
+    'filter:blur(2px)', 'filter:drop-shadow(0 1px 2px #000)', 'clip-path:inset(10%)',
+    'clip-path:polygon(0 0,10px 0,10px 10px)', 'fill:color-mix(in srgb,#fff 20%,#000)',
+  ];
+  const dropped = mustAllow.filter((v) => !isSvgStyleSafe(v));
+  if (dropped.length === 0) { passed++; console.log("  ✅ real SVG paint/transform/filter functions still accepted (no false reject)"); }
+  else { failed++; console.log("  ❌ legitimate CSS function rejected: " + JSON.stringify(dropped)); }
 }
 // A `--` inside a same-document fragment id is ordinary naming, not a custom
 // property: the store can only be introduced at the start of a declaration, so
