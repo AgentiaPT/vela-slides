@@ -68,6 +68,10 @@ tests/screenshots/
 # minify-lab: WIP research/harness for the /minify project — tracked so
 # container reclaim can't wipe it again (see .claude/minify-lab/context.md)
 !.claude/minify-lab
+# ...except generated campaign run artifacts (transcripts, diffs, cost data)
+# — regenerable, bulky, and not reviewable content; same treatment as
+# evals/output/ etc. below.
+.claude/minify-lab/harness/runs/
 # Track only the committed security hook, not the whole hooks dir — keeps
 # local/experimental hooks (which may hold machine paths or tokens) out of this
 # public repo by default.
