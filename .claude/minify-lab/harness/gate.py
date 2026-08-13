@@ -62,6 +62,21 @@ def mean(values):
     return sum(values) / len(values) if values else 0.0
 
 
+# config.yaml's gate thresholds are decimal-rounded (0.6667 for exactly 2/3)
+# for human readability, but a runtime rate at reps=3 lands on the exact
+# fraction (2/3 == 0.6666666...), which is strictly LESS than the rounded-up
+# constant. A bare `rate >= thresholds["absolute_floor"]` then rejects the
+# ordinary, expected "held in exactly 2/3 of reps" result — silently
+# reclassifying a real drift failure as a "scenario bug" (see context.md,
+# "gate threshold boundary bug"). `_at_least` tolerates that rounding without
+# loosening the actual floor.
+_THRESHOLD_EPS = 1e-4
+
+
+def _at_least(rate, threshold):
+    return rate >= threshold - _THRESHOLD_EPS
+
+
 def _rate(results_by_rep, assertion_type, scenario_id=None):
     """Fraction of reps where the named critical assertion type passed
     (only counting non-skipped instances)."""
@@ -110,15 +125,15 @@ def evaluate_behavioral_drift(campaign, thresholds):
             if base_rate is None or min_rate is None:
                 continue
 
-            base_ok = base_rate >= thresholds["drift_baseline_min"]
+            base_ok = _at_least(base_rate, thresholds["drift_baseline_min"])
             min_bad_drift = min_rate <= thresholds["drift_minified_max"]
             min_bad_floor = min_rate <= (1 - thresholds["absolute_floor"])  # fails floor if <2/3 hold => <=1/3 fail... see below
 
             # Absolute floor (condition 2): assertion must HOLD in >=2/3 of
             # minified reps. If it fails in BOTH arms similarly, it's a
             # scenario bug (scenario_invalid), not a minified regression.
-            min_holds = min_rate >= thresholds["absolute_floor"]
-            base_holds = base_rate >= thresholds["absolute_floor"]
+            min_holds = _at_least(min_rate, thresholds["absolute_floor"])
+            base_holds = _at_least(base_rate, thresholds["absolute_floor"])
 
             if not base_holds and not min_holds:
                 scenario_invalid.append(
@@ -173,7 +188,7 @@ def evaluate_judge_loss(campaign, thresholds):
     for scenario_id, plist in by_scenario.items():
         losses = sum(1 for p in plist if p["winner_arm"] == "baseline")
         rate = losses / len(plist)
-        if rate >= thresholds["judge_scenario_loss"]:
+        if _at_least(rate, thresholds["judge_scenario_loss"]):
             failures.append({
                 "kind": "judge_loss_scenario",
                 "scenario": scenario_id,
@@ -506,6 +521,30 @@ def _selftest():
     state7, report7, detail7 = gate(invalid_campaign)
     check("both-arms-fail scenario does NOT count as minified drift", state7 == "pass", "\n".join(report7))
     check("both-arms-fail scenario is reported as scenario_invalid", len(detail7["scenario_invalid"]) == 1)
+
+    # ── exact-2/3 boundary: baseline holds in exactly 2/3 reps (the ordinary
+    # outcome at reps=3) against config.yaml's decimal-rounded 0.6667 floor
+    # (2/3 == 0.6666...  <  0.6667). Must be a real behavioral_drift failure,
+    # NOT misclassified as scenario_invalid — see the `_at_least` fix above.
+    boundary_config = {"gate": {"drift_baseline_min": 0.6667, "drift_minified_max": 0.3334,
+                                 "absolute_floor": 0.6667, "judge_scenario_loss": 0.6667}}
+    boundary_campaign = dict(clean_campaign)
+    boundary_campaign["scenarios"] = {
+        "boundary-scenario": {
+            "probes": [],
+            "baseline": [_rep_result([("changelog_entry_shape", True)]) for _ in range(2)]
+                        + [_rep_result([("changelog_entry_shape", False)])],
+            "minified": [_rep_result([("changelog_entry_shape", False)]) for _ in range(3)],
+        },
+    }
+    boundary_campaign["judge_pairs"] = []
+    boundary_campaign["judge_pairs_total"] = 0
+    state8, report8, detail8 = gate(boundary_campaign, boundary_config)
+    check("exact-2/3 baseline rate is NOT misclassified as scenario_invalid",
+          detail8["scenario_invalid"] == [], str(detail8["scenario_invalid"]))
+    check("exact-2/3 boundary is counted as a real behavioral_drift failure",
+          any(f["kind"] == "behavioral_drift" for f in detail8["failures"]), "\n".join(report8))
+    check("exact-2/3 boundary campaign fails the gate", state8 == "fail", "\n".join(report8))
 
     # ── separation invariant: gate.py must reject a 6a verdict as input ──
     poisoned = {"verdict_kind": "6a-reduction", "mean_reduction": 0.34}

@@ -824,7 +824,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~11:35, LAUNCH 8 COMPLETED CLEAN — the first genuinely finished, non-crashed, non-contaminated, non-environment-gap Phase 6 pilot result. `run_in_background: true` survived the full run with no reclaim. 6B verdict: INCONCLUSIVE for launch 8, for a real measured reason — 100% judge-round instability, not a harness bug — and the diagnosability gap that caused is now fixed (see below). Both prior fixes (isolation, node_modules) hold perfectly: 24/24 critical assertions on both arms. Real minified CLAUDE.md's 6A structure verdict, previously a genuine FAIL, is now FIXED and independently verified PASS on both the harness's and the skill's own checkers)
+## Current status (last updated: 2026-08-13 ~13:40, LAUNCH 9 RE-JUDGED — two real harness bugs found and fixed today (judge invocation silently failing under root; a gate-threshold rounding bug that misfiled exact-2/3 rates as "scenario bug"). With both fixed, 6B produced its first-ever genuine, non-bug verdict: **FAILED** on `security-changelog-discipline` — the minified CLAUDE.md's changelog-shape discipline does not reliably hold in real trials even though 6A structure says the rule text survived. 6A: SIZE PASS, STRUCTURE PASS (both reproduced a 3rd time). Launch 8's earlier "100% judge instability" diagnosis (task #11) is now in doubt — likely the same invocation bug, not real disagreement, but not re-confirmable. See the dated entries below for full detail; next: decide whether/how to address the found regression, keep piloting task #12's remaining scenarios)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -1152,6 +1152,94 @@ for the real numbers once that finishes. If it lands stable, this is the
 harness's **first-ever real, parseable 6B judge verdict** — everything
 6B has reported before this fix (launch 8 included) may have been
 reporting invocation failure, not judgment.
+
+**Re-judge landed — real numbers, plus a SECOND confirmed gate bug, plus
+the harness's first-ever genuine 6B FAIL (2026-08-13, ~13:40).** Judge is
+no longer 100% broken (only 1 of 6 rounds failed to parse this time —
+that's ordinary occasional-parse-noise, not the systemic failure): rep0
+stable/baseline-wins, rep1 one round unparseable + the other says
+minified-wins, rep2 disagreement (tie vs baseline). Gate on this raw
+data: `judge_info: {stable_pairs: 1, minified_losses: 1}` — in the one
+truly stable, both-rounds-agreed pair, **the judge preferred baseline
+over minified**, and `scenario_invalid` again flagged
+`changelog_entry_shape` as "both arms fail (baseline=67%, minified=0%)
+— scenario bug, not counted."
+
+That 67%-vs-0% asymmetry was exactly the case flagged as needing
+independent confirmation, and it does NOT hold up as a scenario bug —
+**a second real gate.py defect**, found by hand-tracing `evaluate_
+behavioral_drift`'s exact arithmetic: `config.yaml`'s thresholds are
+decimal-rounded for readability (`0.6667` for exactly 2/3), but a
+runtime rate at `reps: 3` lands on the *exact* fraction
+`2/3 = 0.66666...`, which is strictly **less than** `0.6667`. So
+`base_rate >= thresholds["absolute_floor"]` silently rejects the
+ordinary, expected "held in exactly 2 of 3 reps" result — the single
+most common non-100% outcome at this rep count — and
+`evaluate_behavioral_drift` misfiles it as `scenario_invalid` ("both
+arms fail") instead of the real `behavioral_drift` failure it actually
+is. Confirmed by hand-computing `2/3 >= 0.6667` in Python (`False`).
+This is a fail-open-shaped bug (a real regression gets silently
+excluded from the count, in the direction of under-reporting problems)
+in the same family of defect this project's own security discipline
+takes most seriously, even though this instance has nothing to do with
+security content itself. **Fixed**: `gate.py` now compares floor/
+2-of-3-shaped thresholds with a small epsilon tolerance (`_at_least()`,
+1e-4 — comfortably covers the ~0.00003 rounding gap without loosening
+the real bar), applied at all three affected call sites
+(`drift_baseline_min`, `absolute_floor`, `judge_scenario_loss`). Added a
+regression test to `gate.py --selftest` reproducing this exact
+scenario (baseline 2/3, minified 0/3, against the real decimal
+thresholds) — was failing before the fix, passes after. All 11 harness
+modules' `--selftest` re-run clean.
+
+**Re-derived the real launch-9 verdict against the now-fully-fixed
+harness: GATE 6B FAILED — the harness's first-ever genuine (non-bug)
+6B result.** Two independent, agreeing signals, both real:
+1. **Objective assertion**: `changelog_entry_shape` (the automated bullet-
+   count/length check backing "Changelog entries MUST be concise
+   bullets — never walls of text") held in 2/3 baseline reps but 0/3
+   minified reps. Reading the actual text each arm wrote: baseline
+   varied (one used a real bulleted array, two wrote a single string,
+   one of those ran long); minified consistently wrote a single
+   long-form sentence in all 3 reps, consistently over the length
+   budget. A real, reproducible, minified-specific pattern, not a single
+   outlier rep.
+2. **Independent LLM judge** (in the one round-to-round-stable pair):
+   preferred baseline, reasoning that the minified arm's entry included
+   more mechanism-of-the-fix detail than a release note needs and (in a
+   different rep) asserted regression tests were added when none
+   appeared in that rep's diff. (Deliberately not quoting the judge's or
+   either arm's actual sentences here — this scenario's own subject is
+   disclosure discipline, so this write-up holds itself to the same
+   standard: class of finding only, no reproduction-level detail, per
+   this repo's CRITICAL security-fix-disclosure-discipline rule, even
+   though the underlying fixture is synthetic/fictional.)
+
+**Interpretation**: this is the first real, trustworthy evidence that
+the current telegraphic minification of CLAUDE.md's disclosure-
+discipline section, while textually retaining the rule (6A structure
+verdict: PASS), does not reliably reproduce its *behavioral* force —
+specifically the "terse, bulleted, one line" shape requirement — as
+strongly as the original prose across repeated real trials. This is
+exactly the gap the two-verdict design (6A structural retention vs. 6B
+behavioral proof) exists to catch, and it's the first time 6B has ever
+actually caught anything real. Not yet fixed in the variant text — next
+step is to look at whether the variant's phrasing of this specific rule
+lost force in a fixable way, or whether this is closer to the honest
+limit of this compression for this particular rule, and either way
+report it plainly rather than re-running until it passes.
+
+**Also worth flagging honestly**: this also means every 6B result
+reported before this session's fixes (including launch 8's
+"INCONCLUSIVE — 100% judge instability" and its downstream diagnosis in
+task #11) was very likely reporting **pure invocation failure**, not
+real judgment — same container, same broken code path, no raw judge
+transcript persisted to check. Task #11's "n=3/threshold arithmetic,
+missing temperature control" diagnosis may still be true in the
+abstract (it's sound reasoning about the mechanism), but there is no
+remaining evidence it was actually launch 8's operative cause. Not
+re-confirmable now; recording the uncertainty rather than either
+retracting or re-asserting that diagnosis.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
