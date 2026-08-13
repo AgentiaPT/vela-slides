@@ -197,18 +197,42 @@ Tier N density) to bring the eval-set average up, keeping the dense files
 too (they're still valid "near-zero-upside" data points, just not the
 whole set).
 
-Dispatched a survey agent (aeb90f1cc8efe313b) to rank candidate files
-(references/*.md, docs/*.md, other un-minified skill SKILL.md files) by
-estimated compressibility. Not yet returned.
+Dispatched a survey agent (aeb90f1cc8efe313b) which ranked candidate FILES
+by compressibility (block-schema.md, SCREENSHOTS.md, design-patterns.md,
+ARCHITECTURE.md — all prose-heavy, low Tier N density). Dispatched 4
+parallel single-pass tiered-hybrid minify runs on those files
+(ab8fc717867f2f692, ac2cd8fc8ad75462d, aa0da1d3ec21f5a6d, a11237671ace54f51)
+— NOT yet returned, let these finish, their data is still useful.
+
+**Correction from user** (2x): "by candidates I mean minifying
+candidates" then "no, minifying approaches candidates, not specific
+files." Misread this as "find more files" — actually means: compare
+different COMPRESSION-STRATEGY/APPROACH candidates (the fallback ladder
+from research-encoding-formats.md §3) against each other, on the same
+file(s), and pick whichever approach clears >=20% honestly while still
+passing the gate. Approaches to compare (escalating aggressiveness, each
+still gate-checked, Tier N still untouchable at every rung):
+  1. Current baseline: tiered-hybrid, conservative (what we've been doing)
+  2. + aggressive Tier-E deletion (no rationale, 1 example max)
+  3. + cross-file dedup via pointers for non-obligation content only
+  4. + prose->DSL conversion for Tier M content still in full sentences
+     (only where content is genuinely a lookup, per the skill's own
+     DSL caveat)
 
 ## Next action
 
-1. Wait for survey agent, pick top 2-4 additional candidates.
-2. Minify those (same /minify + gate procedure), aiming to bring the
-   eval-set average reduction to >=20% while every file still individually
-   passes the preservation gate (never force a file past its honest ceiling
-   just to hit the average — if the average can't reach 20% honestly,
-   report that plainly rather than fudge it).
-3. Once average >=20% and gate passes everywhere: build the eval harness
-   (task #5), then the blind randomized judge (task #6), then run first
-   directional pass and audit for bias.
+1. Let the 4 in-flight file-level minify agents finish (their single-pass
+   tiered-hybrid data still counts toward the eval set).
+2. Dispatch approach-variant agents: pick 1-2 already-minified files (best
+   candidates: CLAUDE.md at 4.7%, or design-patterns.md once it lands) and
+   re-run minify through approach rungs 2-4 above, each as its own explicit
+   candidate output (e.g. `CLAUDE.min.v2.md`, `.v3.md`, `.v4.md`), each
+   individually gate-checked. Compare reduction vs approach.
+3. Pick winning approach(es) — the one(s) that clear >=20% while still
+   passing the gate and not degrading quality — as the finalized /minify
+   method. If needed, fold the winning approach's rules into SKILL.md
+   itself so future minify runs use it by default, rather than treating
+   it as a one-off manual escalation.
+4. Once eval-set average >=20% (honestly, no gate-forcing): build the
+   eval harness (task #5), then the blind randomized judge (task #6), then
+   run first directional pass and audit for bias.
