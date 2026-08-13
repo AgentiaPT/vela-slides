@@ -144,11 +144,12 @@ Orchestrate only — sub-agents do the actual work.
    CLAUDE.md scenarios; keep 6a (reduction pre-filter) and 6b (quality
    gate) as separate verdicts, never merged. Agent: opus, background.
    Output: `.claude/minify-lab/harness-design.md` — see Artifacts index.
-1b. **[dispatched]** Normal-density corroboration study — pre-register
-    ~6 typical (function-word ratio ≥35%) instruction files, re-run the
-    §3 probe protocol from research-encoding-formats.md against them.
-    Agent: opus, background. Output:
-    `.claude/minify-lab/research-normal-density-corroboration.md`
+1b. **[DONE]** Normal-density corroboration study. Agent: opus,
+    background. Output:
+    `.claude/minify-lab/research-normal-density-corroboration.md` — see
+    Artifacts index. **Found a measurement bug affecting phases 4 and
+    5** — correction messages sent to both live agents before they
+    finished (see Artifacts index entry for detail).
 3. **[DONE]** Citation verification pass on phase 1's external
    citations. Agent: sonnet, background. Output:
    `.claude/minify-lab/citation-verification.md` — see Artifacts index.
@@ -215,6 +216,56 @@ Orchestrate only — sub-agents do the actual work.
   - All external literature citations tagged ⚠️ UNVERIFIED (snippet-only,
     arXiv egress-blocked) and explicitly **not load-bearing** — the
     recommendation rests entirely on the 5 measured probes.
+- `.claude/minify-lab/research-normal-density-corroboration.md` —
+  **DONE** (2026-08-13, opus, 894 lines). Pre-registered 6 real external
+  files (atom/atom, nodejs/node, kubernetes/community, google/styleguide,
+  github/awesome-copilot, openai/codex AGENTS.md) and **committed that
+  list to git before fetching any of them** — strong anti-cherry-picking
+  proof. **Two-part verdict, both halves load-bearing**:
+  - ✅ **YES**, TRB clears ≥20% comfortably on normal-density *normative
+    prose* — 27.4% pooled on 2 independent probes (node.js 27.2%, k8s
+    27.5%), 100% constraint survival. Phase 1's ~7.6% was a ceiling on
+    *that input* (this repo's already-dense files), not on the approach
+    — same technique gets ~2.7× the yield on ordinary-density text.
+  - ⚠️ **NO**, not reliably, on whole real-world *files* — projected
+    16.4% across all six pre-registered files, 19.6% across the three
+    that were actually normal-density (as predicted). Real files are
+    only partly normative prose; the rest is frozen machinery the
+    minifier legally cannot touch.
+  - **Root cause, ranked**: (1) frozen-content fraction dominates and
+    caps the achievable ceiling regardless of rewriting quality — one
+    file at 72.5% frozen has a 6.9% ceiling no matter how good the
+    minifier is; (2) function-word ratio predicts the rest at r≈0.98 —
+    compressibility is measurable *before* minifying; (3) genre, not
+    this repo's authorship, drives pre-densification — 2 of 6 unrelated
+    real-world files measured *denser* than this repo's own docs.
+  - **Live bug found and escalated, corrections sent to phases 4 and 5
+    mid-flight (see below) rather than waiting to fix after the fact**:
+    `verbatim_fraction` (phase 1's Appendix definition, inherited by
+    both the skill's frozen-zone rule and `reduction.py`) counts only
+    fenced/inline code. **URLs and markdown link-reference definitions
+    are equally byte-frozen and were being counted as compressible
+    prose** — on one test file this flips the frozen fraction from 5.0%
+    to 37.5% and flips the file's projection across the gate entirely.
+    Both must extend frozen-span detection (and the byte-exact survival
+    check) to URLs/link-destinations/link-reference definitions —
+    proposed the renamed metric `frozen_ext` to mark the fix.
+  - **Gate recalibration recommendation, adopted** (refines this
+    session's earlier Autonomous decision — see below): replace the
+    binary pre-densification exemption with a continuous per-file
+    prediction, `expected_reduction ≈ (1 − frozen_ext) × prose_rate(fw)`,
+    and judge the size sub-verdict as "did the file hit its own
+    predicted reduction" rather than a flat 20%. Report the file-level
+    and section-level (rules-only) numbers side by side — merging them
+    hides the same signal the earlier size/structure split was created
+    to preserve.
+  - **Skill-framing implication**: `/minify` must predict and state a
+    per-file adaptive range before minifying (from `frozen_ext` +
+    function-word ratio), then be judged against hitting that
+    prediction — never a flat percentage claim, which this study shows
+    is wrong on 4 of 6 real files measured. This is also the answer to
+    "world-record" framing: predicted-and-delivered, per file, beats an
+    unachievable flat number.
 - `.claude/minify-lab/citation-verification.md` — **DONE** (2026-08-13,
   sonnet). Calibrated method first against a fabricated control citation
   (correctly reported not-found) before trusting it on real ones. **10
@@ -290,20 +341,24 @@ authorized proceeding on best judgment without asking further questions**
 minifying skill") — see "Autonomous decisions" above for exactly what was
 decided and why.
 
-**4 agents dispatched in parallel this round** (all background, not yet
-landed as of this update):
-- Phase 1b (opus): normal-density corroboration study
-- Phase 3 (sonnet): citation verification
-- Phase 4 (opus): build `.claude/skills/minify/`
-- Phase 5 (sonnet): build `.claude/minify-lab/harness/` scripts
+Phases 3 (citation verification) and 1b (normal-density corroboration)
+are now **DONE**, both reviewed — see Artifacts index. Phase 1b's finding
+was significant enough to actively correct the two still-running builder
+agents (phase 4: skill, phase 5: harness) mid-flight rather than wait —
+correction messages queued for both, covering the `frozen_ext` bug and
+the continuous-prediction gate refinement. **Phase 4 and phase 5 are
+still running** (not yet landed as of this update). Their in-flight
+output has been periodically snapshotted to git as unreviewed WIP commits
+per the Standing rule above — do not assume those files are correct or
+finished; review properly once each agent's actual completion
+notification lands, and confirm the frozen_ext correction was applied
+(check for it explicitly — it was sent as a message, not guaranteed to be
+incorporated).
 
-Not polling — waiting on task-notifications for each. When each lands:
-review its actual output (not just its self-reported summary — this
-project's own risk list warns self-report isn't evidence), update this
-file's Artifacts index and Phase plan, resolve the flagged
-constraint-extractor duplication between phase 4 and 5 once both exist,
-then commit + push. This file gets committed and pushed after every phase
-lands — do not let WIP sit uncommitted (see Incident at top of file).
+Remaining: resolve the flagged constraint-extractor duplication between
+phase 4 and 5 once both exist; then phase 6 (first real pilot, budget
+already locked: 3 reps, sonnet agent-under-test, opus judge) becomes
+unblocked.
 
 ## Session hygiene: checking context usage
 
@@ -330,13 +385,21 @@ use best judgment, make this a world-record minifying skill")
   recommended options **1 + 2 together** (not asked to the user — they
   were AFK; this is the lowest-risk reading of "best judgment" because
   neither option touches the 100%-constraint-survival bar):
-  1. **6a splits into two sub-verdicts**: `size` (≥20%, per-file, with a
-     documented exemption for pre-densified files — verbatim fraction
-     >25% OR function-word ratio <30% — this repo's 3 files all qualify
-     for the exemption) and `structure` (constraint-explicitness score:
-     quantifier/modality tokens made explicit, minus constraints lost).
-     Merging them into one number was hiding the real signal (probe B:
-     4.6% size, decisive structure win).
+  1. **6a splits into two sub-verdicts**: `size` and `structure`
+     (constraint-explicitness score: quantifier/modality tokens made
+     explicit, minus constraints lost). Merging them into one number was
+     hiding the real signal (probe B: 4.6% size, decisive structure
+     win). **[REFINED 2026-08-13 by the phase 1b corroboration study —
+     see its Artifacts entry]**: the original binary exemption (verbatim
+     fraction >25% OR function-word ratio <30%) is superseded by a
+     continuous per-file prediction, `expected_reduction ≈ (1 −
+     frozen_ext) × prose_rate(fw)`, with `size` verdict = "did the file
+     hit its own predicted reduction" rather than a flat 20% check.
+     `frozen_ext` extends the old `verbatim_fraction` to also count URLs
+     and link-reference definitions (a measurement bug phase 1b found —
+     both were still counted as compressible prose). Correction messages
+     were sent to the live phase 4 and phase 5 agents mid-flight so the
+     fix lands in the first build rather than a costly rework pass.
   2. **Commissioned a normal-density corroboration study** (new agent,
      not yet in original phase list) — pre-register ~6 typical
      instruction files (function-word ratio ≥35%, i.e. NOT already

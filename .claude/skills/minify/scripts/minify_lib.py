@@ -50,17 +50,22 @@ assert len(FUNCTION_WORDS) == 84, f"function-word list must stay at 84 words, go
 #: Modality ladder. Strength is what may not be weakened; polarity is separate.
 MODALITY_STRENGTH = {"MUST": 3, "NEVER": 3, "SHOULD": 2, "MAY": 1, None: 0}
 
+#: Modality detection. TRB field labels at line start are first-class carriers:
+#: `NEVER`/`MUST NOT` -> NEVER, `MUST`/`DO`/`GATE`/`RULE` -> MUST, `EXC` -> MAY.
 _MODALITY_PATTERNS: Sequence[Tuple[str, re.Pattern]] = (
     ("NEVER", re.compile(
-        r"(?i)\b(?:must\s+not|shall\s+not|may\s+not|cannot|can't|do\s+not|don't|never|"
-        r"forbidden|prohibited|disallowed|banned|no\s+images|refuse)\b|❌")),
+        r"\b(?:must\s+not|shall\s+not|may\s+not|cannot|can't|do\s+not|don't|never|"
+        r"forbidden|prohibited|disallowed|banned|refuse)\b|❌"
+        r"|^\s*(?:NEVER|MUST NOT)\b", re.I | re.M)),
     ("MUST", re.compile(
-        r"(?i)\b(?:must|shall|required|require|requires|mandatory|non-negotiable|"
-        r"always|hard\s+rule|hard-gate|hard\s+gate|obligatory|has\s+to|have\s+to)\b|✅")),
+        r"\b(?:must|shall|required|require|requires|mandatory|non-negotiable|"
+        r"always|hard\s+rule|hard-gate|hard\s+gate|obligatory|has\s+to|have\s+to)\b|✅"
+        r"|^\s*(?:MUST|DO|GATE|RULE|TEST|TIE|STOP)\b", re.I | re.M)),
     ("SHOULD", re.compile(
-        r"(?i)\b(?:should|prefer|preferred|recommend|recommended|advisable|"
-        r"expected\s+to)\b")),
-    ("MAY", re.compile(r"(?i)\b(?:may|permitted|allowed|optional|at\s+your\s+discretion)\b")),
+        r"\b(?:should|prefer|preferred|recommend|recommended|advisable|"
+        r"expected\s+to)\b|^\s*SHOULD\b", re.I | re.M)),
+    ("MAY", re.compile(r"\b(?:may|permitted|allowed|optional|at\s+your\s+discretion)\b"
+                       r"|^\s*(?:MAY|EXC)\b", re.I | re.M)),
 )
 
 _NEGATIVE_MARKER = re.compile(
@@ -77,7 +82,9 @@ _HEDGE = re.compile(
 QUANTIFIERS: Dict[str, re.Pattern] = {
     "any":        re.compile(r"(?i)\bany\b|∨|\beither\b|\bat\s+least\s+one\b"),
     "all":        re.compile(r"(?i)\ball\b|\bevery\b|\beach\b|∀|\bwhole\b|\bentire\b"),
-    "both":       re.compile(r"(?i)\bboth\b|∧|\band\s+ALSO\b|\bAND\b"),
+    # `AND` only counts as a conjunction quantifier in its explicit upper-case
+    # form — lower-case "and" is ordinary prose and would match everything.
+    "both":       re.compile(r"(?i)\bboth\b|∧|(?-i:\bAND\b)"),
     "only":       re.compile(r"(?i)\bonly\b|\bsolely\b|\bexclusively\b|\bnothing\s+else\b"),
     "always":     re.compile(r"(?i)\balways\b|\bevery\s+time\b|\bpermanent\b|∀"),
     "never":      re.compile(r"(?i)\bnever\b|\bnot\s+once\b|\bat\s+no\s+point\b|❌"),
@@ -496,7 +503,8 @@ _REF_PATTERNS: Sequence[Tuple[str, re.Pattern]] = (
     ("ordinal", re.compile(r"(?i)\b(?:principle|phase|step|stage|rule|item|point)\s+\d+[a-z]?\b")),
     ("link", re.compile(r"\]\(([^)\s]+)\)")),
     ("path", re.compile(r"\b[\w.@-]+(?:/[\w.@-]+)+(?:\.\w+)?/?|\b[\w-]+\.(?:md|py|jsx|js|mjs|cjs|json|txt|html|sh|ya?ml|toml)\b")),
-    ("emphasised-title", re.compile(r"(?<!\w)\*([A-Z][^*\n]{4,70})\*(?!\w)")),
+    # single-asterisk italics only — `**bold**` is emphasis, not a citation
+    ("emphasised-title", re.compile(r"(?<![\w*])\*([A-Z][^*\n]{4,70})\*(?![\w*])")),
 )
 
 
@@ -509,12 +517,50 @@ def _refs_in(text: str) -> List[Tuple[str, str]]:
     return out
 
 
+def _stem(w: str) -> str:
+    """Light inflection stripper so `bodies`/`body` and `titles`/`title` match."""
+    w = w.lower()
+    for suf, rep in (("ies", "y"), ("ing", ""), ("ed", ""), ("es", ""), ("s", "")):
+        if len(w) > len(suf) + 2 and w.endswith(suf):
+            return w[: len(w) - len(suf)] + rep
+    return w
+
+
 def _keys_of(text: str) -> Set[str]:
     """Distinctive content tokens used to locate a constraint after minification."""
     plain = re.sub(r"[*_`#>]", " ", text)
-    toks = {w.lower() for w in _words(plain) if len(w) >= 4 and w.lower() not in FUNCTION_WORDS}
+    toks = {_stem(w) for w in _words(plain) if len(w) >= 4 and w.lower() not in FUNCTION_WORDS}
     toks |= {_normalise_numeric(m.group(0)) for m in _NUMERIC.finditer(text) if any(ch.isdigit() for ch in m.group(0))}
     return toks
+
+
+_PAREN = re.compile(r"\(([^()]{25,400})\)")
+_EXC_CLAUSE = re.compile(
+    r"(?i)(?:except|unless|other\s+than|apart\s+from|the\s+one\s+exception|"
+    r"carve-?out|but\s+not|save\s+for)\b([^.;]{15,300})")
+
+GLOSS_COVERAGE = 0.60
+
+
+def _glosses(doc: Doc) -> List[Dict[str, object]]:
+    """Sub-clause spans that die first under compression (research R2, R13).
+
+    Parentheticals and `except/unless/...` clauses are grammatically subordinate,
+    so a whole-sentence key-coverage check can lose one without noticing. Each is
+    tracked as its own atom with its own survival threshold.
+    """
+    out: List[Dict[str, object]] = []
+    for u in doc.units:
+        if u.kind == "heading":
+            continue
+        for rx, kind in ((_PAREN, "parenthetical"), (_EXC_CLAUSE, "exception-clause")):
+            for m in rx.finditer(u.raw):
+                body = m.group(1).strip()
+                keys = _keys_of(body)
+                if len(keys) >= 3:
+                    out.append({"id": f"G{len(out)+1:03d}", "kind": kind, "line": u.line,
+                                "text": body[:200], "keys": sorted(keys)})
+    return out
 
 
 @dataclass
@@ -600,6 +646,7 @@ def inventory(doc: Doc, include_statements: bool = False) -> Dict[str, object]:
             enum_items=_enum_items(u),
         ))
 
+    glosses = _glosses(doc)
     all_numerics = sorted({_normalise_numeric(m.group(0))
                            for m in _NUMERIC.finditer(_PLACEHOLDER_RE.sub(" ", doc.masked))
                            if any(ch.isdigit() for ch in m.group(0))})
@@ -614,6 +661,7 @@ def inventory(doc: Doc, include_statements: bool = False) -> Dict[str, object]:
         "atoms": {
             "verbatim": [{"id": v.vid, "kind": v.kind, "line": v.line, "text": v.text}
                          for v in doc.verbatims],
+            "glosses": glosses,
             "numerics": all_numerics,
             "references": [[k, v] for k, v in all_refs],
             "headings": [{"line": l, "level": lv, "title": t} for l, lv, t in doc.headings],
@@ -639,6 +687,8 @@ def inventory(doc: Doc, include_statements: bool = False) -> Dict[str, object]:
 
 COVERAGE_PRESENT = 0.80
 COVERAGE_REVIEW = 0.55
+COVERAGE_LOCATED = 0.50   # below this we did not find the rule; skip local defect checks
+ATTEST_MIN_COVERAGE = 0.50   # mechanical floor an attestation must clear
 WINDOW = 3
 
 
@@ -646,37 +696,83 @@ WINDOW = 3
 class Finding:
     cid: str
     status: str        # present | attested | review | lost
-    coverage: float
+    coverage: float    # file-wide key coverage — the survival measure
+    coverage_local: float
     matched_line: Optional[int]
     defects: List[str] = field(default_factory=list)
     note: str = ""
+
+
+def _matches(key: str, pool: Set[str]) -> bool:
+    """Telegraphic rewriting abbreviates: `documents`->`doc`, `repro`->`reproduce`.
+
+    A key counts as surviving if some target token is a prefix of it, or it is a
+    prefix of some target token (>=3 chars). Exact match is the common case.
+    """
+    if key in pool:
+        return True
+    if len(key) < 3 or not key[0].isalpha():
+        return False
+    for t in pool:
+        if len(t) >= 3 and (t.startswith(key[:4]) or key.startswith(t[:4])):
+            if t.startswith(key) or key.startswith(t):
+                return True
+    return False
+
+
+def _coverage(keys: Set[str], pool: Set[str]) -> float:
+    if not keys:
+        return 0.0
+    return sum(1 for k in keys if _matches(k, pool)) / len(keys)
+
+
+def _missing(keys: Set[str], pool: Set[str]) -> List[str]:
+    return sorted(k for k in keys if not _matches(k, pool))
+
+
+def _allowed_missing(n_keys: int) -> int:
+    """Short constraints must not be failed by one abbreviated word.
+
+    Budget = one free token, plus 15% of the constraint's distinctive tokens.
+    """
+    return max(1, math.ceil(0.15 * n_keys))
 
 
 def _unit_keys(doc: Doc) -> List[Tuple[Unit, Set[str]]]:
     return [(u, _keys_of(u.raw)) for u in doc.units if u.kind != "heading"]
 
 
-def _best_match(keys: Set[str], target: List[Tuple[Unit, Set[str]]]) -> Tuple[float, Optional[Unit], Set[str]]:
-    best = (0.0, None, set())
+def _window_size(n_keys: int) -> int:
+    """A big source constraint may legitimately fan out into many TRB lines."""
+    return min(10, max(WINDOW, math.ceil(n_keys / 8)))
+
+
+def _best_match(keys: Set[str], target: List[Tuple[Unit, Set[str]]]
+                ) -> Tuple[float, Optional[Unit], str]:
+    """Return (best window coverage, best single unit, best window text).
+
+    The single best unit is where modality/quantifier tokens are read from — a
+    multi-unit window bleeds a neighbouring rule's `NEVER` into this rule.
+    """
     if not keys:
-        return best
-    for i in range(len(target)):
+        return 0.0, None, ""
+    size = _window_size(len(keys))
+    best_cov, best_text = 0.0, ""
+    best_unit, best_unit_cov = None, 0.0
+    for i, (u, ks) in enumerate(target):
+        c = _coverage(keys, ks)
+        if c > best_unit_cov:
+            best_unit_cov, best_unit = c, u
         acc: Set[str] = set()
-        for w in range(WINDOW):
+        for w in range(size):
             if i + w >= len(target):
                 break
             acc = acc | target[i + w][1]
-            cov = len(keys & acc) / len(keys)
-            if cov > best[0]:
-                best = (cov, target[i][0], acc)
-    return best
-
-
-def _window_text(doc: Doc, unit: Optional[Unit]) -> str:
-    if unit is None:
-        return ""
-    idx = [u.uid for u in doc.units].index(unit.uid)
-    return " ".join(u.raw for u in doc.units[idx: idx + WINDOW])
+            cov = _coverage(keys, acc)
+            if cov > best_cov:
+                best_cov = cov
+                best_text = "\n".join(t[0].raw for t in target[i: i + w + 1])
+    return best_cov, best_unit, best_text
 
 
 def survival(inv: Dict[str, object], minified: Doc,
@@ -684,14 +780,28 @@ def survival(inv: Dict[str, object], minified: Doc,
     """Map every inventory item into `minified`. Mechanical, no model calls."""
     attest = attest or {}
     target = _unit_keys(minified)
+    file_pool: Set[str] = set()
+    for _u, ks in target:
+        file_pool |= ks
     min_raw = minified.text
+    min_nums_all = {_normalise_numeric(m.group(0)) for m in _NUMERIC.finditer(min_raw)
+                    if any(ch.isdigit() for ch in m.group(0))}
+    min_flat = re.sub(r"\s+", " ", min_raw).lower()
     findings: List[Finding] = []
     explicit_gain = 0
 
     for craw in inv["constraints"]:                       # type: ignore[index]
         keys = set(craw["keys"])
-        cov, unit, _acc = _best_match(keys, target)
-        win = _window_text(minified, unit)
+        cov_file = _coverage(keys, file_pool)
+        missing = _missing(keys, file_pool)
+        cov_local, unit, win_text = _best_match(keys, target)
+        located = cov_local >= COVERAGE_LOCATED
+        # Modality/quantifier are read from the single best-matching unit when it
+        # covers the rule — a multi-unit window bleeds a neighbour's tokens in.
+        win = ""
+        if located:
+            u_cov = _coverage(keys, _keys_of(unit.raw)) if unit else 0.0
+            win = unit.raw if (unit and u_cov >= COVERAGE_PRESENT) else win_text
         defects: List[str] = []
 
         # -- verbatim spans this constraint depends on must be byte-present
@@ -700,16 +810,13 @@ def survival(inv: Dict[str, object], minified: Doc,
                 defects.append(f"verbatim-missing:{span[:48]}")
 
         # -- numerics must survive with identical canonical identity
-        win_nums = {_normalise_numeric(m.group(0)) for m in _NUMERIC.finditer(min_raw)
-                    if any(ch.isdigit() for ch in m.group(0))}
         for n in craw["numerics"]:
-            if n not in win_nums:
+            if n not in min_nums_all:
                 defects.append(f"numeric-drift:{n}")
 
         # -- reference edges must survive (resolution checked separately)
         for kind, val in craw["refs"]:
-            if kind in ("section", "ordinal") and re.sub(r"\s+", " ", val).lower() not in \
-                    re.sub(r"\s+", " ", min_raw).lower():
+            if kind in ("section", "ordinal") and re.sub(r"\s+", " ", val).lower() not in min_flat:
                 defects.append(f"reference-dropped:{val}")
 
         # -- enumerations may not be truncated
@@ -717,31 +824,37 @@ def survival(inv: Dict[str, object], minified: Doc,
             if item not in min_raw:
                 defects.append(f"enum-item-missing:{item[:40]}")
 
-        # -- modality / polarity / hedge
-        mod_after, neg_after = modality_of(win) if win else (None, False)
+        # -- modality / polarity / hedge (only where the rule was actually located)
+        mod_after, neg_after = modality_of(win) if located else (None, False)
         mod_before = craw["modality"]
-        if mod_before and MODALITY_STRENGTH[mod_after] < MODALITY_STRENGTH[mod_before]:
+        # Only hard modality loss is a defect: MUST/NEVER softened, or any
+        # modality erased entirely. SHOULD<->MAY drift is below detector precision.
+        if located and mod_before and (
+                (MODALITY_STRENGTH[mod_before] == 3 and MODALITY_STRENGTH[mod_after] < 3)
+                or mod_after is None):
             defects.append(f"modality-weakened:{mod_before}->{mod_after}")
-        if craw["negative"] and win and not neg_after:
+        if located and craw["negative"] and not neg_after:
             defects.append("polarity-flipped")
-        if craw["hedged"] and mod_after in ("MUST", "NEVER") and \
-                MODALITY_STRENGTH[mod_before] < 3:
+        if located and craw["hedged"] and mod_after in ("MUST", "NEVER") and \
+                MODALITY_STRENGTH[mod_before] < 3 and not _HEDGE.search(win):
             defects.append(f"hedge-hardened:->{mod_after}")
 
         # -- quantifiers whose loss changes scope
-        q_after = set(quantifiers_of(win)) if win else set()
-        for q in craw["quantifiers"]:
-            if q in SCOPE_QUANTIFIERS and q not in q_after:
-                defects.append(f"quantifier-erosion:{q}")
+        q_after = set(quantifiers_of(win)) if located else set()
+        if located:
+            for q in craw["quantifiers"]:
+                if q in SCOPE_QUANTIFIERS and q not in q_after:
+                    defects.append(f"quantifier-erosion:{q}")
 
         # -- explicitness gain (capped per constraint so repetition can't inflate)
         before_tokens = len(craw["quantifiers"]) + (1 if mod_before else 0)
         after_tokens = len(q_after) + (1 if mod_after else 0)
-        explicit_gain += max(-3, min(3, after_tokens - before_tokens))
+        explicit_gain += max(-3, min(3, after_tokens - before_tokens)) if located else 0
 
-        if cov >= COVERAGE_PRESENT and not defects:
+        within_budget = len(missing) <= _allowed_missing(len(keys))
+        if (cov_file >= COVERAGE_PRESENT or within_budget) and not defects:
             status = "present"
-        elif cov >= COVERAGE_REVIEW or defects:
+        elif cov_file >= COVERAGE_REVIEW or defects:
             status = "review"
         else:
             status = "lost"
@@ -749,12 +862,18 @@ def survival(inv: Dict[str, object], minified: Doc,
         note = ""
         if status in ("review", "lost") and craw["cid"] in attest:
             a = attest[craw["cid"]]
-            ok, why = _check_attestation(craw, a, minified)
-            if ok:
-                status, note = "attested", f"attested -> line {a.get('line')}: {a.get('why', '')}"
+            if defects:
+                # A mechanical defect is a measured fact, not a judgement call.
+                # It has to be fixed in the file; it can never be attested away.
+                note = ("attestation NOT APPLICABLE: mechanical defects must be fixed "
+                        "in the minified file, not attested")
             else:
-                note = f"attestation REJECTED: {why}"
-        findings.append(Finding(craw["cid"], status, round(cov, 3),
+                ok, why = _check_attestation(craw, a, minified)
+                if ok:
+                    status, note = "attested", f"attested -> line {a.get('line')}: {a.get('why', '')}"
+                else:
+                    note = f"attestation REJECTED: {why}"
+        findings.append(Finding(craw["cid"], status, round(cov_file, 3), round(cov_local, 3),
                                 unit.line if unit else None, defects, note))
 
     # -- global atom checks (independent of any single constraint)
@@ -762,11 +881,13 @@ def survival(inv: Dict[str, object], minified: Doc,
     for v in inv["atoms"]["verbatim"]:                     # type: ignore[index]
         if v["text"] not in min_raw:
             atom_failures.append(f"verbatim-span-lost[{v['id']}]: {v['text'][:60]!r}")
-    min_nums = {_normalise_numeric(m.group(0)) for m in _NUMERIC.finditer(min_raw)
-                if any(ch.isdigit() for ch in m.group(0))}
     for n in inv["atoms"]["numerics"]:                     # type: ignore[index]
-        if n not in min_nums:
+        if n not in min_nums_all:
             atom_failures.append(f"numeric-literal-lost: {n}")
+    for g in inv["atoms"].get("glosses", []):              # type: ignore[union-attr]
+        cov = _coverage(set(g["keys"]), file_pool)
+        if cov < GLOSS_COVERAGE:
+            atom_failures.append(f"{g['kind']}-lost[{g['id']}] cov={cov:.2f}: {g['text'][:70]!r}")
 
     lost = [f for f in findings if f.status == "lost"]
     review = [f for f in findings if f.status == "review"]
@@ -796,8 +917,12 @@ def _check_attestation(craw: Dict[str, object], a: Dict[str, object],
     """An attestation is a claim with a mechanical floor, not a free pass.
 
     It must name a line in the minified file, and that line's neighbourhood must
-    share at least one verbatim anchor or two distinctive content tokens with the
-    original constraint. Blanket attestation is therefore impossible.
+    carry at least half of the constraint's distinctive tokens. Blanket
+    attestation is therefore impossible: pointing at an unrelated line fails.
+
+    Consequence worth knowing: a rule paraphrased into entirely new vocabulary
+    cannot be attested either. Keep a rule's distinctive terms, or the tool has
+    no way to tell your paraphrase from a deletion.
     """
     line = a.get("line")
     if not isinstance(line, int):
@@ -806,11 +931,11 @@ def _check_attestation(craw: Dict[str, object], a: Dict[str, object],
     if not (1 <= line <= len(lines)):
         return False, f"line {line} out of range"
     win = "\n".join(lines[max(0, line - 2): line + 2])
-    anchors = [s for s in craw["verbatims"] if s in win]          # type: ignore[index]
-    shared = _keys_of(win) & set(craw["keys"])                    # type: ignore[index]
-    if anchors or len(shared) >= 2:
+    cov = _coverage(set(craw["keys"]), _keys_of(win))             # type: ignore[index]
+    if cov >= ATTEST_MIN_COVERAGE:
         return True, ""
-    return False, "attested line shares no anchor and <2 distinctive tokens with the constraint"
+    return False, (f"attested line carries only {cov:.0%} of the constraint's distinctive "
+                   f"tokens (need >= {ATTEST_MIN_COVERAGE:.0%})")
 
 
 # ---------------------------------------------------------------------------
@@ -855,6 +980,21 @@ def reference_graph(original: Doc, minified: Doc, root: Optional[str] = None) ->
     """Two checks: (1) edge preservation, always; (2) resolution, when `root` given."""
     o_edges = {_edge_key(k, v): (k, v) for k, v in _refs_in(_restore(original.masked, original.verbatims))}
     m_edges = {_edge_key(k, v) for k, v in _refs_in(_restore(minified.masked, minified.verbatims))}
+
+    # An italic phrase is only a citation if some file actually provides that
+    # heading; otherwise it is ordinary emphasis and must not be tracked as an edge.
+    known_titles = providers(original) | providers(minified)
+    if root:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", "dist", "__pycache__")]
+            for fn in filenames:
+                if fn.endswith(".md"):
+                    try:
+                        known_titles |= providers(load(os.path.join(dirpath, fn)))
+                    except (OSError, UnicodeDecodeError):
+                        continue
+    o_edges = {k: v for k, v in o_edges.items()
+               if v[0] != "emphasised-title" or k in known_titles}
 
     dropped = [v for k, (kind, v) in o_edges.items()
                if kind in ("section", "ordinal", "emphasised-title", "link") and k not in m_edges]
@@ -931,6 +1071,11 @@ def frontmatter_check(original: Doc, minified: Doc) -> Dict[str, object]:
 SIZE_BAR_PCT = 20.0
 PRE_DENSIFIED_VERBATIM_PCT = 25.0
 PRE_DENSIFIED_FUNCWORD_PCT = 30.0
+#: Above the bar but still dense. Reported, never gating. Calibration: ordinary
+#: English prose with no code (a licence text) measures 48.2% under this skill's
+#: frozen 84-word list; this repo's instruction files measure 19.9-34.0%.
+BORDERLINE_FUNCWORD_PCT = 35.0
+ORDINARY_PROSE_FUNCWORD_PCT = 48.2
 IMPLAUSIBLE_CUT_PCT = 60.0
 PROXY_SPREAD_FLAG_PTS = 5.0
 

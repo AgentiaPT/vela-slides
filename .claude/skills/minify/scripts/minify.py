@@ -247,33 +247,47 @@ def cmd_verify(a: argparse.Namespace) -> int:
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures")
 
-#: (name, source, candidate, expect) — expect is "accept" or a defect substring
-#: that MUST appear in the rejection report.
+#: (name, source, candidate, expect, attest) — `expect` is "accept", "reject",
+#: "FAIL-GREW", or a substring that MUST appear in the rejection report.
 CASES = [
-    ("probe-a known-good", "probe-a.before.md", "probe-a.after.md", "accept"),
-    ("probe-b known-good", "probe-b.before.md", "probe-b.after.md", "accept"),
-    ("probe-c known-good", "probe-c.before.md", "probe-c.after.md", "accept"),
-    ("probe-a dropped exception", "probe-a.before.md", "probe-a.lossy-exception.md", "reject"),
-    ("probe-b flattened quantifier", "probe-b.before.md", "probe-b.lossy-quantifier.md", "reject"),
-    ("probe-b truncated scope list", "probe-b.before.md", "probe-b.lossy-scopelist.md", "verbatim"),
-    ("probe-c numeric drift", "probe-c.before.md", "probe-c.lossy-numeric.md", "numeric"),
-    ("probe-c dropped cross-reference", "probe-c.before.md", "probe-c.lossy-ref.md", "reference"),
-    ("probe-a weakened modality", "probe-a.before.md", "probe-a.lossy-modality.md", "reject"),
+    # known-good: the three phase-1 probes, hand-verified at 100% constraint survival
+    ("probe-a known-good", "probe-a.before.md", "probe-a.after.md", "accept", None),
+    ("probe-b known-good", "probe-b.before.md", "probe-b.after.md", "accept", None),
+    ("probe-c known-good", "probe-c.before.md", "probe-c.after.md", "accept", None),
+    # one deliberate defect per semantic-loss class
+    ("probe-a dropped exception", "probe-a.before.md", "probe-a.lossy-exception.md", "reject", None),
+    ("probe-b flattened quantifier", "probe-b.before.md", "probe-b.lossy-quantifier.md",
+     "quantifier-erosion", None),
+    ("probe-b truncated scope list", "probe-b.before.md", "probe-b.lossy-scopelist.md",
+     "verbatim", None),
+    ("probe-c numeric drift", "probe-c.before.md", "probe-c.lossy-numeric.md", "numeric", None),
+    ("probe-c dropped cross-reference", "probe-c.before.md", "probe-c.lossy-ref.md",
+     "reference", None),
+    ("probe-a weakened modality", "probe-a.before.md", "probe-a.lossy-modality.md",
+     "modality-weakened", None),
     ("frontmatter description compressed", "frontmatter.before.md",
-     "frontmatter.lossy-description.md", "frontmatter"),
-    ("output grew instead of shrinking", "probe-a.before.md", "probe-a.grown.md", "FAIL-GREW"),
+     "frontmatter.lossy-description.md", "frontmatter", None),
+    ("output grew instead of shrinking", "probe-a.before.md", "probe-a.grown.md",
+     "FAIL-GREW", None),
+    # attestation path: unattested rework is rejected, a valid attestation clears
+    # it, and an attestation pointing at an unrelated line does not
+    ("reworded rule, unattested", "probe-a.before.md", "probe-a.reworded.md", "reject", None),
+    ("reworded rule, valid attestation", "probe-a.before.md", "probe-a.reworded.md",
+     "accept", "attest.valid.json"),
+    ("bogus attestation is refused", "probe-a.before.md", "probe-a.lossy-exception.md",
+     "attestation REJECTED", "attest.bogus.json"),
 ]
 
 
 def cmd_selftest(a: argparse.Namespace) -> int:
     failures = 0
-    for name, src, cand, expect in CASES:
+    for name, src, cand, expect, att in CASES:
         s, c = os.path.join(FIXTURES, src), os.path.join(FIXTURES, cand)
         if not (os.path.exists(s) and os.path.exists(c)):
             print(f"  MISSING FIXTURE  {name}")
             failures += 1
             continue
-        r = _run_verify(s, c)
+        r = _run_verify(s, c, attest_path=os.path.join(FIXTURES, att) if att else None)
         rejected = (r["structure"]["result"] == "REJECTED"
                     or r["references"]["result"] == "REJECTED"
                     or r["frontmatter"]["result"] == "REJECTED")

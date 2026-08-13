@@ -1,0 +1,6 @@
+{
+  "K005": {
+    "line": 9,
+    "why": "rule-of-thumb test kept in the TEST field; the discourse marker 'Rule of thumb' and the redundant 'to trigger the bug' tail were dropped, the decision rule itself is unchanged"
+  }
+}
