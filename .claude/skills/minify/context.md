@@ -185,16 +185,30 @@ with the user before investing more in the harness:
      file (something NOT already hand-tuned) to demonstrate the skill's
      upside ceiling — open question, not yet actioned.
 
+## Decision (user, cont.)
+
+User: "we should aim at least 20% reduction candidate on average before
+eval." Locked in — average reduction across the eval-set files must be
+>=20% before we proceed to build/run the harness. The 4 existing pairs
+average ~1.7%, nowhere close. Response: don't force deeper cuts into the
+same 4 dense files (would violate Tier N gate); instead find/add MORE
+COMPRESSIBLE candidate files (prose-heavy references/docs, likely lower
+Tier N density) to bring the eval-set average up, keeping the dense files
+too (they're still valid "near-zero-upside" data points, just not the
+whole set).
+
+Dispatched a survey agent (aeb90f1cc8efe313b) to rank candidate files
+(references/*.md, docs/*.md, other un-minified skill SKILL.md files) by
+estimated compressibility. Not yet returned.
+
 ## Next action
 
-1. Surface the above finding to the user briefly (small-effect-size
-   result on this repo's files) — do NOT silently proceed as if 20-30%
-   was achieved.
-2. Build the eval harness (task #5): run a task against baseline file vs
-   `/minify`-produced file, fresh session each time, capture tokens/turns/
-   tool-errors/success signal per eval-task-set.md's mechanical checks —
-   runnable across all 4 committed target pairs now.
-3. Build the blind randomized-order judge (task #6, separate model —
-   leaning Opus — from the Sonnet task-executor).
-4. Run first directional pass, audit results for bias per the checklist
-   above.
+1. Wait for survey agent, pick top 2-4 additional candidates.
+2. Minify those (same /minify + gate procedure), aiming to bring the
+   eval-set average reduction to >=20% while every file still individually
+   passes the preservation gate (never force a file past its honest ceiling
+   just to hit the average — if the average can't reach 20% honestly,
+   report that plainly rather than fudge it).
+3. Once average >=20% and gate passes everywhere: build the eval harness
+   (task #5), then the blind randomized judge (task #6), then run first
+   directional pass and audit for bias.
