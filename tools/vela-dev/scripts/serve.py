@@ -1120,18 +1120,16 @@ class VelaLocalServer:
         import subprocess
         print(f"  [port]   Port {self.port} in use — killing stale process...")
         # Try reading PID from .vela.env first (most reliable)
-        runtime_path = self._runtime_path()
+        info = self._read_runtime_info() or {}
         killed = False
-        try:
-            with open(runtime_path, encoding="utf-8") as f:
-                info = json.load(f)
-            stale_pid = info.get("pid")
-            if stale_pid and info.get("port") == self.port:
+        stale_pid = info.get("pid")
+        if stale_pid and info.get("port") == self.port:
+            try:
                 os.kill(stale_pid, 9)
                 killed = True
                 print(f"  [port]   Killed stale PID {stale_pid}")
-        except (OSError, json.JSONDecodeError, ProcessLookupError):
-            pass
+            except OSError:
+                pass
         # Fallback: find PID by port (platform-aware)
         if not killed:
             try:
@@ -1209,6 +1207,87 @@ class VelaLocalServer:
     def _runtime_path(self):
         return os.path.join(os.getcwd(), self.RUNTIME_FILE)
 
+    # SECURITY (CWE-59/61/367): the runtime file lives in the process CWD — the
+    # user's project/worktree, i.e. content Vela does not own and an attacker may
+    # have authored (a cloned repo, a shared checkout). Any pre-existing
+    # `.vela.env` is therefore untrusted input, both as a directory entry and as
+    # bytes: if the entry is a symlink/junction/other link, opening it by path
+    # makes Vela read or — far worse — TRUNCATE AND OVERWRITE a file outside the
+    # project, and in authenticated mode that write puts a live auth token in a
+    # file the attacker chose. Every touch of this file goes through the helpers
+    # below and fails CLOSED: reads open O_NOFOLLOW and take content from the
+    # SAME fd (no re-resolved path, no check/use race); writes first destroy the
+    # existing directory ENTRY (unlink/rmdir act on the entry, never on its
+    # target) and then create exclusively, so the write can only land on an inode
+    # this process just made. Never relax this into "check then open by path".
+
+    def _read_runtime_info(self):
+        """Read + validate the runtime file. Returns {"pid", "port"} (values are
+        positive ints or None), or None when there is nothing usable.
+
+        Fields are type-checked rather than trusted: the file is attacker-
+        authorable, and a non-int pid would crash the callers' os.kill/tasklist
+        while a non-positive one would make os.kill() signal a whole process
+        group (-1 = every process this user can signal)."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            fd = os.open(self._runtime_path(), flags)
+        except OSError:
+            return None  # absent, a link (ELOOP), or unreadable
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                return None  # fifo/device/directory — not our runtime file
+            f = os.fdopen(fd, "r", encoding="utf-8")
+        except OSError:
+            os.close(fd)
+            return None
+        try:
+            with f:
+                info = json.load(f)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            return None  # unreadable, not UTF-8, not JSON, or nested to exhaustion
+        if not isinstance(info, dict):
+            return None
+        pid, port = info.get("pid"), info.get("port")
+        return {
+            "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 else None,
+            "port": port if isinstance(port, int) and not isinstance(port, bool) else None,
+        }
+
+    @staticmethod
+    def _discard_runtime_entry(path):
+        """Delete any existing entry at `path` WITHOUT dereferencing it, so a
+        planted link is destroyed instead of followed. A real directory is left
+        alone — the exclusive create then fails and the caller writes nothing."""
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return  # nothing there (or unreadable) — the exclusive create decides
+        # Only a REAL directory is spared: lstat types a link as S_IFLNK (Windows
+        # reparse points included), so this never spares one. Decided from the
+        # single lstat above — a second path check would reopen the race.
+        if stat.S_ISDIR(st.st_mode):
+            return
+        try:
+            os.unlink(path)
+        except OSError:
+            try:
+                os.rmdir(path)  # Windows directory symlink / junction
+            except OSError:
+                pass
+
+    def _create_runtime_file(self):
+        """Return a write fd for a freshly created runtime file (mode 0o600).
+
+        O_CREAT|O_EXCL refuses to open an existing entry at all — including a
+        symlink, dangling or not — so this either creates our own inode or
+        raises. O_NOFOLLOW is belt-and-braces for the same guarantee."""
+        rpath = self._runtime_path()
+        self._discard_runtime_entry(rpath)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(rpath, flags, 0o600)
+
     @staticmethod
     def _is_pid_alive(pid):
         """Check if a process with the given PID is still running."""
@@ -1273,15 +1352,12 @@ class VelaLocalServer:
         """Read existing .vela.env — if the PID is dead, clean up. If alive and
         confirmed to be a Vela server on our port, kill it.
         Must run BEFORE _write_runtime_info."""
-        rpath = self._runtime_path()
-        try:
-            with open(rpath, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return  # no file or corrupt — nothing to clean
+        info = self._read_runtime_info()
+        if info is None:
+            return  # no file, a link, or corrupt — nothing to clean
 
-        stale_pid = info.get("pid")
-        stale_port = info.get("port")
+        stale_pid = info["pid"]
+        stale_port = info["port"]
         if not stale_pid:
             return
 
@@ -1320,20 +1396,35 @@ class VelaLocalServer:
         }
         if not self._no_auth:
             info["token"] = self._auth_token
-        rpath = self._runtime_path()
         try:
-            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(info, f, indent=2)
-            actual = os.stat(rpath).st_mode & 0o777
-            if actual != 0o600 and not self._no_auth:
-                print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
-                print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
+            fd = self._create_runtime_file()
         except OSError as e:
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except OSError as e:
+            os.close(fd)
+            print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        try:
+            with f:
+                json.dump(info, f, indent=2)
+                # Report on the object we actually wrote (fstat on our own fd),
+                # never on a path that could resolve elsewhere by now.
+                actual = os.fstat(f.fileno()).st_mode & 0o777
+        except OSError as e:
+            print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        if actual != 0o600 and not self._no_auth:
+            print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
+            print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
 
     def _remove_runtime_files(self):
-        """Remove runtime files (.vela.env, .vela.pid)."""
+        """Remove runtime files (.vela.env, .vela.pid).
+
+        os.unlink removes the directory entry itself and never dereferences it,
+        so this cannot touch whatever a planted link pointed at."""
         for name in (self.RUNTIME_FILE, ".vela.pid"):
             try:
                 os.unlink(os.path.join(os.getcwd(), name))

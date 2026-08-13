@@ -1567,6 +1567,119 @@ class TestBackendParity(unittest.TestCase):
         self.assertIn('"--system-prompt"', self.go)
 
 
+class TestRuntimeFileLinks(unittest.TestCase):
+    """The runtime file (.vela.env) is created in the process CWD — a project
+    directory Vela does not own. A pre-existing entry there is untrusted: these
+    assert Vela never dereferences it, in either direction.
+
+    Without the no-follow/exclusive-create handling, the write path truncates
+    and overwrites whatever the entry points at (a token-bearing write outside
+    the project) and the read path parses an arbitrary file's bytes."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.proj = os.path.join(self.tmp, "proj")
+        self.outside = os.path.join(self.tmp, "outside.txt")
+        os.mkdir(self.proj)
+        with open(self.outside, "w", encoding="utf-8") as f:
+            f.write("MARKER")
+        with open(os.path.join(self.proj, "sample.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        self.server = VelaLocalServer(self.proj, port=0, no_open=True, channel_port=0)
+        self._cwd = os.getcwd()
+        os.chdir(self.proj)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.addCleanup(os.chdir, self._cwd)
+
+    @property
+    def _rt(self):
+        return os.path.join(self.proj, ".vela.env")
+
+    def _assert_outside_untouched(self):
+        with open(self.outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "MARKER",
+                             "runtime write escaped the project directory")
+
+    def _supports(self, maker):
+        try:
+            maker()
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("filesystem/platform cannot create this link type")
+
+    # -- write path --
+
+    def test_symlinked_runtime_file_is_not_followed(self):
+        self._supports(lambda: os.symlink(self.outside, self._rt))
+        self.server._write_runtime_info()
+        self._assert_outside_untouched()
+        self.assertFalse(os.path.islink(self._rt))
+        with open(self._rt, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["port"], 0)  # our own fresh file
+
+    def test_dangling_symlink_runtime_file_is_not_followed(self):
+        ghost = os.path.join(self.tmp, "ghost.txt")
+        self._supports(lambda: os.symlink(ghost, self._rt))
+        self.server._write_runtime_info()
+        self.assertFalse(os.path.exists(ghost), "write created the link target")
+        self.assertFalse(os.path.islink(self._rt))
+
+    def test_hardlinked_runtime_file_is_not_followed(self):
+        self._supports(lambda: os.link(self.outside, self._rt))
+        self.server._write_runtime_info()
+        self._assert_outside_untouched()
+        self.assertEqual(os.stat(self._rt).st_nlink, 1, "wrote through a hard link")
+
+    def test_normal_write_still_replaces_a_plain_runtime_file(self):
+        with open(self._rt, "w", encoding="utf-8") as f:
+            f.write("stale contents")
+        self.server._write_runtime_info()
+        with open(self._rt, encoding="utf-8") as f:
+            info = json.load(f)
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertIn("token", info)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX permission bits")
+    def test_runtime_file_is_created_owner_only(self):
+        self.server._write_runtime_info()
+        self.assertEqual(os.stat(self._rt).st_mode & 0o777, 0o600)
+
+    def test_directory_in_the_way_is_not_deleted(self):
+        os.mkdir(self._rt)
+        with open(os.path.join(self._rt, "keep.txt"), "w", encoding="utf-8") as f:
+            f.write("user data")
+        self.server._write_runtime_info()  # must fail closed, not clobber
+        self.assertTrue(os.path.isdir(self._rt))
+        self.assertTrue(os.path.exists(os.path.join(self._rt, "keep.txt")))
+
+    # -- read path --
+
+    def test_symlinked_runtime_file_is_not_read(self):
+        with open(self.outside, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "port": 1234}, f)
+        self._supports(lambda: os.symlink(self.outside, self._rt))
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_non_regular_runtime_file_is_not_read(self):
+        self._supports(lambda: os.mkfifo(self._rt))
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_hostile_pid_values_are_rejected(self):
+        # A non-int pid crashes os.kill/tasklist; a non-positive one makes
+        # os.kill() signal a process GROUP (-1 = every process this user owns).
+        for bad in (-1, 0, "1234", True, [1], None, 12.5):
+            with open(self._rt, "w", encoding="utf-8") as f:
+                json.dump({"pid": bad, "port": 0}, f)
+            self.assertIsNone(self.server._read_runtime_info()["pid"],
+                              f"pid {bad!r} was accepted")
+            self.server._cleanup_stale_server()  # must not raise
+
+    def test_corrupt_runtime_file_is_ignored(self):
+        for junk in ("not json", "[1,2,3]", '"str"', ""):
+            with open(self._rt, "w", encoding="utf-8") as f:
+                f.write(junk)
+            self.assertIsNone(self.server._read_runtime_info())
+
+
 if __name__ == "__main__":
     print(f"\n{'='*60}")
     print(f"  Vela Local Server Tests")
