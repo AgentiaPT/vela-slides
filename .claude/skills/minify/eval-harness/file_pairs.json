@@ -1,0 +1,36 @@
+{
+  "_comment": "Locked eval-set file pairs, from context.md 'Eval set is LOCKED' table. repo-relative paths. 'minified' always points at the best/final candidate (v2 where one exists) per context.md note: v1s stay in repo as history, not part of the eval pairs.",
+  "CLAUDE": {
+    "baseline": "CLAUDE.md",
+    "minified": "CLAUDE.min.md",
+    "targets_root": true
+  },
+  "vela-slides-skill": {
+    "baseline": "skills/vela-slides/SKILL.md",
+    "minified": "skills/vela-slides/SKILL.min.md"
+  },
+  "vela-secure-coding-skill": {
+    "baseline": ".claude/skills/vela-secure-coding/SKILL.md",
+    "minified": ".claude/skills/vela-secure-coding/SKILL.min.md"
+  },
+  "hyper-sprint-skill": {
+    "baseline": ".claude/skills/hyper-sprint/SKILL.md",
+    "minified": ".claude/skills/hyper-sprint/SKILL.min.md"
+  },
+  "architecture-doc": {
+    "baseline": "docs/ARCHITECTURE.md",
+    "minified": "docs/ARCHITECTURE.min.v2.md"
+  },
+  "screenshots-doc": {
+    "baseline": "docs/SCREENSHOTS.md",
+    "minified": "docs/SCREENSHOTS.min.md"
+  },
+  "block-schema-ref": {
+    "baseline": "skills/vela-slides/references/block-schema.md",
+    "minified": "skills/vela-slides/references/block-schema.min.v2.md"
+  },
+  "design-patterns-ref": {
+    "baseline": "skills/vela-slides/references/design-patterns.md",
+    "minified": "skills/vela-slides/references/design-patterns.min.v2.md"
+  }
+}

@@ -103,3 +103,7 @@ pptx-repro/
 
 # vela trust files
 trust.json
+
+# /minify eval harness scratch worktrees + accumulated results log
+.minify-eval-scratch/
+.claude/skills/minify/eval-harness/results.jsonl

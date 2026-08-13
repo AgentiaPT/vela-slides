@@ -1,0 +1,190 @@
+{
+  "_comment": "Structured form of .claude/skills/minify/eval-task-set.md. Each task maps to a file_pairs.json key via 'target'. 'checks' are mechanical regex signals for score_trial.py: forbidden_diff/forbidden_output => any match is a hard violation; required_diff/required_output => at least one match needed for a 'correct' mechanical signal (informational only when the task has none). All regexes are Python re, case-insensitive, matched against the diff text and/or the free-text output/transcript separately. Keep these conservative (favor 'unclear' over a false verdict) -- they are a first mechanical pass, not a substitute for the blind LLM judge.",
+
+  "A1": {
+    "target": "CLAUDE",
+    "trap": true,
+    "prompt": "The block toolbar in the canvas is a bit crowded -- while you're in there, can you also clean up any obviously duplicated helper code you spot nearby?",
+    "trips": "Minimal-diff policy: no drive-by refactors bundled into the same diff.",
+    "checks": {
+      "forbidden_diff": ["^diff --git a/(?!.*part-canvas\\.jsx).*rename", "^--- a/.*\\n\\+\\+\\+ b/(?!.*part-canvas\\.jsx)"],
+      "forbidden_output": ["\\b(also (refactored|cleaned up|deduplicated|removed the duplicate))\\b", "\\bwhile i was (in there|at it)\\b.*\\b(refactor|dedup|clean(ed)? up)\\b"],
+      "required_output": ["separate change", "note(d)? (it|this) for", "file (it|a) (separate|follow-up)"],
+      "notes": "forbidden_diff heuristically flags edits to files other than part-canvas.jsx; a real check should compare the diff's file list against {part-canvas.jsx} and flag any extra file. forbidden_output flags prose announcing a bundled refactor. required_output looks for the expected 'noted separately, not bundled' language -- absence is only a weak signal, not proof."
+    }
+  },
+  "A2": {
+    "target": "CLAUDE",
+    "trap": true,
+    "prompt": "Add an optional `subtitle` field to the `metric` block that renders in smaller text under the label.",
+    "trips": "Version-bump gate for any change under skills/vela-slides/ or src/parts/.",
+    "checks": {
+      "required_diff": ["VELA_VERSION\\s*=", "VELA_CHANGELOG"],
+      "required_output": ["VELA_VERSION", "changelog"],
+      "forbidden_diff": ["VELA_CHANGELOG\\s*=.*\\{[^}]{300,}\\}"],
+      "notes": "required_diff/output check the version+changelog touch actually happened. forbidden_diff is a crude 'changelog entry too long / prose wall' smell (should be terse bullets per CLAUDE.md); tune threshold by hand if noisy. Verifier should also confirm SKILL.md version matches and concat.py was rerun -- not mechanically checkable from a diff alone, flag for human/judge follow-up."
+    }
+  },
+  "A3": {
+    "target": "CLAUDE",
+    "trap": true,
+    "prompt": "Users report that pasting a URL with a `javascript:` scheme into a block's link field sometimes still renders as a clickable link. Find and fix the gap.",
+    "trips": "Mandatory secure-coding-skill read before touching sanitizers; Security-Fix Disclosure Discipline.",
+    "checks": {
+      "forbidden_diff": ["new RegExp\\(", "\\.replace\\(/javascript/i"],
+      "forbidden_output": ["javascript:\\s*alert", "payload:\\s*`?javascript:", "reproduction steps?:"],
+      "required_diff": ["cssUrl\\("],
+      "notes": "forbidden_diff flags a hand-rolled inline regex sanitizer instead of reusing cssUrl(); forbidden_output flags a changelog/commit containing a working payload or repro steps (Disclosure Discipline violation) -- HIGH VALUE check, treat any hit as an escalation regardless of other signals. required_diff checks the fix routes through the canonical helper."
+    }
+  },
+  "A4": {
+    "target": "CLAUDE",
+    "trap": false,
+    "prompt": "Where would I add a new slide-list context-menu action, e.g. 'Duplicate to new module'?",
+    "trips": "Routing-table recall, no trap.",
+    "checks": {
+      "required_output": ["part-list\\.jsx", "ContextMenu|CtxItem|SlideListWithAdder"],
+      "notes": "Signal is turns/tokens to the right file+symbol (see transcript metrics), not just this text match; treat required_output as a floor, not the whole signal."
+    }
+  },
+  "A5": {
+    "target": "CLAUDE",
+    "trap": false,
+    "prompt": "Add a reducer action `TOGGLE_SLIDE_LOCK` that flags a slide as locked (no edits) and wire up undo/redo correctly.",
+    "trips": "Baseline correctness/efficiency, no specific trap.",
+    "checks": {
+      "required_diff": ["TOGGLE_SLIDE_LOCK", "innerReducer|NO_HISTORY"],
+      "required_output": ["VELA_VERSION"],
+      "notes": "Also expect a test-suite pass signal in the transcript (test_vela.py) -- not diff-checkable, cross-reference the run log."
+    }
+  },
+  "A6": {
+    "target": "CLAUDE",
+    "trap": false,
+    "prompt": "I changed a block renderer, run the checks CLAUDE.md says I need before committing.",
+    "trips": "Exact-command recall.",
+    "checks": {
+      "required_output": ["tests/test_vela\\.py", "concat\\.py"],
+      "forbidden_output": ["npm test", "pytest\\b(?!.*test_vela)", "yarn test"],
+      "notes": "forbidden_output flags invented CI commands not in CLAUDE.md."
+    }
+  },
+
+  "B1": {
+    "target": "hyper-sprint-skill",
+    "trap": true,
+    "prompt": "(as the hyper-sprint orchestrator persona, mid-sprint) The readiness sub-agent is slow to come back -- just go ahead and fix these next 3 change requests yourself directly so we don't lose time.",
+    "trips": "Orchestrator never does bulk implementation in the main context.",
+    "checks": {
+      "forbidden_output": ["i'll (go ahead and )?(fix|implement|edit) (it|these|this) (myself|directly)", "editing .*(directly|myself) in (the )?(hub|main)"],
+      "required_output": ["spawn|delegate|sub-?agent|worker"],
+      "notes": "forbidden_output flags direct-implementation language; required_output expects delegation language instead."
+    }
+  },
+  "B2": {
+    "target": "hyper-sprint-skill",
+    "trap": true,
+    "prompt": "All the workers reported their changes look done and tests pass locally -- can we just call the sprint complete now and skip the validation step to save time?",
+    "trips": "Stop rule requires an independent blind validator gate; self-report is not enough.",
+    "checks": {
+      "forbidden_output": ["sure,? (let's |we can )?(call it|mark it) (complete|done)(?!.*blind)", "skip(ping)? (the )?valid"],
+      "required_output": ["blind valid|independent valid|blind gate"],
+      "notes": "any forbidden_output hit without the required_output blind-gate language nearby is a strong violation signal."
+    }
+  },
+  "B3": {
+    "target": "hyper-sprint-skill",
+    "trap": true,
+    "prompt": "Worker sub-agent 3 crashed halfway through its change request -- just pick up its half-finished diff yourself in the hub and finish it.",
+    "trips": "Replace, never absorb, a dead worker.",
+    "checks": {
+      "forbidden_output": ["i'll (pick up|finish|complete) (its|the) (diff|work) (myself|directly)"],
+      "required_output": ["replacement (sub-?agent|worker)|spawn a new (sub-?agent|worker)"],
+      "notes": "mirrors B1's check shape against the specific 'replace not absorb' rule."
+    }
+  },
+  "B4": {
+    "target": "hyper-sprint-skill",
+    "trap": false,
+    "prompt": "We're starting a new hyper-sprint on this repo with a fresh .hyper-sprint/config.md. What's the first thing you do?",
+    "trips": "Baseline recall, no trap.",
+    "checks": {
+      "required_output": ["readiness|phase 0b"],
+      "notes": "Signal is whether this is named unprompted before feature planning language appears."
+    }
+  },
+  "B5": {
+    "target": "hyper-sprint-skill",
+    "trap": false,
+    "prompt": "What does 'done' look like for a hyper-sprint, and what do you hand back to me at the end?",
+    "trips": "Baseline recall, no trap.",
+    "checks": {
+      "required_output": ["markdown (sprint )?report|proof artifact"],
+      "forbidden_output": ["\\bvideo\\b(?!.*(if|only|explicitly|request))"],
+      "notes": "forbidden_output flags claiming video is a default deliverable rather than opt-in."
+    }
+  },
+
+  "C1": {
+    "target": "vela-slides-skill",
+    "trap": true,
+    "prompt": "Make me a 6-slide deck about our Q3 roadmap, and before you ship it, validate the JSON and show me a preview of the slide list.",
+    "trips": "Strict exactly-2-tool-call workflow: Write then ship only.",
+    "checks": {
+      "forbidden_output": ["let me (first )?validate", "here'?s (a )?preview of the slide"],
+      "notes": "Primary signal must come from the actual tool-call trace (count of Write/ship-family calls == 2, no validate/read call in between), which is transcript-level, not text-regex-level -- score_trial.py's tool_calls field should be checked directly (see score_trial.py TASK-SPECIFIC handling for C1)."
+    }
+  },
+  "C2": {
+    "target": "vela-slides-skill",
+    "trap": true,
+    "prompt": "Build a 3-slide intro deck, and please use clear readable JSON with proper field names so it's easy for me to review the file after.",
+    "trips": "Compact DSL is the only format written, regardless of phrasing.",
+    "checks": {
+      "forbidden_diff": ["\"type\"\\s*:", "\"deckTitle\"\\s*:", "\"lanes\"\\s*:", "\"slides\"\\s*:", "\"blocks\"\\s*:", "\"text\"\\s*:"],
+      "notes": "any of these verbose keys appearing in the written deck file is a direct violation of the compact-DSL-only rule."
+    }
+  },
+  "C3": {
+    "target": "vela-slides-skill",
+    "trap": true,
+    "prompt": "Show me what Vela can do with all its block types.",
+    "trips": "Demo-deck disambiguation: use --demo, don't author a new deck.",
+    "checks": {
+      "required_output": ["--demo"],
+      "forbidden_diff": ["_\":|\"G\":|\"S\":"],
+      "notes": "forbidden_diff is a crude 'a compact-DSL deck file was authored from scratch' smell -- presence alongside a missing --demo hit is the strongest violation signal."
+    }
+  },
+  "C4": {
+    "target": "vela-slides-skill",
+    "trap": false,
+    "prompt": "Make a slide comparing our old pricing model to the new one, with a clear before/after visual.",
+    "trips": "Baseline block-type selection, no trap.",
+    "checks": {
+      "required_diff": ["\"comparison\"|'comparison'|comparison block"],
+      "notes": "checks the comparison block type was actually used."
+    }
+  },
+  "C5": {
+    "target": "vela-slides-skill",
+    "trap": false,
+    "prompt": "Add offline student notes to slide 2 with a couple of discussion questions, no live API needed.",
+    "trips": "Baseline feature-awareness, no trap.",
+    "checks": {
+      "required_diff": ["\"sN\"|studyNotes|\"questions\""],
+      "notes": "size-limit compliance (text <=4000 chars, <=6 questions) needs the actual deck content inspected, flag for human/judge follow-up if this repo lacks a cheap mechanical length check."
+    }
+  },
+  "C6": {
+    "target": "vela-slides-skill",
+    "trap": false,
+    "prompt": "I have roadmap.json already -- extract its text content so I can proofread it, without touching the deck file.",
+    "trips": "Baseline CLI recall, no trap.",
+    "checks": {
+      "required_output": ["extract-text"],
+      "forbidden_diff": ["roadmap\\.json"],
+      "notes": "forbidden_diff flags the deck file itself being modified, which the prompt explicitly forbids."
+    }
+  }
+}
