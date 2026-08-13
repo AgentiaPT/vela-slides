@@ -411,7 +411,12 @@ def read_deck_json(path, dir_fd=None):
             raise OSError(f"Not a plain, single-linked file: {path}")
         f = os.fdopen(fd, "r", encoding="utf-8")
     except BaseException:
-        os.close(fd)
+        # fdopen takes ownership, so the fd may already be closed here; a second
+        # close would raise EBADF and mask the real error.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         raise
     with f:
         return json.load(f)
@@ -447,7 +452,7 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
     # made relative to the pinned directory, and so its mode is set through the
     # DESCRIPTOR. A by-path chmod here would follow a link planted at the temp
     # name in the (untrusted) folder and change the mode of a file elsewhere.
-    for attempt in range(8):
+    for _ in range(8):
         cand = f"{SAVE_TMP_PREFIX}{secrets.token_hex(8)}{SAVE_TMP_SUFFIX}"
         tmp_arg = cand if dir_fd is not None else os.path.join(folder, cand)
         try:
