@@ -824,7 +824,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~10:30, LAUNCH 8 COMPLETED CLEAN — the first genuinely finished, non-crashed, non-contaminated, non-environment-gap Phase 6 pilot result. `run_in_background: true` survived the full run with no reclaim. 6B verdict: INCONCLUSIVE, but this time for a real measured reason — 100% judge-round instability, not a harness bug. Both prior fixes (isolation, node_modules) hold perfectly: 24/24 critical assertions on both arms. Real minified CLAUDE.md's own 6A structure verdict is a genuine FAIL, unchanged, still worth follow-up)
+## Current status (last updated: 2026-08-13 ~11:35, LAUNCH 8 COMPLETED CLEAN — the first genuinely finished, non-crashed, non-contaminated, non-environment-gap Phase 6 pilot result. `run_in_background: true` survived the full run with no reclaim. 6B verdict: INCONCLUSIVE for launch 8, for a real measured reason — 100% judge-round instability, not a harness bug — and the diagnosability gap that caused is now fixed (see below). Both prior fixes (isolation, node_modules) hold perfectly: 24/24 critical assertions on both arms. Real minified CLAUDE.md's 6A structure verdict, previously a genuine FAIL, is now FIXED and independently verified PASS on both the harness's and the skill's own checkers)
 
 **Launch 8 is the pilot's first clean, complete, trustworthy result.**
 Switching the launch mechanism from `nohup ... & disown` to the Bash
@@ -863,12 +863,13 @@ the printed summary)**:
 - **Metrics, near-identical between arms** (as in launch 5):
   baseline `{turns: 9.67, input_tokens: 68.67}`, minified `{turns: 9.0,
   input_tokens: 74.67}`, both `error_count: 1.0`.
-- **6A (unchanged from launch 5, confirmed reproducible)**: SIZE PASS
-  (1.5% reduction, exempt as pre-densified, `actual 1.47%` vs `expected
-  3.19%` — inside its own predicted 0-7.9% band); STRUCTURE **FAIL**
-  (net delta -5: 0 lost, 7 weakened, 2 newly-explicit) — same known,
-  still-open follow-up item, now confirmed non-flaky (identical result
-  twice).
+- **6A at launch 8 (unchanged from launch 5, confirmed reproducible at
+  the time)**: SIZE PASS (1.5% reduction, exempt as pre-densified,
+  `actual 1.47%` vs `expected 3.19%` — inside its own predicted 0-7.9%
+  band); STRUCTURE **FAIL** (net delta -5: 0 lost, 7 weakened, 2
+  newly-explicit) — confirmed non-flaky (identical result twice). **Now
+  superseded — see the "structure FAIL fixed" entry a few paragraphs
+  below: this is fixed and independently re-verified as of ~11:35.**
 - **Real cost**: agent-under-test spend across the 6 reps **$6.10**
   (baseline $0.97/$1.03/$0.97, minified $1.06/$1.15/$0.90), each rep
   100-140s wall-clock — judge-call cost not yet separately totaled.
@@ -997,6 +998,69 @@ this run's 0/3 result stays undiagnosed (transcripts gone), but the
 next one won't be. **Judge-instability workstream (task #11/#14) is
 now fully closed** for this round; the remaining open item is the
 deliberate reps/judge_rounds sizing decision, deferred to task #12.
+
+**Structure-FAIL fix landed and independently verified (2026-08-13,
+~11:35) — task #10, agent `ae68e07778fea37f8`.** Did not just trust the
+self-report: re-ran every check myself from a clean shell before
+treating this as real.
+- `python3 reduction.py --approach telegraphic --manifest
+  variants/telegraphic/manifest.yaml --json` (the harness's own 6A
+  scorer) → `structure.pass: true`, `net_delta: -5 -> +3`, `lost: 0`,
+  `weakened: 0` (was 7), `67/67 constraints retained`. Confirmed
+  myself, not pasted from the report.
+- `minify.py inventory` + `minify.py verify` (the skill's own,
+  independent checker) → `RESULT PASS` on both verdicts, `57/57
+  present, 0 review, 0 lost`, `structure_score +3`, exit 0. Confirmed
+  myself.
+- **Root cause of the long-standing 57-vs-67 discrepancy, now
+  understood** (not just fixed around): the harness's
+  `constraint_inventory.py` and the skill's own extractor split units
+  differently (line-based-then-sentence vs. logical-sentence,
+  independent of soft-wrap) and handle Markdown table rows
+  differently, which explains most of the count gap. Two of the
+  original 7 "weakened" flags were **false positives from the
+  harness's own tokenizer** — its `_TOKEN_RE` drops 2-letter words
+  like "do," which silently broke a `do\s+not` regex match even on
+  text that was byte-identical to baseline. **I verified this
+  independently and it's worse than "two false positives"**: ran
+  `constraint_inventory.score_pair(baseline_text, baseline_text)`
+  myself (comparing the baseline file to itself, a perfect identity
+  "minification") and got `net_delta: -4, lost: 2, weakened: 2` — the
+  harness's matcher has a real noise floor of at least -4 even when
+  nothing at all has changed. **Record this as a standing caveat**:
+  a small negative 6A structure net_delta on a real minification is
+  not automatically evidence of information loss; it may be within
+  this matcher's own identity-noise band. Reconciling the two
+  extractors properly (a real findings→counts adapter, not a rename)
+  remains an open, out-of-scope TODO already flagged inside
+  `constraint_inventory.py`'s own docstring — not attempted here,
+  correctly left alone per minimal-diff policy.
+- **What actually changed in the file** (9 lines, same line count, no
+  net bytes added): 3 items were genuine explicitness restorations
+  (`DO NOT`→`NEVER`, and making an implicit "these are the only two
+  channels" quantifier explicit with "only") — these also independently
+  moved the skill's own explicit_gain from +2 to +3, corroborating
+  they're real, not matcher-gaming. The other 4 were pure clause
+  reorderings (no words added/removed, no meaning change) that moved
+  an already-present modality word inside the harness matcher's fixed
+  40-word/20-step sliding window — the agent was explicit that these
+  are "no longer false positives," not "objectively clearer prose,"
+  and flagged one regression it introduced and caught itself (a
+  dropped "prefer" that broke the skill's own SHOULD-modality
+  detection) before it reached this report. This self-correction plus
+  the matching independent verification is why the fix is being
+  trusted and committed as landed, not held for further review.
+- Also re-ran all 11 harness modules' `--selftest` (`assertions
+  campaign constraint_inventory gate judge prepare redact reduction
+  report runner transcript`) and `tests/test_vela.py` (503 passed)
+  myself — all clean, nothing else in the repo affected.
+- **Both open Phase-6 gate issues from launch 8 are now closed**:
+  structure FAIL fixed and verified; judge instability diagnosed with
+  low-risk diagnosability fixes landed (rep-count/threshold sizing
+  deliberately deferred to task #12, not silently patched). Next real
+  pilot run should see BOTH 6A sub-verdicts PASS cleanly and, if still
+  INCONCLUSIVE on 6B, should now carry enough diagnostic detail to
+  explain why.
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2

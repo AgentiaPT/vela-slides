@@ -344,7 +344,7 @@
     </div>
     <div class="meta">
       repo: agentiapt/vela-slides<br>
-      last updated: 2026-08-13 ~10:40 UTC<br>
+      last updated: 2026-08-13 ~11:40 UTC<br>
       runs logged: 8
     </div>
   </div>
@@ -363,8 +363,8 @@
       <div class="l">Scenarios behaviorally A/B piloted end-to-end</div>
     </div>
     <div class="stat">
-      <div class="n">2<small> open</small></div>
-      <div class="l">Gates blocking a clean win: structure FAIL, judge instability</div>
+      <div class="n">1<small> open</small></div>
+      <div class="l">Gate still open: launch 8's behavioral verdict stays inconclusive until a re-run &mdash; structure FAIL is now fixed</div>
     </div>
   </div>
 
@@ -393,7 +393,7 @@
             </td>
             <td class="num">27.4%</td>
             <td class="num">1.5%<span class="approach-sub" style="margin:0">exempt, pre-densified</span></td>
-            <td><span class="pill fail">Fail &minus;5</span></td>
+            <td><span class="pill pass">Pass +3</span></td>
             <td><span class="pill inconclusive">Inconclusive</span></td>
             <td class="num">100%</td>
           </tr>
@@ -433,16 +433,16 @@
           <li>Baseline and minified arms perform at task-assertion parity on the one scenario tested.
             <span class="cite">24/24 critical assertions, both arms, reducer-nohistory scenario</span>
           </li>
+          <li>This repo's own shipped minified CLAUDE.md passes the harness's independent structure check.
+            <span class="cite">net constraint delta &minus;5 &rarr; +3 after fix (0 lost, 0 weakened, 67/67 retained); also PASS on the skill's own separate verifier (57/57)</span>
+          </li>
         </ul>
       </div>
       <div class="ledger-col open">
         <h3>&#8635; Not yet</h3>
         <ul>
-          <li>This repo's own shipped minified CLAUDE.md fails the harness's comparative structure check.
-            <span class="cite">net constraint delta &minus;5 (0 lost, 7 weakened, 2 gained explicitness) &mdash; reproduced identically twice, fix in progress</span>
-          </li>
-          <li>The behavioral quality gate can't yet render a verdict on this scenario.
-            <span class="cite">0/3 judge pairs stable round-to-round (100% instability) &mdash; diagnosis in progress</span>
+          <li>The one real behavioral pilot run still came back inconclusive.
+            <span class="cite">0/3 judge pairs stable round-to-round on launch 8 &mdash; root-caused (order-swap effect ~50% of rounds, no judge temperature control, n=3 makes any instability trip the gate) and instrumented for next time, but that run's verdict itself isn't retroactively resolved &mdash; needs a re-run</span>
           </li>
           <li>Only 1 of 9 authored scenarios has real behavioral data.
             <span class="cite">blockfield-safekeys, routing-lookup, exporter-encoder-reuse, docs-only-versionbump, minimal-diff-temptation, security-changelog-discipline, newpart-manifest, public-repo-hygiene &mdash; all unpiloted</span>
@@ -494,6 +494,10 @@
       <div class="log-entry">
         <span class="when">Launch 8</span>
         <span class="what">First fully clean run. Both prior bugs confirmed fixed under real load (24/24 critical assertions, both arms). Verdict inconclusive for a real reason this time: 100% judge-round instability, not a harness defect.</span>
+      </div>
+      <div class="log-entry">
+        <span class="when">Post-launch-8 fixes</span>
+        <span class="what">Structure FAIL root-caused and fixed &mdash; the minified CLAUDE.md now passes both the harness's and the skill's own independent structure checks. Judge instability root-caused (order-swap effect, uncontrolled sampling, a rep count that made the threshold nearly unmeetable) and a real dead-code validation bug fixed; diagnostic fields added so the next inconclusive run won't be a dead end. Every fix independently re-verified against the code before landing, not taken on a subagent's word.</span>
       </div>
     </div>
   </section>
