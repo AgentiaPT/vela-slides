@@ -128,10 +128,9 @@ Orchestrate only — sub-agents do the actual work.
     §3 probe protocol from research-encoding-formats.md against them.
     Agent: opus, background. Output:
     `.claude/minify-lab/research-normal-density-corroboration.md`
-3. **[dispatched]** Citation verification pass on phase 1's external
-   citations (WebSearch snippet-level — arXiv itself is egress-blocked
-   in-container). Agent: sonnet, background. Output:
-   `.claude/minify-lab/citation-verification.md`
+3. **[DONE]** Citation verification pass on phase 1's external
+   citations. Agent: sonnet, background. Output:
+   `.claude/minify-lab/citation-verification.md` — see Artifacts index.
 4. **[dispatched]** Build `.claude/skills/minify/` itself, applying TRB
    (phase 1's top-ranked approach) + a self-check constraint-inventory
    extractor. Agent: opus. Constraints: don't apply to real repo files
@@ -195,6 +194,28 @@ Orchestrate only — sub-agents do the actual work.
   - All external literature citations tagged ⚠️ UNVERIFIED (snippet-only,
     arXiv egress-blocked) and explicitly **not load-bearing** — the
     recommendation rests entirely on the 5 measured probes.
+- `.claude/minify-lab/citation-verification.md` — **DONE** (2026-08-13,
+  sonnet). Calibrated method first against a fabricated control citation
+  (correctly reported not-found) before trusting it on real ones. **10
+  clusters / 15 sources checked: 0 fabricated, 0 contradicted, 7 fully
+  verified, 3 carry a misattribution** (real papers exist, but a specific
+  number/quote is attached to the wrong one of them):
+  - **A**: the "50% of context window" position-bias figure is cited to
+    arXiv 2510.10276 but actually belongs to arXiv 2508.07479 (Veseli et
+    al., COLM 2025), uncited.
+  - **B**: the Agent Skills "median ~80 tokens" figure is labeled
+    "(Anthropic platform docs)" but that page states a flat ~100
+    tokens/skill with no median/range — the 80-token figure traces to a
+    third-party analysis (SwirlAI 2026), not Anthropic's own docs.
+  - **C**: the negation "mechanisms overshadowed at later layers" quote
+    is attached to two sources that don't contain it; appears to
+    originate in an uncited third paper (arXiv 2605.03052).
+  - **Action item, not yet done**: re-attribute or drop these three
+    numbers/quotes before they appear in the `/minify` skill's own docs,
+    a PR body, or any other public-facing text. None of this touches
+    research-encoding-formats.md's actual recommendation (rests on §3's
+    measured probes, not the literature) — this only clears the
+    literature review itself for eventual citation.
 - `.claude/minify-lab/harness-design.md` — **DONE** (2026-08-13, opus,
   ~1600 lines). Implementation-ready spec for `.claude/minify-lab/
   harness/`. Key points:
