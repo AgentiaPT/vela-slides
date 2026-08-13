@@ -493,8 +493,56 @@ committing to an approach) rather than being built ad hoc.
   - Not yet reviewed line-by-line by the orchestrator beyond structure +
     the confounder-control sections (§6, spot-checked — sound). Full
     review still pending before phase 5 (implementation) starts.
+- `.claude/minify-lab/harness/` — **DONE, independently verified**
+  (2026-08-13; built across two sonnet agents, one killed mid-flight by a
+  container restart and picked up by a completion agent,
+  `a2caefbe6e75c35bb`). Orchestrator ran every module's own `--selftest`
+  directly (not trusting the agent's self-report): **all 10 modules pass**
+  (`prepare transcript assertions judge redact gate report reduction
+  constraint_inventory runner`), and `git worktree list` confirms no
+  worktree was left registered afterward.
+  - **`frozen_ext` fix — confirmed genuinely wired, not just claimed.**
+    Read `reduction.py` directly: `frozen_ext_fraction()` blanks fenced
+    code, then inline code, then matches `https?://...` spans (which,
+    confirmed by reading the code and its comment, also catches inline-
+    link destinations and reference-style `[label]: url` lines — a single
+    regex covers all three since fences/inline-code are already blanked
+    out first). `prose_reduction_rate`/`predicted_reduction`/
+    `hit_prediction` are wired into `measure_pair()`. The claimed
+    regression test is real: `--selftest` contains explicit checks
+    (`OLD binary rule would NOT have exempted the link-heavy file`, `NEW
+    continuous prediction correctly marks the link-heavy file...`)
+    proving the old binary verbatim-only exemption misses exactly the
+    class of file phase 1b's corroboration study found broken.
+  - **`runner.py`** (harness-design.md §8.1, the piece missing when the
+    restart hit): `prepare_arm` → capture pre-agent `base_texts` →
+    compose prompt → pluggable `invoke` (defaults to a real `claude -p`
+    call, gated behind explicit CLI args — never triggered by anything
+    else) → `transcript.parse_jsonl` → `post_run_diff` → `run_assertions`
+    → unconditional `cleanup`. One documented, reasoned deviation from
+    the literal spec: `transcript.jsonl`/`runner.err` are written to
+    `run_dir`, not inside the worktree, to avoid the same
+    diff-pollution bug already fixed for `anchors.json` in `prepare.py`.
+    `--selftest` uses a stub invoke (zero model spend, confirmed — no
+    real `claude` process runs during self-test).
+  - **Constraint-inventory duplication — investigated, left unresolved on
+    purpose, not glossed over.** The agent inspected `minify_lib.py`'s
+    actual `survival()` return shape and found it's structurally
+    different from what `reduction.py` already calls
+    (`constraint_inventory.py`'s flat `net_delta/lost_count/
+    weakened_count/newly_explicit_count` vs. `minify_lib.py`'s
+    `Finding`-based `status`/`defects` list) — collapsing them needs a
+    real findings→counts adapter plus a calibration cross-check, not an
+    import rename. Correctly judged not worth a risky rewrite of an
+    already-working, spec-matching, self-tested gate under time
+    pressure; left a detailed TODO in `constraint_inventory.py` itself
+    for whoever picks it up. This is a legitimate engineering call, not
+    a shortcut — verified by reading both modules' actual code, not just
+    the agent's explanation of it.
+  - **Phase 5 is now CLOSED.** Stopped the `send_later` keep-alive
+    check-in chain per its own stated stop condition.
 
-## Current status (last updated: 2026-08-13, phases 1+2 landed, user went AFK, 4 more dispatched)
+## Current status (last updated: 2026-08-13, phase 5 landed and independently verified — all of phases 1/1b/2/3/4/5 done, phase 6 held on rate-limit throttle)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -513,22 +561,22 @@ verified (not just self-report — ran phase 4's own selftest firsthand:
 16/16 pass; spot-checked its code for the frozen_ext fix: present). The
 `/minify` skill is real, live, and discoverable in the skill listing.
 
-**Phase 5 (harness scripts) is still running** — not yet landed. It has
-already picked up further progress on `constraint_inventory.py` and
-`reduction.py` since the frozen_ext correction was sent; not yet verified
-whether the correction was actually incorporated there too (only
-confirmed for phase 4 so far) — check explicitly when phase 5's
-completion notification lands, don't assume symmetry. In-flight output
-continues to be snapshotted to git as unreviewed WIP commits per the
-Standing rule.
+**Phase 5 (harness scripts) landed and is independently verified** —
+see the Artifacts index entry above for the full check (all 10 modules'
+own `--selftest` re-run directly by the orchestrator, `frozen_ext`
+confirmed genuinely wired with a real regression test, `runner.py`
+matches the §8.1 design, constraint-extractor duplication investigated
+and consciously left as-is with a documented reason rather than either
+silently ignored or riskily merged). The `send_later` keep-alive chain
+that was covering this wait has been stopped.
 
-Remaining after phase 5 lands: resolve the flagged constraint-extractor
-duplication between the skill's own (`.claude/skills/minify/`, now the
-canonical, verified implementation) and the harness's
-`constraint_inventory.py` — the harness should very likely import/reuse
-the skill's version rather than keep a second one; check what phase 5
-actually did. Then phase 6 (first real pilot — budget already locked: 3
-reps, sonnet agent-under-test, opus judge) becomes unblocked.
+**Phase 6 (first real pilot run) is READY but intentionally HELD** — not
+on any technical blocker, but on the rate-limit throttle logged above
+(5-hour usage was at 91% as of ~04:40; Phase 6 is the most agent-heavy
+phase in the plan: 3 reps × sonnet-under-test + opus judge, multiplied
+across 9 scenarios). Resume after ~07:15 UTC or when the user confirms
+headroom has recovered, whichever comes first — see "Rate-limit
+throttle" section.
 
 ## Session hygiene: checking context usage
 

@@ -19,6 +19,33 @@ minified counterpart.
 # version from here or folding this file's harness-specific bits (weighting
 # for 6a's structure sub-verdict, the `min_net_delta` gate hookup) into it
 # and deleting this one.
+#
+# Re-evaluated during the runner.py build-out (phase 5 completion pass):
+# reconciliation is NOT a drop-in import. `reduction.py` calls this module's
+# `score_pair(base, min) -> {net_delta, lost_count, weakened_count,
+# newly_explicit_count}` directly (see `ci.score_pair` in `measure_pair()`)
+# and `run_approach()` sums those four fields verbatim into the 6a structure
+# verdict. `minify_lib.py`'s `inventory()`/`survival()` — confirmed by
+# reading `.claude/skills/minify/scripts/minify_lib.py` — returns a richer,
+# differently-shaped result instead: `survival(inv, minified_doc, attest=None)`
+# -> `{structure_score, result: "PASS"|"REJECTED", findings: [Finding(cid,
+# status: present|attested|review|lost, coverage, defects: [...])]}`, where
+# `structure_score = explicit_gain - constraints_lost` is computed from
+# per-Constraint survival, not from four flat counters. `parse(text,
+# path="<memory>")` does accept raw text with no real file needed, so the
+# plumbing side of a reuse is easy — but a correct adapter still has to
+# derive `lost_count`/`weakened_count`/`newly_explicit_count` from
+# `findings[].status`/`defects[]` (e.g. status=="lost" -> lost_count,
+# a `modality-weakened:*` defect -> weakened_count, an explicit-count
+# comparison for newly_explicit_count) and cross-check both modules'
+# calibration constants agree before wiring it in — real engineering, not a
+# rename. Given `constraint_inventory.py` is already wired into `reduction.py`
+# and both pass `--selftest` matching the locked §7 spec, this pass leaves
+# the two implementations in place rather than risk regressing a working,
+# spec-matching gate under time pressure. Next step for whoever picks this
+# up: write the findings->counts adapter above, run both self-tests plus a
+# corroboration diff against a handful of real pairs, THEN delete this file
+# in favor of the import.
 
 Purpose (harness-design.md §7, context.md's amended verdict-6a "structure"
 sub-verdict): a size-only reduction metric hides the exact signal probe B
