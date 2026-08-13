@@ -50,6 +50,26 @@ Before: the "P1 — ACTIVE" badge is invisible, icon rows render as empty grey c
 | `expand_deck` mutated its input (popped `C`; second call errored) | Deep-copies before reading (pop predates this sprint; consequences were new) |
 | Full-format deck with a top-level `C`: palette ignored, then a misleading "define it in palette 'C'" error | Full+`C` decks run the same normalise→resolve→gate pipeline everywhere `_load_full` is used |
 
+## Threat-model security pass (post-implementation)
+
+A deep threat-model review of the change (blind reviewer, full `vela-secure-coding` skill as checklist, exercising adversarial decks — not just reading) covered nine vulnerability classes. **Zero newly-introduced vulnerabilities or bad practices:**
+
+- **ReDoS** — all four new regexes proven linear (worst ~11 ms at 500 K chars, O(n)); no catastrophic backtracking in the colour grammar.
+- **Fail-open** — the unresolved-alias gate raises before any write; exit 4 + no artifact proven on ship/assemble/validate.
+- **Injection** — normalisation/substitution preserves the render-side `cssColor`/`cssGradient` boundary (untouched); crafted palette values (`#fff;}*{…}`, `expression()`, `</script>`) still rejected at render. The colour-grammar sweep is explicitly warning-only, not mistaken for a control.
+- **Alias correctness** — exact-token substitution genuinely closes the substring-mangling class; no `$`-token can survive into a shipped colour past the gate.
+- Mutable global, path/file handling, disclosure discipline, general practices — all SAFE.
+
+The review surfaced **three fail-closed hardening items** (two flagged initially, a third by the independent re-verify), all corrected in this sprint:
+
+| Item | Severity | Pre-existing? | Fix |
+|---|---|---|---|
+| `validate.py` reported a full-format deck (unresolved `$X`, no `C`) **valid** when the `vela` import degraded — genuine **fail-open** in a security gate | Medium | Yes | Import failure now populates the error list and refuses to validate without the alias gate (exit 1, never "Deck is valid") — commit `ab8a3a0` |
+| Tree-walk recursion unbounded (fail-closed only because `json.load` tripped first) | Low | Yes | `RecursionError` at the `expand_deck`/gate boundary → clean `DeckExpandError` — commit `ab8a3a0` |
+| Deep on-disk deck still dumped a **raw traceback** — the guard sat after parse, but `json.load` at the CLI entrypoints blew the stack first (~247 levels) | Low (no data-integrity breach — no artifact written) | Yes | Guard moved to the JSON-parse boundary in both entrypoints; clean "too deeply nested" error; regression test drives the **real file-based CLI** (the path prior in-memory tests missed) — commit `280a21f` |
+
+Each fix was independently blind-verified (fail-closed behavior confirmed, happy-path byte-identity preserved). Suites after the pass: `test_vela.py` **537**, `test_cli.py` **75**.
+
 ## Pre-existing issues (verified at base, out of scope — follow-up candidates)
 
 - Compactor aliases repeated hex **inside prose text fields** → full→compact→expand corrupts prose to `$A` (the prose exemption then correctly refuses to touch it).
@@ -65,10 +85,11 @@ Before: the "P1 — ACTIVE" badge is invisible, icon rows render as empty grey c
 | Metric | Value |
 |---|---|
 | Commits | 5 (`3f56ae6` plan · `6394aa4` implementation · `37359c8`/`e4f463e` proof assets · `7b3f169` fix round) |
-| Tests | `test_vela.py` 503 → **534** · `test_cli.py` 53 → **65** (+43 total, incl. `tests/fixtures/palette-bare-keys.json` incident fixture) |
+| Tests | `test_vela.py` 503 → **537** · `test_cli.py` 53 → **75** (+56 total, incl. `tests/fixtures/palette-bare-keys.json` incident fixture) |
 | Gates | test suites, `concat.py`, `lint.py`, `check-routing.py` all green at HEAD |
-| Blind rounds | 2 (round 1: 12 findings → 7 fixed, 5 verified pre-existing · round 2: clean) |
-| Wall clock | ~10:30–12:20 (plan `10:35` → gate close after `11:20` fix + round-2 verification) |
+| Blind rounds | 2 correctness (round 1: 12 findings → 7 fixed, 5 verified pre-existing · round 2: clean) + a threat-model security pass (0 new vulns, 3 fail-closed hardening items corrected) |
+| Commits | `6394aa4` impl · `7b3f169` fix round · `ab8a3a0` + `280a21f` security hardening · plan/proof/report |
+| Wall clock | ~10:30–14:xx (plan `10:35` → correctness gate → threat-model pass) |
 
 ## Cost
 
