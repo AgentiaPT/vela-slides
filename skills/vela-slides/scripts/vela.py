@@ -495,6 +495,30 @@ def expand_deck(compact, allow_unresolved=None):
     in-process/library callers); True downgrades the unresolved-alias hard
     error to a stderr warning. Raises DeckExpandError on an unusable palette
     or (unless allowed) on aliases that survive expansion."""
+    try:
+        return _expand_deck_unbounded(compact, allow_unresolved)
+    except RecursionError:
+        # This pipeline recurses several times over the same tree (deepcopy,
+        # _substitute_aliases, per-slide/-block expansion, json.dumps/loads
+        # for the bare-hex fixup, then find_unresolved_aliases/
+        # _sweep_color_grammar in the gate) with no single canonical
+        # depth-cap helper on the Python side to thread through all of them
+        # (the closest sibling convention, MAX_SUBOBJECT_DEPTH in
+        # part-imports.jsx, bounds one JS sub-object walk, not this whole
+        # multi-pass pipeline). A deck nested deep enough hits Python's own
+        # recursion limit — previously an uncaught RecursionError (a raw
+        # traceback) instead of the clean, fail-closed DeckExpandError every
+        # other unusable-deck path produces here. Catch RecursionError only
+        # (never a broader except) at this single boundary and convert it —
+        # same outcome (non-zero exit, no artifact written) with a clean
+        # message instead of a traceback.
+        raise DeckExpandError(
+            "deck is too deeply nested to expand safely") from None
+
+
+def _expand_deck_unbounded(compact, allow_unresolved):
+    """expand_deck's actual body — see expand_deck for the RecursionError
+    boundary wrapping this."""
     if allow_unresolved is None:
         allow_unresolved = _allow_unresolved_mode
     if not _is_compact(compact):

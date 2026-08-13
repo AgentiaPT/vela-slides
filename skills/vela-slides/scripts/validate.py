@@ -64,15 +64,22 @@ def validate(path, allow_unresolved=False):
     if script_dir not in sys.path:
         sys.path.insert(0, script_dir)
     expand_errors = []
+    have_vela = False
     try:
         import vela as _vela
         from vela import (is_compact, find_unresolved_aliases, DeckExpandError,
                           _load_full, _needs_expansion)
         have_vela = True
     except ImportError as e:
-        have_vela = False
-        print(f"WARNING: could not import vela.py helpers ({e}); "
-              f"validating the un-expanded form", file=sys.stderr)
+        # vela.py drives the unresolved-colour-alias security gate below
+        # (find_unresolved_aliases / expand_deck's _palette_gate). Without it
+        # a deck with a live "$X" alias could sail through every other check
+        # and get reported "valid" — fail closed instead of validating an
+        # un-gated deck. Uses the same "expand_failed" short-circuit as a
+        # DeckExpandError so the CLI exits 1 with just this message.
+        expand_errors.append(
+            f"cannot import vela.py helpers ({e}) — refusing to validate "
+            f"without the unresolved-colour-alias gate")
     if have_vela and (_needs_expansion(deck) or isinstance(deck, list)):
         # Propagate --allow-unresolved into the expansion path — expand_deck
         # reads vela's module flag, so without this the standalone validator
@@ -109,10 +116,19 @@ def validate(path, allow_unresolved=False):
 
     # Post-expansion invariant: no colour alias may survive into a deck this
     # validator blesses — a leftover "$X" ships as a literal string. Full-format
-    # decks are checked too (they never go through expand_deck's own gate).
+    # decks are checked too (they never go through expand_deck's own gate, so
+    # expand_deck's RecursionError→DeckExpandError boundary doesn't cover this
+    # direct call — guard it here too, same fail-closed outcome).
     if have_vela and isinstance(deck, dict):
         sink = warnings if allow_unresolved else errors
-        for apath, _akey, avalue in find_unresolved_aliases(deck):
+        try:
+            unresolved = find_unresolved_aliases(deck)
+        except RecursionError:
+            # Always a hard error, never downgraded by --allow-unresolved —
+            # this is an abuse/DoS guard, not an alias report.
+            errors.append("deck is too deeply nested to validate safely")
+            unresolved = []
+        for apath, _akey, avalue in unresolved:
             sink.append(f"Unresolved colour alias: {apath} = {avalue!r} — "
                         f"define it in palette 'C' (keys carry the $ sigil)")
 

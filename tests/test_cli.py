@@ -560,6 +560,36 @@ def main():
               "full-format 'C' palette is resolved and dropped in the saved deck",
               json.dumps(saved)[:300])
 
+        # ══ validate.py fails closed if it cannot import vela.py (security) ═
+        # vela.py drives the unresolved-colour-alias gate. If the import ever
+        # degrades, validate.py must refuse to report "valid" rather than
+        # silently skip the gate. Simulate the degrade by running a copy of
+        # validate.py with no vela.py alongside it.
+        print("\n── validate.py import-failure fail-closed ──")
+        isolated_dir = os.path.join(tmpdir, "isolated-validate")
+        os.makedirs(isolated_dir, exist_ok=True)
+        shutil.copy(VALIDATE_PY, os.path.join(isolated_dir, "validate.py"))
+        # Full-format deck (no top-level 'C', so the expansion path is a
+        # no-op either way) carrying a literal, never-resolved colour alias —
+        # exactly the shape that used to sail through as "valid" when the
+        # import failure silently skipped both the expansion path and the
+        # explicit find_unresolved_aliases scan.
+        leak_deck = {"deckTitle": "Leak", "lanes": [{"title": "L", "items": [
+            {"title": "I", "slides": [{"title": "T", "duration": 30,
+                                        "bg": "#0f172a", "color": "$Z",
+                                        "blocks": []}]}]}]}
+        leak_path = os.path.join(isolated_dir, "leak.vela")
+        with open(leak_path, "w", encoding="utf-8") as f:
+            json.dump(leak_deck, f)
+        r = subprocess.run([sys.executable, os.path.join(isolated_dir, "validate.py"), leak_path],
+                            capture_output=True, text=True, cwd=isolated_dir)
+        check(r.returncode != 0,
+              "validate.py fails closed (non-zero exit) when vela.py can't be imported",
+              f"rc={r.returncode}\n{r.stdout}\n{r.stderr}")
+        check("Deck is valid" not in r.stdout,
+              "validate.py never reports 'Deck is valid' when the alias gate was skipped by import failure",
+              r.stdout)
+
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

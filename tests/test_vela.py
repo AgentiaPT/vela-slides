@@ -3857,6 +3857,63 @@ def test_palette_hardening():
     else:
         fail("full-format no-'C' passthrough")
 
+    # 7. Bounded recursion: a deck nested far past any real authored depth
+    #    must fail closed with a clean DeckExpandError, never an uncaught
+    #    RecursionError (raw traceback). Build in-memory (bypassing
+    #    json.dumps/loads, which have their own, lower recursion ceiling) so
+    #    this exercises expand_deck's own recursive walks specifically.
+    def _nest(depth):
+        node = {"bg": "#000", "blocks": []}
+        for _ in range(depth):
+            node = {"blocks": [node]}
+        return node
+
+    deep_compact = {"n": "Deep", "C": {"$A": "#111111"},
+                     "G": [{"g": "S", "S": [
+                         {"n": "s", "d": 20, "bg": "$A", "color": "#fff",
+                          "B": [_nest(2000)]}]}]}
+    try:
+        expand_deck(deep_compact)
+        fail("deeply-nested compact deck raises on expand", "no exception")
+    except DeckExpandError as e:
+        if "deeply nested" in str(e):
+            ok("deeply-nested compact deck fails closed with a clean DeckExpandError")
+        else:
+            fail("deep-nesting error content", str(e))
+    except RecursionError:
+        fail("deeply-nested compact deck fails closed",
+             "raised an uncaught RecursionError instead of DeckExpandError")
+
+    deep_full = {"deckTitle": "Deep", "lanes": [{"title": "L", "items": [
+        {"title": "I", "slides": [{"title": "s", "duration": 20, "bg": "#000",
+                                    "color": "#fff", "blocks": [_nest(2000)]}]}]}]}
+    try:
+        expand_deck(deep_full)
+        fail("deeply-nested full-format deck raises on expand", "no exception")
+    except DeckExpandError as e:
+        if "deeply nested" in str(e):
+            ok("deeply-nested full-format deck fails closed with a clean DeckExpandError")
+        else:
+            fail("deep-nesting (full-format) error content", str(e))
+    except RecursionError:
+        fail("deeply-nested full-format deck fails closed",
+             "raised an uncaught RecursionError instead of DeckExpandError")
+
+    # find_unresolved_aliases itself: called directly by validate.py for a
+    # full-format deck that never goes through expand_deck at all (no
+    # top-level 'C', so _needs_expansion is False) — expand_deck's own
+    # RecursionError→DeckExpandError boundary doesn't cover this call site;
+    # validate.py wraps it separately. Confirm the function itself still
+    # raises the underlying RecursionError uncaught (documenting why that
+    # separate wrap in validate.py is needed) rather than silently returning
+    # a wrong/partial answer.
+    try:
+        find_unresolved_aliases(deep_full)
+        fail("find_unresolved_aliases on a very deep deck", "expected RecursionError")
+    except RecursionError:
+        ok("find_unresolved_aliases raises RecursionError on abusive depth "
+           "(validate.py's own wrapper converts this to a clean error)")
+
 
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
