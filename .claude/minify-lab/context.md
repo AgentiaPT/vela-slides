@@ -726,7 +726,7 @@ deterministically above), not a case needing semantic judgment — but an
 secondary confirmation, never a silent default) is a reasonable Phase 7+
 idea, not in scope for this fix.
 
-## Current status (last updated: 2026-08-13 ~09:20, campaign.py built + stub-tested + real-run smoke-tested, real Phase 6 pilot about to launch)
+## Current status (last updated: 2026-08-13 ~10:10, campaign.py built + stub-tested + real-run smoke-tested, real Phase 6 pilot launched a 3rd time after fixing 2 launch-blocking bugs)
 
 Container reclaim wiped all prior artifacts; rebuilt from scratch per the
 user's choice (full re-run, not summary-reconstruction). Phases 1 and 2
@@ -807,16 +807,63 @@ un-ignore would otherwise force-track every campaign's raw transcripts/
 diffs/cost data into this public repo; same treatment `evals/output/` etc.
 already get.
 
-**Next: the real Phase 6 pilot** — `reducer-nohistory` (well-scoped,
-moderate complexity, strong assertion coverage), reps=3, both arms,
-judge_rounds=2 — real sonnet agent-under-test + real opus judge calls,
-launching now via `campaign.py`'s CLI in the background. Per the last
-check-in's standing instruction: message the user with a brief status
-update once this actually kicks off (not a silent reschedule) — done in
-this same turn. Rough cost estimate before launch: order of magnitude
-$15-50 total (6 sonnet agent runs on a real, moderately-sized code task +
-6 short single-turn opus judge calls) — not a hard budget, just the
-expectation set going in.
+**The real Phase 6 pilot launch found two more real bugs before it ever
+reached agent spend** — the smoke test above only exercised
+`runner.run_one()` directly; the first two attempts through
+`campaign.py`'s own CLI wrapper hit code paths the smoke test didn't
+cover. Both were caught at prepare-time (zero agent API spend lost each
+time), independently verified, and fixed:
+
+1. **`.gitignore` self-leak allowlist gap.** Launch 1 failed instantly
+   with `leak_check_failed: True` on all 6 (arm, rep) combos —
+   `prepare.py`'s §6.1 lab self-leak scrub flagged the new
+   `.claude/minify-lab/harness/runs/` line added to `.gitignore` earlier
+   this session (see above), because that exact line wasn't yet in
+   `prepare.py`'s own `KNOWN_SAFE_MENTIONS[".gitignore"]` allowlist. Fixed
+   by adding the line to the allowlist.
+2. **Stale placeholder-collision assertion in `prepare.py --selftest`.**
+   Running the harness's own selftest suite to sanity-check fix #1
+   surfaced a second, pre-existing failure (confirmed via `git stash` it
+   predates this session's edits): a test still asserted
+   `variants/telegraphic/CLAUDE.md` has *no* token collision with the
+   frozen scenarios' `leak_tokens`, left over from when that file was a
+   placeholder stub. Now that it's the real minified output (built
+   earlier this session), it legitimately inherits the same
+   routing-table-symbol collisions the baseline has — a faithful
+   minification preserves the routing table. Fixed by updating the
+   assertion to expect the same collision set as the baseline. Full
+   harness selftest suite (7 modules): 32/32 ALL OK afterward.
+
+Launch 2 (properly backgrounded this time) got further — past both
+prepare-time checks above — but failed with a **third, real bug**: a
+`variant_leak_check` rejection on `variants/baseline/CLAUDE.md` itself,
+citing token collisions from `routing-lookup`, `exporter-encoder-reuse`,
+and `docs-only-versionbump` — three *unrelated* scenarios not even part
+of this campaign. Root cause: `run_campaign()` was passing the *entire*
+9-scenario file to `run_one()`'s `scenarios_for_leak_check`, but
+`variant_leak_check()` scans a variant against every scenario's
+`leak_tokens` in whatever list it's handed, not just the scenario
+actually running. Those three scenarios have pre-existing, *documented*
+token collisions with CLAUDE.md's own routing table (see `prepare.py`'s
+module docstring "KNOWN FINDING") — `reducer-nohistory` itself is
+explicitly documented there as unaffected, but was blocked anyway by
+unrelated scenarios' tokens. Verified the diagnosis with a one-off check
+that scoping to just `reducer-nohistory` returns zero collisions against
+both variant files. Fixed by passing `chosen` (this campaign's own
+scenario list) instead of `all_scenarios`; re-ran `campaign.py
+--selftest` (15/15, unaffected — it already used a single-scenario
+override) before committing. Commit `93119fa`.
+
+**Launch 3 is now running in the background** (`reducer-nohistory`,
+reps=3, both arms, judge_rounds=2, real sonnet agent-under-test + real
+opus judge calls) after cleaning up launch 2's stale run directory. Per
+the standing instruction: will message the user with a brief status
+update once this completes with real results — not yet done, this is
+the first attempt to get past prepare-time checks into actual agent
+spend. Rough cost estimate before launch: order of magnitude $15-50 total
+(6 sonnet agent runs on a real, moderately-sized code task + 6 short
+single-turn opus judge calls) — not a hard budget, just the expectation
+set going in.
 
 ## Session hygiene: checking context usage
 
