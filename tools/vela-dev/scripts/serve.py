@@ -385,6 +385,24 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         cleaned = " ".join("".join(out).split())[:cls._TITLE_MAX]
         return cleaned or fallback
 
+    # Largest deck we will read into memory. The listing re-reads EVERY .vela in
+    # the folder on each poll, so without a cap one planted multi-gigabyte file
+    # drives sustained memory and CPU load on every refresh. The watcher already
+    # capped its own read; these are the paths that did not.
+    _DECK_MAX_BYTES = 64 * 1024 * 1024
+
+    @classmethod
+    def _read_deck_json(cls, fd):
+        """Parse a deck from an owned descriptor, bounded in size.
+
+        Takes ownership of fd (closes it), mirroring os.fdopen.
+        """
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            payload = f.read(cls._DECK_MAX_BYTES + 1)
+        if len(payload) > cls._DECK_MAX_BYTES:
+            raise ValueError("deck exceeds the maximum readable size")
+        return json.loads(payload)
+
     @classmethod
     def _open_deck_fd(cls, folder, name, write=False):
         """Open a deck file by NAME and return an OS file descriptor.
@@ -646,8 +664,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             slide_count = 0
             is_compact = False
             try:
-                with os.fdopen(fd, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = self._read_deck_json(fd)  # bounded; takes the fd
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
                 title = self._display_label(data.get("deckTitle") or data.get("n") or name, name)
@@ -705,8 +722,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         try:
-            with os.fdopen(fd, "r", encoding="utf-8") as f:  # fdopen owns the fd
-                raw_deck = json.load(f)
+            raw_deck = self._read_deck_json(fd)  # bounded; takes the fd
         except Exception as e:
             print(f"[error] Reading {deck_name}: {e}")
             self.send_error(500, "Error loading deck")
@@ -1050,8 +1066,7 @@ class VelaLocalServer:
                     except (ValueError, OSError):
                         print(f"[sync] {name} no longer resolves inside the folder — skipping")
                         return
-                    with os.fdopen(fd, "r", encoding="utf-8") as f:  # fdopen owns the fd
-                        new_data = json.load(f)
+                    new_data = VelaHTTPHandler._read_deck_json(fd)  # bounded
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
                     print(f"[sync] {name} changed → pushed to browser")
@@ -1185,11 +1200,17 @@ class VelaLocalServer:
 
     def _load_vendor_files(self):
         self._vendor_available = False
-        search_dirs = [
-            self.folder_path,
-            os.getcwd(),
-            os.path.dirname(os.path.dirname(SKILL_DIR)),
-        ]
+        # SECURITY: only ever load executable vendor assets from the trusted
+        # install root. This previously searched the served folder and the launch
+        # cwd first — both directories the threat model treats as attacker-
+        # writable — and whatever it found was served at /vendor/... as
+        # application/javascript under a CSP whose script-src includes 'self'. A
+        # planted node_modules therefore ran as a first-class page script with
+        # full same-origin access, bypassing every deck sanitizer entirely: no
+        # symlink, no race, just a regular file in a planted directory. The old
+        # realpath check only prevented a symlink escaping node_modules; it said
+        # nothing about whether that node_modules could be trusted at all.
+        search_dirs = [os.path.dirname(os.path.dirname(SKILL_DIR))]
         vendor_map = {
             "/vendor/babel.min.js": ("@babel/standalone/babel.min.js", "application/javascript"),
         }
@@ -1231,7 +1252,14 @@ class VelaLocalServer:
             with open(runtime_path, encoding="utf-8") as f:
                 info = json.load(f)
             stale_pid = info.get("pid")
-            if stale_pid and info.get("port") == self.port:
+            # Apply the SAME verification as _cleanup_stale_server(). That path
+            # checks the PID is a live Python process actually bound to the port
+            # before signalling it; this one did not, so a runtime file naming
+            # any PID could direct a SIGKILL at an unrelated process. The two
+            # paths read the same attacker-influenced file and must agree.
+            if (stale_pid and info.get("port") == self.port
+                    and self._is_python_process(stale_pid)
+                    and self._pid_holds_port(stale_pid, self.port)):
                 os.kill(stale_pid, 9)
                 killed = True
                 print(f"  [port]   Killed stale PID {stale_pid}")

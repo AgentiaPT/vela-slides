@@ -1889,6 +1889,87 @@ class TestLabelSpoofingCategories(unittest.TestCase):
             self.assertEqual(self._label(text), text)
 
 
+class TestVendorAssetTrust(unittest.TestCase):
+    """Vendor assets are served as executable JavaScript under a CSP whose
+    script-src includes 'self', so they must come only from the trusted install
+    root. Searching the served folder or launch cwd let a planted regular file
+    run as a first-class page script — no symlink, no race — which bypasses
+    every deck sanitizer at once."""
+
+    MARKER = b"__PLANTED_VENDOR_PAYLOAD__"
+
+    def _plant(self, base):
+        d = os.path.join(base, "node_modules", "@babel", "standalone")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "babel.min.js"), "wb") as f:
+            f.write(self.MARKER)
+
+    def _vendor_bodies(self):
+        return b"".join(body for body, _ in VelaHTTPHandler.static_files.values())
+
+    def test_served_folder_node_modules_is_not_loaded(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        served = os.path.join(root, "served"); os.makedirs(served)
+        self._plant(served)
+
+        prev = dict(VelaHTTPHandler.static_files)
+        self.addCleanup(lambda: VelaHTTPHandler.static_files.update(prev))
+        VelaHTTPHandler.static_files.clear()
+
+        VelaLocalServer(served, port=0, no_open=True, channel_port=0)._load_vendor_files()
+        self.assertNotIn(self.MARKER, self._vendor_bodies(),
+                         "a planted vendor asset was served as executable JS")
+
+    def test_launch_cwd_node_modules_is_not_loaded(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        served = os.path.join(root, "served"); os.makedirs(served)
+        self._plant(root)
+
+        prev = dict(VelaHTTPHandler.static_files)
+        self.addCleanup(lambda: VelaHTTPHandler.static_files.update(prev))
+        VelaHTTPHandler.static_files.clear()
+
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            VelaLocalServer(served, port=0, no_open=True, channel_port=0)._load_vendor_files()
+        finally:
+            os.chdir(cwd)
+        self.assertNotIn(self.MARKER, self._vendor_bodies(),
+                         "a vendor asset from the launch cwd was served as executable JS")
+
+
+class TestDeckReadIsBounded(unittest.TestCase):
+    """The listing re-reads every deck on each poll, so an unbounded read lets
+    one planted oversized file load repeatedly into memory."""
+
+    def test_oversized_deck_is_refused(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "big.vela")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"deckTitle":"' + "A" * 4096 + '","lanes":[]}')
+
+        original = VelaHTTPHandler._DECK_MAX_BYTES
+        VelaHTTPHandler._DECK_MAX_BYTES = 512  # smaller than the file
+        self.addCleanup(setattr, VelaHTTPHandler, "_DECK_MAX_BYTES", original)
+
+        fd = VelaHTTPHandler._open_deck_fd(root, "big.vela")
+        with self.assertRaises(ValueError):
+            VelaHTTPHandler._read_deck_json(fd)
+
+    def test_normal_deck_still_reads(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        with open(os.path.join(root, "ok.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        fd = VelaHTTPHandler._open_deck_fd(root, "ok.vela")
+        self.assertEqual(VelaHTTPHandler._read_deck_json(fd)["deckTitle"],
+                         SAMPLE_DECK["deckTitle"])
+
+
 class TestRuntimeFileWrite(unittest.TestCase):
     """.vela.env carries the auth token and is written into the launch cwd —
     which for the usual `serve.py .` IS the served folder, so the same process
