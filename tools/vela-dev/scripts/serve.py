@@ -52,6 +52,7 @@ from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
 LOCAL_HTML_PATH = os.path.join(DEV_DIR, "local.html")            # dev preview shell
+BROWSER_JS_PATH = os.path.join(DEV_DIR, "browser.js")            # folder-browser client code
 
 # Content-Security-Policy for the local dev server. The hosted Claude.ai
 # artifact runs inside a sandboxed iframe whose CSP already blocks outbound
@@ -82,6 +83,24 @@ CSP_POLICY = "; ".join([
     "img-src 'self' data:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "connect-src 'self' https://api.anthropic.com https://esm.sh http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+])
+
+# The folder browser is a separate, self-contained page: static markup plus a
+# single same-origin script. It needs none of the app's in-browser toolchain,
+# so it does not inherit the app's permissive policy — it gets a strict one.
+# Without 'unsafe-inline' in script-src, an injected event-handler attribute
+# cannot execute even if markup-building were ever reintroduced here; that is
+# the point of keeping this policy separate rather than reusing CSP_POLICY.
+BROWSER_CSP = "; ".join([
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",  # the page's own <style> block; cannot execute JS
+    "img-src 'self' data:",              # inline SVG favicon
+    "connect-src 'self'",                # only /api/decks
     "base-uri 'none'",
     "object-src 'none'",
     "form-action 'none'",
@@ -131,6 +150,16 @@ class DeckVersionTracker:
 
 
 # ── File browser HTML ─────────────────────────────────────────────────
+def build_browser_js():
+    """Return the folder-browser client code, served as an external script.
+
+    Kept out of the HTML so the browser page can run under BROWSER_CSP with no
+    'unsafe-inline' in script-src.
+    """
+    with open(BROWSER_JS_PATH, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def build_browser_html():
     """Return the HTML for the Jupyter-style deck file browser."""
     return r"""<!DOCTYPE html>
@@ -199,131 +228,16 @@ def build_browser_html():
     </div>
   </div>
   <div class="toolbar">
-    <input type="text" class="search-box" id="search-input" placeholder="Search decks…" oninput="filterList()" />
+    <input type="text" class="search-box" id="search-input" placeholder="Search decks…" />
     <span class="deck-count" id="deck-count"></span>
   </div>
   <div id="deck-list" class="deck-list">
     <div class="loading">Loading decks…</div>
   </div>
 
-  <script>
-    var listEl = document.getElementById('deck-list');
-    var countEl = document.getElementById('deck-count');
-    var folderEl = document.getElementById('folder-path');
-    var searchEl = document.getElementById('search-input');
-    var allDecks = [];
-    var sortCol = 'modified';
-    var sortAsc = false;
-
-    function formatSize(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / 1048576).toFixed(1) + ' MB';
-    }
-
-    function formatDate(iso) {
-      var d = new Date(iso);
-      var now = new Date();
-      var diff = (now - d) / 1000;
-      if (diff < 60) return 'just now';
-      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-      if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-      return d.toLocaleDateString();
-    }
-
-    function sortDecks(decks) {
-      var col = sortCol;
-      return decks.slice().sort(function(a, b) {
-        var va, vb;
-        if (col === 'title') { va = (a.title || a.name).toLowerCase(); vb = (b.title || b.name).toLowerCase(); }
-        else if (col === 'name') { va = a.name.toLowerCase(); vb = b.name.toLowerCase(); }
-        else if (col === 'slides') { va = a.slides; vb = b.slides; }
-        else if (col === 'size') { va = a.size; vb = b.size; }
-        else { va = a.modified; vb = b.modified; }
-        if (va < vb) return sortAsc ? -1 : 1;
-        if (va > vb) return sortAsc ? 1 : -1;
-        return 0;
-      });
-    }
-
-    function setSort(col) {
-      if (sortCol === col) { sortAsc = !sortAsc; }
-      else { sortCol = col; sortAsc = col === 'title' || col === 'name'; }
-      renderList();
-    }
-
-    function arrow(col) {
-      if (sortCol !== col) return '<span class="sort-arrow">⇅</span>';
-      return '<span class="sort-arrow">' + (sortAsc ? '▲' : '▼') + '</span>';
-    }
-
-    function esc(s) { if (!s) return ''; var el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
-
-    function filterList() { renderList(); }
-
-    function renderList() {
-      var q = searchEl.value.toLowerCase().trim();
-      var filtered = allDecks;
-      if (q) {
-        filtered = allDecks.filter(function(d) {
-          return (d.title || '').toLowerCase().indexOf(q) !== -1 || d.name.toLowerCase().indexOf(q) !== -1;
-        });
-      }
-      var sorted = sortDecks(filtered);
-      countEl.textContent = (q ? sorted.length + '/' : '') + allDecks.length + ' deck' + (allDecks.length !== 1 ? 's' : '');
-
-      if (sorted.length === 0) {
-        listEl.innerHTML = '<div class="empty-state"><div class="icon">' + (q ? '🔍' : '📂') + '</div><div class="msg">' + (q ? 'No decks match "' + q.replace(/</g,'&lt;') + '"' : 'No .vela deck files found in this folder.') + '</div></div>';
-        return;
-      }
-
-      var cls = function(c) { return sortCol === c ? ' class="sorted"' : ''; };
-      var html = '<table><thead><tr>';
-      html += '<th' + cls('title') + ' onclick="setSort(\'title\')">Title ' + arrow('title') + '</th>';
-      html += '<th' + cls('name') + ' onclick="setSort(\'name\')">File ' + arrow('name') + '</th>';
-      html += '<th' + cls('slides') + ' onclick="setSort(\'slides\')" style="text-align:right">Slides ' + arrow('slides') + '</th>';
-      html += '<th' + cls('size') + ' onclick="setSort(\'size\')" style="text-align:right">Size ' + arrow('size') + '</th>';
-      html += '<th' + cls('modified') + ' onclick="setSort(\'modified\')">Modified ' + arrow('modified') + '</th>';
-      html += '<th style="width:60px"></th>';
-      html += '</tr></thead><tbody>';
-      sorted.forEach(function(d) {
-        var url = '/deck/' + encodeURIComponent(d.name);
-        html += '<tr class="deck-row" onclick="window.location=\'' + url + '\'">';
-        html += '<td class="col-title"><a href="' + url + '">' + esc(d.title || d.name) + '</a></td>';
-        html += '<td class="col-file">' + esc(d.name) + '</td>';
-        html += '<td class="col-slides">' + d.slides + '</td>';
-        html += '<td class="col-size">' + formatSize(d.size) + '</td>';
-        html += '<td class="col-modified" title="' + d.modified + '">' + formatDate(d.modified) + '</td>';
-        html += '<td class="col-badge">' + (d.compact ? '<span class="deck-badge">compact</span>' : '') + '</td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table>';
-      listEl.innerHTML = html;
-    }
-
-    // Focus search on Ctrl+F / Cmd+F
-    document.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); searchEl.focus(); searchEl.select(); }
-      if (e.key === 'Escape' && document.activeElement === searchEl) { searchEl.value = ''; filterList(); searchEl.blur(); }
-    });
-
-    // Load decks on startup + auto-refresh every 3s
-    function fetchDecks() {
-      fetch('/api/decks')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          folderEl.textContent = data.folder;
-          allDecks = data.decks;
-          renderList();
-        })
-        .catch(function(e) {
-          listEl.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="msg">Error loading decks: ' + e.message + '</div></div>';
-        });
-    }
-    fetchDecks();
-    setInterval(fetchDecks, 3000);
-  </script>
+  <!-- Client code lives in an external same-origin file (tools/vela-dev/browser.js)
+       so this page can run with no 'unsafe-inline' in script-src. Do not inline it. -->
+  <script src="/browser.js" defer></script>
 </body>
 </html>"""
 
@@ -362,6 +276,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         no characters that could break JS/HTML string contexts)."""
         if not isinstance(name, str) or not name.strip():
             return False
+        # A name longer than the filesystem allows can never identify a real
+        # deck: every open fails with ENAMETOOLONG. Rejecting it here keeps
+        # unusable names from reaching per-name server state at all.
+        if len(name.encode("utf-8", "surrogatepass")) > 255:
+            return False
         # NFKC-fold first so fullwidth separators/dots (／ ＼ ．) collapse to ASCII
         # and get caught by the checks below; then reject bidi/format controls
         # (e.g. RTLO U+202E filename spoofing) and the Unicode separator/dot
@@ -373,10 +292,189 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             return False
         if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
             return False
+        # Reject lone surrogates. os.listdir() surfaces undecodable filename bytes
+        # as surrogates (surrogateescape), and such a name cannot be encoded into
+        # a request path or valid JSON at all — so it could be LISTED but never
+        # fetched, and encodeURIComponent() throws on it client-side, taking the
+        # whole listing down with it. Listing only what can actually be served is
+        # the invariant; drop these at the same gate as every other bad name.
+        if any(0xD800 <= ord(c) <= 0xDFFF for c in name):
+            return False
+        # The File column shows the name VERBATIM — it is the identity the user
+        # checks when a title looks wrong, so it must not be able to lie either.
+        # A name is an identifier, not prose, so deceptive characters are REJECTED
+        # here rather than rewritten (rewriting would make the column disagree
+        # with the real filename, which is its own kind of lie).
+        #   Cc      — control chars; also escape sequences into terminals/logs
+        #   Me      — enclosing marks
+        #   2+ Mn   — stacked combining marks (Zalgo); a single legitimate mark
+        #             stays allowed so non-Latin filenames still work
+        #   blanks  — glyphs that render empty but are not str.isspace(), used to
+        #             push the real extension out of view
+        if any(c in VelaHTTPHandler._BLANK_GLYPHS for c in name):
+            return False
+        # Category allowlist, expressed as its complement. An enumerated list of
+        # slash lookalikes was bypassed by characters nobody thought to enumerate,
+        # so reject by ROLE instead: nothing whose purpose is to modify or draw a
+        # glyph may appear in a name.
+        #   Mn/Mc/Me — combining marks. A single overlay (long solidus) draws a
+        #              slash through its base, forging a path separator; the title
+        #              filter already drops all marks, so this matches it.
+        #   Lm/Sk    — modifier letters/symbols, e.g. the modifier colon
+        #   So       — "other symbols", which includes the box-drawing diagonals
+        #              that render pixel-identical to a slash
+        #   Cc       — controls, which also inject escapes into logs/terminals
+        # Zs other than ASCII space is rejected too (the Ogham space draws a dash).
+        # TRADE-OFF: this also rejects emoji in filenames (they are So). Such a
+        # deck is simply not listed or served until renamed — fail-closed, and the
+        # name is the identity the whole listing is trusted against.
+        for c in name:
+            if unicodedata.category(c) in ("Mn", "Mc", "Me", "Lm", "Sk", "So", "Cc"):
+                return False
+            if unicodedata.category(c) == "Zs" and c != " ":
+                return False
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
                 and bool(name.strip()))
+
+    # Deck titles are attacker-controlled: unlike the filename, `deckTitle` comes
+    # from inside the deck JSON and passes through no name validation at all.
+    # It is the listing's most prominent label, so it is a spoofing surface —
+    # bidi/format controls can make a row read as a different, benign file, and a
+    # non-string value breaks the client's search/sort. Normalize it here, at the
+    # one place titles enter the listing.
+    _TITLE_MAX = 200
+
+    # Characters that render blank or zero-width but are NOT str.isspace(), so
+    # " ".join(s.split()) leaves them intact: braille blank, the Hangul fillers
+    # (and their NFKC targets), Mongolian vowel separator, Khmer inherent vowels,
+    # no-break space. Runs of these push a label's real suffix out of view just as
+    # effectively as spaces, so they must be folded to whitespace before collapsing.
+    _BLANK_GLYPHS = " ᠎⠀ᅟᅠㅤﾠ឴឵"
+
+    # Unicode categories a display label may never contain. Denylisting single
+    # characters is what let the first version of this be bypassed; this is a
+    # category allowlist expressed as its complement — every codepoint is dropped
+    # unless its category is absent from here.
+    #   C* — control, format (bidi/RTLO), private-use, surrogate, unassigned
+    #   Mn/Me — combining marks: stacking produces Zalgo, and a single overlay
+    #           (e.g. combining long solidus) draws a slash the filter never sees
+    _LABEL_REJECT_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cs", "Cn", "Mn", "Me"))
+
+    @classmethod
+    def _display_label(cls, value, fallback):
+        """Return a safe display label for the deck listing.
+
+        The title comes from inside the deck JSON and is the listing's most
+        prominent, clickable label — so it must not be able to impersonate another
+        file. NFKC-fold first, drop every character in a rejected category, fold
+        blank-rendering glyphs to real spaces, collapse runs, bound length, and
+        fall back when nothing usable remains. The client renders labels via
+        textContent, so this is anti-spoofing, not anti-XSS.
+
+        RESIDUAL: cross-script homoglyphs (Cyrillic 'а' for Latin 'a') are not
+        folded — that needs confusables data and is disproportionate here. The
+        File column shows the real filename and the link target is the real path,
+        so the title is never the only identity the user can check.
+        """
+        if not isinstance(value, str):
+            return fallback  # numbers/objects/lists are not labels
+        text = unicodedata.normalize("NFKC", value)
+        out = []
+        for ch in text:
+            category = unicodedata.category(ch)
+            if category in cls._LABEL_REJECT_CATEGORIES:
+                continue
+            out.append(" " if ch in cls._BLANK_GLYPHS or category == "Zs" else ch)
+        cleaned = " ".join("".join(out).split())[:cls._TITLE_MAX]
+        return cleaned or fallback
+
+    # Largest deck we will read into memory. The listing re-reads EVERY .vela in
+    # the folder on each poll, so without a cap one planted multi-gigabyte file
+    # drives sustained memory and CPU load on every refresh. The watcher already
+    # capped its own read; these are the paths that did not.
+    _DECK_MAX_BYTES = 64 * 1024 * 1024
+
+    @classmethod
+    def _read_deck_json(cls, fd):
+        """Parse a deck from an owned descriptor, bounded in size.
+
+        Takes ownership of fd (closes it), mirroring os.fdopen.
+        """
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            payload = f.read(cls._DECK_MAX_BYTES + 1)
+        if len(payload) > cls._DECK_MAX_BYTES:
+            raise ValueError("deck exceeds the maximum readable size")
+        return json.loads(payload)
+
+    @classmethod
+    def _open_deck_fd(cls, folder, name, write=False):
+        """Open a deck file by NAME and return an OS file descriptor.
+
+        SINGLE FILE-ACCESS POINT for deck reads and writes.
+
+        SECURITY (CWE-22/59/367): _safe_deck_path() realpath-validates but returns
+        the UNRESOLVED join path, so any caller that then opens BY PATH resolves the
+        leaf a second time — a local process can swap a deck-named symlink between
+        the check and the open and redirect the read or write outside the served
+        folder. Realpath containment alone cannot close that window; only refusing
+        the symlink atomically at open() can. The listing handler already did this;
+        every name-taking route now shares this helper so the guarantee cannot hold
+        in one place and not another.
+
+        Callers MUST operate on the returned descriptor and MUST NOT re-open by
+        path — re-opening reintroduces the exact race this closes.
+
+        Raises ValueError if the name escapes the folder; OSError if the entry is a
+        symlink (ELOOP), is missing, or is not a regular file.
+        """
+        path = cls._safe_deck_path(folder, name)  # containment for the parent dirs
+        if write:
+            # NOTE: deliberately NO O_TRUNC here. O_TRUNC destroys the file at
+            # open(), before any check can run — so truncation would happen even
+            # for an entry we are about to refuse. Truncate below, after the
+            # inode passes every guard.
+            flags = os.O_WRONLY | os.O_CREAT
+        else:
+            # O_NONBLOCK so a fifo entry cannot hang the handler.
+            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
+        fd = os.open(path, flags, 0o600)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError(f"not a regular file: {name}")
+            # Refuse multiply-linked inodes. O_NOFOLLOW only rejects a SYMlink; a
+            # HARDlink is an ordinary directory entry inside the folder whose
+            # realpath stays inside, so containment, O_NOFOLLOW and S_ISREG all
+            # pass while the inode is shared with a file outside the folder —
+            # reading it exfiltrates that file and writing it destroys it. A deck
+            # the server owns has exactly one link; anything else is refused.
+            if st.st_nlink != 1:
+                raise OSError(f"refusing multiply-linked file: {name}")
+            if write:
+                os.ftruncate(fd, 0)  # safe now: the inode passed every guard
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    def _deck_name_from_path(self, prefix):
+        """Decode the deck name out of a request path beginning with `prefix`.
+
+        SINGLE PARSING POINT for the three name-taking routes, so they cannot
+        disagree with each other or with the listing.
+
+        The query string is stripped from the RAW path *before* percent-decoding.
+        Only a literal '?' delimits a query, so an encoded one belongs to the
+        filename and must survive; decoding first would truncate such a name and
+        make an entry the listing legitimately exposes unservable.
+        """
+        raw = self.path[len(prefix):]
+        if "?" in raw:
+            raw = raw.split("?", 1)[0]
+        return unquote(raw)
 
     @staticmethod
     def _safe_deck_path(folder, name):
@@ -410,7 +508,11 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
         url_token = qs.get("token", [None])[0]
         if url_token:
-            if hmac.compare_digest(url_token, srv._auth_token):
+            # compare_digest raises TypeError on non-ASCII str input, and this
+            # runs before any validation — an unauthenticated request could take
+            # the handler down with no response. A non-ASCII token cannot match
+            # a token_urlsafe secret anyway, so reject it outright.
+            if url_token.isascii() and hmac.compare_digest(url_token, srv._auth_token):
                 session_id = secrets.token_urlsafe(24)
                 with srv._sessions_lock:
                     srv._sessions.add(session_id)
@@ -432,7 +534,8 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. Authorization header: Bearer xxx (for API/programmatic access)
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            if hmac.compare_digest(auth_header[7:], srv._auth_token):
+            bearer = auth_header[7:]
+            if bearer.isascii() and hmac.compare_digest(bearer, srv._auth_token):
                 return True
             self.send_error(403, "Invalid token")
             return False
@@ -485,16 +588,22 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return default
 
+    # Per-response CSP override. Defaults to the app policy; the folder-browser
+    # routes opt into the stricter BROWSER_CSP. Reset at the top of every
+    # request because handler instances are reused across keep-alive requests.
+    _csp = None
+
     def end_headers(self):
         """Override to inject security headers into all responses."""
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", CSP_POLICY)
+        self.send_header("Content-Security-Policy", self._csp or CSP_POLICY)
         super().end_headers()
 
     # ── Routing ────────────────────────────────────────────────────
 
     def do_GET(self):
+        self._csp = None  # handler instances are reused across keep-alive requests
         if not self._check_host():
             return
         if not self._check_auth():
@@ -502,6 +611,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         self._route_folder_get()
 
     def do_POST(self):
+        self._csp = None  # handler instances are reused across keep-alive requests
         if not self._check_host():
             return
         if not self._check_auth():
@@ -514,8 +624,13 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _route_folder_get(self):
         if self.path == "/" or self.path == "/index.html":
+            self._csp = BROWSER_CSP
             content = build_browser_html().encode("utf-8")
             self._serve(content, "text/html; charset=utf-8")
+        elif self.path == "/browser.js":
+            self._csp = BROWSER_CSP
+            self._serve(build_browser_js().encode("utf-8"),
+                        "text/javascript; charset=utf-8")
         elif self.path == "/api/decks":
             self._handle_list_decks()
         elif self.path.startswith("/deck/"):
@@ -540,45 +655,29 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         for name in sorted(os.listdir(srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
-            # SECURITY (containment + no check/use race, CWE-22/59/367): every
-            # other file-touching handler realpath-validates then opens by PATH,
-            # which follows a symlink at the leaf and re-resolves it independently
-            # of the check — so a deck-named symlink to a file outside the served
-            # folder leaks its size and (for JSON) its deckTitle, and swapping the
-            # symlink between the check and the open wins a TOCTOU race even after a
-            # static-containment check. Open with O_NOFOLLOW so a symlinked entry is
-            # refused ATOMICALLY at the leaf (both the static escape and the race),
-            # and fstat the returned fd so size AND content come from the very object
-            # we opened, never a re-resolved path. Realpath containment still guards
-            # the parent directories; O_NONBLOCK avoids blocking on a fifo entry, and
-            # the S_ISREG check drops anything that is not a plain file.
             if not self._validate_deck_name(name):
                 continue
-            fpath = os.path.join(srv.folder_path, name)
-            open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            # Shared symlink-proof open (see _open_deck_fd for why by-path opens
+            # are unsafe here). Metadata comes from the SAME descriptor we read, so
+            # size and content can never describe two different objects.
             try:
-                self._safe_deck_path(srv.folder_path, name)
-                fd = os.open(fpath, open_flags)
+                fd = self._open_deck_fd(srv.folder_path, name)
             except (ValueError, OSError):
                 continue  # escapes the folder, is a symlink (ELOOP), or unreadable
             try:
                 st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode):
-                    os.close(fd)
-                    continue
             except OSError:
                 os.close(fd)
                 continue
-            # Read metadata from the SAME fd (os.fdopen takes ownership and closes it).
+            # os.fdopen takes ownership of the fd and closes it.
             title = name
             slide_count = 0
             is_compact = False
             try:
-                with os.fdopen(fd, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = self._read_deck_json(fd)  # bounded; takes the fd
                 if isinstance(data, dict) and data.get("_vela") and "data" in data:
                     data = data["data"]
-                title = data.get("deckTitle") or data.get("n") or name
+                title = self._display_label(data.get("deckTitle") or data.get("n") or name, name)
                 is_compact = "n" in data and ("G" in data or "S" in data)
                 if "lanes" in data:
                     for lane in data["lanes"]:
@@ -611,11 +710,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_serve_deck(self):
         """GET /deck/<name> — serve Vela app with this deck loaded."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/deck/"):])
-
-        # Strip query string
-        if "?" in deck_name:
-            deck_name = deck_name.split("?", 1)[0]
+        deck_name = self._deck_name_from_path("/deck/")
 
         # Security: no path traversal, enforce .vela extension
         if not self._validate_deck_name(deck_name):
@@ -625,18 +720,26 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be served")
             return
 
+        # Read through a symlink-proof descriptor and hand the PARSED deck on, so
+        # nothing downstream re-opens by path (see _open_deck_fd).
         try:
-            deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+            fd = self._open_deck_fd(srv.folder_path, deck_name)
         except ValueError:
             self.send_error(403, "Access denied")
             return
-
-        if not os.path.isfile(deck_path):
+        except OSError:
             self.send_error(404, "Deck not found")
             return
 
         try:
-            html = srv._build_html_for_deck(deck_path, deck_name)
+            raw_deck = self._read_deck_json(fd)  # bounded; takes the fd
+        except Exception as e:
+            print(f"[error] Reading {deck_name}: {e}")
+            self.send_error(500, "Error loading deck")
+            return
+
+        try:
+            html = srv._build_html_for_deck(raw_deck, deck_name)
             self._serve(html, "text/html; charset=utf-8")
         except Exception as e:
             print(f"[error] Building HTML for {deck_name}: {e}")
@@ -645,11 +748,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_poll(self):
         """GET /poll/<name>?v=N — long-poll for a specific deck."""
         srv = self.server_ref
-        rest = self.path[len("/poll/"):]
-        if "?" in rest:
-            deck_name = unquote(rest.split("?", 1)[0])
-        else:
-            deck_name = unquote(rest)
+        deck_name = self._deck_name_from_path("/poll/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
@@ -658,7 +757,10 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be polled")
             return
 
-        tracker = srv.get_tracker(deck_name)
+        # Look up WITHOUT creating. get_tracker() allocates on miss, which made
+        # the 404 below unreachable and let any syntactically valid name pin a
+        # tracker in memory for the process's lifetime.
+        tracker = srv.peek_tracker(deck_name)
         if not tracker:
             self.send_error(404, "Deck not tracked")
             return
@@ -668,7 +770,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_deck_save(self):
         """POST /save/<name> — browser sends deck updates for a specific deck."""
         srv = self.server_ref
-        deck_name = unquote(self.path[len("/save/"):])
+        deck_name = self._deck_name_from_path("/save/")
 
         if not self._validate_deck_name(deck_name):
             self.send_error(400, "Invalid deck name")
@@ -689,17 +791,26 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                try:
-                    deck_path = self._safe_deck_path(srv.folder_path, deck_name)
-                except ValueError:
-                    self.send_error(403, "Access denied")
-                    return
-                srv.set_deck_data(deck_name, deck)
+                # Authorize BEFORE recording anything. This used to populate the
+                # server-wide cache first, so a save that was then refused still
+                # left its payload resident — unbounded, never evicted, and
+                # holding content that was never on disk. Open first; only a
+                # write we are actually going to perform may touch shared state.
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                with open(deck_path, "w", encoding="utf-8") as f:
+                # Open symlink-proof and write through THAT descriptor. Opening by
+                # path here is what let a racing symlink swap redirect the write
+                # outside the served folder (see _open_deck_fd). O_CREAT keeps
+                # save-as-new working; O_NOFOLLOW refuses an existing symlink.
+                try:
+                    fd = self._open_deck_fd(srv.folder_path, deck_name, write=True)
+                except (ValueError, OSError):
+                    self.send_error(403, "Access denied")
+                    return
+                with os.fdopen(fd, "w", encoding="utf-8") as f:  # fdopen owns the fd
                     json.dump(deck, f, ensure_ascii=False, indent=2)
+                srv.set_deck_data(deck_name, deck)  # now it matches what is on disk
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
@@ -840,10 +951,27 @@ class FileWatcher:
     def ignore_next(self, seconds=1.5):
         self._ignore_until = time.time() + seconds
 
+    # A watched path lives inside the served folder, so a local process can
+    # replace it with a symlink to a fifo (a blocking open hangs this thread) or
+    # to /dev/zero (an unbounded read exhausts memory). This hash is only used for
+    # change detection — the content actually served is re-read through
+    # _open_deck_fd — so it needs the same open discipline, plus a size cap.
+    _HASH_MAX_BYTES = 64 * 1024 * 1024
+
     def _file_hash(self):
         try:
-            with open(self.path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
+            flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+            fd = os.open(self.path, flags)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    return None
+                with os.fdopen(fd, "rb") as f:  # fdopen takes ownership
+                    fd = None
+                    return hashlib.sha256(f.read(self._HASH_MAX_BYTES)).hexdigest()
+            finally:
+                if fd is not None:
+                    os.close(fd)
         except Exception:
             return ""
 
@@ -896,8 +1024,15 @@ class VelaLocalServer:
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
-        # Always folder mode — if a file is passed, use its parent directory
-        abs_path = os.path.abspath(path)
+        # Always folder mode — if a file is passed, use its parent directory.
+        # SECURITY: resolve the served root ONCE, here, with realpath rather than
+        # abspath. O_NOFOLLOW in _open_deck_fd() refuses a symlinked LEAF, but it
+        # cannot protect a parent component: if the root itself stayed a symlink it
+        # would be re-resolved on every request, and a local process could re-point
+        # it between the containment check and the open to redirect reads and
+        # writes into another directory. Pinning the resolved root closes that
+        # window for every path derived from it.
+        abs_path = os.path.realpath(path)
         if os.path.isfile(abs_path):
             self.folder_path = os.path.dirname(abs_path)
         else:
@@ -909,6 +1044,11 @@ class VelaLocalServer:
         self._lock = threading.Lock()
 
     # ── Per-deck state management (folder mode) ──────────────────────
+
+    def peek_tracker(self, deck_name):
+        """Return an existing tracker, or None. Never allocates."""
+        with self._lock:
+            return self._deck_trackers.get(deck_name)
 
     def get_tracker(self, deck_name):
         with self._lock:
@@ -939,18 +1079,17 @@ class VelaLocalServer:
 
             def on_change(name=deck_name):
                 try:
-                    # Re-validate folder containment on every re-read. The watched
-                    # path may resolve differently than when the watcher was armed,
-                    # so apply the same realpath guard the HTTP read/write paths use
-                    # (_safe_deck_path) instead of a bare open() — keeps this read
-                    # path consistent with the rest of the server.
+                    # Re-open through the shared symlink-proof descriptor on every
+                    # re-read. The watched path may resolve differently than when the
+                    # watcher was armed, and this fires on filesystem events an
+                    # attacker can trigger — so it needs the same atomic guarantee as
+                    # the HTTP routes, not just a realpath check followed by open().
                     try:
-                        fpath = VelaHTTPHandler._safe_deck_path(self.folder_path, name)
-                    except ValueError:
+                        fd = VelaHTTPHandler._open_deck_fd(self.folder_path, name)
+                    except (ValueError, OSError):
                         print(f"[sync] {name} no longer resolves inside the folder — skipping")
                         return
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        new_data = json.load(f)
+                    new_data = VelaHTTPHandler._read_deck_json(fd)  # bounded
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
                     print(f"[sync] {name} changed → pushed to browser")
@@ -1048,10 +1187,14 @@ class VelaLocalServer:
 
         return html
 
-    def _build_html_for_deck(self, deck_path, deck_name):
-        """Build the Vela app HTML for a specific deck file (folder mode)."""
-        with open(deck_path, "r", encoding="utf-8") as f:
-            deck_data = self._normalize_deck(json.load(f))
+    def _build_html_for_deck(self, raw_deck, deck_name):
+        """Build the Vela app HTML for a deck already read from disk (folder mode).
+
+        Takes the PARSED deck rather than a path: the caller reads it through
+        _open_deck_fd()'s symlink-proof descriptor, so this must never re-open by
+        path (that would resolve the leaf again and reopen the TOCTOU window).
+        """
+        deck_data = self._normalize_deck(raw_deck)
 
         self.set_deck_data(deck_name, deck_data)
         self._ensure_watcher(deck_name)
@@ -1080,11 +1223,17 @@ class VelaLocalServer:
 
     def _load_vendor_files(self):
         self._vendor_available = False
-        search_dirs = [
-            self.folder_path,
-            os.getcwd(),
-            os.path.dirname(os.path.dirname(SKILL_DIR)),
-        ]
+        # SECURITY: only ever load executable vendor assets from the trusted
+        # install root. This previously searched the served folder and the launch
+        # cwd first — both directories the threat model treats as attacker-
+        # writable — and whatever it found was served at /vendor/... as
+        # application/javascript under a CSP whose script-src includes 'self'. A
+        # planted node_modules therefore ran as a first-class page script with
+        # full same-origin access, bypassing every deck sanitizer entirely: no
+        # symlink, no race, just a regular file in a planted directory. The old
+        # realpath check only prevented a symlink escaping node_modules; it said
+        # nothing about whether that node_modules could be trusted at all.
+        search_dirs = [os.path.dirname(os.path.dirname(SKILL_DIR))]
         vendor_map = {
             "/vendor/babel.min.js": ("@babel/standalone/babel.min.js", "application/javascript"),
         }
@@ -1123,10 +1272,16 @@ class VelaLocalServer:
         runtime_path = self._runtime_path()
         killed = False
         try:
-            with open(runtime_path, encoding="utf-8") as f:
-                info = json.load(f)
-            stale_pid = info.get("pid")
-            if stale_pid and info.get("port") == self.port:
+            info = self._read_runtime_info(runtime_path)
+            stale_pid = info and info["pid"]
+            # Apply the SAME verification as _cleanup_stale_server(). That path
+            # checks the PID is a live Python process actually bound to the port
+            # before signalling it; this one did not, so a runtime file naming
+            # any PID could direct a SIGKILL at an unrelated process. The two
+            # paths read the same attacker-influenced file and must agree.
+            if (stale_pid and info.get("port") == self.port
+                    and self._is_python_process(stale_pid)
+                    and self._pid_holds_port(stale_pid, self.port)):
                 os.kill(stale_pid, 9)
                 killed = True
                 print(f"  [port]   Killed stale PID {stale_pid}")
@@ -1274,14 +1429,12 @@ class VelaLocalServer:
         confirmed to be a Vela server on our port, kill it.
         Must run BEFORE _write_runtime_info."""
         rpath = self._runtime_path()
-        try:
-            with open(rpath, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return  # no file or corrupt — nothing to clean
+        info = self._read_runtime_info(rpath)
+        if not info:
+            return  # missing, corrupt, or not a plain file — nothing to clean
 
-        stale_pid = info.get("pid")
-        stale_port = info.get("port")
+        stale_pid = info["pid"]
+        stale_port = info["port"]
         if not stale_pid:
             return
 
@@ -1309,6 +1462,35 @@ class VelaLocalServer:
             time.sleep(0.5)
             self._remove_runtime_files()
 
+    @staticmethod
+    def _read_runtime_info(rpath):
+        """Read .vela.env safely, or return None.
+
+        The WRITE path was hardened to refuse a planted symlink; these readers
+        were left on a plain open(). They run before the socket binds, in a
+        directory the threat model treats as attacker-writable, so a planted
+        entry could hang the start-up (fifo), exhaust memory (/dev/zero), or
+        crash it with values of the wrong type. Same open discipline as every
+        other read, plus coercion of the two fields actually used.
+        """
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
+        try:
+            fd = os.open(rpath, flags)
+        except OSError:
+            return None
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                return None
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                info = json.loads(f.read(64 * 1024))
+            if not isinstance(info, dict):
+                return None
+            return {"pid": int(info.get("pid")), "port": int(info.get("port"))}
+        except (OSError, ValueError, TypeError, OverflowError):
+            return None
+
     def _write_runtime_info(self):
         """Write .vela.env with auth token, port, pid.
         Mode 0o600 ensures only the current user can read the token."""
@@ -1321,16 +1503,42 @@ class VelaLocalServer:
         if not self._no_auth:
             info["token"] = self._auth_token
         rpath = self._runtime_path()
+        # SECURITY: this file carries the auth token, and it is written into the
+        # launch cwd — which for the usual `serve.py .` IS the served folder, so
+        # the same local process that plants hostile decks can pre-plant this name.
+        # Opening it O_CREAT|O_TRUNC without O_NOFOLLOW followed a planted symlink:
+        # it truncated whatever the link pointed at and wrote the token into it.
+        # Remove any existing entry (unlink acts on the link itself, never its
+        # target) and then create EXCLUSIVELY: O_CREAT|O_EXCL fails on an existing
+        # path including a symlink, so the file we write is always one we just
+        # made, owned by us, at mode 0600. No O_TRUNC — there is nothing to
+        # truncate, and a refused open must never destroy anything.
         try:
-            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.unlink(rpath)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"  [auth]   WARNING: Could not replace runtime file: {e}")
+            return
+        try:
+            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:
+            # Lost a race to recreate the name, or it reappeared as a symlink.
+            # Fail closed: never write the token to a path we did not create.
+            print(f"  [auth]   WARNING: Could not write runtime file safely: {e}")
+            return
+        try:
+            actual = os.fstat(fd).st_mode & 0o777  # from the fd we own, not a path
             with os.fdopen(fd, "w") as f:
                 json.dump(info, f, indent=2)
-            actual = os.stat(rpath).st_mode & 0o777
-            if actual != 0o600 and not self._no_auth:
-                print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
-                print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
         except OSError as e:
+            os.close(fd)
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        if actual != 0o600 and not self._no_auth:
+            print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
+            print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
 
     def _remove_runtime_files(self):
         """Remove runtime files (.vela.env, .vela.pid)."""
