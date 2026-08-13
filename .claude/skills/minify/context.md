@@ -320,11 +320,25 @@ slides SKILL.md) average ~1.7% — genuinely near their compressibility
 floor, confirmed independently by 2 separate agents per file across
 conservative and (for some) aggressive attempts.
 
-**Reported to user**: flagged the split and asked them to choose between
-excluding the near-0% policy files from the ">=20% average" gate (vs.
-keeping them as separate zero-upside compliance-only eval cases) or
-relaxing the target. Awaiting their call before locking the final eval
-set and moving to the harness.
+**User decision (2026-08-13): "Relax the 20% target to match the honest
+average."** ~11.5% average across the 8-file eval set is accepted as the
+final, honest number for this repo's already-dense instruction files.
+No further minify-tuning effort on these 8 files. Eval set is LOCKED:
+
+| File | Baseline | Minified (best candidate) | Reduction |
+|---|---|---|---|
+| CLAUDE.md | CLAUDE.md | CLAUDE.min.md | 4.7% |
+| skills/vela-slides/SKILL.md | orig | SKILL.min.md | 1.5% |
+| .claude/skills/vela-secure-coding/SKILL.md | orig | SKILL.min.md | 0.5% |
+| .claude/skills/hyper-sprint/SKILL.md | orig | SKILL.min.md | 0.2% |
+| docs/ARCHITECTURE.md | orig | ARCHITECTURE.min.v2.md | 22.8% |
+| docs/SCREENSHOTS.md | orig | SCREENSHOTS.min.md | 8.2% |
+| skills/vela-slides/references/block-schema.md | orig | block-schema.min.v2.md | 31.5% |
+| skills/vela-slides/references/design-patterns.md | orig | design-patterns.min.v2.md | 22.3% |
+
+Note: for the 4 files with both a v1 and v2 candidate, the harness
+should use the v2 (best) file as "the minified variant" — v1s stay in
+repo as intermediate data/history, not part of the eval pairs.
 
 ## Next action
 
