@@ -201,6 +201,31 @@ uiSuite("SVG Sanitizer (XSS)", [
       return !covered && !/overflow/i.test(host.innerHTML) && rendered;
     } finally { sib.remove(); host.remove(); }
   }},
+  { name: "SECURITY: deck SVG cannot break out of foreign content into live HTML", fn: async () => {
+    // A breakout makes the HTML parser leave foreign-content mode, so the rest
+    // re-parses as live HTML — a real anchor that navigates without going through
+    // openExternalLink, and boxes with no SVG viewport clip. Assert on the
+    // NAMESPACE of the rendered result, which is what actually distinguishes it.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg"><font color="a">' +
+        '<a href="https://attacker.invalid/steal" style="display:block;width:960px;height:500px">x</a></font></svg>');
+      const foreign = Array.from(host.querySelectorAll("*")).filter((el) => el.namespaceURI !== "http://www.w3.org/2000/svg");
+      const noLiveAnchor = !host.querySelector('a[href^="https://attacker"]');
+      return foreign.length === 0 && noLiveAnchor;
+    } finally { host.remove(); }
+  }},
+  { name: "SVG realistic diagram preserved and wholly SVG-namespaced", fn: async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup('<defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/></linearGradient><marker id="m" overflow="visible"><path d="M0,-5L10,0L0,5"/></marker></defs><g transform="translate(4,4)"><rect width="40" height="20" fill="url(#g)"/><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#m)"/></g>');
+      const allSvg = Array.from(host.querySelectorAll("*")).every((el) => el.namespaceURI === "http://www.w3.org/2000/svg");
+      return allSvg && !!host.querySelector("marker") && !!host.querySelector("g[transform]");
+    } finally { host.remove(); }
+  }},
   { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
     // transform on the BOUNDARY <svg> relocates the box and its hit-testing while
     // painting nothing — deck content silently takes clicks meant for a neighbour.

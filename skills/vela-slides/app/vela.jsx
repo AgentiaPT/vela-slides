@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.46";
+const VELA_VERSION = "13.47";
 const VELA_CHANGELOG = [
+  { v: "13.47", d: ["security: closed a markup-parsing escape in the deck SVG sanitizer that could re-enter an HTML parsing context", "security: added an independent namespace invariant on the sanitizer output as a class-level backstop", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },
@@ -560,9 +561,20 @@ const SVG_ALLOWED_TAGS = new Set([
   "marker", "mask", "clippath", "pattern", "filter",
   // shapes
   "circle", "ellipse", "line", "path", "polygon", "polyline", "rect",
-  // text/font (font/glyph/hkern/vkern + tref are deprecated but legitimate; no XSS surface)
+  // text/font (glyph/hkern/vkern + tref are deprecated but legitimate; no XSS surface)
+  // SECURITY: <font> is deliberately absent. Per the HTML parsing spec it is a
+  // FOREIGN-CONTENT BREAKOUT token when it carries color/face/size: the HTML
+  // parser pops the <svg> off the open-element stack and parses the rest in HTML
+  // insertion mode. Everything after it then re-parses as HTML — an ordinary <a>
+  // becomes a real anchor that navigates without passing openExternalLink, and an
+  // <image> aliases to <img>; worse, the escaping content is an HTML box with no
+  // SVG viewport clip and no `svg` tag, so neither the viewport nor the
+  // boundary-element rule applies to it. It is a deprecated SVG 1.1 font element
+  // that no real deck emits, so it is dropped outright rather than
+  // attribute-filtered. The namespace check in outputIsClean is the independent
+  // backstop for any other construct with the same effect. (v13.46)
   "text", "tspan", "textpath", "tref", "altglyph", "altglyphdef", "altglyphitem",
-  "glyph", "glyphref", "font", "hkern", "vkern",
+  "glyph", "glyphref", "hkern", "vkern",
   // gradients / paints
   "lineargradient", "radialgradient", "stop",
   // filter primitives (the `fe*` family — purely declarative pixel ops)
@@ -885,9 +897,22 @@ function sanitizeSvgMarkup(raw) {
     // parser quirk, so no single missed element reaches the sink live. (v13.19)
     const outputIsClean = (str) => {
       if (!str) return true;
-      const d = new DOMParser().parseFromString(`<div>${str}</div>`, "text/html");
-      for (const el of d.querySelectorAll("*")) {
+      const d = new DOMParser().parseFromString(`<div id="vela-out">${str}</div>`, "text/html");
+      const host = d.getElementById("vela-out");
+      if (!host) return false;
+      for (const el of host.querySelectorAll("*")) {
         if ((el.localName || "").toLowerCase() === "script") return false;
+        // NAMESPACE INVARIANT (v13.46): we only ever emit an <svg> and SVG
+        // descendants, so after this HTML re-parse every element must still be in
+        // the SVG namespace. An element in the HTML namespace means the parser
+        // LEFT foreign-content mode part-way through — a breakout — and everything
+        // past that point is live HTML: anchors that navigate without going
+        // through openExternalLink, tags that alias to fetching HTML elements, and
+        // boxes with neither the SVG viewport clip nor an `svg` tag for the
+        // boundary rule to key on. Rejecting the whole payload here catches the
+        // class, not just the one token that can trigger it, and it is checked on
+        // the SAME string the sink receives.
+        if (el.namespaceURI !== "http://www.w3.org/2000/svg") return false;
         for (const a of el.attributes) {
           if (a.name.toLowerCase().startsWith("on")) return false;
         }
@@ -11928,6 +11953,31 @@ uiSuite("SVG Sanitizer (XSS)", [
       const rendered = /<rect/i.test(host.innerHTML);
       return !covered && !/overflow/i.test(host.innerHTML) && rendered;
     } finally { sib.remove(); host.remove(); }
+  }},
+  { name: "SECURITY: deck SVG cannot break out of foreign content into live HTML", fn: async () => {
+    // A breakout makes the HTML parser leave foreign-content mode, so the rest
+    // re-parses as live HTML — a real anchor that navigates without going through
+    // openExternalLink, and boxes with no SVG viewport clip. Assert on the
+    // NAMESPACE of the rendered result, which is what actually distinguishes it.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup(
+        '<svg xmlns="http://www.w3.org/2000/svg"><font color="a">' +
+        '<a href="https://attacker.invalid/steal" style="display:block;width:960px;height:500px">x</a></font></svg>');
+      const foreign = Array.from(host.querySelectorAll("*")).filter((el) => el.namespaceURI !== "http://www.w3.org/2000/svg");
+      const noLiveAnchor = !host.querySelector('a[href^="https://attacker"]');
+      return foreign.length === 0 && noLiveAnchor;
+    } finally { host.remove(); }
+  }},
+  { name: "SVG realistic diagram preserved and wholly SVG-namespaced", fn: async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      host.innerHTML = sanitizeSvgMarkup('<defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/></linearGradient><marker id="m" overflow="visible"><path d="M0,-5L10,0L0,5"/></marker></defs><g transform="translate(4,4)"><rect width="40" height="20" fill="url(#g)"/><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#m)"/></g>');
+      const allSvg = Array.from(host.querySelectorAll("*")).every((el) => el.namespaceURI === "http://www.w3.org/2000/svg");
+      return allSvg && !!host.querySelector("marker") && !!host.querySelector("g[transform]");
+    } finally { host.remove(); }
   }},
   { name: "SECURITY: deck SVG cannot become an invisible click interceptor over sibling content", fn: async () => {
     // transform on the BOUNDARY <svg> relocates the box and its hit-testing while

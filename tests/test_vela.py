@@ -376,6 +376,18 @@ def test_security():
     else:
         fail("SVG presentation-attr URL filter",
              "fill/filter/mask/marker/clip-path/cursor values must pass isSvgStyleSafe; style= must pass isSvgInlineStyleSafe")
+    # (2b) v13.46: the output backstop asserts a NAMESPACE invariant — everything we
+    #      emit is SVG, so an element that re-parses into the HTML namespace means
+    #      the parser left foreign-content mode (a breakout) and the rest is live
+    #      HTML. This is the class-level net behind the tag allowlist; both layers
+    #      are independent, so each is gated separately (the allowlist half is
+    #      asserted behaviorally in test_svg_mxss.cjs).
+    if 'el.namespaceURI !== "http://www.w3.org/2000/svg"' in all_jsx and "outputIsClean" in all_jsx:
+        ok("sanitizeSvgMarkup output backstop enforces the SVG-namespace invariant")
+    else:
+        fail("SVG namespace backstop",
+             "outputIsClean must reject an HTML-namespace element in the re-parsed output")
+
     # (3) non-anchor href/xlink:href is #fragment-only; <a> keeps the scheme allowlist.
     if 'name === "href" && tag === "a"' in all_jsx:
         ok("SVG href policy split: <a> click-nav allowlist vs #fragment-only auto-load refs")

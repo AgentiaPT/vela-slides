@@ -106,7 +106,7 @@ const vm = require("vm");
 const sandbox = { ...ctx, module: { exports: {} }, exports: {}, require };
 vm.createContext(sandbox);
 vm.runInContext(harness, sandbox);
-const { sanitizeSvgMarkup, isSvgStyleSafe, SVG_STYLE_PROPS } = sandbox.module.exports;
+const { sanitizeSvgMarkup, isSvgStyleSafe, SVG_STYLE_PROPS, SVG_ALLOWED_TAGS } = sandbox.module.exports;
 
 // Harness liveness check. sanitizeSvgMarkup swallows every exception and returns
 // "" — correct at runtime (fail closed), but it means a harness that forgot to
@@ -524,6 +524,47 @@ runNoVar("bare unquoted scheme in an inline-style value",
   const dropped = mustAllow.filter((v) => !isSvgStyleSafe(v));
   if (dropped.length === 0) { passed++; console.log("  ✅ real SVG paint/transform/filter functions still accepted (no false reject)"); }
   else { failed++; console.log("  ❌ legitimate CSS function rejected: " + JSON.stringify(dropped)); }
+}
+// FOREIGN-CONTENT BREAKOUT. Certain tokens make the HTML parser pop the <svg>
+// off the open-element stack and continue in HTML insertion mode, so everything
+// after them re-parses as live HTML: an <a> becomes a real anchor that navigates
+// without passing openExternalLink, tags alias to fetching HTML elements, and the
+// escaping content is an HTML box with neither the SVG viewport clip nor an `svg`
+// tag for the boundary rule to key on. Asserted on the NAMESPACE of the re-parsed
+// output, which is the property that actually distinguishes a breakout.
+{
+  const payloads = [
+    '<svg xmlns="http://www.w3.org/2000/svg"><font color="a"><a href="https://attacker.invalid/steal" style="display:block;width:960px;height:500px">x</a></font></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><font face="a"><g style="width:900px;transform:translate(0,-360px)"> </g></font></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><font size="3"><image href="#a"/></font></svg>',
+    '<g><font color="a"><rect width="9" height="9"/></font></g>',
+  ];
+  const escaped = payloads.filter((raw) => {
+    const host = document.createElement("div");
+    host.innerHTML = sanitizeSvgMarkup(raw);
+    return Array.from(host.querySelectorAll("*")).some((el) => el.namespaceURI !== "http://www.w3.org/2000/svg");
+  });
+  if (escaped.length === 0) { passed++; console.log("  ✅ foreign-content breakout neutralized (output stays wholly in the SVG namespace)"); }
+  else { failed++; console.log("  ❌ breakout survived: " + JSON.stringify(escaped.map((r) => sanitizeSvgMarkup(r)))); }
+}
+// The two layers are independent — either alone closes the hole — so each needs
+// its own gate or a revert of one would go unnoticed. Layer 1: the breakout token
+// must not be in the tag allowlist.
+{
+  const breakoutTags = ["font", "b", "big", "div", "span", "p", "table", "img", "embed", "meta", "head", "body"];
+  const present = breakoutTags.filter((t) => SVG_ALLOWED_TAGS.has(t));
+  if (present.length === 0) { passed++; console.log("  ✅ no HTML foreign-content breakout token is in the tag allowlist"); }
+  else { failed++; console.log("  ❌ breakout token allowlisted: " + JSON.stringify(present)); }
+}
+// …and the same invariant asserted on a REAL diagram, so the check above cannot
+// be passing merely because everything is being dropped.
+{
+  const out = sanitizeSvgMarkup('<defs><linearGradient id="g" gradientTransform="rotate(20)"><stop offset="0" stop-color="#f00"/></linearGradient><marker id="m" overflow="visible"><path d="M0,-5L10,0L0,5"/></marker><filter id="f"><feGaussianBlur stdDeviation="2"/></filter></defs><g transform="translate(4,4)" filter="url(#f)"><rect width="40" height="20" fill="url(#g)"/><text x="2" y="14" style="fill:#fff;font-size:11px" textLength="30">hi</text><line x1="0" y1="0" x2="9" y2="9" marker-end="url(#m)"/></g>');
+  const host = document.createElement("div"); host.innerHTML = out;
+  const allSvg = Array.from(host.querySelectorAll("*")).every((el) => el.namespaceURI === "http://www.w3.org/2000/svg");
+  const intact = /url\(#g\)/.test(out) && /marker-end="url\(#m\)"/.test(out) && /transform="translate\(4,4\)"/.test(out) && /gradientTransform/.test(out);
+  if (allSvg && intact) { passed++; console.log("  ✅ realistic diagram preserved and wholly SVG-namespaced (backstop has no false positive)"); }
+  else { failed++; console.log("  ❌ realistic diagram — allSvg=" + allSvg + " intact=" + intact + " out=" + out); }
 }
 // UI-integrity, boundary element: the outer <svg> establishes the clip that keeps
 // deck content inside its block, so a property applied to THAT element acts
