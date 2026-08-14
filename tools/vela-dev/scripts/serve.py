@@ -1970,19 +1970,28 @@ class VelaLocalServer:
 
     @staticmethod
     def _process_is_vela(pid):
-        """True only if `pid`'s command line names this server script.
+        """True only if `pid` is running THIS script, identified by PATH.
 
-        SECURITY: "a live Python process holding the port" is NOT "a previous
-        Vela server" — a user's Jupyter, Flask or Django on the same port fits
-        that description exactly, and the caller SIGKILLs whatever it accepts.
-        Require positive identity before signalling anything."""
-        me = os.path.basename(__file__)
+        SECURITY: this decision ends in SIGKILL, and `serve.py` is one of the
+        most common names a dev server can have — matching on the NAME alone
+        adopts an unrelated project's server as ours and kills it, which is the
+        very thing this check exists to prevent. So resolve each candidate
+        argument against the TARGET's own working directory (its cwd is not
+        ours) and require it to name the same file this process is running.
+        Paths are compared rather than inodes so that editing the script, as
+        happens constantly in development, does not make a live server
+        unrecognisable."""
+        me = os.path.realpath(os.path.abspath(__file__))
+        base = os.path.basename(__file__)
 
-        def names_this_script(argv):
-            # Compare BASENAMES exactly. A substring test would match
-            # "test_serve.py", "myserve.py" or any path merely containing the
-            # name — and this decision ends in SIGKILL.
-            return any(os.path.basename(a) == me for a in argv if a)
+        def runs_this_script(argv, cwd):
+            for arg in argv:
+                if not arg or os.path.basename(arg) != base:
+                    continue
+                cand = arg if os.path.isabs(arg) or not cwd else os.path.join(cwd, arg)
+                if os.path.realpath(cand) == me:
+                    return True
+            return False
 
         try:
             if sys.platform == "win32":
@@ -1990,17 +1999,22 @@ class VelaLocalServer:
                     ["wmic", "process", "where", f"processid={int(pid)}",
                      "get", "commandline", "/format:list"],
                     capture_output=True, text=True, timeout=5)
-                return names_this_script((r.stdout or "").replace('"', " ").split())
+                # No cwd available here, so only an absolute match can succeed.
+                return runs_this_script((r.stdout or "").replace('"', " ").split(), None)
             try:
                 with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
-                    # procfs gives the real argv, NUL-separated — no quoting to
-                    # guess at.
-                    return names_this_script(f.read().decode("utf-8", "replace").split("\0"))
+                    argv = f.read().decode("utf-8", "replace").split("\0")
             except FileNotFoundError:
                 # No procfs (macOS/BSD) — ask ps for the command line instead.
                 r = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="],
                                    capture_output=True, text=True, timeout=5)
-                return names_this_script((r.stdout or "").split())
+                argv = (r.stdout or "").split()
+                return runs_this_script(argv, None)
+            try:
+                cwd = os.readlink(f"/proc/{int(pid)}/cwd")
+            except OSError:
+                cwd = None
+            return runs_this_script(argv, cwd)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return False
 

@@ -871,6 +871,24 @@ class TestSecurity(FolderServerTestBase):
         self.assertFalse(self._server._is_our_stale_server(os.getpid(), self._port))
         self.assertFalse(self._server._process_is_vela(-1))
 
+    def test_a_different_projects_serve_py_is_not_ours(self):
+        # serve.py is one of the commonest dev-server filenames, so matching on
+        # the name alone would adopt someone else's server and SIGKILL it.
+        import subprocess
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        script = os.path.join(other, "serve.py")   # same NAME, different file
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("import time\ntime.sleep(30)\n")
+        proc = subprocess.Popen([sys.executable, script])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        time.sleep(0.3)
+        self.assertFalse(self._server._process_is_vela(proc.pid),
+                         "another project's serve.py was identified as ours")
+        # ...and the same run through the gate that decides whether to signal.
+        self.assertFalse(self._server._is_our_stale_server(proc.pid, self._port))
+
     def test_save_refuses_a_symlinked_deck_entry(self):
         # An atomic replace would silently destroy a link the user made, and the
         # read path already refuses one.
