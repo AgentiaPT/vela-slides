@@ -3342,13 +3342,40 @@ def test_study_notes():
     # A theme preset is copied into every slide that names it, and a turbo
     # colour entry into every block that indexes it — the same multiplier the
     # palette had, so the same cap applies to all three.
-    theme_deck = {"n": "d", "T": {"d": {"b": "y" * 5000}},
-                  "S": [{"t": "d"} for _ in range(50)]}
-    theme_out = json.dumps(expand_deck(copy.deepcopy(theme_deck)))
-    if len(theme_out) < 5000:
-        ok("theme preset values cannot amplify a deck")
+    # A preset is copied wholesale into every slide that names it, so the cost
+    # is keys x slides x value length. Capping the VALUE alone left the product
+    # unbounded, and a single-key sample passed against code that amplified
+    # thousands of times — so the shape tested here is many keys x many slides.
+    theme_deck = {"n": "d",
+                  "T": {"d": {f"k{i:04d}": "y" * 400 for i in range(400)}},
+                  "S": [{"t": "d"} for _ in range(400)]}
+    theme_in = len(json.dumps(theme_deck))
+    theme_out = len(json.dumps(expand_deck(copy.deepcopy(theme_deck))))
+    if theme_out < theme_in:
+        ok("theme presets cannot amplify a deck (keys x slides bounded)")
     else:
-        fail("theme preset amplification", f"{len(json.dumps(theme_deck))}B in -> {len(theme_out)}B out")
+        fail("theme preset amplification", f"{theme_in}B in -> {theme_out}B out")
+
+    # A non-string value must not sail past a string-shaped check and be copied
+    # into every slide either.
+    nonstr_deck = {"n": "d", "T": {"d": {"b": ["#fff"] * 2000}},
+                   "S": [{"t": "d"} for _ in range(200)]}
+    nonstr_out = json.dumps(expand_deck(copy.deepcopy(nonstr_deck)))
+    if len(nonstr_out) < len(json.dumps(nonstr_deck)):
+        ok("non-string theme values are dropped, not copied")
+    else:
+        fail("non-string theme value copied into slides", f"{len(nonstr_out)}B out")
+
+    # ...while the documented preset keys, including the NUMERIC padding, still
+    # reach the slide.
+    themed = {"n": "d", "T": {"d": {"b": "#0f172a", "c": "#e2e8f0", "a": "#3b82f6", "p": 48}},
+              "S": [{"t": "d"}]}
+    tslide = expand_deck(copy.deepcopy(themed))["lanes"][0]["items"][0]["slides"][0]
+    if (tslide.get("bg") == "#0f172a" and tslide.get("color") == "#e2e8f0"
+            and tslide.get("accent") == "#3b82f6" and tslide.get("padding") == 48):
+        ok("documented theme keys still resolve, padding included")
+    else:
+        fail("theme resolution changed", repr(tslide)[:100])
 
     # A real gradient, written as an alias, must still resolve (the cap clears
     # the app's own gradient ceiling).

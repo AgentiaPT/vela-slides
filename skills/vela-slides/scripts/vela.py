@@ -66,6 +66,27 @@ def _short_enough(v):
     """True if `v` is a colour-sized string we are willing to copy around."""
     return isinstance(v, str) and len(v.encode("utf-8", "surrogatepass")) <= MAX_PALETTE_VALUE
 
+
+def _theme_value_ok(v):
+    """True if `v` may be copied into every slide that names its theme.
+
+    A colour-sized string, or a plain number — padding is numeric, so a
+    string-only test would silently drop it from every themed deck. Numbers are
+    length-checked too: an integer can be arbitrarily long, and it would be
+    copied just like a string. bool is excluded (it is an int in Python and is
+    not a theme value).
+    """
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        try:
+            return len(repr(v)) <= 32
+        except ValueError:
+            # Converting an absurdly long integer to text raises rather than
+            # returning a long string. Refuse it instead of propagating.
+            return False
+    return _short_enough(v)
+
 # ── Helpers ────────────────────────────────────────────────────────────
 _json_mode = False
 
@@ -216,6 +237,12 @@ _SK_REV = {v: k for k, v in _SK.items()}
 _TK = {"b": "bg", "c": "color", "a": "accent", "p": "padding"}
 _TK_REV = {v: k for k, v in _TK.items()}
 
+# The only keys a theme preset may carry. compact_deck emits exactly _TK, so
+# nothing legitimate is lost — and the allowlist is what bounds expansion: every
+# preset key is copied into every slide naming the theme, so an open-ended key
+# set multiplies by slide count as well as by value length.
+_THEME_ALLOWED_KEYS = frozenset(list(_TK) + list(_TK.values()) + ["bgGradient", "g"])
+
 # Slide properties that come from theme (omit when compacting if they match)
 _THEME_PROPS = ["bg", "color", "accent", "padding"]
 
@@ -348,11 +375,14 @@ def expand_deck(compact):
     for name, preset in raw_themes.items():
         if not isinstance(preset, dict):
             continue
-        # Drop over-long values here for the same reason as the palette: a theme
-        # preset is copied into every slide that names it, so one long value is
-        # multiplied by the slide count.
+        # A preset is copied wholesale into every slide that names it, so BOTH
+        # its key count and its value lengths decide how much a deck expands —
+        # capping the value alone left the product unbounded. Keep only the
+        # known theme keys, and only values short enough to be colours.
+        # _short_enough is also the type check: a non-string here would sail
+        # past a "not a string OR short" test and be copied just the same.
         themes[name] = {k: v for k, v in preset.items()
-                        if not isinstance(v, str) or _short_enough(v)}
+                        if k in _THEME_ALLOWED_KEYS and _theme_value_ok(v)}
 
     # Build full deck with lanes structure
     title = compact.get("n", compact.get("deckTitle", "Untitled"))
