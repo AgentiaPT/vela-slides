@@ -67,15 +67,48 @@ def _short_enough(v):
     return isinstance(v, str) and len(v.encode("utf-8", "surrogatepass")) <= MAX_PALETTE_VALUE
 
 
+def _group_slides(group):
+    """Slides of one group. ONE definition: the expander accepts either
+    spelling, so a counter that knew only `S` projected no cost at all for a
+    deck that used `slides`."""
+    if not isinstance(group, dict):
+        return []
+    slides = group.get("S", group.get("slides", []))
+    return slides if isinstance(slides, list) else []
+
+
 def _count_slides(compact):
-    """Slides in a compact deck, flat (`S`) or grouped (`G`)."""
-    n = len(compact.get("S") or []) if isinstance(compact.get("S"), list) else 0
+    """Slides in a compact deck, flat (`S`/`slides`) or grouped (`G`)."""
+    flat = compact.get("S", compact.get("slides", []))
+    n = len(flat) if isinstance(flat, list) else 0
     groups = compact.get("G")
     if isinstance(groups, list):
-        for g in groups:
-            if isinstance(g, dict) and isinstance(g.get("S"), list):
-                n += len(g["S"])
+        n += sum(len(_group_slides(g)) for g in groups)
     return n
+
+
+def _byte_len(s):
+    return len(s.encode("utf-8", "surrogatepass"))
+
+
+def _alias_growth(obj, alias_re, palette, text_keys, skip=False):
+    """Bytes the one-pass alias substitution will ADD to `obj`.
+
+    Measured by walking the parsed tree with the SAME expression that does the
+    substituting: counting occurrences in the serialised JSON instead missed any
+    alias containing a character JSON escapes, projecting no growth at all for
+    it. Bytes, not code points, because that is what the budget is in.
+    """
+    if isinstance(obj, str):
+        if skip:
+            return 0
+        return sum(_byte_len(palette[m]) - _byte_len(m) for m in alias_re.findall(obj))
+    if isinstance(obj, dict):
+        return sum(_alias_growth(v, alias_re, palette, text_keys, k in text_keys)
+                   for k, v in obj.items())
+    if isinstance(obj, list):
+        return sum(_alias_growth(v, alias_re, palette, text_keys, skip) for v in obj)
+    return 0
 
 
 def _reject_if_oversized(current, added, what):
@@ -366,13 +399,6 @@ def expand_deck(compact):
                     pass
 
         if palette:
-            # With one-pass substitution each occurrence is replaced exactly
-            # once, so the growth is countable before any of it is built.
-            _raw = json.dumps(compact, ensure_ascii=False)
-            _growth = sum(_raw.count(a) * max(0, len(v) - len(a))
-                          for a, v in palette.items())
-            _reject_if_oversized(len(_raw), _growth, "colour aliases")
-
             # Walk the JSON tree and replace $aliases in string values.
             # Skip known text-content keys to avoid corrupting prose.
             _TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
@@ -391,6 +417,15 @@ def expand_deck(compact):
             # transitive behaviour this removes.
             _alias_re = re.compile("|".join(
                 re.escape(a) for a in sorted(palette, key=len, reverse=True)))
+
+            # Project with the same expression, over the same tree, before any
+            # of the result is built. One walk — the previous form rescanned the
+            # whole deck once per alias, which was itself a way to burn minutes
+            # of CPU on a file nothing had yet agreed to expand.
+            _reject_if_oversized(
+                _byte_len(json.dumps(compact, ensure_ascii=False)),
+                _alias_growth(compact, _alias_re, palette, _TEXT_KEYS),
+                "colour aliases")
 
             def _resolve(obj, skip=False):
                 if isinstance(obj, str) and not skip:
@@ -421,7 +456,7 @@ def expand_deck(compact):
     if themes:
         # Every kept key is copied into every slide that names the preset, so
         # the cost is knowable from the preset and the slide count alone.
-        _worst = max(len(json.dumps(t, ensure_ascii=False)) for t in themes.values())
+        _worst = max(_byte_len(json.dumps(t, ensure_ascii=False)) for t in themes.values())
         _reject_if_oversized(0, _worst * _count_slides(compact), "theme presets")
 
     # Build full deck with lanes structure
@@ -1056,6 +1091,17 @@ def unturbo_deck(data):
     lanes_data = data[1]
     palette = data[2] if len(data) > 2 else []
 
+    # Same budget as the compact path. This decoder copies a palette entry into
+    # every index that names it, so it is the same amplifier — leaving it out
+    # meant a deck only had to be written in the other format to skip the check.
+    if palette:
+        _raw = json.dumps(data, ensure_ascii=False)
+        _widest = max((_byte_len(v) for v in palette if isinstance(v, str)), default=0)
+        # Every integer in the structure is a potential palette index, which is
+        # the cheapest sound over-estimate of how many copies can be demanded.
+        _slots = sum(1 for tok in re.finditer(r"-?\d+", _raw))
+        _reject_if_oversized(_byte_len(_raw), _slots * _widest, "turbo colours")
+
     def decode_slide(s):
         def _cv(idx):
             return _palette_value(palette, idx)
@@ -1103,10 +1149,17 @@ def unturbo_deck(data):
 def _load_full(path):
     """Load a deck JSON and auto-expand if compact or turbo."""
     deck = _load_deck(path)
-    if _is_turbo(deck):
-        return unturbo_deck(deck)
-    if _is_compact(deck):
-        return expand_deck(deck)
+    try:
+        if _is_turbo(deck):
+            return unturbo_deck(deck)
+        if _is_compact(deck):
+            return expand_deck(deck)
+    except ValueError as e:
+        # A deck refused by the expansion budget is bad input, not a crash —
+        # report it the way every other rejected deck is reported instead of
+        # printing a traceback from a shipped tool.
+        _err(EXIT_VALIDATION, str(e),
+             suggestions=["Split the deck, or shorten its palette/theme values"])
     return deck
 
 

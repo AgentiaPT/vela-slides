@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.50";
+const VELA_VERSION = "13.51";
 const VELA_CHANGELOG = [
+  { v: "13.51", d: ["security: the expansion budget is now measured on the parsed deck in bytes, closing ways a deck could be built despite exceeding it", "security: the turbo format is budgeted like the compact one", "fix: a refused deck reports a validation error instead of a traceback"] },
   { v: "13.50", d: ["security: a deck that would expand past the size budget is now refused before it is built, instead of after the memory was spent", "security: the local server no longer keeps a deck it went on to refuse", "fix: non-finite numbers in a theme preset are dropped"] },
   { v: "13.49", d: ["security: theme presets are limited to the known theme keys, bounding expansion by key count as well as value length", "security: non-string and over-long theme values are dropped rather than copied into every slide", "fix: numeric padding in a theme preset still applies"] },
   { v: "13.48", d: ["security: theme presets and turbo colour entries are now length-capped like palette values", "security: the colour-value limit is measured in bytes and raised to clear the gradient ceiling, so long gradients still resolve", "internal: one shared turbo colour lookup instead of two copies"] },

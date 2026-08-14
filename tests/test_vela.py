@@ -3398,6 +3398,35 @@ def test_study_notes():
     except ValueError:
         ok("alias growth is projected from the input, not discovered after")
 
+    # The budget must be projected with the same instrument that does the
+    # cutting: an alias carrying a character JSON escapes never appears in the
+    # serialised text, so counting occurrences there projected no cost at all.
+    esc_deck = {"n": "d", "C": {'$"': "#" + "z" * 500},
+                "S": [{"b": '$"'} for _ in range(400000)]}
+    try:
+        expand_deck(copy.deepcopy(esc_deck))
+        fail("an alias hidden by JSON escaping bypassed the expansion budget")
+    except ValueError:
+        ok("alias growth is projected from the parsed deck, not its JSON text")
+
+    # ...and the turbo form of the same amplifier is budgeted too.
+    turbo_bomb = [ "d", [["L", [["I", [[f"s{i}", 0, "", 0, 0, 0, 0, 0, 0, []]
+                                        for i in range(200000)]]]]], ["#" + "y" * 500] ]
+    try:
+        unturbo_deck(copy.deepcopy(turbo_bomb))
+        fail("the turbo path expanded past the budget")
+    except ValueError:
+        ok("turbo colour expansion is budgeted like the compact path")
+
+    # A grouped deck spelling its slides the long way must be counted too.
+    grouped = {"n": "d", "T": {"d": {k: "y" * 500 for k in ("b", "c", "a", "bgGradient")}},
+               "G": [{"n": "g", "slides": [{"t": "d"} for _ in range(100000)]}]}
+    try:
+        expand_deck(copy.deepcopy(grouped))
+        fail("a grouped deck using the long slides key skipped the budget")
+    except ValueError:
+        ok("slide counting matches what the expander actually walks")
+
     # Non-finite numbers are not colours or paddings: they serialise as bare
     # NaN/Infinity, which a browser's JSON.parse refuses.
     nf = {"n": "d", "T": {"d": {"p": float("inf")}}, "S": [{"t": "d"}]}

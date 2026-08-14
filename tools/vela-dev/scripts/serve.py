@@ -1608,13 +1608,16 @@ class VelaLocalServer:
         """
         deck_data = self._normalize_deck(raw_deck)
 
-        # Build the page BEFORE recording the deck: _prepare_html is where an
-        # oversized deck is refused, and caching first would keep the very
-        # object we just rejected (and arm a watcher for it).
-        html = self._prepare_html(deck_data, deck_name)
-
-        self.set_deck_data(deck_name, deck_data)
+        # Arm the watcher against the file as read: its change baseline is taken
+        # when it starts, so arming it later leaves a window in which an edit is
+        # folded into the baseline and never reported.
         self._ensure_watcher(deck_name)
+
+        # ...but record the deck only AFTER the step that can refuse it —
+        # _prepare_html is where an oversized deck is rejected, and caching
+        # first kept the very object we had just refused.
+        html = self._prepare_html(deck_data, deck_name)
+        self.set_deck_data(deck_name, deck_data)
 
         # Patch sync URLs to include deck name for folder mode
         safe_name = quote(deck_name, safe="")
