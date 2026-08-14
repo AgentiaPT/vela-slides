@@ -124,17 +124,20 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
+          cp skills/vela-slides/app/vela.jsx "vela-slides-${TAG}.jsx"
           # Build the upload ZIP with the hardened packager, not a raw `zip -r`:
           # the test suite above imports the skill scripts and creates
           # skills/vela-slides/scripts/__pycache__, which `zip -r` would pack.
           # package-skill.py excludes __pycache__/*.pyc and skips symlinks.
           python3 tools/vela-dev/scripts/package-skill.py --output "vela-slides-skill-${TAG}.zip"
-          ls -lh vela-slides-skill-*.zip
+          ls -lh "vela-slides-${TAG}.jsx" "vela-slides-skill-${TAG}.zip"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: skill-zip
-          path: vela-slides-skill-*.zip
+          path: |
+            vela-slides-*.zip
+            vela-slides-*.jsx
           if-no-files-found: error
           retention-days: 14
 
@@ -182,22 +185,30 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          ls -lh *.zip
-          # `sha256sum` writes paths verbatim — keeping ZIPs and SHA256SUMS in
-          # the same dir means the file works with `sha256sum -c` after
-          # downloading both from the release page.
-          sha256sum *.zip > "SHA256SUMS-${TAG}.txt"
+          shopt -s nullglob
+          ASSETS=( *.zip *.jsx )
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
+          ls -lh "${ASSETS[@]}"
+          # `sha256sum` writes paths verbatim — keeping ZIPs and the raw JSX in
+          # the same dir means the manifest works after downloading from the
+          # release page.
+          sha256sum "${ASSETS[@]}" > "SHA256SUMS-${TAG}.txt"
           echo "--- SHA256SUMS-${TAG}.txt ---"
           cat "SHA256SUMS-${TAG}.txt"
 
       - name: Attest build provenance
-        # Produces a SLSA-compliant attestation binding each ZIP to the
+        # Produces a SLSA-compliant attestation binding each release asset to the
         # workflow run + commit that built it. Verifiable with `gh attestation
         # verify <file> --repo <owner>/<repo>`. SHA256SUMS itself is intentionally
         # excluded — it is a manifest of attested artefacts, not an artefact.
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: '*.zip'
+          subject-path: |
+            *.zip
+            *.jsx
 
       - name: Compose release notes
         env:
@@ -218,6 +229,10 @@ jobs:
               echo "1. Download \`vela-slides-skill-${TAG}.zip\` below"
               echo "2. Claude.ai → **Customize → Skills → + → Upload a skill**"
               echo "3. Upload the ZIP — done."
+              echo
+              echo "### Raw monolith"
+              echo
+              echo "Download \`vela-slides-${TAG}.jsx\` to grab the compiled monolith directly from the release page."
               echo
               echo "For Claude Code:"
               echo "\`\`\`bash"
@@ -247,10 +262,10 @@ jobs:
             fi
             echo "### Verification"
             echo
-            echo "All ZIPs are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
+            echo "All package files are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
             echo "\`\`\`bash"
             echo "sha256sum -c SHA256SUMS-${TAG}.txt"
-            echo "gh attestation verify <zip> --repo ${{ github.repository }}"
+            echo "gh attestation verify <zip-or-jsx> --repo ${{ github.repository }}"
             echo "\`\`\`"
           } > release-notes.md
           echo "--- release notes ---"
@@ -263,8 +278,13 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          gh release create "$TAG" \
-            *.zip "SHA256SUMS-${TAG}.txt" \
+          shopt -s nullglob
+          ASSETS=( *.zip *.jsx )
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
+          gh release create "$TAG" "${ASSETS[@]}" "SHA256SUMS-${TAG}.txt" \
             --repo "$REPO" \
             --title "Vela Slides ${VERSION}" \
             --notes-file release-notes.md
