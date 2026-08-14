@@ -3312,6 +3312,40 @@ def test_study_notes():
         fail("compact_deck preserves literal hex codes inside studyNotes.text",
              f"text after compact: {sn_in_compact.get('text', '') if sn_in_compact else None!r}")
 
+    # ── Palette expansion must not amplify ────────────────────────────
+    # A palette whose values name other aliases used to be re-scanned on every
+    # substitution, so each level multiplied the last: a few hundred bytes of
+    # deck could expand into gigabytes while the input-size cap saw nothing
+    # unusual. Expansion is one pass now, so depth cannot buy size.
+    def _chained_palette_deck(levels):
+        pal = {f"$L{i}": f"$L{i + 1}$L{i + 1}$L{i + 1}" for i in range(levels)}
+        pal[f"$L{levels}"] = "#3B82F6"
+        return {"n": "b", "C": pal, "S": [{"b": "$L0"}]}
+
+    sizes = [len(json.dumps(expand_deck(_chained_palette_deck(n)))) for n in (4, 12, 24)]
+    if max(sizes) - min(sizes) < 200:
+        ok("compact palette expansion does not grow with alias depth")
+    else:
+        fail("compact palette expansion amplifies", f"sizes at depth 4/12/24: {sizes}")
+
+    # ...while the documented behaviour (aliases name colour literals, longest
+    # alias wins, prose keys untouched) is unchanged.
+    pal_deck = {"n": "d", "C": {"$A": "#3B82F6", "$AB": "#111111"},
+                "S": [{"b": "$A", "c": "$AB", "x": "keep $A literal"}]}
+    pal_slide = expand_deck(copy.deepcopy(pal_deck))["lanes"][0]["items"][0]["slides"][0]
+    if (pal_slide.get("b") == "#3B82F6" and pal_slide.get("c") == "#111111"
+            and pal_slide.get("x") == "keep $A literal"):
+        ok("palette aliases still resolve, longest first, prose left alone")
+    else:
+        fail("palette alias resolution changed", repr(pal_slide))
+
+    long_deck = {"n": "d", "C": {"$A": "x" * 300}, "S": [{"b": "$A"}]}
+    long_slide = expand_deck(copy.deepcopy(long_deck))["lanes"][0]["items"][0]["slides"][0]
+    if long_slide.get("b") == "$A":
+        ok("over-long palette value is dropped, not expanded")
+    else:
+        fail("over-long palette value was expanded", repr(long_slide)[:80])
+
     # Round-trip back to full and compare
     expanded = expand_deck(copy.deepcopy(compact))
     sn_round = expanded.get("lanes", [{}])[0].get("items", [{}])[0].get("slides", [{}])[0].get("studyNotes")
