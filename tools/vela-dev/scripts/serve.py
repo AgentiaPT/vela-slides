@@ -409,6 +409,11 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
         # The replace below would silently destroy a link the user made, and the
         # read path already refuses one — same reasoning as the hard-link branch.
         raise PermissionError(f"Deck file is a link: {path}")
+    if dst is not None and not stat.S_ISREG(dst.st_mode):
+        # Anything that is not a plain file — fifo, socket, device node, or a
+        # Windows reparse point that does not report as a link — is not a deck.
+        # Without this the replace below destroys it and answers "saved".
+        raise PermissionError(f"Deck path is not a plain file: {path}")
     if dst is not None and stat.S_ISREG(dst.st_mode):
         if dst.st_nlink > 1:
             # A hard link shares its inode with another name, possibly outside
@@ -511,7 +516,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # belongs in a filename, so reject them here rather than at each sink.
         if any(unicodedata.category(c) == "Cc" for c in name) or "\x7f" in name:
             return False
-        if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
+        if any(c in "⁄∕∖⧸⧹․‥…。｡⹊" for c in name):
             return False
         # Reject lone surrogates. os.listdir() surfaces undecodable filename bytes
         # as surrogates (surrogateescape), and such a name cannot be encoded into
@@ -566,14 +571,23 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                 if c.isascii():
                     continue
                 cat = unicodedata.category(c)
-                if cat in ("Me", "Lm", "Sk", "So", "Cc", "Cf", "Co", "Cs", "Cn"):
+                if cat in ("Me", "Lm", "Sk", "Sm", "So",
+                           "Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
+                    # Sm is where the solidus OPERATORS live (reverse, double,
+                    # triple solidus) — they draw as separators, which is the
+                    # whole point of judging by role. Zl/Zp are the Unicode line
+                    # and paragraph separators. Rejecting non-ASCII Sm also costs
+                    # ÷ ± × in filenames: the same fail-closed trade-off already
+                    # accepted for emoji.
                     return False
                 if cat == "Zs":
                     return False
-                if c in "\u0337\u0338":
-                    # Solidus overlays draw a slash THROUGH the previous glyph,
-                    # forging a separator. Rejected wherever they appear, unlike
-                    # combining marks in general (below).
+                if c in "\u0335\u0336\u0337\u0338\u20e5\u20eb":
+                    # Stroke and solidus overlays draw a line THROUGH the previous
+                    # glyph, forging a separator. The whole class is rejected
+                    # wherever it appears, unlike combining marks in general
+                    # (below) — covering only the two best-known ones left the
+                    # same primitive available under another codepoint.
                     return False
         # Combining marks (Mn/Mc) are judged on the FOLDED form only. They are
         # required by Devanagari, Thai, Hebrew, Arabic and Bengali filenames, and
@@ -581,11 +595,17 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # accented Latin name — rejecting them outright makes those decks
         # unservable. What is actually deceptive is STACKING (Zalgo), which the
         # folded form still shows, so cap consecutive marks instead.
+        # The cap must clear what real orthographies stack: Thai vowel+tone,
+        # Hebrew niqqud+dagesh, Arabic harakat+shadda and Devanagari nukta+matra
+        # all reach three on a single base, and a decomposed Vietnamese syllable
+        # carries two. Deceptive stacking (hiding the extension behind a wall of
+        # marks) needs far more than that, so allow a real cluster and refuse a
+        # pile.
         marks = 0
         for c in name:
             if unicodedata.category(c) in ("Mn", "Mc"):
                 marks += 1
-                if marks >= 2:
+                if marks >= 5:
                     return False
             else:
                 marks = 0
@@ -1948,15 +1968,52 @@ class VelaLocalServer:
         except (OSError, subprocess.TimeoutExpired):
             return False
 
+    @staticmethod
+    def _process_is_vela(pid):
+        """True only if `pid`'s command line names this server script.
+
+        SECURITY: "a live Python process holding the port" is NOT "a previous
+        Vela server" — a user's Jupyter, Flask or Django on the same port fits
+        that description exactly, and the caller SIGKILLs whatever it accepts.
+        Require positive identity before signalling anything."""
+        me = os.path.basename(__file__)
+
+        def names_this_script(argv):
+            # Compare BASENAMES exactly. A substring test would match
+            # "test_serve.py", "myserve.py" or any path merely containing the
+            # name — and this decision ends in SIGKILL.
+            return any(os.path.basename(a) == me for a in argv if a)
+
+        try:
+            if sys.platform == "win32":
+                r = subprocess.run(
+                    ["wmic", "process", "where", f"processid={int(pid)}",
+                     "get", "commandline", "/format:list"],
+                    capture_output=True, text=True, timeout=5)
+                return names_this_script((r.stdout or "").replace('"', " ").split())
+            try:
+                with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+                    # procfs gives the real argv, NUL-separated — no quoting to
+                    # guess at.
+                    return names_this_script(f.read().decode("utf-8", "replace").split("\0"))
+            except FileNotFoundError:
+                # No procfs (macOS/BSD) — ask ps for the command line instead.
+                r = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="],
+                                   capture_output=True, text=True, timeout=5)
+                return names_this_script((r.stdout or "").split())
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return False
+
     def _is_our_stale_server(self, pid, port):
         """True only if `pid` is plausibly a previous Vela server on `port`.
 
         SECURITY: the PID reaching both callers comes from the runtime file in a
-        directory Vela does not own, i.e. it names a kill TARGET chosen by
-        whoever wrote that file. Confirming the process kind AND that it really
-        holds the port is what keeps a planted file from turning either path into
-        an arbitrary-process kill. One copy, so the two callers cannot drift."""
-        return bool(pid) and self._is_python_process(pid) and self._pid_holds_port(pid, port)
+        directory Vela does not own, or from asking the OS who holds the port —
+        neither of which says the process is OURS to kill. Require the process
+        kind, its identity (it must actually be this server script) AND that it
+        really holds the port. One copy, so the two callers cannot drift."""
+        return (bool(pid) and self._is_python_process(pid)
+                and self._process_is_vela(pid) and self._pid_holds_port(pid, port))
 
     def _kill_pid(self, pid):
         """Kill a process by PID (platform-aware)."""

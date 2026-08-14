@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -811,8 +812,22 @@ class TestSecurity(FolderServerTestBase):
         # A slash-drawing character that NFKC folds into an innocent one must be
         # judged on the form the user actually sees, not the folded form.
         self.assertFalse(v("report\u2f03.vela"), "folding let a slash lookalike through")
-        # ...and stacked marks (Zalgo) cannot be used to hide the real extension.
-        self.assertFalse(v("report\u0300\u0301\u0302.vela"))
+        # ...and a PILE of marks (Zalgo) cannot be used to hide the real
+        # extension. Three is an ordinary Thai/Hebrew cluster, so the line is
+        # drawn above what real orthographies stack.
+        self.assertFalse(v("report" + "\u0300" * 8 + ".vela"))
+        self.assertTrue(v("report\u0300\u0301\u0302.vela"))
+
+    def test_separator_glyphs_are_refused_by_role(self):
+        # The rule is meant to reject anything whose ROLE is to draw a separator,
+        # not an enumerated list — so the operators and the overlays count too.
+        v = VelaHTTPHandler._validate_deck_name
+        for cp, what in ((0x29F5, "reverse solidus operator"), (0x2AFD, "double solidus"),
+                         (0x2AFB, "triple solidus"), (0x2E4A, "dotted solidus"),
+                         (0x2028, "line separator"), (0x2029, "paragraph separator"),
+                         (0x0335, "short stroke overlay"), (0x0336, "long stroke overlay"),
+                         (0x20E5, "reverse solidus overlay"), (0x20EB, "double solidus overlay")):
+            self.assertFalse(v(f"budget{chr(cp)}etc.vela"), f"{what} accepted (U+{cp:04X})")
 
     def test_ordinary_names_in_any_script_still_work(self):
         # The rules above must not cost users their own language: these all carry
@@ -822,11 +837,39 @@ class TestSecurity(FolderServerTestBase):
                             ("latin nfc", "caf\u00e9.vela"),
                             ("latin nfd (macOS form)", "cafe\u0301.vela"),
                             ("hindi", "\u0930\u093f\u092a\u094b\u0930\u094d\u091f.vela"),
-                            ("thai", "\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19.vela"),
-                            ("hebrew+niqqud", "\u05d3\u05bc\u05d5\u05d7.vela"),
-                            ("arabic+harakat", "\u062a\u064e\u0642\u0631\u064a\u0631.vela"),
+                            # Real words, not one-mark samples: these stack a
+                            # vowel sign with a tone/dagesh/shadda on one base,
+                            # which is what the earlier cap wrongly refused.
+                            ("thai (vowel+tone)", "\u0e17\u0e35\u0e48\u0e1b\u0e23\u0e30\u0e0a\u0e38\u0e21.vela"),
+                            ("thai (nam)", "\u0e19\u0e49\u0e33.vela"),
+                            ("hebrew (shalom, niqqud)", "\u05e9\u05b8\u05c1\u05dc\u05d5\u05b9\u05dd.vela"),
+                            ("arabic (muhammad, harakat)", "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f.vela"),
+                            ("bengali", "\u09ac\u09be\u0982\u09b2\u09be.vela"),
+                            ("devanagari nukta+matra", "\u0915\u093c\u093f\u0924\u093e\u092c.vela"),
                             ("cjk", "\u4f1a\u8b70.vela"), ("cyrillic", "\u043e\u0442\u0447\u0451\u0442.vela")):
             self.assertTrue(v(name), f"{label} deck name was refused")
+
+    def test_save_refuses_a_non_plain_entry(self):
+        # A fifo/socket/device at a deck name is not a deck: the atomic replace
+        # would destroy it and answer "saved".
+        fifo = os.path.join(self._tmpdir, "pipe.vela")
+        try:
+            os.mkfifo(fifo)
+        except (OSError, AttributeError, NotImplementedError):
+            self.skipTest("platform cannot create a fifo")
+        self.addCleanup(lambda: os.path.exists(fifo) and os.unlink(fifo))
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/pipe.vela", body=payload)
+        self.assertEqual(status, 409)
+        self.assertTrue(stat.S_ISFIFO(os.stat(fifo).st_mode), "the save destroyed a fifo")
+
+    def test_only_a_vela_server_is_reclaimed_from_a_port(self):
+        # "A python process holding the port" also describes the user's Jupyter
+        # or Flask; identity is what makes it ours to stop.
+        self.assertFalse(self._server._process_is_vela(os.getpid()),
+                         "the test runner was identified as a Vela server")
+        self.assertFalse(self._server._is_our_stale_server(os.getpid(), self._port))
+        self.assertFalse(self._server._process_is_vela(-1))
 
     def test_save_refuses_a_symlinked_deck_entry(self):
         # An atomic replace would silently destroy a link the user made, and the
