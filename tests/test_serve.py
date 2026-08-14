@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -35,6 +36,13 @@ LOCAL_HTML_PATH = os.path.join(REPO_ROOT, "tools", "vela-dev", "local.html")
 
 sys.path.insert(0, SCRIPTS_DIR)
 
+import serve as serve_mod
+
+# Root bypasses file permission checks, so "this file is not writable" cannot be
+# expressed to it — open(path, "w") on a 0444 file succeeds for root too, which
+# is exactly what the server's writability pre-check now mirrors. Tests that
+# depend on a write being refused are meaningless (and fail) under root.
+RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 from serve import (
     DeckVersionTracker,
     FileWatcher,
@@ -573,6 +581,428 @@ class TestSecurity(FolderServerTestBase):
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
         status, _, _ = fetch(self._port, "POST", "/save/sub/deck.vela", body=payload)
         self.assertEqual(status, 400)
+
+    # -- Link escapes on the deck sinks --
+    # Realpath containment sees a symlink but CANNOT see a hard link: a hard
+    # link to a file outside the served folder resolves inside it. So the deck
+    # sinks must not write through, or read out of, a linked entry either.
+
+    def _link_deck(self, maker, name, outside_name, content="OUTSIDE"):
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+        outside = os.path.join(outside_dir, outside_name)
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write(content)
+        link = os.path.join(self._tmpdir, name)
+        try:
+            maker(outside, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem/platform cannot create this link type")
+        self.addCleanup(lambda: os.path.exists(outside) and os.unlink(outside))
+        self.addCleanup(lambda: os.path.exists(link) and os.unlink(link))
+        return outside, link
+
+    def test_save_through_hardlinked_deck_does_not_escape(self):
+        outside, link = self._link_deck(os.link, "hl-save.vela", "hl-save-victim.txt")
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/hl-save.vela", body=payload)
+        # A multiply-linked destination is refused outright, matching the read
+        # path — never written through, never silently detached.
+        self.assertNotEqual(status, 200)
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE", "save wrote through a hard link")
+        with open(link, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE", "refused save still changed the entry")
+
+    def test_save_through_symlinked_deck_does_not_write_through(self):
+        # Containment already blocks a symlink pointing outside, so aim it at a
+        # deck INSIDE the folder: the check passes, and only the writer decides
+        # whether the other deck gets clobbered.
+        target = self._write_temp_deck("sl-target.vela", {"deckTitle": "TARGET", "lanes": []})
+        link = os.path.join(self._tmpdir, "sl-save.vela")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("platform cannot create symlinks")
+        self.addCleanup(lambda: os.path.exists(link) and os.unlink(link))
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sl-save.vela", body=payload)
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "TARGET",
+                             "save wrote through a symlink into another deck")
+
+    def test_serving_a_hardlinked_deck_does_not_leak_it(self):
+        # The planted content is a canary MARKER, not a real credential — the
+        # test writes it outside the folder on purpose to prove it never leaks.
+        canary = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-read.vela", "hl-read-victim.json", canary)
+        status, _, body = fetch(self._port, "GET", "/deck/hl-read.vela")
+        self.assertNotIn(b"SUPERSECRET", body)
+        self.assertEqual(status, 409)  # refused at the reader, with a reason
+
+    def test_listing_skips_hardlinked_decks(self):
+        canary = json.dumps({"deckTitle": "SUPERSECRET", "lanes": []})
+        self._link_deck(os.link, "hl-list.vela", "hl-list-victim.json", canary)
+        status, _, body = fetch(self._port, "GET", "/api/decks")
+        self.assertEqual(status, 200)
+        self.assertNotIn(b"SUPERSECRET", body)
+
+    # -- Control characters in deck names --
+
+    def test_control_characters_in_deck_name_rejected(self):
+        # CR/LF split an HTTP status line into forged headers; ESC/BEL rewrite
+        # the operator's terminal. Neither belongs in a filename.
+        v = VelaHTTPHandler._validate_deck_name
+        for bad in ("a\r\nX-Injected: 1\r\nz.vela", "a\nb.vela", "a\x1b[2Jb.vela",
+                    "a\x07b.vela", "a\x00b.vela", "a\x7fb.vela"):
+            self.assertFalse(v(bad), f"accepted control chars: {bad!r}")
+        self.assertTrue(v("normal-deck.vela"))
+        self.assertTrue(v("Präsentation-Daten.vela"))  # printable unicode still fine
+        # Emoji are category So, which the glyph-forging allowlist rejects
+        # (fail-closed: a name is an identifier, not prose).
+        self.assertFalse(v("Präsentation-📊.vela"))
+
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
+    def test_save_error_does_not_reach_the_status_line(self):
+        # Even if a name slipped through, the reason phrase must stay static:
+        # http.server writes it into the status line without escaping.
+        path = self._write_temp_deck("ro-msg.vela")
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=5)
+        conn.request("POST", "/save/ro-msg.vela", body=payload,
+                     headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 409)   # a refused entry, not a server fault
+        self.assertNotIn("ro-msg", resp.reason)  # nothing untrusted in the status line
+        conn.close()
+
+    def test_console_safe_escapes_terminal_control(self):
+        out = serve_mod.console_safe("deck\x1b[2J\x07\nname.vela")
+        for ch in ("\x1b", "\x07", "\n"):
+            self.assertNotIn(ch, out)
+        self.assertIn("deck", out)
+        self.assertEqual(serve_mod.console_safe("Präsentation-📊"), "Präsentation-📊")
+        self.assertLess(len(serve_mod.console_safe("x" * 500)), 200)
+
+    def test_oversized_deck_is_refused_not_parsed(self):
+        big = os.path.join(self._tmpdir, "huge.vela")
+        with open(big, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "H", "lanes": [], "pad": "x" * (serve_mod.MAX_DECK_BYTES + 1024)}, f)
+        self.addCleanup(os.unlink, big)
+        status, _, body = fetch(self._port, "GET", "/deck/huge.vela")
+        self.assertEqual(status, 409)
+        status, _, listing = fetch(self._port, "GET", "/api/decks")
+        self.assertNotIn(b"huge.vela", listing)
+
+    def test_payload_cap_counts_bytes_not_characters(self):
+        # The expanded-payload cap is a BYTE limit; multi-byte UTF-8 content
+        # must not slip past a character-length check.
+        deck = self._write_temp_deck("bytes.vela",
+                                     {"deckTitle": "€" * 64, "lanes": []})
+        self.addCleanup(os.unlink, deck)
+        old = serve_mod.MAX_DECK_PAYLOAD
+        serve_mod.MAX_DECK_PAYLOAD = 100  # < byte length, > char length of the JSON
+        self.addCleanup(setattr, serve_mod, "MAX_DECK_PAYLOAD", old)
+        status, _, _ = fetch(self._port, "GET", "/deck/bytes.vela")
+        self.assertEqual(status, 409)
+
+    def test_deck_too_large_after_expansion_is_409_not_500(self):
+        # A deck refused during HTML building (size cap, bad structure) is a
+        # property of the FILE, not a server fault.
+        deck = self._write_temp_deck("expands.vela")
+        self.addCleanup(os.unlink, deck)
+        old = serve_mod.MAX_DECK_PAYLOAD
+        serve_mod.MAX_DECK_PAYLOAD = 4
+        self.addCleanup(setattr, serve_mod, "MAX_DECK_PAYLOAD", old)
+        status, _, _ = fetch(self._port, "GET", "/deck/expands.vela")
+        self.assertEqual(status, 409)
+
+    def test_entry_writable_honours_more_than_the_owner_bit(self):
+        # os.access-based check: owner-writable file is writable, an all-bits-off
+        # file is not (S_IWUSR alone would also wrongly refuse group/other-writable
+        # decks owned by someone else, which cannot be simulated single-uid).
+        path = self._write_temp_deck("perm.vela")
+        self.addCleanup(os.unlink, path)
+        self.addCleanup(os.chmod, path, 0o644)
+        os.chmod(path, 0o200)  # write-only for owner: still writable
+        self.assertTrue(serve_mod.entry_writable(path))
+        if getattr(os, "geteuid", lambda: 1)() != 0:  # root bypasses permission bits
+            os.chmod(path, 0o444)
+            self.assertFalse(serve_mod.entry_writable(path))
+
+    def test_poll_for_an_unknown_deck_allocates_nothing(self):
+        before = len(self._server._deck_trackers)
+        for i in range(25):
+            status, _, _ = fetch(self._port, "GET", f"/poll/ghost{i}.vela?v=0")
+            self.assertEqual(status, 404)
+        self.assertEqual(len(self._server._deck_trackers), before,
+                         "polling unknown names allocated per-name state")
+
+    def test_non_ascii_token_is_rejected_not_crashed(self):
+        # hmac.compare_digest raises TypeError on a non-ASCII str, before routing.
+        self.assertFalse(serve_mod.token_equal("é", "secret"))
+        self.assertFalse(serve_mod.token_equal(None, "secret"))
+        self.assertFalse(serve_mod.token_equal("secret", "sécret"))
+        self.assertTrue(serve_mod.token_equal("s3cret", "s3cret"))
+
+    def test_no_request_name_can_touch_a_file_outside_the_folder(self):
+        """Evidence for the py/path-injection class CodeQL reports here.
+
+        Deck names reach os.open/os.stat/os.replace, so a scanner sees request
+        data in a path expression. What it cannot model: the name is rejected if
+        it carries a separator or traversal, and the open is then made RELATIVE
+        to a directory descriptor pinned at startup — so no name can name an
+        entry outside that directory. This asserts that end to end instead of
+        asserting it in a comment."""
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+        canary = os.path.join(outside_dir, "canary.vela")
+        with open(canary, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE-CANARY"}, f)
+        before_outside = sorted(os.listdir(outside_dir))
+        before_home = sorted(os.listdir(self._tmpdir))
+
+        rel = os.path.relpath(canary, self._tmpdir)
+        hostile = [
+            "../canary.vela", "..%2Fcanary.vela", "....//canary.vela",
+            "%2e%2e%2fcanary.vela", "..%5Ccanary.vela", "sub/../../canary.vela",
+            rel, rel.replace("/", "%2F"), canary, canary.lstrip("/"),
+            "/etc/passwd", "..%252Fcanary.vela", "a%00../canary.vela",
+            "\uff0e\uff0e\uff0fcanary.vela", "\u2024\u2024\u2215canary.vela",
+            "\u202e../canary.vela", ".vela.env", "../.vela.env",
+            "%EF%BC%8E%EF%BC%8E%EF%BC%8Fcanary.vela",
+            "%00../canary.vela", "..;/canary.vela", "./../canary.vela",
+            "a%00../canary.vela", "%0d%0a../canary.vela",
+        ]
+        payload = json.dumps({"type": "deck_save",
+                              "deck": {"deckTitle": "PATH-INJECTION-MARKER", "lanes": []}})
+        # Percent-encode anything the client library refuses to put in a request
+        # line (raw non-ASCII, control bytes) so the SERVER is what decodes it.
+        hostile = [n if n.isascii() else quote(n, safe="%/") for n in hostile]
+        for name in hostile:
+            for verb, path, body in (("GET", f"/deck/{name}", None),
+                                     ("GET", f"/poll/{name}?v=0", None),
+                                     ("POST", f"/save/{name}", payload)):
+                status, _, _ = fetch(self._port, verb, path, body=body)
+                self.assertGreaterEqual(status, 400, f"{verb} {path} was accepted")
+
+        # CONTROL: a legitimate name on the same endpoints still works, so the
+        # 4xx results above are the guards, not a broken harness.
+        self.assertEqual(fetch(self._port, "GET", "/deck/sample.vela")[0], 200)
+        self.assertEqual(fetch(self._port, "POST", "/save/sample.vela", body=payload)[0], 200)
+
+        # Nothing outside the served folder was created, removed or rewritten...
+        self.assertEqual(sorted(os.listdir(outside_dir)), before_outside)
+        with open(canary, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "OUTSIDE-CANARY")
+        # ...and no stray entry appeared inside it either.
+        self.assertEqual(sorted(os.listdir(self._tmpdir)), before_home)
+
+    def test_deck_names_cannot_lie_in_the_listing(self):
+        # The File column is rendered verbatim and is the identity the listing is
+        # trusted against, so a name must not be able to imitate another one.
+        v = VelaHTTPHandler._validate_deck_name
+        for label, ch in (("unassigned (Cn)", "\u2065"), ("private use (Co)", "\ue0b0"),
+                          ("blank glyph", "\u2800"), ("emoji (So)", "\U0001f4ca"),
+                          ("solidus overlay", "\u0338"), ("box diagonal", "\u2571"),
+                          ("zero-width space (Cf)", "\u200b")):
+            self.assertFalse(v(f"report{ch}.vela"), f"{label} accepted in a deck name")
+        # A slash-drawing character that NFKC folds into an innocent one must be
+        # judged on the form the user actually sees, not the folded form.
+        self.assertFalse(v("report\u2f03.vela"), "folding let a slash lookalike through")
+        # ...and a PILE of marks (Zalgo) cannot be used to hide the real
+        # extension. Three is an ordinary Thai/Hebrew cluster, so the line is
+        # drawn above what real orthographies stack.
+        self.assertFalse(v("report" + "\u0300" * 8 + ".vela"))
+        self.assertTrue(v("report\u0300\u0301\u0302.vela"))
+
+    def test_separator_glyphs_are_refused_by_role(self):
+        # The rule is meant to reject anything whose ROLE is to draw a separator,
+        # not an enumerated list — so the operators and the overlays count too.
+        v = VelaHTTPHandler._validate_deck_name
+        for cp, what in ((0x29F5, "reverse solidus operator"), (0x2AFD, "double solidus"),
+                         (0x2AFB, "triple solidus"), (0x2E4A, "dotted solidus"),
+                         (0x2028, "line separator"), (0x2029, "paragraph separator"),
+                         (0x0335, "short stroke overlay"), (0x0336, "long stroke overlay"),
+                         (0x20E5, "reverse solidus overlay"), (0x20EB, "double solidus overlay")):
+            self.assertFalse(v(f"budget{chr(cp)}etc.vela"), f"{what} accepted (U+{cp:04X})")
+
+    def test_ordinary_names_in_any_script_still_work(self):
+        # The rules above must not cost users their own language: these all carry
+        # combining marks or non-ASCII punctuation and are perfectly ordinary.
+        v = VelaHTTPHandler._validate_deck_name
+        for label, name in (("ascii", "report.vela"), ("caret", "report^2.vela"),
+                            ("latin nfc", "caf\u00e9.vela"),
+                            ("latin nfd (macOS form)", "cafe\u0301.vela"),
+                            ("hindi", "\u0930\u093f\u092a\u094b\u0930\u094d\u091f.vela"),
+                            # Real words, not one-mark samples: these stack a
+                            # vowel sign with a tone/dagesh/shadda on one base,
+                            # which is what the earlier cap wrongly refused.
+                            ("thai (vowel+tone)", "\u0e17\u0e35\u0e48\u0e1b\u0e23\u0e30\u0e0a\u0e38\u0e21.vela"),
+                            ("thai (nam)", "\u0e19\u0e49\u0e33.vela"),
+                            ("hebrew (shalom, niqqud)", "\u05e9\u05b8\u05c1\u05dc\u05d5\u05b9\u05dd.vela"),
+                            ("arabic (muhammad, harakat)", "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f.vela"),
+                            ("bengali", "\u09ac\u09be\u0982\u09b2\u09be.vela"),
+                            ("devanagari nukta+matra", "\u0915\u093c\u093f\u0924\u093e\u092c.vela"),
+                            ("cjk", "\u4f1a\u8b70.vela"), ("cyrillic", "\u043e\u0442\u0447\u0451\u0442.vela")):
+            self.assertTrue(v(name), f"{label} deck name was refused")
+
+    def test_save_refuses_a_non_plain_entry(self):
+        # A fifo/socket/device at a deck name is not a deck: the atomic replace
+        # would destroy it and answer "saved".
+        fifo = os.path.join(self._tmpdir, "pipe.vela")
+        try:
+            os.mkfifo(fifo)
+        except (OSError, AttributeError, NotImplementedError):
+            self.skipTest("platform cannot create a fifo")
+        self.addCleanup(lambda: os.path.exists(fifo) and os.unlink(fifo))
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/pipe.vela", body=payload)
+        self.assertEqual(status, 409)
+        self.assertTrue(stat.S_ISFIFO(os.stat(fifo).st_mode), "the save destroyed a fifo")
+
+    def test_only_a_vela_server_is_reclaimed_from_a_port(self):
+        # "A python process holding the port" also describes the user's Jupyter
+        # or Flask; identity is what makes it ours to stop.
+        self.assertFalse(self._server._process_is_vela(os.getpid()),
+                         "the test runner was identified as a Vela server")
+        self.assertFalse(self._server._is_our_stale_server(os.getpid(), self._port))
+        self.assertFalse(self._server._process_is_vela(-1))
+
+    def test_a_different_projects_serve_py_is_not_ours(self):
+        # serve.py is one of the commonest dev-server filenames, so matching on
+        # the name alone would adopt someone else's server and SIGKILL it.
+        import subprocess
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        script = os.path.join(other, "serve.py")   # same NAME, different file
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("import time\ntime.sleep(30)\n")
+        proc = subprocess.Popen([sys.executable, script])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        time.sleep(0.3)
+        self.assertFalse(self._server._process_is_vela(proc.pid),
+                         "another project's serve.py was identified as ours")
+        # ...and the same run through the gate that decides whether to signal.
+        self.assertFalse(self._server._is_our_stale_server(proc.pid, self._port))
+
+    def test_save_refuses_a_symlinked_deck_entry(self):
+        # An atomic replace would silently destroy a link the user made, and the
+        # read path already refuses one.
+        target = self._write_temp_deck("sym-target.vela", {"deckTitle": "TARGET", "lanes": []})
+        link = os.path.join(self._tmpdir, "sym-alias.vela")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("platform cannot create symlinks")
+        self.addCleanup(lambda: os.path.lexists(link) and os.unlink(link))
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/sym-alias.vela", body=payload)
+        self.assertEqual(status, 409)
+        self.assertTrue(os.path.islink(link), "the save destroyed a symlinked entry")
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "TARGET")
+
+    def test_refused_save_answers_like_the_refused_read(self):
+        # Same file property, same class of answer on both verbs.
+        outside, _ = self._link_deck(os.link, "hl-status.vela", "hl-status-victim.txt")
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        self.assertEqual(fetch(self._port, "GET", "/deck/hl-status.vela")[0], 409)
+        self.assertEqual(fetch(self._port, "POST", "/save/hl-status.vela", body=payload)[0], 409)
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE")
+
+    # -- Deck file mode / atomicity --
+
+    def test_save_preserves_a_private_decks_mode(self):
+        # An atomic replace needs no write permission on the FILE, so without an
+        # explicit carry-over a deck the user made private would come back
+        # world-readable on the next browser save.
+        path = self._write_temp_deck("private.vela")
+        os.chmod(path, 0o600)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/private.vela", body=payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
+    def test_save_refuses_a_read_only_deck(self):
+        path = self._write_temp_deck("readonly.vela", {"deckTitle": "KEEP", "lanes": []})
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/readonly.vela", body=payload)
+        self.assertEqual(status, 409)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "KEEP")
+
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
+    def test_failed_save_does_not_publish_the_edit(self):
+        # A save that never reached disk must not be pushed to other tabs.
+        path = self._write_temp_deck("lost.vela", {"deckTitle": "ONDISK", "lanes": []})
+        os.chmod(path, 0o444)
+        self.addCleanup(os.chmod, path, 0o644)
+        payload = json.dumps({"type": "deck_save",
+                              "deck": {"deckTitle": "NEVER-SAVED", "lanes": []}})
+        fetch(self._port, "POST", "/save/lost.vela", body=payload)
+        self.assertNotEqual(
+            (self._server.get_deck_data("lost.vela") or {}).get("deckTitle"),
+            "NEVER-SAVED", "an unsaved edit was published to other clients")
+
+    def test_save_does_not_carry_special_mode_bits(self):
+        # S_IMODE keeps setuid/setgid/sticky; a file the server creates and owns
+        # must never inherit them from the entry it replaces.
+        path = self._write_temp_deck("sgid.vela")
+        os.chmod(path, 0o2644)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sgid.vela", body=payload)
+        self.assertEqual(os.stat(path).st_mode & 0o7000, 0)
+
+    def test_save_leaves_no_temp_files_behind(self):
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        fetch(self._port, "POST", "/save/sample.vela", body=payload)
+        leftovers = [n for n in os.listdir(self._tmpdir) if n.startswith(".vela-save-")]
+        self.assertEqual(leftovers, [])
+
+    def test_concurrent_saves_never_widen_deck_permissions(self):
+        # write_deck_json must not read-modify-write the process umask: another
+        # thread inside that window creates world-writable files.
+        names = [f"conc{i}.vela" for i in range(12)]
+        for n in names:
+            self._write_temp_deck(n)
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        threads = [threading.Thread(target=fetch,
+                                    args=(self._port, "POST", f"/save/{n}"),
+                                    kwargs={"body": payload}) for n in names]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+        modes = {os.stat(os.path.join(self._tmpdir, n)).st_mode & 0o777 for n in names}
+        # Compare against what the server decided once at import — asserting a
+        # hardcoded 0o644 would fail on a machine with a different umask.
+        self.assertEqual(modes, {serve_mod.DECK_FILE_MODE}, f"unexpected modes: {modes}")
+
+    def test_vendor_js_is_not_loaded_from_the_served_folder(self):
+        # /vendor/babel.min.js is executed in the authenticated page origin, so
+        # it must never come from project-directory content.
+        nm = os.path.join(self._tmpdir, "node_modules", "@babel", "standalone")
+        os.makedirs(nm, exist_ok=True)
+        self.addCleanup(shutil.rmtree, os.path.join(self._tmpdir, "node_modules"),
+                        ignore_errors=True)
+        with open(os.path.join(nm, "babel.min.js"), "w", encoding="utf-8") as f:
+            f.write("/*PROJECT-SUPPLIED-JS*/")
+        srv = VelaLocalServer(self._tmpdir, port=0, no_open=True, channel_port=0)
+        saved = dict(VelaHTTPHandler.static_files)
+        try:
+            srv._load_vendor_files()
+            body = VelaHTTPHandler.static_files.get("/vendor/babel.min.js", (b"", ""))[0]
+        finally:
+            VelaHTTPHandler.static_files = saved
+        self.assertNotIn(b"PROJECT-SUPPLIED-JS", body)
 
     # -- Path traversal on /poll/ (DOCUMENTS MISSING VALIDATION) --
 
@@ -1568,6 +1998,201 @@ class TestBackendParity(unittest.TestCase):
         self.assertNotIn("--system-prompt", self.py)  # value form never on argv
         self.assertIn('"--system-prompt"', self.go)
 
+
+class TestRuntimeFileLinks(unittest.TestCase):
+    """The runtime file (.vela.env) is created in the process CWD — a project
+    directory Vela does not own. A pre-existing entry there is untrusted: these
+    assert Vela never dereferences it, in either direction.
+
+    Without the no-follow/exclusive-create handling, the write path truncates
+    and overwrites whatever the entry points at (a token-bearing write outside
+    the project) and the read path parses an arbitrary file's bytes."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.proj = os.path.join(self.tmp, "proj")
+        self.outside = os.path.join(self.tmp, "outside.txt")
+        os.mkdir(self.proj)
+        with open(self.outside, "w", encoding="utf-8") as f:
+            f.write("MARKER")
+        with open(os.path.join(self.proj, "sample.vela"), "w", encoding="utf-8") as f:
+            json.dump(SAMPLE_DECK, f)
+        self.server = VelaLocalServer(self.proj, port=0, no_open=True, channel_port=0)
+        self._cwd = os.getcwd()
+        os.chdir(self.proj)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.addCleanup(os.chdir, self._cwd)
+
+    @property
+    def _rt(self):
+        return os.path.join(self.proj, ".vela.env")
+
+    def _assert_outside_untouched(self):
+        with open(self.outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "MARKER",
+                             "runtime write escaped the project directory")
+
+    def _supports(self, maker):
+        try:
+            maker()
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("filesystem/platform cannot create this link type")
+
+    # -- write path --
+
+    def test_symlinked_runtime_file_is_not_followed(self):
+        self._supports(lambda: os.symlink(self.outside, self._rt))
+        self.server._write_runtime_info()
+        self._assert_outside_untouched()
+        self.assertFalse(os.path.islink(self._rt))
+        with open(self._rt, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["port"], 0)  # our own fresh file
+
+    def test_dangling_symlink_runtime_file_is_not_followed(self):
+        ghost = os.path.join(self.tmp, "ghost.txt")
+        self._supports(lambda: os.symlink(ghost, self._rt))
+        self.server._write_runtime_info()
+        self.assertFalse(os.path.exists(ghost), "write created the link target")
+        self.assertFalse(os.path.islink(self._rt))
+
+    def test_hardlinked_runtime_file_is_not_followed(self):
+        self._supports(lambda: os.link(self.outside, self._rt))
+        self.server._write_runtime_info()
+        self._assert_outside_untouched()
+        self.assertEqual(os.stat(self._rt).st_nlink, 1, "wrote through a hard link")
+
+    def test_normal_write_still_replaces_a_plain_runtime_file(self):
+        with open(self._rt, "w", encoding="utf-8") as f:
+            f.write("stale contents")
+        self.server._write_runtime_info()
+        with open(self._rt, encoding="utf-8") as f:
+            info = json.load(f)
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertIn("token", info)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX permission bits")
+    def test_runtime_file_is_created_owner_only(self):
+        self.server._write_runtime_info()
+        self.assertEqual(os.stat(self._rt).st_mode & 0o777, 0o600)
+
+    def test_directory_in_the_way_is_not_deleted(self):
+        os.mkdir(self._rt)
+        with open(os.path.join(self._rt, "keep.txt"), "w", encoding="utf-8") as f:
+            f.write("user data")
+        self.server._write_runtime_info()  # must fail closed, not clobber
+        self.assertTrue(os.path.isdir(self._rt))
+        self.assertTrue(os.path.exists(os.path.join(self._rt, "keep.txt")))
+
+    # -- read path --
+
+    def test_symlinked_runtime_file_is_not_read(self):
+        with open(self.outside, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "port": 1234}, f)
+        self._supports(lambda: os.symlink(self.outside, self._rt))
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_non_regular_runtime_file_is_not_read(self):
+        self._supports(lambda: os.mkfifo(self._rt))
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_hostile_pid_values_are_rejected(self):
+        # A non-int pid crashes os.kill/tasklist; a non-positive one makes
+        # os.kill() signal a process GROUP (-1 = every process this user owns).
+        for bad in (-1, 0, "1234", True, [1], None, 12.5):
+            with open(self._rt, "w", encoding="utf-8") as f:
+                json.dump({"pid": bad, "port": 0}, f)
+            self.assertIsNone(self.server._read_runtime_info()["pid"],
+                              f"pid {bad!r} was accepted")
+            self.server._cleanup_stale_server()  # must not raise
+
+    def test_oversized_runtime_file_is_not_parsed(self):
+        # An unbounded json.load() on a file this process does not own lets the
+        # project directory choose how much memory Vela allocates at startup.
+        pad = "A" * (VelaLocalServer.RUNTIME_MAX_BYTES + 1024)
+        with open(self._rt, "w", encoding="utf-8") as f:
+            json.dump({"pid": 1, "port": 0, "pad": pad}, f)
+        self.assertIsNone(self.server._read_runtime_info())
+
+    def test_planted_pid_cannot_kill_an_unrelated_process(self):
+        # The runtime file names a kill TARGET, and _retry_after_stale_kill runs
+        # on the ordinary busy-port path. The PID must be verified (right process
+        # kind AND actually holding the port), never trusted from the file.
+        # NB: claim a free ephemeral port rather than hardcoding one — a fixed
+        # port could be held by an unrelated process on the machine running this
+        # suite, and the port-holder fallback would then kill it for real.
+        # Assert the DECISION, with kills stubbed out: driving the real fallback
+        # would run `lsof -ti :PORT`, which also matches client sockets, and
+        # SIGKILL whichever unrelated process happens to hold that port on the
+        # machine running this suite.
+        import subprocess
+        from unittest import mock
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(victim.wait)
+        self.addCleanup(victim.kill)
+        self.server.port = 3030
+        with open(self._rt, "w", encoding="utf-8") as f:
+            json.dump({"pid": victim.pid, "port": 3030}, f)
+        self.assertFalse(self.server._is_our_stale_server(victim.pid, 3030),
+                         "an unrelated live process was accepted as our stale server")
+        with mock.patch.object(serve_mod.os, "kill") as killed, \
+                mock.patch.object(serve_mod.subprocess, "run") as ran:
+            ran.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            try:
+                self.server._retry_after_stale_kill(VelaHTTPHandler)
+            except Exception:
+                pass  # the kill decision is the subject, not the rebind
+        self.assertNotIn(victim.pid, [c.args[0] for c in killed.call_args_list],
+                         "a process named only by the runtime file was signalled")
+        self.assertIsNone(victim.poll())
+
+    @unittest.skipUnless(
+        all(fn in os.supports_dir_fd for fn in (os.open, os.stat, os.unlink, os.rmdir)),
+        "platform has no dir_fd-relative calls")
+    def test_runtime_writes_stay_in_the_pinned_directory(self):
+        # No-follow/exclusive-create only constrain the final path component, so
+        # the directory itself must be pinned — otherwise a swap above the file
+        # relocates the token write. Changing CWD stands in for that swap.
+        self.server._write_runtime_info()
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        os.mkdir(elsewhere)
+        os.chdir(elsewhere)
+        self.server._write_runtime_info()
+        self.assertFalse(os.path.exists(os.path.join(elsewhere, ".vela.env")),
+                         "runtime write followed the moved directory")
+        self.assertTrue(os.path.exists(self._rt))
+
+    @unittest.skipIf(os.name == "nt", "POSIX-only fallback gating")
+    def test_rmdir_fallback_does_not_run_on_posix(self):
+        # POSIX unlink removes symlinks itself, so a failed unlink is never "it
+        # was a link" — running rmdir anyway deletes a real directory that raced
+        # into place after the stat.
+        from unittest import mock
+        os.symlink(self.tmp, self._rt)
+        with mock.patch.object(serve_mod.os, "unlink",
+                               side_effect=PermissionError("simulated race")), \
+                mock.patch.object(serve_mod.os, "rmdir") as rmdir:
+            self.server._discard_runtime_entry(".vela.env")
+        self.assertEqual(rmdir.call_args_list, [], "rmdir fallback ran on POSIX")
+
+    def test_missing_cwd_never_raises(self):
+        # Startup and atexit cleanup both address the runtime file; if the
+        # directory is gone, os.getcwd() itself fails and an escaping error
+        # would abort the server rather than degrade to "no runtime file".
+        gone = os.path.join(self.proj, "gone")
+        os.mkdir(gone)
+        os.chdir(gone)
+        os.rmdir(gone)
+        self.server._write_runtime_info()
+        self.assertIsNone(self.server._read_runtime_info())
+        self.server._cleanup_stale_server()
+        self.server._remove_runtime_files()
+        os.chdir(self.proj)
+
+    def test_corrupt_runtime_file_is_ignored(self):
+        for junk in ("not json", "[1,2,3]", '"str"', ""):
+            with open(self._rt, "w", encoding="utf-8") as f:
+                f.write(junk)
+            self.assertIsNone(self.server._read_runtime_info())
 
 class TestDeckNameCodeDataSeparation(FolderServerTestBase):
     """Deck filenames are attacker-influenced (decks are shared artifacts), so

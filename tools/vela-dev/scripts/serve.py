@@ -15,6 +15,7 @@ Usage:
 """
 
 import hashlib
+import errno
 import hmac
 import http.cookies
 import http.server
@@ -48,6 +49,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(DEV_DIR))            # repo root
 SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")    # lean shipped skill
 # vela.py / assemble.py stay in the lean skill; import them from there.
 sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
+sys.path.insert(0, SCRIPT_DIR)  # sibling dev-tool modules (agent_backend)
 from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
@@ -242,6 +244,224 @@ def build_browser_html():
 </html>"""
 
 
+# One credential compare for both local servers. It lives in agent_backend
+# (which also runs standalone, so it cannot depend on this module) and is
+# imported here rather than copied — a second copy is how these two drift.
+from agent_backend import token_equal  # noqa: E402  (path set up above)
+
+
+# ── Deck file I/O ─────────────────────────────────────────────────────
+# The umask is process-global, so reading it (the only way to sample it) is a
+# read-modify-write that cannot be made thread-safe. Do it ONCE here, at import,
+# while the process is still single-threaded; the server then applies the result
+# with fchmod and never touches the process umask again. Doing it per write let
+# concurrent saves observe the temporarily-zeroed umask and create decks that
+# were readable and writable by everyone.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+DECK_FILE_MODE = 0o666 & ~_UMASK  # what a plain open(path, "w") would have made
+MAX_DECK_BYTES = 32 * 1024 * 1024    # a deck file we are willing to read
+MAX_DECK_PAYLOAD = 64 * 1024 * 1024  # ...and to serialise into a page after expansion
+SAVE_TMP_PREFIX = ".vela-save-"   # write_deck_json's temp; swept at startup
+SAVE_TMP_SUFFIX = ".tmp"
+
+
+def console_safe(text, limit=160):
+    """Render untrusted text for the operator's terminal.
+
+    Deck names and OS error strings carry project-directory content, and a
+    terminal executes what it is sent: escape sequences clear the screen, retitle
+    the window, or forge a reassuring log line the operator then believes. Escape
+    every non-printable and cap the length. (Names reaching the HTTP layer are
+    rejected outright by _validate_deck_name — this is the console's own guard,
+    which also covers text that never passed through it, such as OS errors.)"""
+    text = str(text)
+    out = "".join(c if c.isprintable() or c == " " else f"\\x{ord(c):02x}"
+                  for c in text[:limit])
+    return out + ("…" if len(text) > limit else "")
+
+
+def pin_dir(path):
+    """Open a directory to use as a dir_fd anchor, or None where unsupported.
+
+    SECURITY (CWE-59/61/367): no-follow flags and containment checks constrain
+    only the FINAL path component — every by-path call re-resolves the
+    directories above it, so replacing a directory NAME relocates the whole
+    operation, however carefully the leaf was guarded. Resolving the directory
+    once and addressing entries relative to that descriptor pins the path: the
+    folder we list, read and write stays the one the server started on, whatever
+    its name comes to refer to later. Windows has no dir_fd-relative calls, so
+    callers there fall back to by-path access, which the leaf guards still
+    cover."""
+    # NB: os.replace is deliberately not probed here — it takes src_dir_fd /
+    # dst_dir_fd rather than dir_fd, so it never appears in supports_dir_fd.
+    # write_deck_json falls back to the by-path rename if renameat is missing.
+    needed = (os.open, os.stat, os.unlink)
+    if not all(fn in os.supports_dir_fd for fn in needed):
+        return None
+    try:
+        return os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return None
+
+# SECURITY (CWE-59/61/367): the served folder is the user's project, so a
+# deck-named ENTRY in it is untrusted even when its name passed validation.
+# Realpath containment (_safe_deck_path) sees a symlink but CANNOT see a hard
+# link — a hard link to a file outside the folder resolves inside it — and
+# re-opening by path after the check re-resolves the name, so a swap between
+# check and open escapes containment anyway. Both directions go through the two
+# functions below, and neither ever writes through, or reads out of, an entry it
+# did not verify on the descriptor it is using.
+
+def read_deck_json(path, dir_fd=None):
+    """Read + parse a deck file. Raises OSError/ValueError on anything unusable.
+
+    Opens no-follow, then takes the content from the SAME descriptor it
+    verified, so the bytes cannot come from a re-resolved path. A link count
+    above one means the inode is reachable under another name (possibly outside
+    the folder): treated as an escape, not as a deck."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
+    if os.name == "nt":
+        # No O_NOFOLLOW on Windows: reject reparse points by name up front so
+        # this reader is not weaker than the runtime-file one.
+        wst = os.stat(path, follow_symlinks=False, **kwargs)
+        if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+            raise OSError(f"Refusing to read a reparse point: {path}")
+    fd = os.open(path, flags, **kwargs)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            raise OSError(f"Not a plain, single-linked file: {path}")
+        # Size-gate on the descriptor: parsing is what costs memory, and the
+        # folder chooses the file. A real deck is orders of magnitude smaller.
+        if st.st_size > MAX_DECK_BYTES:
+            raise OSError(f"Deck file exceeds {MAX_DECK_BYTES} bytes: {path}")
+        f = os.fdopen(fd, "r", encoding="utf-8")
+    except BaseException:
+        # fdopen takes ownership, so the fd may already be closed here; a second
+        # close would raise EBADF and mask the real error.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    with f:
+        # Bounded read, not json.load(f): the entry can grow between the fstat
+        # above and this read, so the cap must be enforced on the bytes actually
+        # taken — same shape as the other two readers.
+        payload = f.buffer.read(MAX_DECK_BYTES + 1)
+    if len(payload) > MAX_DECK_BYTES:
+        raise OSError(f"Deck file exceeds {MAX_DECK_BYTES} bytes: {path}")
+    return json.loads(payload.decode("utf-8"))
+
+
+def entry_writable(path, dir_fd=None, folder=None):
+    """Report whether the current user may write the existing entry.
+
+    Advisory pre-check for write_deck_json (the write itself is an atomic
+    replace, which only needs directory permission): it preserves what
+    open(path, "w") used to enforce. os.access honours group/other write bits
+    and root — checking only the owner bit (S_IWUSR) would wrongly refuse a
+    deck writable via group/other permissions. faccessat flags are applied
+    only where the platform supports them; the caller has already stat'd the
+    entry no-follow and rejected links, so this stays a permissions check.
+    CodeQL flags the os.access as py/path-injection, but every caller reaches
+    it only after _validate_deck_name + _safe_deck_path containment (same
+    unmodeled-sanitizer limitation noted on _safe_deck_path).
+    """
+    kwargs = {}
+    if dir_fd is not None:
+        if os.access in os.supports_dir_fd:
+            kwargs["dir_fd"] = dir_fd
+        else:
+            path = os.path.join(folder or ".", path)
+    if os.access in os.supports_effective_ids:
+        kwargs["effective_ids"] = True
+    if os.access in os.supports_follow_symlinks:
+        kwargs["follow_symlinks"] = False
+    return os.access(path, os.W_OK, **kwargs)
+
+
+def write_deck_json(path, deck, dir_fd=None, folder=None):
+    """Write a deck file by atomic replace, never through the existing entry.
+
+    The payload lands in a freshly created temp file in the same folder and is
+    then os.replace()d onto the name. rename swaps the directory ENTRY, so a
+    symlink or hard link sitting there is detached instead of written through,
+    and there is no window in which the name is re-resolved for the write.
+    Readers also never observe a half-written deck."""
+    kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
+    if folder is None:
+        folder = os.path.dirname(path) or "."
+    tmp = None
+    # Replacing an entry does not need write permission on the FILE, only on the
+    # directory — so an atomic replace would happily overwrite a deck the user
+    # deliberately made read-only, which open(path, "w") could not. Keep the old
+    # promise, and carry the existing file's own mode over to the replacement so
+    # a private deck does not quietly become world-readable on the next save.
+    mode = DECK_FILE_MODE
+    try:
+        dst = os.stat(path, follow_symlinks=False, **kwargs)
+    except OSError:
+        dst = None
+    if dst is not None and stat.S_ISLNK(dst.st_mode):
+        # The replace below would silently destroy a link the user made, and the
+        # read path already refuses one — same reasoning as the hard-link branch.
+        raise PermissionError(f"Deck file is a link: {path}")
+    if dst is not None and not stat.S_ISREG(dst.st_mode):
+        # Anything that is not a plain file — fifo, socket, device node, or a
+        # Windows reparse point that does not report as a link — is not a deck.
+        # Without this the replace below destroys it and answers "saved".
+        raise PermissionError(f"Deck path is not a plain file: {path}")
+    if dst is not None and stat.S_ISREG(dst.st_mode):
+        if dst.st_nlink > 1:
+            # A hard link shares its inode with another name, possibly outside
+            # the folder. The atomic replace below would not write through it,
+            # but silently detaching a link the user made is its own surprise —
+            # refuse, matching the read path's multiply-linked refusal.
+            raise PermissionError(f"Deck file is multiply-linked: {path}")
+        if not entry_writable(path, dir_fd=dir_fd, folder=folder):
+            raise PermissionError(f"Deck file is read-only: {path}")
+        mode = stat.S_IMODE(dst.st_mode) & 0o777  # never carry setuid/setgid/sticky
+    # Create the temp exclusively ourselves rather than via mkstemp, so it can be
+    # made relative to the pinned directory, and so its mode is set through the
+    # DESCRIPTOR. A by-path chmod here would follow a link planted at the temp
+    # name in the (untrusted) folder and change the mode of a file elsewhere.
+    for _ in range(8):
+        cand = f"{SAVE_TMP_PREFIX}{secrets.token_hex(8)}{SAVE_TMP_SUFFIX}"
+        tmp_arg = cand if dir_fd is not None else os.path.join(folder, cand)
+        try:
+            fd = os.open(tmp_arg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, **kwargs)
+            tmp = tmp_arg
+            break
+        except FileExistsError:
+            continue
+    if tmp is None:
+        raise OSError(f"Could not create a temp file for {path}")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(deck, f, ensure_ascii=False, indent=2)
+            # Apply the mode decided above — the replaced file's own mode, or
+            # what a plain open(path, "w") would have produced for a new file.
+            # fchmod, so it can only ever apply to the file we just created.
+            if hasattr(os, "fchmod"):
+                os.fchmod(f.fileno(), mode)
+        if dir_fd is not None:
+            try:
+                os.replace(tmp, path, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            except NotImplementedError:  # no renameat on this platform
+                os.replace(os.path.join(folder, tmp), os.path.join(folder, path))
+        else:
+            os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp, **kwargs)
+        except OSError:
+            pass
+        raise
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────
 class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     static_files = {}
@@ -287,10 +507,16 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # lookalikes NFKC does NOT fold (division/fraction slash, set-minus, dot
         # leaders). The realpath check in _safe_deck_path() is the containment
         # guarantee; this prevents deceptive names slipping into the listing.
+        raw_name = name
         name = unicodedata.normalize("NFKC", name)
         if any(unicodedata.category(c) == "Cf" for c in name):
             return False
-        if any(c in "⁄∕∖⧸⧹․‥…。｡" for c in name):
+        # Control characters (Cc) and DEL: CR/LF split an HTTP status line into
+        # forged headers, and ESC/BEL rewrite the operator's terminal. Neither
+        # belongs in a filename, so reject them here rather than at each sink.
+        if any(unicodedata.category(c) == "Cc" for c in name) or "\x7f" in name:
+            return False
+        if any(c in "⁄∕∖⧸⧹․‥…。｡⹊" for c in name):
             return False
         # Reject lone surrogates. os.listdir() surfaces undecodable filename bytes
         # as surrogates (surrogateescape), and such a name cannot be encoded into
@@ -317,22 +543,72 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # slash lookalikes was bypassed by characters nobody thought to enumerate,
         # so reject by ROLE instead: nothing whose purpose is to modify or draw a
         # glyph may appear in a name.
-        #   Mn/Mc/Me — combining marks. A single overlay (long solidus) draws a
-        #              slash through its base, forging a path separator; the title
-        #              filter already drops all marks, so this matches it.
+        #   Me       — enclosing marks
         #   Lm/Sk    — modifier letters/symbols, e.g. the modifier colon
         #   So       — "other symbols", which includes the box-drawing diagonals
         #              that render pixel-identical to a slash
-        #   Cc       — controls, which also inject escapes into logs/terminals
+        #   Cc/Cf    — controls and format chars, which also inject escapes into
+        #              logs/terminals and reorder the displayed name
+        #   Co/Cs/Cn — private-use, surrogate and UNASSIGNED codepoints. These
+        #              have no agreed glyph, and the ones a browser draws at ZERO
+        #              width make a listing row indistinguishable from an honest
+        #              deck's — the exact lie this block exists to prevent. The
+        #              title filter already rejects them; names now match it.
         # Zs other than ASCII space is rejected too (the Ogham space draws a dash).
         # TRADE-OFF: this also rejects emoji in filenames (they are So). Such a
         # deck is simply not listed or served until renamed — fail-closed, and the
         # name is the identity the whole listing is trusted against.
+        #
+        # Checked on the RAW name as well as the folded one: NFKC turns several
+        # rejected characters into innocent ones (a Kangxi radical that draws a
+        # slash folds to an ordinary ideograph), so folding first would let the
+        # displayed glyph escape the rule that exists to police it. ASCII is
+        # exempt — the deceptive-glyph problem is a non-ASCII one, and the
+        # explicit character checks below still police ASCII (`^` is category Sk
+        # and is an ordinary filename character).
+        for form in (raw_name, name):
+            for c in form:
+                if c.isascii():
+                    continue
+                cat = unicodedata.category(c)
+                if cat in ("Me", "Lm", "Sk", "Sm", "So",
+                           "Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
+                    # Sm is where the solidus OPERATORS live (reverse, double,
+                    # triple solidus) — they draw as separators, which is the
+                    # whole point of judging by role. Zl/Zp are the Unicode line
+                    # and paragraph separators. Rejecting non-ASCII Sm also costs
+                    # ÷ ± × in filenames: the same fail-closed trade-off already
+                    # accepted for emoji.
+                    return False
+                if cat == "Zs":
+                    return False
+                if c in "\u0335\u0336\u0337\u0338\u20e5\u20eb":
+                    # Stroke and solidus overlays draw a line THROUGH the previous
+                    # glyph, forging a separator. The whole class is rejected
+                    # wherever it appears, unlike combining marks in general
+                    # (below) — covering only the two best-known ones left the
+                    # same primitive available under another codepoint.
+                    return False
+        # Combining marks (Mn/Mc) are judged on the FOLDED form only. They are
+        # required by Devanagari, Thai, Hebrew, Arabic and Bengali filenames, and
+        # a filesystem that stores names decomposed (macOS) puts one in every
+        # accented Latin name — rejecting them outright makes those decks
+        # unservable. What is actually deceptive is STACKING (Zalgo), which the
+        # folded form still shows, so cap consecutive marks instead.
+        # The cap must clear what real orthographies stack: Thai vowel+tone,
+        # Hebrew niqqud+dagesh, Arabic harakat+shadda and Devanagari nukta+matra
+        # all reach three on a single base, and a decomposed Vietnamese syllable
+        # carries two. Deceptive stacking (hiding the extension behind a wall of
+        # marks) needs far more than that, so allow a real cluster and refuse a
+        # pile.
+        marks = 0
         for c in name:
-            if unicodedata.category(c) in ("Mn", "Mc", "Me", "Lm", "Sk", "So", "Cc"):
-                return False
-            if unicodedata.category(c) == "Zs" and c != " ":
-                return False
+            if unicodedata.category(c) in ("Mn", "Mc"):
+                marks += 1
+                if marks >= 5:
+                    return False
+            else:
+                marks = 0
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
@@ -392,9 +668,9 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     # Largest deck we will read into memory. The listing re-reads EVERY .vela in
     # the folder on each poll, so without a cap one planted multi-gigabyte file
-    # drives sustained memory and CPU load on every refresh. The watcher already
-    # capped its own read; these are the paths that did not.
-    _DECK_MAX_BYTES = 64 * 1024 * 1024
+    # drives sustained memory and CPU load on every refresh. One cap, shared
+    # with the module-level readers, so the two paths cannot drift.
+    _DECK_MAX_BYTES = MAX_DECK_BYTES
 
     @classmethod
     def _read_deck_json(cls, fd):
@@ -409,25 +685,30 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         return json.loads(payload)
 
     @classmethod
-    def _open_deck_fd(cls, folder, name, write=False):
+    def _open_deck_fd(cls, folder, name, write=False, dir_fd=None):
         """Open a deck file by NAME and return an OS file descriptor.
 
-        SINGLE FILE-ACCESS POINT for deck reads and writes.
+        SINGLE FILE-ACCESS POINT for name-keyed deck reads.
 
         SECURITY (CWE-22/59/367): _safe_deck_path() realpath-validates but returns
         the UNRESOLVED join path, so any caller that then opens BY PATH resolves the
         leaf a second time — a local process can swap a deck-named symlink between
         the check and the open and redirect the read or write outside the served
         folder. Realpath containment alone cannot close that window; only refusing
-        the symlink atomically at open() can. The listing handler already did this;
-        every name-taking route now shares this helper so the guarantee cannot hold
-        in one place and not another.
+        the symlink atomically at open() can. When `dir_fd` (the pinned served
+        folder — see pin_dir) is given, the open is made RELATIVE to it, so the
+        directories above the deck cannot be swapped either.
 
         Callers MUST operate on the returned descriptor and MUST NOT re-open by
         path — re-opening reintroduces the exact race this closes.
 
+        Saves do NOT come through here: write_deck_json() replaces the entry
+        atomically via a temp file instead of writing through it. The write=True
+        branch exists for callers that need the same guarded open with truncate
+        semantics on an existing entry.
+
         Raises ValueError if the name escapes the folder; OSError if the entry is a
-        symlink (ELOOP), is missing, or is not a regular file.
+        symlink (ELOOP), a hard link, is missing, or is not a regular file.
         """
         path = cls._safe_deck_path(folder, name)  # containment for the parent dirs
         if write:
@@ -440,7 +721,18 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             # O_NONBLOCK so a fifo entry cannot hang the handler.
             flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
-        fd = os.open(path, flags, 0o600)
+        kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
+        target = name if dir_fd is not None else path
+        if os.name == "nt":
+            # O_NOFOLLOW does not exist on Windows, so the flag above is a no-op
+            # there and a symlink or junction WOULD be followed. Reject reparse
+            # points by name first — weaker than an atomic no-follow open, but it
+            # keeps this path from being weaker than read_deck_json, which has
+            # carried the same check since before it was the single access point.
+            wst = os.stat(target, follow_symlinks=False, **kwargs)
+            if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+                raise OSError(f"Refusing to read a reparse point: {name}")
+        fd = os.open(target, flags, 0o600, **kwargs)
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
@@ -508,11 +800,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
         url_token = qs.get("token", [None])[0]
         if url_token:
-            # compare_digest raises TypeError on non-ASCII str input, and this
-            # runs before any validation — an unauthenticated request could take
-            # the handler down with no response. A non-ASCII token cannot match
-            # a token_urlsafe secret anyway, so reject it outright.
-            if url_token.isascii() and hmac.compare_digest(url_token, srv._auth_token):
+            if token_equal(url_token, srv._auth_token):
                 session_id = secrets.token_urlsafe(24)
                 with srv._sessions_lock:
                     srv._sessions.add(session_id)
@@ -534,8 +822,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # 2. Authorization header: Bearer xxx (for API/programmatic access)
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            bearer = auth_header[7:]
-            if bearer.isascii() and hmac.compare_digest(bearer, srv._auth_token):
+            if token_equal(auth_header[7:], srv._auth_token):
                 return True
             self.send_error(403, "Invalid token")
             return False
@@ -652,20 +939,34 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_list_decks(self):
         srv = self.server_ref
         decks = []
-        for name in sorted(os.listdir(srv.folder_path)):
+        for name in sorted(os.listdir(srv.folder_fd if srv.folder_fd is not None
+                                      else srv.folder_path)):
             if not name.endswith(DECK_EXT):
                 continue
+            # SECURITY (containment + no check/use race, CWE-22/59/367): a
+            # deck-named symlink to a file outside the served folder would leak
+            # its size and (for JSON) its deckTitle, and swapping the entry
+            # between a check and an open wins a TOCTOU race that no static
+            # containment test can close. The shared symlink-proof open (see
+            # _open_deck_fd) refuses a linked entry ATOMICALLY at the leaf, and
+            # fstat on the returned fd means size AND content come from the very
+            # object we opened, never a re-resolved path. The open is relative
+            # to the pinned folder descriptor, so the directories above it
+            # cannot be swapped either.
             if not self._validate_deck_name(name):
+                srv.note_skipped_deck(name, "name contains characters that are not allowed")
                 continue
-            # Shared symlink-proof open (see _open_deck_fd for why by-path opens
-            # are unsafe here). Metadata comes from the SAME descriptor we read, so
-            # size and content can never describe two different objects.
             try:
-                fd = self._open_deck_fd(srv.folder_path, name)
+                fd = self._open_deck_fd(srv.folder_path, name, dir_fd=srv.folder_fd)
             except (ValueError, OSError):
-                continue  # escapes the folder, is a symlink (ELOOP), or unreadable
+                srv.note_skipped_deck(name, "outside the folder, a link, or unreadable")
+                continue
             try:
                 st = os.fstat(fd)
+                if st.st_size > MAX_DECK_BYTES:
+                    os.close(fd)
+                    srv.note_skipped_deck(name, "larger than the deck size limit")
+                    continue
             except OSError:
                 os.close(fd)
                 continue
@@ -720,29 +1021,53 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403, "Only .vela files can be served")
             return
 
-        # Read through a symlink-proof descriptor and hand the PARSED deck on, so
-        # nothing downstream re-opens by path (see _open_deck_fd).
+        # Read through a symlink-proof descriptor, relative to the pinned folder,
+        # and hand the PARSED deck on, so nothing downstream re-opens by path
+        # (see _open_deck_fd).
         try:
-            fd = self._open_deck_fd(srv.folder_path, deck_name)
+            fd = self._open_deck_fd(srv.folder_path, deck_name, dir_fd=srv.folder_fd)
         except ValueError:
             self.send_error(403, "Access denied")
             return
-        except OSError:
+        except FileNotFoundError:
             self.send_error(404, "Deck not found")
+            return
+        except OSError as e:
+            # The open refuses links and non-plain files. That is a property of
+            # the FILE, not a server fault, and it is invisible from the browser
+            # — so name it and give the remedy rather than a bare 500.
+            print(f"[error] Refusing to serve {console_safe(deck_name)}: {console_safe(e)}")
+            self.send_error(409, "Deck not served: it is a link, or shares its "
+                                 "contents with another name. Copy it to a plain "
+                                 "file (cp deck.vela copy.vela) and open that.")
             return
 
         try:
             raw_deck = self._read_deck_json(fd)  # bounded; takes the fd
+        except ValueError as e:
+            # Oversized or malformed content is a property of the FILE, not a
+            # server fault — 409, mirroring the link/non-plain-file refusals.
+            print(f"[error] Refusing to serve {console_safe(deck_name)}: {console_safe(e)}")
+            self.send_error(409, "Deck not served: the file is too large or is "
+                                 "not valid deck JSON.")
+            return
         except Exception as e:
-            print(f"[error] Reading {deck_name}: {e}")
+            print(f"[error] Reading {console_safe(deck_name)}: {console_safe(e)}")
             self.send_error(500, "Error loading deck")
             return
 
         try:
             html = srv._build_html_for_deck(raw_deck, deck_name)
             self._serve(html, "text/html; charset=utf-8")
+        except ValueError as e:
+            # Normalization/expansion rejecting the deck (bad structure, or the
+            # expanded payload blowing the size cap) is a property of the FILE,
+            # not a server fault — 409, mirroring the read-path refusals.
+            print(f"[error] Refusing to serve {console_safe(deck_name)}: {console_safe(e)}")
+            self.send_error(409, "Deck not served: the deck data is too large "
+                                 "or is not a valid deck.")
         except Exception as e:
-            print(f"[error] Building HTML for {deck_name}: {e}")
+            print(f"[error] Building HTML for {console_safe(deck_name)}: {console_safe(e)}")
             self.send_error(500, "Error loading deck")
 
     def _handle_deck_poll(self):
@@ -791,34 +1116,53 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             if error_sent:
                 return
             if deck:
-                # Authorize BEFORE recording anything. This used to populate the
-                # server-wide cache first, so a save that was then refused still
-                # left its payload resident — unbounded, never evicted, and
-                # holding content that was never on disk. Open first; only a
-                # write we are actually going to perform may touch shared state.
+                # Authorize BEFORE recording anything: only a write that actually
+                # reached disk may touch shared state — publishing an edit that
+                # never landed makes every other tab believe a lost save.
+                try:
+                    deck_path = self._safe_deck_path(srv.folder_path, deck_name)
+                except ValueError:
+                    self.send_error(403, "Access denied")
+                    return
                 watcher = srv.get_watcher(deck_name)
                 if watcher:
                     watcher.ignore_next(2.0)
-                # Open symlink-proof and write through THAT descriptor. Opening by
-                # path here is what let a racing symlink swap redirect the write
-                # outside the served folder (see _open_deck_fd). O_CREAT keeps
-                # save-as-new working; O_NOFOLLOW refuses an existing symlink.
+                # Atomic replace via a temp file (see write_deck_json): a symlink
+                # or hard link sitting at the name is detached instead of written
+                # through, readers never observe a half-written deck, and the
+                # write is relative to the pinned folder descriptor.
                 try:
-                    fd = self._open_deck_fd(srv.folder_path, deck_name, write=True)
-                except (ValueError, OSError):
-                    self.send_error(403, "Access denied")
+                    write_deck_json(
+                        deck_name if srv.folder_fd is not None else deck_path,
+                        deck, dir_fd=srv.folder_fd, folder=srv.folder_path)
+                except PermissionError as e:
+                    # The entry itself is refused (a link, multiply linked, or
+                    # not writable) — a property of the FILE, not a server fault,
+                    # so answer as the read path does instead of claiming 500.
+                    print(f"[save] Refusing to write {console_safe(deck_name)}: "
+                          f"{console_safe(e)}")
+                    self.send_error(409, "Deck not saved: it is a link, shares its "
+                                         "contents with another name, or is not "
+                                         "writable. Copy it to a plain file.")
                     return
-                with os.fdopen(fd, "w", encoding="utf-8") as f:  # fdopen owns the fd
-                    json.dump(deck, f, ensure_ascii=False, indent=2)
+                except OSError as e:
+                    # Report the real reason instead of a generic 400, and leave
+                    # the in-memory deck alone.
+                    print(f"[save] Could not write {console_safe(deck_name)}: "
+                          f"{console_safe(e)}")
+                    # Static reason phrase: send_error writes `message` straight
+                    # into the status line, so nothing untrusted may reach it.
+                    self.send_error(500, "Could not write deck (see server console)")
+                    return
                 srv.set_deck_data(deck_name, deck)  # now it matches what is on disk
                 tracker = srv.get_tracker(deck_name)
                 if tracker:
                     tracker.bump()
-                print(f"[sync] Browser edit → saved {deck_name}")
+                print(f"[sync] Browser edit → saved {console_safe(deck_name)}")
             self._json_response(200, {"ok": True})
         except Exception as e:
             if not isinstance(e, BrokenPipeError):
-                print(f"[save] Error: {e}")
+                print(f"[save] Error: {console_safe(e)}")
                 self.send_error(400, "Invalid request")
 
     def _json_response(self, code, obj):
@@ -955,25 +1299,41 @@ class FileWatcher:
     # replace it with a symlink to a fifo (a blocking open hangs this thread) or
     # to /dev/zero (an unbounded read exhausts memory). This hash is only used for
     # change detection — the content actually served is re-read through
-    # _open_deck_fd — so it needs the same open discipline, plus a size cap.
-    _HASH_MAX_BYTES = 64 * 1024 * 1024
+    # read_deck_json — so it needs the same open discipline, plus a size cap.
+    MAX_HASH_BYTES = 64 * 1024 * 1024
 
     def _file_hash(self):
+        """Hash the watched file, refusing anything that is not a plain file.
+
+        SECURITY: the watched entry sits in a project directory, so it may have
+        been replaced since the watcher was armed. O_NOFOLLOW keeps a link from
+        redirecting the read outside the folder; O_NONBLOCK plus the S_ISREG
+        check keep a fifo from parking this thread inside open() (it runs while
+        the server lock is held, so a block there wedges every deck endpoint);
+        and the cap keeps an oversized file from being pulled into memory."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
-            flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_NONBLOCK", 0))
             fd = os.open(self.path, flags)
-            try:
-                if not stat.S_ISREG(os.fstat(fd).st_mode):
-                    return None
-                with os.fdopen(fd, "rb") as f:  # fdopen takes ownership
-                    fd = None
-                    return hashlib.sha256(f.read(self._HASH_MAX_BYTES)).hexdigest()
-            finally:
-                if fd is not None:
-                    os.close(fd)
-        except Exception:
+        except OSError:
             return ""
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > self.MAX_HASH_BYTES:
+                return ""
+            h = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    break
+                h.update(chunk)
+            return h.hexdigest()
+        except OSError:
+            return ""
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     def _poll(self):
         while self._running:
@@ -991,7 +1351,7 @@ class FileWatcher:
             except FileNotFoundError:
                 pass
             except Exception as e:
-                print(f"[watch] Error: {e}")
+                print(f"[watch] Error: {console_safe(e)}")
             time.sleep(self.interval)
 
 
@@ -1024,34 +1384,72 @@ class VelaLocalServer:
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
+        # Runtime-file directory, pinned on first use (see _runtime_dir_fd).
+        self._dir_fd = None
+        self._dir_fd_unsupported = False
+
         # Always folder mode — if a file is passed, use its parent directory.
         # SECURITY: resolve the served root ONCE, here, with realpath rather than
-        # abspath. O_NOFOLLOW in _open_deck_fd() refuses a symlinked LEAF, but it
-        # cannot protect a parent component: if the root itself stayed a symlink it
-        # would be re-resolved on every request, and a local process could re-point
-        # it between the containment check and the open to redirect reads and
-        # writes into another directory. Pinning the resolved root closes that
-        # window for every path derived from it.
+        # abspath. O_NOFOLLOW in read_deck_json/write_deck_json refuses a
+        # symlinked LEAF, but it cannot protect a parent component: if the root
+        # itself stayed a symlink it would be re-resolved on every request, and a
+        # local process could re-point it between the containment check and the
+        # open to redirect reads and writes into another directory. Pinning the
+        # resolved root closes that window for every path derived from it.
         abs_path = os.path.realpath(path)
         if os.path.isfile(abs_path):
             self.folder_path = os.path.dirname(abs_path)
         else:
             self.folder_path = abs_path
+        # Deck folder pinned once (see pin_dir): every list/read/write below is
+        # done relative to this descriptor, so swapping a directory name above
+        # the deck files cannot relocate them.
+        self.folder_fd = pin_dir(self.folder_path)
+
         # Per-deck state
+        self._skipped_decks = set()   # names already explained by note_skipped_deck
         self._deck_trackers = {}    # name → DeckVersionTracker
         self._deck_watchers = {}    # name → FileWatcher
         self._deck_cache = {}       # name → dict (deck data)
         self._lock = threading.Lock()
 
+    def note_skipped_deck(self, name, reason):
+        """Explain, once per name, why a file in the folder is not listed —
+        otherwise a deck the user can see on disk just vanishes silently."""
+        with self._lock:
+            if name in self._skipped_decks:
+                return
+            self._skipped_decks.add(name)
+        print(f"  [decks]  Skipping {console_safe(name)}: {reason}")
+
+    def sweep_save_temps(self):
+        """Remove our own leftover save temporaries (a save killed mid-write
+        leaves one). unlink never dereferences, so a planted entry using our
+        prefix is removed rather than followed."""
+        try:
+            names = os.listdir(self.folder_fd if self.folder_fd is not None
+                               else self.folder_path)
+        except OSError:
+            return
+        kwargs = {"dir_fd": self.folder_fd} if self.folder_fd is not None else {}
+        for name in names:
+            if name.startswith(SAVE_TMP_PREFIX) and name.endswith(SAVE_TMP_SUFFIX):
+                try:
+                    os.unlink(name if self.folder_fd is not None
+                              else os.path.join(self.folder_path, name), **kwargs)
+                except OSError:
+                    pass
+
     # ── Per-deck state management (folder mode) ──────────────────────
 
     def peek_tracker(self, deck_name):
         """Return an existing tracker, or None. Never allocates."""
-        with self._lock:
-            return self._deck_trackers.get(deck_name)
+        return self.get_tracker(deck_name, create=False)
 
-    def get_tracker(self, deck_name):
+    def get_tracker(self, deck_name, create=True):
         with self._lock:
+            if deck_name not in self._deck_trackers and not create:
+                return None
             if deck_name not in self._deck_trackers:
                 self._deck_trackers[deck_name] = DeckVersionTracker()
             return self._deck_trackers[deck_name]
@@ -1085,20 +1483,25 @@ class VelaLocalServer:
                     # attacker can trigger — so it needs the same atomic guarantee as
                     # the HTTP routes, not just a realpath check followed by open().
                     try:
-                        fd = VelaHTTPHandler._open_deck_fd(self.folder_path, name)
-                    except (ValueError, OSError):
-                        print(f"[sync] {name} no longer resolves inside the folder — skipping")
+                        fpath = VelaHTTPHandler._safe_deck_path(self.folder_path, name)
+                    except ValueError:
+                        print(f"[sync] {console_safe(name)} no longer resolves inside the folder — skipping")
                         return
-                    new_data = VelaHTTPHandler._read_deck_json(fd)  # bounded
+                    new_data = read_deck_json(
+                        name if self.folder_fd is not None else fpath,
+                        dir_fd=self.folder_fd)
                     self.set_deck_data(name, new_data)
                     self.get_tracker(name).bump()
-                    print(f"[sync] {name} changed → pushed to browser")
+                    print(f"[sync] {console_safe(name)} changed → pushed to browser")
                 except Exception as e:
-                    print(f"[sync] Error reading {name}: {e}")
+                    print(f"[sync] Error reading {console_safe(name)}: {console_safe(e)}")
 
+            # Claim the slot under the lock, but do NOT start the watcher here:
+            # start() reads and hashes the file, and holding the lock across that
+            # I/O blocks every deck endpoint (get_tracker/get_deck_data/save).
             watcher = FileWatcher(deck_path, on_change)
-            watcher.start()
             self._deck_watchers[deck_name] = watcher
+        watcher.start()
 
     # ── HTML building ────────────────────────────────────────────────
 
@@ -1135,6 +1538,14 @@ class VelaLocalServer:
 
         # Inject deck data into STARTUP_PATCH
         deck_json_str = json.dumps(deck_data, ensure_ascii=False, separators=(",", ":"))
+        # Expansion (compact → full, alias resolution) is a multiplier, so the
+        # input cap alone does not bound this. Check the expanded payload before
+        # it is escaped and spliced into a ~1.5 MB template. The cap is in
+        # BYTES: the character-length test alone would undercount multi-byte
+        # UTF-8 content, so it only short-circuits the (up to 4×) encode.
+        if (len(deck_json_str) > MAX_DECK_PAYLOAD
+                or len(deck_json_str.encode("utf-8")) > MAX_DECK_PAYLOAD):
+            raise ValueError(f"Expanded deck exceeds {MAX_DECK_PAYLOAD} bytes")
         marker = "const STARTUP_PATCH = null;"
         if marker not in vela_jsx:
             raise RuntimeError("STARTUP_PATCH marker not found in template")
@@ -1191,8 +1602,9 @@ class VelaLocalServer:
         """Build the Vela app HTML for a deck already read from disk (folder mode).
 
         Takes the PARSED deck rather than a path: the caller reads it through
-        _open_deck_fd()'s symlink-proof descriptor, so this must never re-open by
-        path (that would resolve the leaf again and reopen the TOCTOU window).
+        a symlink-proof descriptor (_open_deck_fd / read_deck_json), so this
+        must never re-open by path (that would resolve the leaf again and
+        reopen the TOCTOU window).
         """
         deck_data = self._normalize_deck(raw_deck)
 
@@ -1269,25 +1681,32 @@ class VelaLocalServer:
         import subprocess
         print(f"  [port]   Port {self.port} in use — killing stale process...")
         # Try reading PID from .vela.env first (most reliable)
-        runtime_path = self._runtime_path()
+        info = self._read_runtime_info() or {}
         killed = False
-        try:
-            info = self._read_runtime_info(runtime_path)
-            stale_pid = info and info["pid"]
-            # Apply the SAME verification as _cleanup_stale_server(). That path
-            # checks the PID is a live Python process actually bound to the port
-            # before signalling it; this one did not, so a runtime file naming
-            # any PID could direct a SIGKILL at an unrelated process. The two
-            # paths read the same attacker-influenced file and must agree.
-            if (stale_pid and info.get("port") == self.port
-                    and self._is_python_process(stale_pid)
-                    and self._pid_holds_port(stale_pid, self.port)):
+        stale_pid = info.get("pid")
+        # SECURITY: never signal the file-supplied PID on the file's say-so —
+        # this runs on the ordinary busy-port path, not just under --replace.
+        # _is_our_stale_server() applies the SAME verification as
+        # _cleanup_stale_server(): the PID must be a live Python process actually
+        # bound to the port before it may be signalled. Anything unverified falls
+        # through to the OS-discovered port holder below — which applies the same
+        # verification, because "the OS named it" says nothing about whether the
+        # process is ours to kill.
+        if (info.get("port") == self.port
+                and self._is_our_stale_server(stale_pid, self.port)):
+            try:
                 os.kill(stale_pid, 9)
                 killed = True
                 print(f"  [port]   Killed stale PID {stale_pid}")
-        except (OSError, json.JSONDecodeError, ProcessLookupError):
-            pass
-        # Fallback: find PID by port (platform-aware)
+            except OSError:
+                pass
+        # Fallback: ask the OS who holds the port. SECURITY/SAFETY: a PID from
+        # the OS is not automatically ours — the query can name an unrelated
+        # service, and (without a listen filter) even a CLIENT connected to that
+        # port, such as the user's browser. Signal only what verifies as a
+        # previous Vela server; otherwise leave it alone and let the caller fall
+        # back to the next free port. --replace is the operator's explicit
+        # opt-out for the unverified case.
         if not killed:
             try:
                 if sys.platform == "win32":
@@ -1298,24 +1717,46 @@ class VelaLocalServer:
                             parts = line.split()
                             pid_str = parts[-1]
                             try:
-                                subprocess.run(["taskkill", "/PID", pid_str, "/F"],
+                                pid = int(pid_str)
+                            except ValueError:
+                                break
+                            if not (self._force_kill
+                                    or self._is_our_stale_server(pid, self.port)):
+                                print(f"  [port]   Port {self.port} is held by PID {pid}, "
+                                      f"which is not a Vela server — leaving it alone "
+                                      f"(use --replace to override).")
+                                break
+                            try:
+                                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
                                                capture_output=True, timeout=5)
                                 killed = True
-                                print(f"  [port]   Killed stale PID {pid_str}")
+                                print(f"  [port]   Killed stale PID {pid}")
                             except (subprocess.TimeoutExpired, ValueError):
                                 pass
                             break
                 else:
-                    result = subprocess.run(["lsof", "-ti", f":{self.port}"],
-                                            capture_output=True, text=True, timeout=3)
+                    result = subprocess.run(
+                        ["lsof", "-ti", "-a", "-sTCP:LISTEN", "-i", f":{self.port}"],
+                        capture_output=True, text=True, timeout=3)
                     for pid_str in result.stdout.strip().split("\n"):
-                        if pid_str.strip():
-                            try:
-                                os.kill(int(pid_str.strip()), 9)
-                                killed = True
-                                print(f"  [port]   Killed stale PID {pid_str.strip()}")
-                            except (ProcessLookupError, ValueError):
-                                pass
+                        if not pid_str.strip():
+                            continue
+                        try:
+                            pid = int(pid_str.strip())
+                        except ValueError:
+                            continue
+                        if not (self._force_kill
+                                or self._is_our_stale_server(pid, self.port)):
+                            print(f"  [port]   Port {self.port} is held by PID {pid}, "
+                                  f"which is not a Vela server — leaving it alone "
+                                  f"(use --replace to override).")
+                            continue
+                        try:
+                            os.kill(pid, 9)
+                            killed = True
+                            print(f"  [port]   Killed stale PID {pid}")
+                        except OSError:
+                            pass
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
         if not killed:
@@ -1339,7 +1780,9 @@ class VelaLocalServer:
         try:
             return ThreadedHTTPServer((self.host, requested), handler_class)
         except OSError as e:
-            if e.errno not in (98, 10048, 10013):  # not EADDRINUSE (98/10048) or EACCES (10013)
+            # errno names, not numbers: EADDRINUSE is 98 on Linux, 48 on macOS,
+            # 10048 on Windows — a hardcoded list aborts instead of reclaiming.
+            if e.errno not in (errno.EADDRINUSE, errno.EACCES, 10048, 10013):
                 raise
         # Requested port busy — try to reclaim it from a stale process.
         httpd = self._retry_after_stale_kill(handler_class)
@@ -1360,9 +1803,155 @@ class VelaLocalServer:
     # ── Run ──────────────────────────────────────────────────────────
 
     RUNTIME_FILE = ".vela.env"
+    RUNTIME_MAX_BYTES = 64 * 1024  # ours is ~200 B; cap what we will parse
 
-    def _runtime_path(self):
-        return os.path.join(os.getcwd(), self.RUNTIME_FILE)
+    def _runtime_dir_fd(self):
+        """Descriptor for the directory the runtime file lives in, resolved once
+        and cached, or None where the platform has no dir_fd-relative calls.
+
+        SECURITY: O_NOFOLLOW/O_EXCL constrain only the FINAL path component. The
+        parent is re-resolved on every open, so swapping a parent directory
+        redirects the write — token included — out of the project even though the
+        inode we create is fresh. Resolving the directory once and addressing the
+        file relative to that descriptor pins the WHOLE path: every create, stat
+        and unlink below lands in the directory the server actually started in,
+        whatever happens to the names above it afterwards."""
+        if self._dir_fd is None and not self._dir_fd_unsupported:
+            needed = (os.open, os.stat, os.unlink, os.rmdir)
+            if not all(fn in os.supports_dir_fd for fn in needed):
+                self._dir_fd_unsupported = True  # Windows: fall back to paths
+                return None
+            try:
+                self._dir_fd = os.open(os.getcwd(),
+                                       os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            except OSError:
+                return None  # transient (e.g. the CWD is gone) — retry next call
+        return self._dir_fd
+
+    def _runtime_target(self, name):
+        """(target, kwargs) addressing `name` in the runtime directory —
+        dir_fd-relative where supported, else the plain absolute path.
+
+        Never raises: os.getcwd() itself fails if the directory was removed out
+        from under the process, and this is called from cleanup and startup
+        paths where that must degrade to a failed open, not an escaping error."""
+        dfd = self._runtime_dir_fd()
+        if dfd is not None:
+            return name, {"dir_fd": dfd}
+        try:
+            return os.path.join(os.getcwd(), name), {}
+        except OSError:
+            return name, {}  # no CWD to resolve — the open below fails closed
+
+    # SECURITY (CWE-59/61/367): the runtime file lives in the process CWD — the
+    # user's project/worktree, i.e. content Vela does not own and an attacker may
+    # have authored (a cloned repo, a shared checkout). Any pre-existing
+    # `.vela.env` is therefore untrusted input, both as a directory entry and as
+    # bytes: if the entry is a symlink/junction/other link, opening it by path
+    # makes Vela read or — far worse — TRUNCATE AND OVERWRITE a file outside the
+    # project, and in authenticated mode that write puts a live auth token in a
+    # file the attacker chose. Every touch of this file goes through the helpers
+    # below and fails CLOSED: reads open O_NOFOLLOW and take content from the
+    # SAME fd (no re-resolved path, no check/use race); writes first destroy the
+    # existing directory ENTRY (unlink/rmdir act on the entry, never on its
+    # target) and then create exclusively, so the write can only land on an inode
+    # this process just made. Never relax this into "check then open by path".
+
+    def _read_runtime_info(self):
+        """Read + validate the runtime file. Returns {"pid", "port"} (values are
+        positive ints or None), or None when there is nothing usable.
+
+        Fields are type-checked rather than trusted: the file is attacker-
+        authorable, and a non-int pid would crash the callers' os.kill/tasklist
+        while a non-positive one would make os.kill() signal a whole process
+        group (-1 = every process this user can signal)."""
+        target, kwargs = self._runtime_target(self.RUNTIME_FILE)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            # O_NOFOLLOW does not exist on Windows, so the open there would
+            # follow a symlink or junction. Reject reparse points up front
+            # instead: weaker than an atomic no-follow open (the check is by
+            # name), but it closes the static case the flag covers elsewhere.
+            if os.name == "nt":
+                wst = os.stat(target, follow_symlinks=False, **kwargs)
+                if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+                    return None
+            fd = os.open(target, flags, **kwargs)
+        except OSError:
+            return None  # absent, a link (ELOOP), or unreadable
+        try:
+            st = os.fstat(fd)
+            # Size-gate BEFORE parsing: json.load() on a file this process does
+            # not own would otherwise pull an attacker-chosen number of bytes
+            # into memory. Our own file is ~200 bytes; anything near the cap is
+            # not ours. Checked on the fd, so it describes what we will read.
+            if not stat.S_ISREG(st.st_mode) or st.st_size > self.RUNTIME_MAX_BYTES:
+                os.close(fd)
+                return None  # fifo/device/directory, or implausibly large
+            f = os.fdopen(fd, "r", encoding="utf-8")
+        except OSError:
+            # fdopen takes ownership of the fd, so it may already be closed here
+            # — a second close would raise EBADF straight out of startup.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            return None
+        try:
+            with f:
+                # Bounded read, not json.load(f): the file can grow between the
+                # fstat above and this read, so the cap is enforced on the bytes
+                # we actually take, never on a size we sampled earlier.
+                raw = f.buffer.read(self.RUNTIME_MAX_BYTES + 1).decode("utf-8")
+            if len(raw) > self.RUNTIME_MAX_BYTES:
+                return None
+            info = json.loads(raw)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            return None  # unreadable, not UTF-8, not JSON, or nested to exhaustion
+        if not isinstance(info, dict):
+            return None
+        pid, port = info.get("pid"), info.get("port")
+        return {
+            "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 else None,
+            "port": port if (isinstance(port, int) and not isinstance(port, bool)
+                             and 0 < port <= 65535) else None,
+        }
+
+    def _discard_runtime_entry(self, name):
+        """Delete any existing entry WITHOUT dereferencing it, so a planted link
+        is destroyed instead of followed. A real directory is left alone — the
+        exclusive create then fails and the caller writes nothing."""
+        target, kwargs = self._runtime_target(name)
+        try:
+            st = os.stat(target, follow_symlinks=False, **kwargs)
+        except OSError:
+            return  # nothing there (or unreadable) — the exclusive create decides
+        if stat.S_ISDIR(st.st_mode):
+            return
+        try:
+            os.unlink(target, **kwargs)
+        except OSError:
+            # POSIX unlink removes every non-directory entry INCLUDING symlinks,
+            # so a failure here is never "it was a link". Only Windows needs the
+            # rmdir fallback (directory symlinks / junctions). Attempting it on
+            # POSIX would delete a real directory that raced into place after the
+            # stat above — exactly what the S_ISDIR guard exists to prevent.
+            if os.name == "nt":
+                try:
+                    os.rmdir(target, **kwargs)
+                except OSError:
+                    pass
+
+    def _create_runtime_file(self):
+        """Return a write fd for a freshly created runtime file (mode 0o600).
+
+        O_CREAT|O_EXCL refuses to open an existing entry at all — including a
+        symlink, dangling or not — so this either creates our own inode or
+        raises. O_NOFOLLOW is belt-and-braces for the same guarantee."""
+        self._discard_runtime_entry(self.RUNTIME_FILE)
+        target, kwargs = self._runtime_target(self.RUNTIME_FILE)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(target, flags, 0o600, **kwargs)
 
     @staticmethod
     def _is_pid_alive(pid):
@@ -1378,6 +1967,67 @@ class VelaLocalServer:
                 return True
         except (OSError, subprocess.TimeoutExpired):
             return False
+
+    @staticmethod
+    def _process_is_vela(pid):
+        """True only if `pid` is running THIS script, identified by PATH.
+
+        SECURITY: this decision ends in SIGKILL, and `serve.py` is one of the
+        most common names a dev server can have — matching on the NAME alone
+        adopts an unrelated project's server as ours and kills it, which is the
+        very thing this check exists to prevent. So resolve each candidate
+        argument against the TARGET's own working directory (its cwd is not
+        ours) and require it to name the same file this process is running.
+        Paths are compared rather than inodes so that editing the script, as
+        happens constantly in development, does not make a live server
+        unrecognisable."""
+        me = os.path.realpath(os.path.abspath(__file__))
+        base = os.path.basename(__file__)
+
+        def runs_this_script(argv, cwd):
+            for arg in argv:
+                if not arg or os.path.basename(arg) != base:
+                    continue
+                cand = arg if os.path.isabs(arg) or not cwd else os.path.join(cwd, arg)
+                if os.path.realpath(cand) == me:
+                    return True
+            return False
+
+        try:
+            if sys.platform == "win32":
+                r = subprocess.run(
+                    ["wmic", "process", "where", f"processid={int(pid)}",
+                     "get", "commandline", "/format:list"],
+                    capture_output=True, text=True, timeout=5)
+                # No cwd available here, so only an absolute match can succeed.
+                return runs_this_script((r.stdout or "").replace('"', " ").split(), None)
+            try:
+                with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+                    argv = f.read().decode("utf-8", "replace").split("\0")
+            except FileNotFoundError:
+                # No procfs (macOS/BSD) — ask ps for the command line instead.
+                r = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="],
+                                   capture_output=True, text=True, timeout=5)
+                argv = (r.stdout or "").split()
+                return runs_this_script(argv, None)
+            try:
+                cwd = os.readlink(f"/proc/{int(pid)}/cwd")
+            except OSError:
+                cwd = None
+            return runs_this_script(argv, cwd)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return False
+
+    def _is_our_stale_server(self, pid, port):
+        """True only if `pid` is plausibly a previous Vela server on `port`.
+
+        SECURITY: the PID reaching both callers comes from the runtime file in a
+        directory Vela does not own, or from asking the OS who holds the port —
+        neither of which says the process is OURS to kill. Require the process
+        kind, its identity (it must actually be this server script) AND that it
+        really holds the port. One copy, so the two callers cannot drift."""
+        return (bool(pid) and self._is_python_process(pid)
+                and self._process_is_vela(pid) and self._pid_holds_port(pid, port))
 
     def _kill_pid(self, pid):
         """Kill a process by PID (platform-aware)."""
@@ -1418,7 +2068,13 @@ class VelaLocalServer:
                     if f":{port}" in line and "LISTENING" in line and line.strip().endswith(str(pid)):
                         return True
             else:
-                r = _sp.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=3)
+                # The state filter matters: a bare port selection also matches
+                # sockets whose REMOTE port is `port` — i.e. every client
+                # connected to the server, which is not holding the port at all.
+                # -a is required: lsof ORs selection filters without it, and the
+                # state filter needs -i to apply.
+                r = _sp.run(["lsof", "-ti", "-a", "-sTCP:LISTEN", "-i", f":{port}"],
+                            capture_output=True, text=True, timeout=3)
                 return str(pid) in r.stdout.split()
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -1428,10 +2084,9 @@ class VelaLocalServer:
         """Read existing .vela.env — if the PID is dead, clean up. If alive and
         confirmed to be a Vela server on our port, kill it.
         Must run BEFORE _write_runtime_info."""
-        rpath = self._runtime_path()
-        info = self._read_runtime_info(rpath)
-        if not info:
-            return  # missing, corrupt, or not a plain file — nothing to clean
+        info = self._read_runtime_info()
+        if info is None:
+            return  # no file, a link, or corrupt — nothing to clean
 
         stale_pid = info["pid"]
         stale_port = info["port"]
@@ -1447,12 +2102,9 @@ class VelaLocalServer:
             # PID alive + port matches .vela.env — but verify both:
             # 1. It's actually a Python process (guards PID recycling)
             # 2. It's actually bound to the port (guards stale .vela.env)
-            if not self._is_python_process(stale_pid):
-                print(f"  [port]   PID {stale_pid} is alive but not Python — PID was recycled, cleaning up")
-                self._remove_runtime_files()
-                return
-            if not self._pid_holds_port(stale_pid, stale_port):
-                print(f"  [port]   PID {stale_pid} is Python but not on port {stale_port} — stale runtime, cleaning up")
+            if not self._is_our_stale_server(stale_pid, stale_port):
+                print(f"  [port]   PID {stale_pid} is not a Vela server on port {stale_port} "
+                      f"(recycled PID or stale runtime) — cleaning up")
                 self._remove_runtime_files()
                 return
             # Confirmed: Python process holding our port — stop it first so we
@@ -1461,35 +2113,6 @@ class VelaLocalServer:
             self._kill_pid(stale_pid)
             time.sleep(0.5)
             self._remove_runtime_files()
-
-    @staticmethod
-    def _read_runtime_info(rpath):
-        """Read .vela.env safely, or return None.
-
-        The WRITE path was hardened to refuse a planted symlink; these readers
-        were left on a plain open(). They run before the socket binds, in a
-        directory the threat model treats as attacker-writable, so a planted
-        entry could hang the start-up (fifo), exhaust memory (/dev/zero), or
-        crash it with values of the wrong type. Same open discipline as every
-        other read, plus coercion of the two fields actually used.
-        """
-        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                 | getattr(os, "O_NONBLOCK", 0))
-        try:
-            fd = os.open(rpath, flags)
-        except OSError:
-            return None
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                os.close(fd)
-                return None
-            with os.fdopen(fd, "r", encoding="utf-8") as f:
-                info = json.loads(f.read(64 * 1024))
-            if not isinstance(info, dict):
-                return None
-            return {"pid": int(info.get("pid")), "port": int(info.get("port"))}
-        except (OSError, ValueError, TypeError, OverflowError):
-            return None
 
     def _write_runtime_info(self):
         """Write .vela.env with auth token, port, pid.
@@ -1502,38 +2125,29 @@ class VelaLocalServer:
         }
         if not self._no_auth:
             info["token"] = self._auth_token
-        rpath = self._runtime_path()
-        # SECURITY: this file carries the auth token, and it is written into the
-        # launch cwd — which for the usual `serve.py .` IS the served folder, so
-        # the same local process that plants hostile decks can pre-plant this name.
-        # Opening it O_CREAT|O_TRUNC without O_NOFOLLOW followed a planted symlink:
-        # it truncated whatever the link pointed at and wrote the token into it.
-        # Remove any existing entry (unlink acts on the link itself, never its
-        # target) and then create EXCLUSIVELY: O_CREAT|O_EXCL fails on an existing
-        # path including a symlink, so the file we write is always one we just
-        # made, owned by us, at mode 0600. No O_TRUNC — there is nothing to
-        # truncate, and a refused open must never destroy anything.
         try:
-            os.unlink(rpath)
-        except FileNotFoundError:
-            pass
+            fd = self._create_runtime_file()
         except OSError as e:
-            print(f"  [auth]   WARNING: Could not replace runtime file: {e}")
+            # Reached when the existing entry could not be replaced (unwritable
+            # directory, immutable file, a directory in the way). Continuing
+            # without a runtime file is the safe outcome — the alternative is
+            # writing a token through something we do not own.
+            print(f"  [auth]   WARNING: Could not replace {self.RUNTIME_FILE} ({e})"
+                  f" — continuing without a runtime file.")
             return
         try:
-            fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        except OSError as e:
-            # Lost a race to recreate the name, or it reappeared as a symlink.
-            # Fail closed: never write the token to a path we did not create.
-            print(f"  [auth]   WARNING: Could not write runtime file safely: {e}")
-            return
-        try:
-            actual = os.fstat(fd).st_mode & 0o777  # from the fd we own, not a path
-            with os.fdopen(fd, "w") as f:
-                json.dump(info, f, indent=2)
+            f = os.fdopen(fd, "w", encoding="utf-8")
         except OSError as e:
             os.close(fd)
+            print(f"  [auth]   WARNING: Could not write runtime file: {e}")
+            return
+        try:
+            with f:
+                json.dump(info, f, indent=2)
+                # Report on the object we actually wrote (fstat on our own fd),
+                # never on a path that could resolve elsewhere by now.
+                actual = os.fstat(f.fileno()).st_mode & 0o777
+        except OSError as e:
             print(f"  [auth]   WARNING: Could not write runtime file: {e}")
             return
         if actual != 0o600 and not self._no_auth:
@@ -1541,10 +2155,14 @@ class VelaLocalServer:
             print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
 
     def _remove_runtime_files(self):
-        """Remove runtime files (.vela.env, .vela.pid)."""
+        """Remove runtime files (.vela.env, .vela.pid).
+
+        os.unlink removes the directory entry itself and never dereferences it,
+        so this cannot touch whatever a planted link pointed at."""
         for name in (self.RUNTIME_FILE, ".vela.pid"):
+            target, kwargs = self._runtime_target(name)
             try:
-                os.unlink(os.path.join(os.getcwd(), name))
+                os.unlink(target, **kwargs)
             except OSError:
                 pass
 
@@ -1586,6 +2204,7 @@ class VelaLocalServer:
             print(f"ERROR: Directory not found: {self.folder_path}", file=sys.stderr)
             sys.exit(1)
 
+        self.sweep_save_temps()
         self._load_vendor_files()
 
         VelaHTTPHandler.server_ref = self

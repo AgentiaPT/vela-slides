@@ -269,6 +269,23 @@ def _host_only(host_header):
     return (h.rsplit(":", 1)[0] if ":" in h else h).lower()
 
 
+def token_equal(a, b):
+    """Constant-time credential compare that cannot be crashed by its input.
+
+    hmac.compare_digest raises TypeError for a str with any non-ASCII character,
+    and this runs before routing — so an unauthenticated request could drop the
+    connection instead of getting 401. Compare the UTF-8 bytes, which accept
+    anything. One copy for both servers: serve.py imports this module.
+    """
+    if not isinstance(a, (str, bytes)) or not isinstance(b, (str, bytes)):
+        return False
+    if isinstance(a, str):
+        a = a.encode("utf-8", "surrogatepass")
+    if isinstance(b, str):
+        b = b.encode("utf-8", "surrogatepass")
+    return hmac.compare_digest(a, b)
+
+
 def _is_loopback_host(host_header):
     return _host_only(host_header) in _LOOPBACK_HOSTS
 
@@ -417,18 +434,26 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         # and /events carry nothing sensitive and stay open. Preflight OPTIONS
         # cannot carry the header, so it is checked here on the real POST only.
         token = getattr(self.server, "_token", None)
-        if token and not hmac.compare_digest(self.headers.get("x-vela-token", ""), token):
+        if token and not token_equal(self.headers.get("x-vela-token", ""), token):
             self._json(401, {"ok": False, "error": "unauthorized"})
             return
         if self.path != "/action":
             self._json(404, {"ok": False, "error": "not found"})
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 16 * 1024 * 1024:
+        # Clamp before comparing: a bare int() lets a malformed header raise
+        # (dropping the connection) and lets a negative one slip past the cap and
+        # park the thread in read(-1). Same rule as serve.py's parser.
+        MAX_BODY = 16 * 1024 * 1024
+        try:
+            length = max(int(self.headers.get("Content-Length") or 0), 0)
+        except (ValueError, TypeError):
+            self._json(400, {"ok": False, "error": "bad content-length"})
+            return
+        if length > MAX_BODY:
             self._json(413, {"ok": False, "error": "payload too large"})
             return
         try:
-            req = json.loads(self.rfile.read(length) or b"{}")
+            req = json.loads(self.rfile.read(min(length, MAX_BODY)) or b"{}")
         except (ValueError, TypeError):
             self._json(400, {"ok": False, "error": "bad json"})
             return

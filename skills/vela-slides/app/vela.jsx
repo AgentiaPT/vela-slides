@@ -135,8 +135,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.46";
+const VELA_VERSION = "13.47";
 const VELA_CHANGELOG = [
+  { v: "13.47", d: ["security: compact-deck colour aliases now expand in a single pass, so a small deck can no longer amplify itself during expansion", "security: over-long palette values are dropped rather than expanded", "regression tests added"] },
   { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
   { v: "13.44", d: "internal: split part-uitest.jsx's suite battery into part-uitest.jsx + part-uitest2.jsx, no functional change" },

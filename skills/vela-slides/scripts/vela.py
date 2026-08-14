@@ -20,7 +20,7 @@ Exit codes:
   5  Conflict (already exists)
 """
 
-import json, sys, os, subprocess, copy, shutil
+import json, sys, os, re, subprocess, copy, shutil
 
 # ── Paths ──────────────────────────────────────────────────────────────
 SKILL_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -37,6 +37,10 @@ EXIT_USAGE = 2
 EXIT_NOT_FOUND = 3
 EXIT_VALIDATION = 4
 EXIT_CONFLICT = 5
+
+# Longest accepted colour-palette value. A colour or gradient literal is far
+# shorter; the cap bounds how much one alias occurrence can expand.
+MAX_PALETTE_VALUE = 256
 
 # ── Helpers ────────────────────────────────────────────────────────────
 _json_mode = False
@@ -273,6 +277,11 @@ def expand_deck(compact):
         if isinstance(raw_palette, dict):
             for k, v in raw_palette.items():
                 if isinstance(k, str) and isinstance(v, str) and k.startswith("$"):
+                    # A palette value is a colour or gradient literal. Anything
+                    # very long is not one, and admitting it would let a tiny
+                    # deck multiply itself by that length at every occurrence.
+                    if len(v) > MAX_PALETTE_VALUE:
+                        continue
                     palette[k] = v
                 elif isinstance(v, dict):
                     # LLM wrote nested palette like {"palette":{"bg":"#..."}} — skip
@@ -286,14 +295,21 @@ def expand_deck(compact):
                                     "annotation", "date", "markup", "deckTitle",
                                     # studyNotes (offline student content) prose fields — preserve literal hex codes
                                     "diagram", "questions", "glossary", "definition"})
-            # Sort longest alias first so $AB is replaced before $A
-            _sorted = sorted(palette.items(), key=lambda x: -len(x[0]))
+            # Sort longest alias first so $AB is replaced before $A. One
+            # alternation, one pass: substituting alias-by-alias re-scanned each
+            # replacement, so a palette whose values contained other aliases
+            # expanded multiplicatively — a few hundred bytes of deck could
+            # become gigabytes. A single pass with a FUNCTION replacement also
+            # keeps the value literal, so neither backreferences nor further
+            # aliases in it are ever interpreted. Values are colour literals
+            # (see references/formats.md), so nothing legitimate needs the
+            # transitive behaviour this removes.
+            _alias_re = re.compile("|".join(
+                re.escape(a) for a in sorted(palette, key=len, reverse=True)))
 
             def _resolve(obj, skip=False):
                 if isinstance(obj, str) and not skip:
-                    for alias, color in _sorted:
-                        obj = obj.replace(alias, color)
-                    return obj
+                    return _alias_re.sub(lambda m: palette[m.group(0)], obj)
                 if isinstance(obj, dict):
                     return {k: _resolve(v, skip=(k in _TEXT_KEYS)) for k, v in obj.items()}
                 if isinstance(obj, list):
@@ -343,7 +359,6 @@ def expand_deck(compact):
     }
 
     # Fix bare hex colors missing # prefix (common LLM output issue)
-    import re
     raw = json.dumps(result, ensure_ascii=False)
     # Match color fields with 6-char hex missing #
     raw = re.sub(

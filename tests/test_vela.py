@@ -1933,10 +1933,12 @@ def test_server_hardening():
     else:
         fail("Runtime file constant")
 
-    if '_runtime_path' in serve_src:
-        ok("_runtime_path method present")
+    # The runtime file is addressed through one helper (dir_fd-relative where
+    # the platform supports it), never by an ad-hoc path built at each call site.
+    if '_runtime_target' in serve_src:
+        ok("_runtime_target helper present")
     else:
-        fail("_runtime_path method")
+        fail("_runtime_target helper")
 
     # ── Server lifecycle ──
     if '_cleanup_stale_server' in serve_src:
@@ -2945,8 +2947,15 @@ def test_serve_auth():
     with open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8") as _f:
         serve_src = _f.read()
 
-    if "hmac.compare_digest" in serve_src:
-        ok("Token comparison uses hmac.compare_digest (timing-safe)")
+    # Credential comparison is one shared helper (agent_backend.token_equal) used
+    # by both local servers, so assert the guarantee where it now lives: serve.py
+    # compares through the helper, and the helper is timing-safe.
+    with open(os.path.join(DEV_SCRIPTS, "agent_backend.py"), encoding="utf-8") as _f:
+        backend_src = _f.read()
+    if ("token_equal" in serve_src
+            and "hmac.compare_digest" not in serve_src  # no second, drifting copy
+            and "hmac.compare_digest" in backend_src):
+        ok("Token comparison uses one timing-safe helper (hmac.compare_digest)")
     else:
         fail("Timing-safe comparison")
 
@@ -3302,6 +3311,40 @@ def test_study_notes():
     else:
         fail("compact_deck preserves literal hex codes inside studyNotes.text",
              f"text after compact: {sn_in_compact.get('text', '') if sn_in_compact else None!r}")
+
+    # ── Palette expansion must not amplify ────────────────────────────
+    # A palette whose values name other aliases used to be re-scanned on every
+    # substitution, so each level multiplied the last: a few hundred bytes of
+    # deck could expand into gigabytes while the input-size cap saw nothing
+    # unusual. Expansion is one pass now, so depth cannot buy size.
+    def _chained_palette_deck(levels):
+        pal = {f"$L{i}": f"$L{i + 1}$L{i + 1}$L{i + 1}" for i in range(levels)}
+        pal[f"$L{levels}"] = "#3B82F6"
+        return {"n": "b", "C": pal, "S": [{"b": "$L0"}]}
+
+    sizes = [len(json.dumps(expand_deck(_chained_palette_deck(n)))) for n in (4, 12, 24)]
+    if max(sizes) - min(sizes) < 200:
+        ok("compact palette expansion does not grow with alias depth")
+    else:
+        fail("compact palette expansion amplifies", f"sizes at depth 4/12/24: {sizes}")
+
+    # ...while the documented behaviour (aliases name colour literals, longest
+    # alias wins, prose keys untouched) is unchanged.
+    pal_deck = {"n": "d", "C": {"$A": "#3B82F6", "$AB": "#111111"},
+                "S": [{"b": "$A", "c": "$AB", "x": "keep $A literal"}]}
+    pal_slide = expand_deck(copy.deepcopy(pal_deck))["lanes"][0]["items"][0]["slides"][0]
+    if (pal_slide.get("b") == "#3B82F6" and pal_slide.get("c") == "#111111"
+            and pal_slide.get("x") == "keep $A literal"):
+        ok("palette aliases still resolve, longest first, prose left alone")
+    else:
+        fail("palette alias resolution changed", repr(pal_slide))
+
+    long_deck = {"n": "d", "C": {"$A": "x" * 300}, "S": [{"b": "$A"}]}
+    long_slide = expand_deck(copy.deepcopy(long_deck))["lanes"][0]["items"][0]["slides"][0]
+    if long_slide.get("b") == "$A":
+        ok("over-long palette value is dropped, not expanded")
+    else:
+        fail("over-long palette value was expanded", repr(long_slide)[:80])
 
     # Round-trip back to full and compare
     expanded = expand_deck(copy.deepcopy(compact))
