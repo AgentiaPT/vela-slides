@@ -49,6 +49,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(DEV_DIR))            # repo root
 SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")    # lean shipped skill
 # vela.py / assemble.py stay in the lean skill; import them from there.
 sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
+sys.path.insert(0, SCRIPT_DIR)  # sibling dev-tool modules (agent_backend)
 from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
@@ -243,20 +244,10 @@ def build_browser_html():
 </html>"""
 
 
-def token_equal(a, b):
-    """Constant-time credential compare that cannot be crashed by its input.
-
-    hmac.compare_digest raises TypeError for a str with any non-ASCII character,
-    and this runs before routing — so an unauthenticated request could drop the
-    connection and print a traceback instead of getting 403. Compare the UTF-8
-    bytes, which accept anything."""
-    if not isinstance(a, (str, bytes)) or not isinstance(b, (str, bytes)):
-        return False
-    if isinstance(a, str):
-        a = a.encode("utf-8", "surrogatepass")
-    if isinstance(b, str):
-        b = b.encode("utf-8", "surrogatepass")
-    return hmac.compare_digest(a, b)
+# One credential compare for both local servers. It lives in agent_backend
+# (which also runs standalone, so it cannot depend on this module) and is
+# imported here rather than copied — a second copy is how these two drift.
+from agent_backend import token_equal  # noqa: E402  (path set up above)
 
 
 # ── Deck file I/O ─────────────────────────────────────────────────────
@@ -356,7 +347,13 @@ def read_deck_json(path, dir_fd=None):
             pass
         raise
     with f:
-        return json.load(f)
+        # Bounded read, not json.load(f): the entry can grow between the fstat
+        # above and this read, so the cap must be enforced on the bytes actually
+        # taken — same shape as the other two readers.
+        payload = f.buffer.read(MAX_DECK_BYTES + 1)
+    if len(payload) > MAX_DECK_BYTES:
+        raise OSError(f"Deck file exceeds {MAX_DECK_BYTES} bytes: {path}")
+    return json.loads(payload.decode("utf-8"))
 
 
 def entry_writable(path, dir_fd=None, folder=None):
@@ -408,6 +405,10 @@ def write_deck_json(path, deck, dir_fd=None, folder=None):
         dst = os.stat(path, follow_symlinks=False, **kwargs)
     except OSError:
         dst = None
+    if dst is not None and stat.S_ISLNK(dst.st_mode):
+        # The replace below would silently destroy a link the user made, and the
+        # read path already refuses one — same reasoning as the hard-link branch.
+        raise PermissionError(f"Deck file is a link: {path}")
     if dst is not None and stat.S_ISREG(dst.st_mode):
         if dst.st_nlink > 1:
             # A hard link shares its inode with another name, possibly outside
@@ -501,6 +502,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # lookalikes NFKC does NOT fold (division/fraction slash, set-minus, dot
         # leaders). The realpath check in _safe_deck_path() is the containment
         # guarantee; this prevents deceptive names slipping into the listing.
+        raw_name = name
         name = unicodedata.normalize("NFKC", name)
         if any(unicodedata.category(c) == "Cf" for c in name):
             return False
@@ -536,22 +538,57 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
         # slash lookalikes was bypassed by characters nobody thought to enumerate,
         # so reject by ROLE instead: nothing whose purpose is to modify or draw a
         # glyph may appear in a name.
-        #   Mn/Mc/Me — combining marks. A single overlay (long solidus) draws a
-        #              slash through its base, forging a path separator; the title
-        #              filter already drops all marks, so this matches it.
+        #   Me       — enclosing marks
         #   Lm/Sk    — modifier letters/symbols, e.g. the modifier colon
         #   So       — "other symbols", which includes the box-drawing diagonals
         #              that render pixel-identical to a slash
-        #   Cc       — controls, which also inject escapes into logs/terminals
+        #   Cc/Cf    — controls and format chars, which also inject escapes into
+        #              logs/terminals and reorder the displayed name
+        #   Co/Cs/Cn — private-use, surrogate and UNASSIGNED codepoints. These
+        #              have no agreed glyph, and the ones a browser draws at ZERO
+        #              width make a listing row indistinguishable from an honest
+        #              deck's — the exact lie this block exists to prevent. The
+        #              title filter already rejects them; names now match it.
         # Zs other than ASCII space is rejected too (the Ogham space draws a dash).
         # TRADE-OFF: this also rejects emoji in filenames (they are So). Such a
         # deck is simply not listed or served until renamed — fail-closed, and the
         # name is the identity the whole listing is trusted against.
+        #
+        # Checked on the RAW name as well as the folded one: NFKC turns several
+        # rejected characters into innocent ones (a Kangxi radical that draws a
+        # slash folds to an ordinary ideograph), so folding first would let the
+        # displayed glyph escape the rule that exists to police it. ASCII is
+        # exempt — the deceptive-glyph problem is a non-ASCII one, and the
+        # explicit character checks below still police ASCII (`^` is category Sk
+        # and is an ordinary filename character).
+        for form in (raw_name, name):
+            for c in form:
+                if c.isascii():
+                    continue
+                cat = unicodedata.category(c)
+                if cat in ("Me", "Lm", "Sk", "So", "Cc", "Cf", "Co", "Cs", "Cn"):
+                    return False
+                if cat == "Zs":
+                    return False
+                if c in "\u0337\u0338":
+                    # Solidus overlays draw a slash THROUGH the previous glyph,
+                    # forging a separator. Rejected wherever they appear, unlike
+                    # combining marks in general (below).
+                    return False
+        # Combining marks (Mn/Mc) are judged on the FOLDED form only. They are
+        # required by Devanagari, Thai, Hebrew, Arabic and Bengali filenames, and
+        # a filesystem that stores names decomposed (macOS) puts one in every
+        # accented Latin name — rejecting them outright makes those decks
+        # unservable. What is actually deceptive is STACKING (Zalgo), which the
+        # folded form still shows, so cap consecutive marks instead.
+        marks = 0
         for c in name:
-            if unicodedata.category(c) in ("Mn", "Mc", "Me", "Lm", "Sk", "So", "Cc"):
-                return False
-            if unicodedata.category(c) == "Zs" and c != " ":
-                return False
+            if unicodedata.category(c) in ("Mn", "Mc"):
+                marks += 1
+                if marks >= 2:
+                    return False
+            else:
+                marks = 0
         return ("/" not in name and "\\" not in name and ".." not in name
                 and "\x00" not in name and "'" not in name and '"' not in name
                 and "<" not in name and ">" not in name and "`" not in name
@@ -665,7 +702,17 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
         kwargs = {"dir_fd": dir_fd} if dir_fd is not None else {}
-        fd = os.open(name if dir_fd is not None else path, flags, 0o600, **kwargs)
+        target = name if dir_fd is not None else path
+        if os.name == "nt":
+            # O_NOFOLLOW does not exist on Windows, so the flag above is a no-op
+            # there and a symlink or junction WOULD be followed. Reject reparse
+            # points by name first — weaker than an atomic no-follow open, but it
+            # keeps this path from being weaker than read_deck_json, which has
+            # carried the same check since before it was the single access point.
+            wst = os.stat(target, follow_symlinks=False, **kwargs)
+            if getattr(wst, "st_file_attributes", 0) & 0x400:  # REPARSE_POINT
+                raise OSError(f"Refusing to read a reparse point: {name}")
+        fd = os.open(target, flags, 0o600, **kwargs)
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
@@ -1068,6 +1115,16 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                     write_deck_json(
                         deck_name if srv.folder_fd is not None else deck_path,
                         deck, dir_fd=srv.folder_fd, folder=srv.folder_path)
+                except PermissionError as e:
+                    # The entry itself is refused (a link, multiply linked, or
+                    # not writable) — a property of the FILE, not a server fault,
+                    # so answer as the read path does instead of claiming 500.
+                    print(f"[save] Refusing to write {console_safe(deck_name)}: "
+                          f"{console_safe(e)}")
+                    self.send_error(409, "Deck not saved: it is a link, shares its "
+                                         "contents with another name, or is not "
+                                         "writable. Copy it to a plain file.")
+                    return
                 except OSError as e:
                     # Report the real reason instead of a generic 400, and leave
                     # the in-memory deck alone.

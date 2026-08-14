@@ -799,6 +799,61 @@ class TestSecurity(FolderServerTestBase):
         # ...and no stray entry appeared inside it either.
         self.assertEqual(sorted(os.listdir(self._tmpdir)), before_home)
 
+    def test_deck_names_cannot_lie_in_the_listing(self):
+        # The File column is rendered verbatim and is the identity the listing is
+        # trusted against, so a name must not be able to imitate another one.
+        v = VelaHTTPHandler._validate_deck_name
+        for label, ch in (("unassigned (Cn)", "\u2065"), ("private use (Co)", "\ue0b0"),
+                          ("blank glyph", "\u2800"), ("emoji (So)", "\U0001f4ca"),
+                          ("solidus overlay", "\u0338"), ("box diagonal", "\u2571"),
+                          ("zero-width space (Cf)", "\u200b")):
+            self.assertFalse(v(f"report{ch}.vela"), f"{label} accepted in a deck name")
+        # A slash-drawing character that NFKC folds into an innocent one must be
+        # judged on the form the user actually sees, not the folded form.
+        self.assertFalse(v("report\u2f03.vela"), "folding let a slash lookalike through")
+        # ...and stacked marks (Zalgo) cannot be used to hide the real extension.
+        self.assertFalse(v("report\u0300\u0301\u0302.vela"))
+
+    def test_ordinary_names_in_any_script_still_work(self):
+        # The rules above must not cost users their own language: these all carry
+        # combining marks or non-ASCII punctuation and are perfectly ordinary.
+        v = VelaHTTPHandler._validate_deck_name
+        for label, name in (("ascii", "report.vela"), ("caret", "report^2.vela"),
+                            ("latin nfc", "caf\u00e9.vela"),
+                            ("latin nfd (macOS form)", "cafe\u0301.vela"),
+                            ("hindi", "\u0930\u093f\u092a\u094b\u0930\u094d\u091f.vela"),
+                            ("thai", "\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19.vela"),
+                            ("hebrew+niqqud", "\u05d3\u05bc\u05d5\u05d7.vela"),
+                            ("arabic+harakat", "\u062a\u064e\u0642\u0631\u064a\u0631.vela"),
+                            ("cjk", "\u4f1a\u8b70.vela"), ("cyrillic", "\u043e\u0442\u0447\u0451\u0442.vela")):
+            self.assertTrue(v(name), f"{label} deck name was refused")
+
+    def test_save_refuses_a_symlinked_deck_entry(self):
+        # An atomic replace would silently destroy a link the user made, and the
+        # read path already refuses one.
+        target = self._write_temp_deck("sym-target.vela", {"deckTitle": "TARGET", "lanes": []})
+        link = os.path.join(self._tmpdir, "sym-alias.vela")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("platform cannot create symlinks")
+        self.addCleanup(lambda: os.path.lexists(link) and os.unlink(link))
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        status, _, _ = fetch(self._port, "POST", "/save/sym-alias.vela", body=payload)
+        self.assertEqual(status, 409)
+        self.assertTrue(os.path.islink(link), "the save destroyed a symlinked entry")
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "TARGET")
+
+    def test_refused_save_answers_like_the_refused_read(self):
+        # Same file property, same class of answer on both verbs.
+        outside, _ = self._link_deck(os.link, "hl-status.vela", "hl-status-victim.txt")
+        payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
+        self.assertEqual(fetch(self._port, "GET", "/deck/hl-status.vela")[0], 409)
+        self.assertEqual(fetch(self._port, "POST", "/save/hl-status.vela", body=payload)[0], 409)
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "OUTSIDE")
+
     # -- Deck file mode / atomicity --
 
     def test_save_preserves_a_private_decks_mode(self):

@@ -2947,8 +2947,15 @@ def test_serve_auth():
     with open(os.path.join(DEV_SCRIPTS, "serve.py"), encoding="utf-8") as _f:
         serve_src = _f.read()
 
-    if "hmac.compare_digest" in serve_src:
-        ok("Token comparison uses hmac.compare_digest (timing-safe)")
+    # Credential comparison is one shared helper (agent_backend.token_equal) used
+    # by both local servers, so assert the guarantee where it now lives: serve.py
+    # compares through the helper, and the helper is timing-safe.
+    with open(os.path.join(DEV_SCRIPTS, "agent_backend.py"), encoding="utf-8") as _f:
+        backend_src = _f.read()
+    if ("token_equal" in serve_src
+            and "hmac.compare_digest" not in serve_src  # no second, drifting copy
+            and "hmac.compare_digest" in backend_src):
+        ok("Token comparison uses one timing-safe helper (hmac.compare_digest)")
     else:
         fail("Timing-safe comparison")
 
