@@ -36,6 +36,12 @@ LOCAL_HTML_PATH = os.path.join(REPO_ROOT, "tools", "vela-dev", "local.html")
 sys.path.insert(0, SCRIPTS_DIR)
 
 import serve as serve_mod
+
+# Root bypasses file permission checks, so "this file is not writable" cannot be
+# expressed to it — open(path, "w") on a 0444 file succeeds for root too, which
+# is exactly what the server's writability pre-check now mirrors. Tests that
+# depend on a write being refused are meaningless (and fail) under root.
+RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 from serve import (
     DeckVersionTracker,
     FileWatcher,
@@ -655,6 +661,7 @@ class TestSecurity(FolderServerTestBase):
         # (fail-closed: a name is an identifier, not prose).
         self.assertFalse(v("Präsentation-📊.vela"))
 
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
     def test_save_error_does_not_reach_the_status_line(self):
         # Even if a name slipped through, the reason phrase must stay static:
         # http.server writes it into the status line without escaping.
@@ -739,6 +746,59 @@ class TestSecurity(FolderServerTestBase):
         self.assertFalse(serve_mod.token_equal("secret", "sécret"))
         self.assertTrue(serve_mod.token_equal("s3cret", "s3cret"))
 
+    def test_no_request_name_can_touch_a_file_outside_the_folder(self):
+        """Evidence for the py/path-injection class CodeQL reports here.
+
+        Deck names reach os.open/os.stat/os.replace, so a scanner sees request
+        data in a path expression. What it cannot model: the name is rejected if
+        it carries a separator or traversal, and the open is then made RELATIVE
+        to a directory descriptor pinned at startup — so no name can name an
+        entry outside that directory. This asserts that end to end instead of
+        asserting it in a comment."""
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside_dir, ignore_errors=True)
+        canary = os.path.join(outside_dir, "canary.vela")
+        with open(canary, "w", encoding="utf-8") as f:
+            json.dump({"deckTitle": "OUTSIDE-CANARY"}, f)
+        before_outside = sorted(os.listdir(outside_dir))
+        before_home = sorted(os.listdir(self._tmpdir))
+
+        rel = os.path.relpath(canary, self._tmpdir)
+        hostile = [
+            "../canary.vela", "..%2Fcanary.vela", "....//canary.vela",
+            "%2e%2e%2fcanary.vela", "..%5Ccanary.vela", "sub/../../canary.vela",
+            rel, rel.replace("/", "%2F"), canary, canary.lstrip("/"),
+            "/etc/passwd", "..%252Fcanary.vela", "a%00../canary.vela",
+            "\uff0e\uff0e\uff0fcanary.vela", "\u2024\u2024\u2215canary.vela",
+            "\u202e../canary.vela", ".vela.env", "../.vela.env",
+            "%EF%BC%8E%EF%BC%8E%EF%BC%8Fcanary.vela",
+            "%00../canary.vela", "..;/canary.vela", "./../canary.vela",
+            "a%00../canary.vela", "%0d%0a../canary.vela",
+        ]
+        payload = json.dumps({"type": "deck_save",
+                              "deck": {"deckTitle": "PATH-INJECTION-MARKER", "lanes": []}})
+        # Percent-encode anything the client library refuses to put in a request
+        # line (raw non-ASCII, control bytes) so the SERVER is what decodes it.
+        hostile = [n if n.isascii() else quote(n, safe="%/") for n in hostile]
+        for name in hostile:
+            for verb, path, body in (("GET", f"/deck/{name}", None),
+                                     ("GET", f"/poll/{name}?v=0", None),
+                                     ("POST", f"/save/{name}", payload)):
+                status, _, _ = fetch(self._port, verb, path, body=body)
+                self.assertGreaterEqual(status, 400, f"{verb} {path} was accepted")
+
+        # CONTROL: a legitimate name on the same endpoints still works, so the
+        # 4xx results above are the guards, not a broken harness.
+        self.assertEqual(fetch(self._port, "GET", "/deck/sample.vela")[0], 200)
+        self.assertEqual(fetch(self._port, "POST", "/save/sample.vela", body=payload)[0], 200)
+
+        # Nothing outside the served folder was created, removed or rewritten...
+        self.assertEqual(sorted(os.listdir(outside_dir)), before_outside)
+        with open(canary, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["deckTitle"], "OUTSIDE-CANARY")
+        # ...and no stray entry appeared inside it either.
+        self.assertEqual(sorted(os.listdir(self._tmpdir)), before_home)
+
     # -- Deck file mode / atomicity --
 
     def test_save_preserves_a_private_decks_mode(self):
@@ -752,6 +812,7 @@ class TestSecurity(FolderServerTestBase):
         self.assertEqual(status, 200)
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
     def test_save_refuses_a_read_only_deck(self):
         path = self._write_temp_deck("readonly.vela", {"deckTitle": "KEEP", "lanes": []})
         os.chmod(path, 0o444)
@@ -762,6 +823,7 @@ class TestSecurity(FolderServerTestBase):
         with open(path, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["deckTitle"], "KEEP")
 
+    @unittest.skipIf(RUNNING_AS_ROOT, "root bypasses file permission checks")
     def test_failed_save_does_not_publish_the_edit(self):
         # A save that never reached disk must not be pushed to other tabs.
         path = self._write_temp_deck("lost.vela", {"deckTitle": "ONDISK", "lanes": []})
