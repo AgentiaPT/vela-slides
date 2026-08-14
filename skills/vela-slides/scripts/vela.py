@@ -38,9 +38,33 @@ EXIT_NOT_FOUND = 3
 EXIT_VALIDATION = 4
 EXIT_CONFLICT = 5
 
-# Longest accepted colour-palette value. A colour or gradient literal is far
-# shorter; the cap bounds how much one alias occurrence can expand.
-MAX_PALETTE_VALUE = 256
+# Longest accepted colour value, in BYTES (the payload cap it works with counts
+# bytes too; counting code points would let an astral-plane value carry four
+# times the data for the same number). 512 clears the app's own gradient ceiling
+# with room to spare, so nothing a deck can legitimately render is dropped.
+#
+# The cap is what keeps expansion from being an amplifier: a palette alias, a
+# theme preset value and a turbo palette entry are each copied into every place
+# that references them, so an uncapped value turns a small file into an
+# arbitrarily large one BEFORE any guard on the finished result can look at it.
+MAX_PALETTE_VALUE = 512
+
+
+def _palette_value(palette, idx):
+    """Colour at `idx` in a turbo palette, or "" if absent or over-long.
+
+    One definition for both turbo decoders: they each had their own copy, so a
+    cap added to one silently left the other uncapped.
+    """
+    if not isinstance(idx, int) or idx < 0 or idx >= len(palette):
+        return ""
+    v = palette[idx]
+    return v if _short_enough(v) else ""
+
+
+def _short_enough(v):
+    """True if `v` is a colour-sized string we are willing to copy around."""
+    return isinstance(v, str) and len(v.encode("utf-8", "surrogatepass")) <= MAX_PALETTE_VALUE
 
 # ── Helpers ────────────────────────────────────────────────────────────
 _json_mode = False
@@ -280,7 +304,7 @@ def expand_deck(compact):
                     # A palette value is a colour or gradient literal. Anything
                     # very long is not one, and admitting it would let a tiny
                     # deck multiply itself by that length at every occurrence.
-                    if len(v) > MAX_PALETTE_VALUE:
+                    if not _short_enough(v):
                         continue
                     palette[k] = v
                 elif isinstance(v, dict):
@@ -322,7 +346,13 @@ def expand_deck(compact):
     raw_themes = compact.get("T", {})
     themes = {}
     for name, preset in raw_themes.items():
-        themes[name] = dict(preset)  # shallow copy
+        if not isinstance(preset, dict):
+            continue
+        # Drop over-long values here for the same reason as the palette: a theme
+        # preset is copied into every slide that names it, so one long value is
+        # multiplied by the slide count.
+        themes[name] = {k: v for k, v in preset.items()
+                        if not isinstance(v, str) or _short_enough(v)}
 
     # Build full deck with lanes structure
     title = compact.get("n", compact.get("deckTitle", "Untitled"))
@@ -685,10 +715,8 @@ def _turbo_encode_block(block, palette):
 def _turbo_decode_block(arr, palette):
     """Decode a positional array back to a block dict."""
     def _cv(idx):
-        """Color value from palette index."""
-        if idx < 0 or idx >= len(palette):
-            return ""
-        return palette[idx]
+        """Color value from palette index (see _palette_value)."""
+        return _palette_value(palette, idx)
 
     def _clean(d):
         """Remove empty-string values."""
@@ -960,8 +988,7 @@ def unturbo_deck(data):
 
     def decode_slide(s):
         def _cv(idx):
-            if idx < 0 or idx >= len(palette): return ""
-            return palette[idx]
+            return _palette_value(palette, idx)
         result = {"title": s[0]}
         bg = _cv(s[1])
         if bg: result["bg"] = bg

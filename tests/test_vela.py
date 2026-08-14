@@ -3339,7 +3339,37 @@ def test_study_notes():
     else:
         fail("palette alias resolution changed", repr(pal_slide))
 
-    long_deck = {"n": "d", "C": {"$A": "x" * 300}, "S": [{"b": "$A"}]}
+    # A theme preset is copied into every slide that names it, and a turbo
+    # colour entry into every block that indexes it — the same multiplier the
+    # palette had, so the same cap applies to all three.
+    theme_deck = {"n": "d", "T": {"d": {"b": "y" * 5000}},
+                  "S": [{"t": "d"} for _ in range(50)]}
+    theme_out = json.dumps(expand_deck(copy.deepcopy(theme_deck)))
+    if len(theme_out) < 5000:
+        ok("theme preset values cannot amplify a deck")
+    else:
+        fail("theme preset amplification", f"{len(json.dumps(theme_deck))}B in -> {len(theme_out)}B out")
+
+    # A real gradient, written as an alias, must still resolve (the cap clears
+    # the app's own gradient ceiling).
+    grad = "linear-gradient(90deg," + ",".join(f"#{i:06x} {i}%" for i in range(20)) + ")"
+    grad_slide = expand_deck({"n": "d", "C": {"$G": grad},
+                              "S": [{"b": "$G"}]})["lanes"][0]["items"][0]["slides"][0]
+    if grad_slide.get("b") == grad:
+        ok("a real multi-stop gradient still resolves through the palette")
+    else:
+        fail("gradient dropped by the colour-value cap", repr(grad_slide)[:80])
+
+    # The cap counts bytes, so a non-ASCII value cannot carry four times as much
+    # data for the same length.
+    astral_deck = {"n": "d", "C": {"$A": "\U0001f600" * 200}, "S": [{"b": "$A"}]}
+    astral_slide = expand_deck(astral_deck)["lanes"][0]["items"][0]["slides"][0]
+    if astral_slide.get("b") == "$A":
+        ok("colour-value cap is measured in bytes")
+    else:
+        fail("colour-value cap counted code points", repr(astral_slide)[:60])
+
+    long_deck = {"n": "d", "C": {"$A": "x" * 600}, "S": [{"b": "$A"}]}
     long_slide = expand_deck(copy.deepcopy(long_deck))["lanes"][0]["items"][0]["slides"][0]
     if long_slide.get("b") == "$A":
         ok("over-long palette value is dropped, not expanded")

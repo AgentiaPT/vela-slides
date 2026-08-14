@@ -305,7 +305,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 477
+- part-imports.jsx: 860-line unbannered stretch after line 478
 - part-blocks.jsx: 748-line unbannered stretch after line 769
 - part-slidepanel.jsx: 405-line unbannered stretch after line 175
 - part-slidepanel.jsx: 378-line unbannered stretch after line 860
