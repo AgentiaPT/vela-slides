@@ -136,17 +136,20 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           python3 tools/vela-dev/scripts/concat.py src/parts skills/vela-slides/app/vela.jsx
+          cp skills/vela-slides/app/vela.jsx "vela-slides-${TAG}.jsx"
           # Build the upload ZIP with the hardened packager, not a raw `zip -r`:
           # the test suite above imports the skill scripts and creates
           # skills/vela-slides/scripts/__pycache__, which `zip -r` would pack.
           # package-skill.py excludes __pycache__/*.pyc and skips symlinks.
           python3 tools/vela-dev/scripts/package-skill.py --output "vela-slides-skill-${TAG}.zip"
-          ls -lh vela-slides-skill-*.zip
+          ls -lh "vela-slides-${TAG}.jsx" "vela-slides-skill-${TAG}.zip"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: skill-zip
-          path: vela-slides-skill-*.zip
+          path: |
+            vela-slides-*.zip
+            vela-slides-*.jsx
           if-no-files-found: error
           retention-days: 14
 
@@ -207,16 +210,24 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          sha256sum *.zip > "SHA256SUMS-${TAG}.txt"
+          shopt -s nullglob
+          ASSETS=( *.zip *.jsx )
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
+          sha256sum "${ASSETS[@]}" > "SHA256SUMS-${TAG}.txt"
           cat "SHA256SUMS-${TAG}.txt"
 
       - name: Attest build provenance
-        # SLSA attestation per ZIP, verifiable with `gh attestation verify`.
+        # SLSA attestation per release asset, verifiable with `gh attestation verify`.
         # Even on a prerelease, this lets reviewers confirm the bytes came
         # from this exact workflow run.
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: '*.zip'
+          subject-path: |
+            *.zip
+            *.jsx
 
       - name: Compose release notes
         env:
@@ -245,6 +256,10 @@ jobs:
               echo "1. Download \`vela-slides-skill-${TAG}.zip\` below"
               echo "2. Claude.ai → **Customize → Skills → + → Upload a skill**"
               echo "3. Upload the ZIP — done."
+              echo
+              echo "### Raw monolith"
+              echo
+              echo "Download \`vela-slides-${TAG}.jsx\` to grab the compiled monolith directly from the preview release page."
               echo
             elif [ "$SKILL_RESULT" != "success" ]; then
               echo "### Skill (Claude.ai)"
@@ -279,10 +294,10 @@ jobs:
             fi
             echo "### Verification"
             echo
-            echo "All ZIPs are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
+            echo "All package files are listed in \`SHA256SUMS-${TAG}.txt\` and have a SLSA build-provenance attestation:"
             echo "\`\`\`bash"
             echo "sha256sum -c SHA256SUMS-${TAG}.txt"
-            echo "gh attestation verify <zip> --repo ${{ github.repository }}"
+            echo "gh attestation verify <zip-or-jsx> --repo ${{ github.repository }}"
             echo "\`\`\`"
             echo
             echo "---"
@@ -310,8 +325,13 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
           REPO: ${{ github.repository }}
         run: |
-          gh release create "$TAG" \
-            *.zip "SHA256SUMS-${TAG}.txt" \
+          shopt -s nullglob
+          ASSETS=( *.zip *.jsx )
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
+          gh release create "$TAG" "${ASSETS[@]}" "SHA256SUMS-${TAG}.txt" \
             --repo "$REPO" \
             --title "Vela Slides ${VERSION} (Preview PR #${PR_NUMBER})" \
             --notes-file release-notes.md \
@@ -350,6 +370,7 @@ jobs:
             if (process.env.SKILL_OK === 'true') {
               body += `### Skill\n`;
               body += `📦 [\`vela-slides-skill-${tag}.zip\`](${assetUrl(`vela-slides-skill-${tag}.zip`)})\n`;
+              body += `🧩 [\`vela-slides-${tag}.jsx\`](${assetUrl(`vela-slides-${tag}.jsx`)})\n`;
               body += `Install: **Customize → Skills → + → Upload a skill**\n\n`;
             }
 
