@@ -84,6 +84,7 @@ evals/workdirs/
 evals/results/
 
 # Local working files
+draft/
 .vela.json
 opus-4-6.*
 *.jsx
