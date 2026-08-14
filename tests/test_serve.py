@@ -673,8 +673,8 @@ class TestSecurity(FolderServerTestBase):
         conn.request("POST", "/save/ro-msg.vela", body=payload,
                      headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
-        self.assertEqual(resp.status, 500)
-        self.assertNotIn("ro-msg", resp.reason)
+        self.assertEqual(resp.status, 409)   # a refused entry, not a server fault
+        self.assertNotIn("ro-msg", resp.reason)  # nothing untrusted in the status line
         conn.close()
 
     def test_console_safe_escapes_terminal_control(self):
@@ -874,7 +874,7 @@ class TestSecurity(FolderServerTestBase):
         self.addCleanup(os.chmod, path, 0o644)
         payload = json.dumps({"type": "deck_save", "deck": SAMPLE_DECK})
         status, _, _ = fetch(self._port, "POST", "/save/readonly.vela", body=payload)
-        self.assertEqual(status, 500)
+        self.assertEqual(status, 409)
         with open(path, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["deckTitle"], "KEEP")
 
