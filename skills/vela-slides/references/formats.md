@@ -34,6 +34,7 @@ Pipeline: any format → `_load_full()` auto-expands → validate → assemble �
 **Color palette (`C`)**: define every color used ≥2× as `"$A":"#hex"`. Use `$A` everywhere instead of raw hex. Assign in frequency order ($A = most common).
 
 **Theme palette (`T`)**: `"d"`:dark, `"l"`:light, `"a"`:alt. Keys: `b`=bg, `c`=color, `a`=accent, `p`=padding. Theme values can use `$` aliases too.
+A preset carries only those keys (long spellings and `bgGradient` are also accepted); anything else is dropped on expansion, since a preset is copied into every slide that names it. Put other per-slide properties on the slide.
 
 **Spacers**: bare int `8` instead of `{"_":"spacer","h":8}`
 

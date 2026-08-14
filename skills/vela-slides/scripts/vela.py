@@ -20,7 +20,7 @@ Exit codes:
   5  Conflict (already exists)
 """
 
-import json, sys, os, re, subprocess, copy, shutil
+import json, math, sys, os, re, subprocess, copy, shutil
 
 # ── Paths ──────────────────────────────────────────────────────────────
 SKILL_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -67,6 +67,24 @@ def _short_enough(v):
     return isinstance(v, str) and len(v.encode("utf-8", "surrogatepass")) <= MAX_PALETTE_VALUE
 
 
+def _count_slides(compact):
+    """Slides in a compact deck, flat (`S`) or grouped (`G`)."""
+    n = len(compact.get("S") or []) if isinstance(compact.get("S"), list) else 0
+    groups = compact.get("G")
+    if isinstance(groups, list):
+        for g in groups:
+            if isinstance(g, dict) and isinstance(g.get("S"), list):
+                n += len(g["S"])
+    return n
+
+
+def _reject_if_oversized(current, added, what):
+    """Raise before building anything if the projected result is too large."""
+    if current + added > MAX_EXPANDED_BYTES:
+        raise ValueError(
+            f"Deck would expand past {MAX_EXPANDED_BYTES} bytes ({what}); refusing to expand")
+
+
 def _theme_value_ok(v):
     """True if `v` may be copied into every slide that names its theme.
 
@@ -78,6 +96,8 @@ def _theme_value_ok(v):
     """
     if isinstance(v, bool):
         return False
+    if isinstance(v, float) and not math.isfinite(v):
+        return False   # NaN/Infinity serialise as bare words a browser rejects
     if isinstance(v, (int, float)):
         try:
             return len(repr(v)) <= 32
@@ -241,7 +261,14 @@ _TK_REV = {v: k for k, v in _TK.items()}
 # nothing legitimate is lost — and the allowlist is what bounds expansion: every
 # preset key is copied into every slide naming the theme, so an open-ended key
 # set multiplies by slide count as well as by value length.
-_THEME_ALLOWED_KEYS = frozenset(list(_TK) + list(_TK.values()) + ["bgGradient", "g"])
+_THEME_ALLOWED_KEYS = frozenset(list(_TK) + list(_TK.values()) + ["bgGradient"])
+
+# Largest deck we are willing to MATERIALISE. Expansion copies palette and theme
+# values into every place that references them, so the result can be far larger
+# than the file — and a guard that measures the finished object has already paid
+# for it. This budget is projected from the input BEFORE expanding, so an
+# oversized deck costs a size calculation rather than the memory itself.
+MAX_EXPANDED_BYTES = 64 * 1024 * 1024
 
 # Slide properties that come from theme (omit when compacting if they match)
 _THEME_PROPS = ["bg", "color", "accent", "padding"]
@@ -339,6 +366,13 @@ def expand_deck(compact):
                     pass
 
         if palette:
+            # With one-pass substitution each occurrence is replaced exactly
+            # once, so the growth is countable before any of it is built.
+            _raw = json.dumps(compact, ensure_ascii=False)
+            _growth = sum(_raw.count(a) * max(0, len(v) - len(a))
+                          for a, v in palette.items())
+            _reject_if_oversized(len(_raw), _growth, "colour aliases")
+
             # Walk the JSON tree and replace $aliases in string values.
             # Skip known text-content keys to avoid corrupting prose.
             _TEXT_KEYS = frozenset({"n", "x", "text", "title", "label", "lb", "sublabel",
@@ -383,6 +417,12 @@ def expand_deck(compact):
         # past a "not a string OR short" test and be copied just the same.
         themes[name] = {k: v for k, v in preset.items()
                         if k in _THEME_ALLOWED_KEYS and _theme_value_ok(v)}
+
+    if themes:
+        # Every kept key is copied into every slide that names the preset, so
+        # the cost is knowable from the preset and the slide count alone.
+        _worst = max(len(json.dumps(t, ensure_ascii=False)) for t in themes.values())
+        _reject_if_oversized(0, _worst * _count_slides(compact), "theme presets")
 
     # Build full deck with lanes structure
     title = compact.get("n", compact.get("deckTitle", "Untitled"))

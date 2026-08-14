@@ -3377,6 +3377,35 @@ def test_study_notes():
     else:
         fail("theme resolution changed", repr(tslide)[:100])
 
+    # An oversized deck must be refused BEFORE it is built: a guard that
+    # measures the finished object has already paid for it in memory.
+    big_theme = {"n": "d", "T": {"d": {k: "y" * 500 for k in ("b", "c", "a", "bgGradient")}},
+                 "S": [{"t": "d"} for _ in range(100000)]}
+    try:
+        expand_deck(copy.deepcopy(big_theme))
+        fail("oversized theme deck expanded instead of being refused")
+    except ValueError as e:
+        if "expand" in str(e):
+            ok("a deck that would expand past the budget is refused before building")
+        else:
+            fail("wrong error for oversized theme deck", str(e)[:60])
+
+    big_palette = {"n": "d", "C": {"$A": "#" + "a" * 500},
+                   "S": [{"b": "$A"} for _ in range(400000)]}
+    try:
+        expand_deck(copy.deepcopy(big_palette))
+        fail("oversized palette deck expanded instead of being refused")
+    except ValueError:
+        ok("alias growth is projected from the input, not discovered after")
+
+    # Non-finite numbers are not colours or paddings: they serialise as bare
+    # NaN/Infinity, which a browser's JSON.parse refuses.
+    nf = {"n": "d", "T": {"d": {"p": float("inf")}}, "S": [{"t": "d"}]}
+    if "padding" not in json.dumps(expand_deck(copy.deepcopy(nf))):
+        ok("non-finite theme numbers are dropped")
+    else:
+        fail("non-finite theme number kept")
+
     # A real gradient, written as an alias, must still resolve (the cap clears
     # the app's own gradient ceiling).
     grad = "linear-gradient(90deg," + ",".join(f"#{i:06x} {i}%" for i in range(20)) + ")"
