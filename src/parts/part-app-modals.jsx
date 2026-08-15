@@ -226,7 +226,7 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
                     </div>}
                   </div>
                   {latestThumb ? <div style={{ position: "relative", flexShrink: 0 }}>
-                    <img src={latestThumb} alt="" style={{
+                    <img data-testid="pptx-export-preview" src={latestThumb} alt="" style={{
                       width: bigW, height: bigH, objectFit: "cover",
                       borderRadius: 6, border: `2px solid ${T.accent}`,
                       boxShadow: `0 8px 32px ${T.accent}30, 0 4px 16px rgba(0,0,0,0.4)`,

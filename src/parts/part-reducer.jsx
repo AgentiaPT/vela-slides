@@ -10,7 +10,7 @@ const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: nul
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -254,6 +254,13 @@ function innerReducer(state, a) {
     case "SET_COMMENTS_PANEL": return { ...state, commentsPanelOpen: a.open };
     case "SET_CHAT": return { ...state, chatOpen: a.open };
     case "RESET_CHAT": return { ...state, chatMessages: [{ role: "assistant", content: "Chat cleared. What's next? ⛵🖖", ts: now() }], chatLoading: false };
+    case "RESTORE_CHAT_STATE": return {
+      ...state,
+      chatMessages: Array.isArray(a.messages) ? a.messages : state.chatMessages,
+      chatLoading: !!a.loading,
+      lastDebug: typeof a.debug === "string" ? a.debug : "",
+      aiWork: a.aiWork || null,
+    };
     case "NEW_DECK": {
       _fullRewrite = true;
       return { ...init, deckTitle: a.title || "Untitled", chatOpen: true, chatMessages: [{ role: "assistant", content: "Setting sail on a new deck — let me build this for you. ⛵🖖", ts: now() }], _bootstrap: { prompt: a.prompt, images: a.images || [] } };
@@ -403,5 +410,4 @@ function reducer(hist, a) {
   if (NO_HISTORY.has(a.type)) return { ...hist, present: newPresent };
   return { past: [...hist.past, hist.present].slice(-MAX_HISTORY), present: newPresent, future: [] };
 }
-
 

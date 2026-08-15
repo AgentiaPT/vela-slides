@@ -59,7 +59,7 @@ function ToolTraceCard({ tool, dispatch }) {
   })();
 
   return (
-    <div style={{ borderRadius: 6, border: `1px solid ${running ? T.accent + "40" : T.border}`, overflow: "hidden", fontSize: 13, transition: "all 0.2s" }}>
+    <div data-testid="vera-tool-trace" data-tool-name={tool.name} style={{ borderRadius: 6, border: `1px solid ${running ? T.accent + "40" : T.border}`, overflow: "hidden", fontSize: 13, transition: "all 0.2s" }}>
       {/* Header — always visible */}
       <div onClick={() => !running && setOpen(!open)} style={{ padding: "5px 10px", display: "flex", alignItems: "center", gap: 6, cursor: running ? "default" : "pointer", background: running ? T.accent + "08" : open ? T.bgCard : "transparent", transition: "background 0.15s" }}
         onMouseEnter={(e) => { if (!running) e.currentTarget.style.background = T.bgCard; }}
@@ -271,7 +271,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
             {m.role === "assistant" && m._streaming && m._thinking && <div style={{ padding: "4px 10px", borderRadius: 6, fontSize: 13, fontFamily: FONT.mono, color: T.accent, display: "flex", alignItems: "center", gap: 6 }}><span style={{ animation: "spin 1s linear infinite", display: "inline-block", fontSize: 10 }}>⚡</span> thinking...</div>}
             {/* Assistant text */}
             {m.role === "assistant" && m.content && m._system && <div style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontFamily: FONT.mono, color: T.textDim, textAlign: "center", opacity: 0.7 }}>{m.content}</div>}
-            {m.role === "assistant" && m.content && !m._system && <div style={{ padding: "8px 10px", borderRadius: 6, fontSize: 14, lineHeight: 1.5, fontFamily: FONT.body, background: T.bgCard, color: T.textMuted, wordBreak: "break-word" }}><ChatMarkdown text={m.content} /></div>}
+            {m.role === "assistant" && m.content && !m._system && <div data-testid="vera-chat-response" style={{ padding: "8px 10px", borderRadius: 6, fontSize: 14, lineHeight: 1.5, fontFamily: FONT.body, background: T.bgCard, color: T.textMuted, wordBreak: "break-word" }}><ChatMarkdown text={m.content} /></div>}
             {/* Jump links */}
             {m.jumps?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "0 4px" }}>
               {m.jumps.map((j, k) => (
@@ -302,12 +302,12 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       <div style={{ padding: "8px 10px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, flexDirection: "column" }}>
         {!aiOk && <div style={{ padding: "4px 8px", fontSize: 11, fontFamily: FONT.mono, color: T.amber, background: T.amber + "15", borderRadius: 4, textAlign: "center" }}>{VELA_AI_UNAVAILABLE_MSG}</div>}
         <div style={{ display: "flex", gap: 6 }}>
-        <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onPaste={handlePaste}
+        <textarea data-testid="vera-chat-input" ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onPaste={handlePaste}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           placeholder={!aiOk ? "AI features not enabled" : pendingImages.length > 0 ? "Describe what to do with images..." : "Tell Vera... (paste images here)"}
           disabled={!aiOk}
           rows={2} style={S.input({ padding: "6px 8px", borderRadius: 4, resize: "none", lineHeight: 1.4, opacity: aiOk ? 1 : 0.5 })} />
-        <button onClick={() => send()} disabled={!aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0)} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined}
+        <button data-testid="vera-chat-send" onClick={() => send()} disabled={!aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0)} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined}
           style={{ padding: "0 12px", background: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? T.border : T.accent, color: "#fff", border: "none", borderRadius: 4, cursor: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, alignSelf: "stretch" }}>↑</button>
         </div>
       </div>
@@ -445,5 +445,4 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
     </div>
   );
 }
-
 

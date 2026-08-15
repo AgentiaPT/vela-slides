@@ -2,12 +2,12 @@
   "deckTitle": "Q1 2026 — Product & Engineering Review",
   "lanes": [
     {
-      "id": "bcb1e403",
+      "id": "9ed2f6b0",
       "title": "Business Review",
       "collapsed": false,
       "items": [
         {
-          "id": "0073fd5b",
+          "id": "53432343",
           "title": "Q1 Overview",
           "notes": "",
           "comments": [],
@@ -16,22 +16,14 @@
           "order": 0,
           "slides": [
             {
-              "title": "Title",
-              "bg": "#1e1b4b",
-              "bgGradient": "linear-gradient(140deg, #1e1b4b 0%, #312e81 40%, #3b0764 100%)",
-              "color": "#e0e7ff",
-              "accent": "#a78bfa",
-              "padding": "48px 60px",
-              "duration": 60,
-              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "badge",
                   "text": "CONFIDENTIAL",
-                  "icon": "Lock",
                   "color": "#c4b5fd",
                   "bg": "#a78bfa20",
-                  "border": "#a78bfa50"
+                  "border": "#a78bfa50",
+                  "icon": "Lock"
                 },
                 {
                   "type": "spacer",
@@ -55,8 +47,6 @@
                 },
                 {
                   "type": "icon-row",
-                  "iconColor": "#c4b5fd",
-                  "iconBg": "#a78bfa20",
                   "items": [
                     {
                       "icon": "Rocket",
@@ -70,17 +60,21 @@
                       "icon": "TrendingUp",
                       "text": "+18% ARR"
                     }
-                  ]
+                  ],
+                  "iconColor": "#c4b5fd",
+                  "iconBg": "#a78bfa20"
                 }
-              ]
+              ],
+              "title": "Title",
+              "bg": "#1e1b4b",
+              "bgGradient": "linear-gradient(140deg, #1e1b4b 0%, #312e81 40%, #3b0764 100%)",
+              "color": "#e0e7ff",
+              "accent": "#a78bfa",
+              "verticalAlign": "center",
+              "padding": "48px 60px",
+              "duration": 60
             },
             {
-              "title": "Key Metrics",
-              "bg": "#1e293b",
-              "color": "#e2e8f0",
-              "accent": "#818cf8",
-              "padding": "36px 48px",
-              "duration": 60,
               "blocks": [
                 {
                   "type": "heading",
@@ -113,18 +107,17 @@
                 {
                   "type": "progress",
                   "label": "OKR Completion — Q1 2026",
-                  "value": "78",
-                  "max": 100
+                  "value": "78"
                 }
-              ]
+              ],
+              "title": "Key Metrics",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#818cf8",
+              "padding": "36px 48px",
+              "duration": 60
             },
             {
-              "title": "Roadmap Progress",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#6366f1",
-              "padding": "36px 48px",
-              "duration": 60,
               "blocks": [
                 {
                   "type": "heading",
@@ -184,18 +177,18 @@
                 },
                 {
                   "type": "callout",
-                  "icon": "alert-triangle",
-                  "text": "Data Pipeline v2 delivery slipped 3 weeks due to upstream Kafka migration. GA now targeted for April 10."
+                  "text": "Data Pipeline v2 delivery slipped 3 weeks due to upstream Kafka migration. GA now targeted for April 10.",
+                  "icon": "alert-triangle"
                 }
-              ]
+              ],
+              "title": "Roadmap Progress",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#6366f1",
+              "padding": "36px 48px",
+              "duration": 60
             },
             {
-              "title": "Team & Resources",
-              "bg": "#1e293b",
-              "color": "#e2e8f0",
-              "accent": "#818cf8",
-              "padding": "36px 48px",
-              "duration": 60,
               "blocks": [
                 {
                   "type": "heading",
@@ -204,8 +197,6 @@
                 },
                 {
                   "type": "grid",
-                  "columns": 2,
-                  "gap": 16,
                   "items": [
                     {
                       "blocks": [
@@ -273,7 +264,8 @@
                         }
                       ]
                     }
-                  ]
+                  ],
+                  "gap": 16
                 },
                 {
                   "type": "matrix",
@@ -316,15 +308,15 @@
                   "text": "Hiring: 4 open reqs (2 Senior Backend, 1 ML Engineer, 1 Mobile Lead). Mobile Lead role open 60+ days — escalated to exec recruiting.",
                   "size": "sm"
                 }
-              ]
+              ],
+              "title": "Team & Resources",
+              "bg": "#1e293b",
+              "color": "#e2e8f0",
+              "accent": "#818cf8",
+              "padding": "36px 48px",
+              "duration": 60
             },
             {
-              "title": "Q2 Priorities",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#6366f1",
-              "padding": "36px 48px",
-              "duration": 60,
               "blocks": [
                 {
                   "type": "heading",
@@ -376,10 +368,16 @@
                 },
                 {
                   "type": "callout",
-                  "icon": "message-circle",
-                  "text": "Executive ask: Approve $180K incremental cloud spend for Data Pipeline scaling and authorize contractor backfill for Mobile."
+                  "text": "Executive ask: Approve $180K incremental cloud spend for Data Pipeline scaling and authorize contractor backfill for Mobile.",
+                  "icon": "message-circle"
                 }
-              ]
+              ],
+              "title": "Q2 Priorities",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#6366f1",
+              "padding": "36px 48px",
+              "duration": 60
             }
           ],
           "createdAt": "2026-06-01T01:08:24.399Z"
@@ -387,7 +385,7 @@
       ]
     },
     {
-      "id": "47a52e73",
+      "id": "44d68c89",
       "title": "Main",
       "collapsed": false,
       "items": []

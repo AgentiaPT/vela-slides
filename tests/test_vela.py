@@ -1356,6 +1356,270 @@ def test_toc_nav_and_gallery_titlecards():
         fail("CR1: title cards not excluded from drag")
 
 
+# ━━━ Product tour contract ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_product_tour():
+    print("\n── Product Tour ──")
+    demo_path = os.path.join(PARTS_DIR, "part-demo.jsx")
+    ui_path = os.path.join(PARTS_DIR, "part-uitest2.jsx")
+    try:
+        demo = open(demo_path, encoding="utf-8").read()
+        ui = open(ui_path, encoding="utf-8").read()
+    except OSError as e:
+        fail("Product tour source readable", str(e))
+        return
+
+    order_match = re.search(r"const DEMO_SCENE_ORDER = Object\.freeze\(\[(.*?)\]\);", demo, re.S)
+    expected = [
+        "Vela Slides",
+        "Shape the Story",
+        "Edit Text, Live",
+        "Show a Process",
+        "Explain the Data",
+        "Compare, Funnel & Cycle",
+        "Numbers, Matrix & Checklist",
+        "Rich Column Layouts",
+        "See the Whole Deck",
+        "Brand & Guidelines",
+        "Comment & Review",
+        "Present with Confidence",
+        "Student & Audience Tools",
+        "Use the Presenter Dashboard",
+        "Improve, Edit with AI & Variants",
+        "Work with Vera",
+        "Vela CLI & Skill",
+        "Bring Your Own Agent",
+        "Export a Print-Ready PDF",
+        "Export Editable PowerPoint",
+        "Ready to Build",
+    ]
+    titles = re.findall(r'"([^"]+)"', order_match.group(1)) if order_match else []
+    if titles == expected and len(expected) >= 20:
+        ok(f"Product tour has the approved {len(expected)}-scene product story")
+    else:
+        fail("Product tour scene order", repr(titles))
+
+    if ('const DEMO_EDIT_TEXT = "Text, Bullets & Quotes — edited live";' in demo
+            and "_demoTypeWithMistakes(ctx, (text) => { editable.textContent = text; }, DEMO_EDIT_TEXT)" in demo
+            and 'subtitle: "Edit text directly on the slide.' in demo
+            and 'textContent === DEMO_EDIT_TEXT' in ui
+            and '_demoKey("Escape"); // cancels the edit' in demo):
+        ok("Product tour shows a typed, corrected, temporary inline edit that reverts")
+    else:
+        fail("Product tour visible inline edit")
+
+    if demo.count("_demoTypeWithMistakes(ctx,") >= 2 and "shown = shown.slice(0, -1);" in demo:
+        ok("Product tour uses the same typo-and-correction typing for inline edit and the Vera prompt")
+    else:
+        fail("Product tour typed-with-mistakes coverage")
+
+    scene_region = demo.split("function buildDemoScenes(ctx)", 1)[-1].split("const getDemoPlan", 1)[0]
+    durations = [int(x) for x in re.findall(r"\bduration:\s*(\d+)", scene_region)]
+    total = sum(durations)
+    if len(durations) == len(expected) and len(durations) >= 20 and 60000 <= total <= 120000:
+        ok(f"Product tour has {len(durations)} scenes at a planned duration of {total / 1000:.0f}s")
+    else:
+        fail("Product tour duration budget", f"{len(durations)} scenes, {total}ms")
+
+    dangerous = {
+        "direct live AI call": r"\b(callVera|callClaudeAPI|_demoSendToVera)\b",
+        "improve/variants clicked": r"_demoClick\((improve|variants)\)",
+        "download action": r"\.download\s*\(|\bDOWNLOAD\b",
+        "external link": r"window\.open\s*\(",
+    }
+    hits = [label for label, pattern in dangerous.items() if re.search(pattern, demo)]
+    if not hits:
+        ok("Product tour does not call live AI, click Improve/Variants, download, or open links")
+    else:
+        fail("Product tour safe automatic actions", ", ".join(hits))
+
+    if ("_demoFind(\"[data-testid='pdf-export-start']\")" in demo and "_demoFind(\"[data-testid='pptx-export-start']\")" in demo):
+        ok("Product tour starts both exports itself (rather than relying on default choose-phase UI)")
+    else:
+        fail("Product tour export-start wiring")
+
+    engine = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    step_region = engine.split("async function callVeraStep", 1)[-1].split("// ━━━ SSE", 1)[0]
+    mock_guard = 'document.documentElement.dataset.velaDemoRunning === "true"' in step_region
+    mock_pos = step_region.find("window.__velaDemoAI")
+    live_pos = step_region.find("callClaudeAPI(")
+    guard_before_live = 0 <= mock_pos < live_pos
+    deterministic_mock = all(token in demo for token in [
+        "DEMO_AI_PROMPT",
+        "DEMO_AI_RESPONSE",
+        'tool: "deck_stats"',
+        "getStats: () => ({ stepCalls, liveCalls: 0 })",
+    ])
+    if mock_guard and guard_before_live and deterministic_mock:
+        ok("Product tour Vera turn is deterministic and cannot reach live AI")
+    else:
+        fail("Product tour mock AI isolation")
+
+    vera_idx = expected.index("Work with Vera")
+    cli_idx = expected.index("Vela CLI & Skill")
+    vera_scene = scene_region.split(f"title: DEMO_SCENE_ORDER[{vera_idx}]", 1)[-1].split(f"title: DEMO_SCENE_ORDER[{cli_idx}]", 1)[0]
+    if ("const DEMO_AI_READY_TIMEOUT_MS = 6000;" in demo
+            and vera_scene.count("DEMO_AI_READY_TIMEOUT_MS") == 1
+            and "ctx.getState().chatMessages" not in vera_scene
+            and '_demoFindAll("[data-testid=\'vera-chat-response\']")' in vera_scene
+            and ".some((response)" in vera_scene
+            and "data-tool-name='deck_stats'" in vera_scene
+            and "_demoTypeWithMistakes(ctx, (text) => _demoSetInput(input, text), DEMO_AI_PROMPT)" in vera_scene):
+        ok("Product tour types the Vera prompt and waits once on the visible response and tool trace")
+    else:
+        fail("Product tour Vera readiness contract")
+
+    app = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    cleanup_contract = all(token in demo for token in [
+        "_demoInstallMockAI()",
+        "_demoRemoveMockAI()",
+        "RESTORE_CHAT_STATE",
+        "mockAI: mockStats",
+        "_demoCloseBrandingPanel()",
+        "_demoCloseEditToggle()",
+    ])
+    persistence_guards = app.count('document.documentElement.dataset.velaDemoRunning === "true"') >= 2
+    if cleanup_contract and persistence_guards and 'case "RESTORE_CHAT_STATE"' in reducer:
+        ok("Product tour removes its AI mock, restores chat, and suppresses saved changes")
+    else:
+        fail("Product tour mock cleanup and persistence guard")
+
+    cleanup_tokens = [
+        "new AbortController()",
+        "controllerRef.current?.abort()",
+        "finally",
+        "restoreSnapshot(snapshot)",
+        "delete document.documentElement.dataset.velaDemoRunning",
+        "elapsedMs: Date.now() - started",
+        "ui.setPdfExport(false)",
+    ]
+    missing_cleanup = [token for token in cleanup_tokens if token not in demo]
+    if not missing_cleanup:
+        ok("Product tour stop/skip cancellation and state restoration are wired")
+    else:
+        fail("Product tour cleanup contract", f"missing: {missing_cleanup}")
+
+    cue_names = set(re.findall(r'_demoCue\("([^"]+)"\)', demo))
+    expected_cues = {
+        "outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery",
+        "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "vera",
+        "cli", "desktop", "pdf-export", "pptx-export",
+    }
+    if expected_cues.issubset(cue_names) and len(expected_cues) >= 20 and 'uiSuite("Product Tour"' in ui:
+        ok(f"Product tour tests cover all {len(expected_cues)} main showcased states")
+    else:
+        fail("Product tour showcased-state coverage", f"cues={sorted(cue_names)}")
+
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    version_match = re.search(r'const VELA_VERSION\s*=\s*"([^"]+)"', imports_src)
+    if (version_match
+            and 'const DEMO_DISCLOSURE = "Vela Slides is a Dark Software Factory experiment. Code is written and reviewed by AI models.";' in demo
+            and "v{VELA_VERSION}" in demo
+            and "{DEMO_DISCLOSURE}" in demo
+            and 'data-testid="demo-disclosure"' in demo):
+        ok("Product tour opens on the runtime version and the exact disclosure line")
+    else:
+        fail("Product tour opening version/disclosure contract")
+
+    badge_match = re.search(r"const DEMO_FEATURE_BADGES = Object\.freeze\(\[(.*?)\]\);", demo, re.S)
+    badges = re.findall(r'\{\s*scene:\s*"([^"]+)",\s*version:\s*"([^"]+)",\s*label:\s*"([^"]+)"', badge_match.group(1)) if badge_match else []
+    changelog_match = re.search(r"const VELA_CHANGELOG = \[(.*?)\n\];", imports_src, re.S)
+    changelog_src = changelog_match.group(1) if changelog_match else ""
+    bad_badges = []
+    for scene, version, label in badges:
+        if scene not in expected:
+            bad_badges.append(f"{scene}: not a tour scene")
+            continue
+        try:
+            major, minor = (float(p) for p in version.split("."))
+        except ValueError:
+            bad_badges.append(f"{version}: not a version number")
+            continue
+        if major < 13 or (major == 13 and minor <= 0):
+            bad_badges.append(f"{version}: not post-13.0")
+            continue
+        entry_match = re.search(r'\{\s*v:\s*"' + re.escape(version) + r'"', changelog_src)
+        if not entry_match:
+            bad_badges.append(f"{version}: not found in VELA_CHANGELOG")
+    if len(badges) >= 5 and not bad_badges:
+        ok(f"Product tour shows {len(badges)} NEW badges for verified post-13.0 changelog features")
+    else:
+        fail("Product tour NEW badges", f"count={len(badges)} problems={bad_badges}")
+
+    slidepanel = open(os.path.join(PARTS_DIR, "part-slidepanel.jsx"), encoding="utf-8").read()
+    pdf_src = open(os.path.join(PARTS_DIR, "part-pdf.jsx"), encoding="utf-8").read()
+    modals = open(os.path.join(PARTS_DIR, "part-app-modals.jsx"), encoding="utf-8").read()
+    chat = open(os.path.join(PARTS_DIR, "part-chat.jsx"), encoding="utf-8").read()
+    list_src = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    slides_src = open(os.path.join(PARTS_DIR, "part-slides.jsx"), encoding="utf-8").read()
+    stable_ids = [
+        "run-demo", "demo-overlay", "demo-card", "demo-title", "demo-step", "demo-skip", "demo-stop", "demo-new-badge", "demo-disclosure",
+        "vera-chat-input", "vera-chat-send", "vera-chat-response", "vera-tool-trace",
+        "toc-tree", "gallery-close", "editor-gallery-toggle", "presenter-toggle", "presenter-view",
+        "student-toggle", "present-edit-toggle", "brand-toggle", "comments-toggle",
+        "export-pptx-menu-item", "pptx-export-modal", "pptx-export-start", "pptx-export-preview", "pptx-export-done",
+        "export-pdf-menu-item", "pdf-export-modal", "pdf-export-start", "pdf-export-preview",
+    ]
+    combined = demo + app + chat + slidepanel + pdf_src + modals + list_src + slides_src
+    missing_ids = [testid for testid in stable_ids if f'data-testid="{testid}"' not in combined]
+    if not missing_ids:
+        ok("Product tour has stable browser test IDs for every showcased surface")
+    else:
+        fail("Product tour test IDs", f"missing: {missing_ids}")
+
+    if "prefers-reduced-motion: reduce" in demo and 'transition = reducedMotion ? "none"' in demo:
+        ok("Product tour respects reduced-motion preference")
+    else:
+        fail("Product tour reduced-motion behavior")
+
+    closing_copy_ok = (
+        "Your story. Built at AI speed." in demo
+        and "Create, refine, present, and export with Vela Slides." in demo
+        and "Ready to build" not in demo
+        and "Start with a clear story. Vela keeps it structured from edit to export." not in demo
+    )
+    if closing_copy_ok:
+        ok("Product tour closing scene uses the approved headline and supporting line")
+    else:
+        fail("Product tour closing scene copy")
+
+    # Callout-jump fix: a target scene's card must stay hidden while its rect
+    # is null (masked corner-jump), reveal on the first real rect, and reveal
+    # anyway after a short bounded number of poll ticks so a target that never
+    # mounts does not hide its scene for the full duration.
+    jump_fix_tokens = [
+        "const DEMO_TARGET_FALLBACK_TICKS = 3;",
+        "pending: hasFnTarget && !rect,",
+        "if (pending) return (",
+        'data-demo-pending="true"',
+        'data-testid="demo-card"',
+        "pending: false }) : prev);",
+        "pollTicks >= DEMO_TARGET_FALLBACK_TICKS",
+    ]
+    missing_jump_fix = [token for token in jump_fix_tokens if token not in demo]
+    if not missing_jump_fix:
+        ok("Product tour target scenes hide the card until a real target rect (or a short bounded fallback) is known")
+    else:
+        fail("Product tour callout-position fix", f"missing: {missing_jump_fix}")
+
+    blocks = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    if '<line x1={`${x2}%`}' in blocks and '<line x1="4" y1={`${y2}%`}' in blocks and 'd={`M ${x2}%' not in blocks:
+        ok("Gallery showcase flow loops use valid SVG line geometry")
+    else:
+        fail("Gallery showcase flow-loop SVG geometry")
+
+    # DEMO_MAP.md is the generated, complete feature index for the tour (mirrors
+    # the src/parts/CODEMAP.md freshness gate) — regenerate in the same commit
+    # as any DEMO_FEATURES/scene/cue change: python3 tools/vela-dev/scripts/demo-map.py
+    demo_map_script = os.path.join(DEV_SCRIPTS, "demo-map.py")
+    result = subprocess.run([sys.executable, demo_map_script, "--check"], capture_output=True, text=True)
+    if result.returncode == 0:
+        ok("DEMO_MAP.md is fresh and DEMO_FEATURES passes its validation")
+    else:
+        fail("DEMO_MAP.md freshness/validation", (result.stdout + result.stderr).strip())
+
+
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_ip_hygiene():
@@ -1649,9 +1913,9 @@ def test_v10_features():
     else:
         fail("SlidePanel state prop")
 
-    # Demo: 19 scenes
-    if "19 scenes" in tpl:
-        ok("Demo has 19 scenes")
+    # Product tour: current scene sequence and time budget
+    if "21 scenes" in tpl and "about 115 seconds" in tpl:
+        ok("Demo is the 21-scene, 115-second product tour")
     else:
         fail("Demo scene count")
 
@@ -3859,6 +4123,24 @@ def test_block_primitives():
 
     # 10. Demo deck contains all 6 new block types
     deck = json.load(open(starter, encoding="utf-8"))
+    modules = [item for lane in deck["lanes"] for item in lane["items"]]
+    visible_release_labels = re.findall(
+        r"\bv(?:8|9|10|12)(?:\.\d+)?\b|APRIL 2026",
+        json.dumps(deck),
+        re.I,
+    )
+    expected_demo_lanes = [
+        "Start Here", "Create & Design", "Edit & Organize",
+        "Present & Learn", "AI & Automation", "Export & Ship",
+    ]
+    if ([lane["title"] for lane in deck["lanes"]] == expected_demo_lanes
+            and len(modules) == 6
+            and all(item.get("slides") for item in modules)
+            and not visible_release_labels):
+        ok("vela-demo.vela has a focused current-product outline with no empty modules")
+    else:
+        fail("vela-demo.vela focused current-product outline")
+
     all_types = set()
     def _collect_block_types(obj):
         if isinstance(obj, dict):
@@ -4278,6 +4560,7 @@ if __name__ == "__main__":
         test_editor_ux_bugs()
         test_slide_editor_ux_features()
         test_toc_nav_and_gallery_titlecards()
+        test_product_tour()
         test_ip_hygiene()
         test_v10_features()
         test_channel_local()

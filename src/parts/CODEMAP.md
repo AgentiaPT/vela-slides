@@ -119,10 +119,11 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
-- Spotlight Overlay: DemoOverlay
-- Demo Scene Helpers: _demoWait _demoKey _demoClick _demoFind _demoFindAll _demoFindBtn _demoRect _demoSetValue _demoType _demoTypeWithMistakes
-- Send a prompt to Vera chat — used by demo end card prompt cards: _demoSendToVera _demoReset buildDemoScenes
-- Demo Runner Component: VelaDemoRunner
+- Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
+- Spotlight Overlay: DemoNewBadge DEMO_TARGET_FALLBACK_TICKS DemoOverlay
+- Demo Helpers: _demoAbortError _demoWait _demoFind _demoFindAll _demoKey _demoClick _demoSetInput _demoTypeWithMistakes _demoVisible _demoUntil _demoUntilReal _demoSelectSlide _demoEditableHeading _demoToggleIsOn _demoCloseBrandingPanel _demoCloseEditToggle _demoCloseBatchPanel _demoReset _demoEnterPresent _demoCue
+- Product Story: buildDemoScenes getDemoPlan
+- Demo Runner: VelaDemoRunner
 
 ### part-pdf-fonts.jsx
 - PDF Fonts: COMPRESSED_FONTS
@@ -209,7 +210,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - CLEAR_BOOTSTRAP: part-chat.jsx
 - CLEAR_RESOLVED_COMMENTS: part-app-modals.jsx
 - CYCLE_STATUS: (no direct dispatch site)
-- DESELECT: part-app.jsx
+- DESELECT: part-app.jsx part-demo.jsx
 - DRAG_REORDER: part-list.jsx
 - DUPLICATE_SLIDE: part-list.jsx part-slidepanel.jsx
 - FINALIZE_STREAM: part-chat.jsx
@@ -239,26 +240,27 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - RESET_CHAT: part-chat.jsx
 - RESOLVE_ALL_COMMENTS: part-app-modals.jsx
 - RESOLVE_COMMENT: part-app-modals.jsx part-list.jsx part-slides.jsx
-- SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
+- RESTORE_CHAT_STATE: part-demo.jsx
+- SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-demo.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
 - SET_BRANDING: part-chat.jsx part-slides.jsx
-- SET_CHAT: part-app.jsx part-chat.jsx
-- SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
+- SET_CHAT: part-app.jsx part-chat.jsx part-demo.jsx
+- SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
-- SET_FONT_SCALE: part-slidepanel.jsx
-- SET_FULLSCREEN: part-app.jsx part-slidepanel.jsx
+- SET_FONT_SCALE: part-demo.jsx part-slidepanel.jsx
+- SET_FULLSCREEN: part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_GUIDELINES: part-slides.jsx
 - SET_IMPORTANCE: part-list.jsx
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
-- SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
-- SET_SECTION_COLLAPSED: part-list.jsx
+- SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
+- SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
 - SET_SLIDES: part-slidepanel.jsx
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
-- SET_SLIDE_SELECTION: part-list.jsx
+- SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
 - SET_STATUS: (no direct dispatch site)
 - SET_TITLE: part-app.jsx
-- SET_VERA_MODE: part-slidepanel.jsx part-slides.jsx
+- SET_VERA_MODE: part-demo.jsx part-slidepanel.jsx part-slides.jsx
 - SPLIT_ITEM_AT: part-list.jsx
 - STREAM_TOOL: part-chat.jsx
 - TEACHER_CLEAR: part-slides.jsx
@@ -305,12 +307,12 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 476
-- part-blocks.jsx: 748-line unbannered stretch after line 769
+- part-imports.jsx: 860-line unbannered stretch after line 489
+- part-blocks.jsx: 751-line unbannered stretch after line 769
 - part-slidepanel.jsx: 405-line unbannered stretch after line 175
-- part-slidepanel.jsx: 378-line unbannered stretch after line 860
+- part-slidepanel.jsx: 377-line unbannered stretch after line 863
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
-- part-demo.jsx: 577-line unbannered stretch after line 194
+- part-demo.jsx: 407-line unbannered stretch after line 414
 - part-pdf.jsx: 390-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
 - part-pdf-vector.jsx: 479-line unbannered stretch after line 459

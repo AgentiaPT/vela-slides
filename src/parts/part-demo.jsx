@@ -1,11 +1,134 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
-// ━━━ Vela Live Demo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Cinematic auto-demo with spotlight overlay and floating annotations.
-// Triggered via 🎬 Demo header button or window.dispatchEvent("vela-run-demo").
-// Uses the same DOM primitives as the UI test suite.
+// ━━━ Vela Product Tour ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A short, safe tour of the live app. Its Vera turn uses a local deterministic
+// response. It does not call live AI, write files, start an export, or open a link.
+
+const DEMO_MIN_DURATION_MS = 60000;
+const DEMO_MAX_DURATION_MS = 120000;
+const DEMO_AI_READY_TIMEOUT_MS = 6000;
+// Baseline for the "NEW" badges below — every badged feature must post-date this version.
+const DEMO_BASELINE_VERSION = "13.0";
+const DEMO_DISCLOSURE = "Vela Slides is a Dark Software Factory experiment. Code is written and reviewed by AI models.";
+const DEMO_SCENE_ORDER = Object.freeze([
+  "Vela Slides",
+  "Shape the Story",
+  "Edit Text, Live",
+  "Show a Process",
+  "Explain the Data",
+  "Compare, Funnel & Cycle",
+  "Numbers, Matrix & Checklist",
+  "Rich Column Layouts",
+  "See the Whole Deck",
+  "Brand & Guidelines",
+  "Comment & Review",
+  "Present with Confidence",
+  "Student & Audience Tools",
+  "Use the Presenter Dashboard",
+  "Improve, Edit with AI & Variants",
+  "Work with Vera",
+  "Vela CLI & Skill",
+  "Bring Your Own Agent",
+  "Export a Print-Ready PDF",
+  "Export Editable PowerPoint",
+  "Ready to Build",
+]);
+const DEMO_AI_PROMPT = "Review this demo deck and summarize its product story.";
+const DEMO_AI_RESPONSE = "I checked the live deck structure. The story moves from the Vela overview through semantic blocks, editing, presentation tools, AI features, and export.";
+const DEMO_EDIT_TEXT = "Text, Bullets & Quotes — edited live";
+// Tested feature metadata for the compact "NEW" badges — every entry names a scene
+// in DEMO_SCENE_ORDER and a version confirmed present, word-for-word verifiable,
+// in VELA_CHANGELOG (see tests/test_vela.py::test_product_tour for the check).
+const DEMO_FEATURE_BADGES = Object.freeze([
+  { scene: "Shape the Story", version: "13.12", label: "Multi-select & cross-deck copy/paste" },
+  { scene: "Numbers, Matrix & Checklist", version: "13.19", label: "Reorder items in a block" },
+  { scene: "Rich Column Layouts", version: "13.20", label: "Balanced multi-image layouts" },
+  { scene: "See the Whole Deck", version: "13.20", label: "Gallery section title cards" },
+  { scene: "Present with Confidence", version: "13.18", label: "Edit while presenting" },
+  { scene: "Bring Your Own Agent", version: "13.20", label: "Desktop save reliability" },
+]);
+const _demoBadgeFor = (title) => DEMO_FEATURE_BADGES.find((b) => b.scene === title) || null;
+
+// The single source of truth for "what does the tour showcase". One entry per
+// distinct verified cue (see _demoCue calls below and the matching checks in
+// part-uitest2.jsx). tools/vela-dev/scripts/demo-map.py reads this array to
+// generate src/parts/DEMO_MAP.md and to run `--check` (wired into
+// tests/test_vela.py). Keep field order fixed — the generator parses it with
+// a plain regex, not a JS engine. `deckSlide: null` means the cue does not
+// select a specific slide (it acts on whatever the prior scene left selected,
+// or on a whole-deck surface like the gallery or an export modal).
+const DEMO_FEATURES = Object.freeze([
+  { id: "outline", title: "Shape the Story", introduced: "13.12", isNew: true, deckSlide: "What is Vela?", testId: "[data-testid='toc-tree']", cue: "outline", action: "Expand the outline and open a slide.", assertion: "Outline tree is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "inline-edit", title: "Edit Text, Live", introduced: "13.0", isNew: false, deckSlide: "Text Blocks", testId: "[contenteditable='true']", cue: "inline-edit", action: "Type corrected text into the slide heading, then cancel.", assertion: "The editable heading shows the typed text before Escape reverts it.", cleanup: "_demoKey('Escape') cancels the edit.", safety: "safe" },
+  { id: "flow", title: "Show a Process", introduced: "13.0", isNew: false, deckSlide: "Flows & Loops", testId: "[data-block-type='flow']", cue: "flow", action: "Open the Flows & Loops slide.", assertion: "A flow block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "data", title: "Explain the Data", introduced: "13.0", isNew: false, deckSlide: "Data Blocks", testId: "[data-block-type='table']", cue: "data", action: "Open the Data Blocks slide.", assertion: "A table block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "layouts-1", title: "Compare, Funnel & Cycle", introduced: "13.0", isNew: false, deckSlide: "Comparison, Funnel & Cycle", testId: "text:Visitors,Describe", cue: "layouts-1", action: "Open the Comparison, Funnel & Cycle slide.", assertion: "Page text shows the comparison and funnel content.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "layouts-2", title: "Numbers, Matrix & Checklist", introduced: "13.19", isNew: true, deckSlide: "Number Row, Matrix & Checklist", testId: "text:Quick Wins,Comparison block", cue: "layouts-2", action: "Open the Number Row, Matrix & Checklist slide.", assertion: "Page text shows the matrix and checklist content.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "columns", title: "Rich Column Layouts", introduced: "13.20", isNew: true, deckSlide: "Columns Layout", testId: "[data-block-type='badge']", cue: "columns", action: "Open the Columns Layout slide.", assertion: "A badge block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "gallery", title: "See the Whole Deck", introduced: "13.20", isNew: true, deckSlide: null, testId: "[data-testid='gallery-close']", cue: "gallery", action: "Open the slide gallery.", assertion: "The gallery panel is open.", cleanup: "Closed by the smart-merge jump in the same scene.", safety: "safe" },
+  { id: "smart-merge", title: "See the Whole Deck", introduced: "13.0", isNew: false, deckSlide: "Gallery View & Smart Merge", testId: "text:Smart Merge", cue: "smart-merge", action: "Click the Smart Merge card in the gallery to jump to it.", assertion: "The gallery closes and the Smart Merge slide is visible.", cleanup: "Gallery already closed by the jump; next scene's _demoReset restores selection.", safety: "safe" },
+  { id: "branding", title: "Brand & Guidelines", introduced: "13.0", isNew: false, deckSlide: "Branding & Theming", testId: "[data-testid='brand-toggle']", cue: "branding", action: "Open the branding panel.", assertion: "The branding toggle shows its active state.", cleanup: "try/finally re-clicks brand-toggle.", safety: "safe" },
+  { id: "comments", title: "Comment & Review", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='comments-toggle']", cue: "comments", action: "Turn on review mode.", assertion: "Review mode is active.", cleanup: "try/finally exits review mode and closes the comments panel.", safety: "safe" },
+  { id: "present", title: "Present with Confidence", introduced: "13.18", isNew: true, deckSlide: "Navigate & Present", testId: "[data-testid='present-edit-toggle']", cue: "present", action: "Enter fullscreen present mode and toggle live edit.", assertion: "The present-mode edit toggle is visible.", cleanup: "The presenter scene exits fullscreen at its end.", safety: "safe" },
+  { id: "student", title: "Student & Audience Tools", introduced: "13.0", isNew: false, deckSlide: "Student Mode & Study Notes", testId: "[data-testid='student-toggle']", cue: "student", action: "Turn on student mode on a slide with study notes.", assertion: "Vera mode is 'student'.", cleanup: "try/finally re-clicks student-toggle.", safety: "safe" },
+  { id: "presenter", title: "Use the Presenter Dashboard", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='presenter-view']", cue: "presenter", action: "Open the presenter dashboard.", assertion: "The presenter view is visible.", cleanup: "_demoKey('Escape') and SET_FULLSCREEN false at scene end.", safety: "safe" },
+  { id: "ai-editing", title: "Improve, Edit with AI & Variants", introduced: "13.0", isNew: false, deckSlide: "AI Editing Modes", testId: "text:Improve,Variants", cue: "ai-editing", action: "Show the Improve, Edit with AI, and Variants controls.", assertion: "Page text shows Improve or Variants.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "vera", title: "Work with Vera", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='vera-tool-trace']", cue: "vera", action: "Type a prompt to Vera and send it to the deterministic mock.", assertion: "A deck_stats tool trace and the mock response are visible.", cleanup: "SET_CHAT open:false at scene end.", safety: "safe" },
+  { id: "cli", title: "Vela CLI & Skill", introduced: "13.0", isNew: false, deckSlide: "Vela CLI & Skill", testId: "[data-block-type='code']", cue: "cli", action: "Open the Vela CLI & Skill slide.", assertion: "A code block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "desktop", title: "Bring Your Own Agent", introduced: "13.20", isNew: true, deckSlide: "Vela Desktop — Bring Your Own Agent", testId: "[data-block-type='callout']", cue: "desktop", action: "Open the Vela Desktop slide.", assertion: "A callout block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "pdf-export", title: "Export a Print-Ready PDF", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='pdf-export-preview']", cue: "pdf-export", action: "Start a PDF export and wait for the preview.", assertion: "A PDF preview thumbnail is visible; no download starts.", cleanup: "ctx.ui.setPdfExport(false) at scene end, before any download.", safety: "safe" },
+  { id: "pptx-export", title: "Export Editable PowerPoint", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='pptx-export-preview']", cue: "pptx-export", action: "Start a PPTX export and wait for the preview.", assertion: "A PPTX preview thumbnail is visible; no download starts.", cleanup: "ctx.ui.setPptxExport(false) at scene end, before any download.", safety: "safe" },
+]);
+
+const _demoCreateMockAI = () => {
+  let stepCalls = 0;
+  return {
+    nextStep: async () => {
+      stepCalls++;
+      if (stepCalls === 1) {
+        return { message: "", tool_calls: [{ tool: "deck_stats", input: {} }] };
+      }
+      return { message: DEMO_AI_RESPONSE, tool_calls: [] };
+    },
+    getStats: () => ({ stepCalls, liveCalls: 0 }),
+  };
+};
+
+const _demoInstallMockAI = () => {
+  window.__velaDemoAI = _demoCreateMockAI();
+  window.dispatchEvent(new Event("vela-agent-update"));
+  return window.__velaDemoAI;
+};
+
+const _demoRemoveMockAI = () => {
+  delete window.__velaDemoAI;
+  window.dispatchEvent(new Event("vela-agent-update"));
+};
 
 // ── Spotlight Overlay ────────────────────────────────────────────────
-function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onStop, centered, children }) {
+function DemoNewBadge({ badge }) {
+  if (!badge) return null;
+  return (
+    <span data-testid="demo-new-badge" data-feature-version={badge.version} title={`${badge.label} — v${badge.version}`} style={{
+      display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8,
+      fontSize: 10, fontWeight: 800, letterSpacing: 0.5, fontFamily: FONT.mono,
+      color: "#0f172a", background: T.green || "#34d399",
+      padding: "2px 7px", borderRadius: 999, verticalAlign: "middle",
+    }}>NEW</span>
+  );
+}
+
+// A target-scene's rect is null until the target mounts (many scenes'
+// actions create their own target — polling before action() would delay
+// every scene, so the runner still paints at once). Painting the card at
+// the hard-coded fallback corner during that null window, then snapping
+// to the real corner once the target resolves, produced a visible jump.
+// `pending` suppresses the corner-dependent parts (spotlight ring, card)
+// for that first null window only; `DEMO_TARGET_FALLBACK_TICKS` bounds
+// how long a scene can stay pending so a target that never resolves still
+// gets a visible callout instead of staying silently hidden.
+const DEMO_TARGET_FALLBACK_TICKS = 3;
+
+function DemoOverlay({ rect, title, subtitle, step, total, progress, badge, onSkip, onStop, centered, pending, reducedMotion, children }) {
   const pad = 10;
   const r = rect ? {
     top: rect.top - pad,
@@ -13,13 +136,12 @@ function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onS
     width: rect.width + pad * 2,
     height: rect.height + pad * 2,
   } : null;
+  const transition = reducedMotion ? "none" : "all 0.3s ease";
 
-  // Centered mode: full-screen backdrop with centered card
   if (centered) return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 99990, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto" }}>
-      {/* Progress bar */}
+    <div data-testid="demo-overlay" data-demo-scene={title} style={{ position: "fixed", inset: 0, zIndex: 99990, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto" }}>
       <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 99993, background: "rgba(255,255,255,0.08)" }}>
-        <div style={{ height: "100%", background: T.accent, width: `${progress * 100}%` }} />
+        <div style={{ height: "100%", background: T.accent, width: `${progress * 100}%`, transition }} />
       </div>
       <div style={{
         width: 540, maxWidth: "92vw", zIndex: 99992,
@@ -29,26 +151,32 @@ function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onS
         boxShadow: `0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px ${T.accent}15`,
       }}>
         {children || <>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 8, lineHeight: 1.3 }}>{title}</div>
+          <div data-testid="demo-title" style={{ fontSize: 22, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 8, lineHeight: 1.3 }}>{title}<DemoNewBadge badge={badge} /></div>
           {subtitle && <div style={{ fontSize: 15, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6 }}>{subtitle}</div>}
         </>}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 20 }}>
-          <button onClick={onStop} style={{ fontSize: 13, fontFamily: FONT.mono, color: T.accent, background: T.accent + "15", border: `1px solid ${T.accent}40`, borderRadius: 8, padding: "6px 20px", cursor: "pointer", fontWeight: 600 }}>Close</button>
+          <button data-testid="demo-stop" onClick={onStop} style={{ fontSize: 13, fontFamily: FONT.mono, color: T.accent, background: T.accent + "15", border: `1px solid ${T.accent}40`, borderRadius: 8, padding: "6px 20px", cursor: "pointer", fontWeight: 600 }}>Close</button>
         </div>
       </div>
     </div>
   );
 
-  // Corner mode (default)
+  if (pending) return (
+    <div data-testid="demo-overlay" data-demo-scene={title} data-demo-pending="true" style={{ position: "fixed", inset: 0, zIndex: 99990, pointerEvents: "none" }}>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 99993, background: "rgba(255,255,255,0.08)" }}>
+        <div style={{ height: "100%", background: T.accent, width: `${progress * 100}%`, transition: reducedMotion ? "none" : "width 0.3s ease" }} />
+      </div>
+    </div>
+  );
+
   const cardW = 400, cardH = 170, margin = 16;
   const corners = [
-    { name: "top-left", top: margin, left: margin },
-    { name: "top-right", top: margin, left: window.innerWidth - cardW - margin },
-    { name: "bottom-left", top: window.innerHeight - cardH - margin, left: margin },
-    { name: "bottom-right", top: window.innerHeight - cardH - margin, left: window.innerWidth - cardW - margin },
+    { top: margin, left: margin },
+    { top: margin, left: window.innerWidth - cardW - margin },
+    { top: window.innerHeight - cardH - margin, left: margin },
+    { top: window.innerHeight - cardH - margin, left: window.innerWidth - cardW - margin },
   ];
-
-  let best = corners[3]; // default: bottom-right
+  let best = corners[3];
   if (r) {
     const targetCx = r.left + r.width / 2;
     const targetCy = r.top + r.height / 2;
@@ -62,8 +190,7 @@ function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onS
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 99990, pointerEvents: "none" }}>
-      {/* Spotlight ring — no mask, just a glowing border around target */}
+    <div data-testid="demo-overlay" data-demo-scene={title} style={{ position: "fixed", inset: 0, zIndex: 99990, pointerEvents: "none" }}>
       {r && (
         <div style={{
           position: "fixed",
@@ -72,22 +199,14 @@ function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onS
           border: `2px solid ${T.accent}60`,
           boxShadow: `0 0 24px 4px ${T.accent}25`,
           zIndex: 99991,
-          transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition,
           pointerEvents: "none",
         }} />
       )}
-
-      {/* Progress bar */}
       <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 99993, background: "rgba(255,255,255,0.08)" }}>
-        <div style={{
-          height: "100%", background: T.accent,
-          width: `${progress * 100}%`,
-          transition: "width 0.3s ease",
-        }} />
+        <div style={{ height: "100%", background: T.accent, width: `${progress * 100}%`, transition: reducedMotion ? "none" : "width 0.3s ease" }} />
       </div>
-
-      {/* Annotation card — always in a corner */}
-      <div style={{
+      <div data-testid="demo-card" style={{
         position: "fixed",
         top: best.top, left: best.left,
         width: cardW, zIndex: 99992,
@@ -98,752 +217,855 @@ function DemoOverlay({ rect, title, subtitle, step, total, progress, onSkip, onS
         padding: "20px 24px",
         boxShadow: `0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px ${T.accent}15`,
         pointerEvents: "auto",
-        transition: "top 0.4s ease, left 0.4s ease",
+        transition: reducedMotion ? "none" : "top 0.3s ease, left 0.3s ease",
       }}>
-        {/* Accent bar */}
         <div style={{ width: 40, height: 3, background: T.accent, borderRadius: 2, marginBottom: 12 }} />
-
-        <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 6, lineHeight: 1.3 }}>{title}</div>
+        <div data-testid="demo-title" style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 6, lineHeight: 1.3 }}>{title}<DemoNewBadge badge={badge} /></div>
         {subtitle && <div style={{ fontSize: 15, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6 }}>{subtitle}</div>}
-
-        {/* Step counter + controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-          <span style={{ fontSize: 12, fontFamily: FONT.mono, color: "#475569" }}>{step}/{total}</span>
-          <button onClick={onSkip} style={{ fontSize: 12, fontFamily: FONT.mono, color: T.accent, background: "transparent", border: `1px solid ${T.accent}30`, borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>Skip ⏭</button>
-          <button onClick={onStop} style={{ fontSize: 12, fontFamily: FONT.mono, color: "#ef4444", background: "transparent", border: "1px solid #ef444430", borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>Stop ⏹</button>
+          <span data-testid="demo-step" style={{ fontSize: 12, fontFamily: FONT.mono, color: "#64748b" }}>{step}/{total}</span>
+          <button data-testid="demo-skip" onClick={onSkip} style={{ fontSize: 12, fontFamily: FONT.mono, color: T.accent, background: "transparent", border: `1px solid ${T.accent}30`, borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>Skip</button>
+          <button data-testid="demo-stop" onClick={onStop} style={{ fontSize: 12, fontFamily: FONT.mono, color: "#ef4444", background: "transparent", border: "1px solid #ef444430", borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>Stop</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Demo Scene Helpers ───────────────────────────────────────────────
-const _demoWait = (ms) => new Promise((r) => setTimeout(r, ms));
+// ── Demo Helpers ─────────────────────────────────────────────────────
+const _demoAbortError = () => {
+  const e = new Error("Vela demo action stopped");
+  e.name = "AbortError";
+  return e;
+};
+
+const _demoWait = (ms, signal, scale = 1) => new Promise((resolve, reject) => {
+  if (signal?.aborted) { reject(_demoAbortError()); return; }
+  const delay = ms <= 0 ? 0 : Math.max(16, Math.round(ms * scale));
+  let timer = null;
+  const onAbort = () => {
+    if (timer != null) clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+    reject(_demoAbortError());
+  };
+  timer = setTimeout(() => {
+    signal?.removeEventListener("abort", onAbort);
+    resolve();
+  }, delay);
+  signal?.addEventListener("abort", onAbort, { once: true });
+});
+
+const _demoFind = (sel) => document.querySelector(sel);
+const _demoFindAll = (sel) => Array.from(document.querySelectorAll(sel));
 const _demoKey = (key, opts = {}) => {
   const target = document.activeElement || document.body;
   target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts }));
   target.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true, cancelable: true, ...opts }));
 };
 const _demoClick = (elOrSel) => {
-  const el = typeof elOrSel === "string" ? document.querySelector(elOrSel) : elOrSel;
+  const el = typeof elOrSel === "string" ? _demoFind(elOrSel) : elOrSel;
   if (!el) return null;
   el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   el.click();
   return el;
 };
-const _demoFind = (sel) => document.querySelector(sel);
-const _demoFindAll = (sel) => Array.from(document.querySelectorAll(sel));
-const _demoFindBtn = (text) => _demoFindAll("button").find((b) => (b.textContent || "").includes(text));
-const _demoRect = (el) => el ? el.getBoundingClientRect() : null;
-
-const _demoSetValue = (el, text) => {
-  const tracker = el._valueTracker;
-  if (tracker) tracker.setValue("");
-  try {
-    const ns = Object.getOwnPropertyDescriptor(
-      el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, "value"
-    )?.set;
-    if (ns) ns.call(el, text); else el.value = text;
-  } catch { el.value = text; }
+const _demoSetInput = (el, value) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  if (setter) setter.call(el, value);
+  else el.value = value;
   el.dispatchEvent(new Event("input", { bubbles: true }));
-  el.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-const _demoType = async (el, text, charDelay = 40) => {
-  if (!el) return;
-  el.focus();
-  for (let i = 0; i <= text.length; i++) {
-    _demoSetValue(el, text.slice(0, i));
-    if (i < text.length) await _demoWait(charDelay);
-  }
-};
-
-// Typing with deliberate mistakes and backspace corrections — feels human
-// mistakes: array of { at: charIndex, wrong: "xyz", pause: ms }
-const _demoTypeWithMistakes = async (el, text, mistakes = [], charDelay = 45) => {
-  if (!el) return;
-  el.focus();
-  let cursor = 0;
-  const mistakeMap = {};
-  for (const m of mistakes) mistakeMap[m.at] = m;
-
-  while (cursor <= text.length) {
-    const m = mistakeMap[cursor];
-    if (m) {
-      // Type the wrong chars
-      for (let j = 0; j < m.wrong.length; j++) {
-        _demoSetValue(el, text.slice(0, cursor) + m.wrong.slice(0, j + 1));
-        await _demoWait(charDelay);
-      }
-      // Pause — "notice the mistake"
-      await _demoWait(m.pause || 400);
-      // Backspace the wrong chars
-      for (let j = m.wrong.length; j > 0; j--) {
-        _demoSetValue(el, text.slice(0, cursor) + m.wrong.slice(0, j - 1));
-        await _demoWait(30);
-      }
-      await _demoWait(150);
+// Types text one character at a time with human-like variable pauses, one
+// deliberate slip (an extra wrong key), a beat to notice it, then a visible
+// backspace correction — shared by the inline-edit and Vera-prompt scenes so
+// neither typing scene looks like an instant paste.
+const _demoTypeWithMistakes = async (ctx, apply, text) => {
+  const mistakeAt = Math.max(3, Math.floor(text.length * 0.45));
+  let shown = "";
+  for (let i = 0; i < text.length; i++) {
+    shown += text[i];
+    apply(shown);
+    await ctx.wait(26 + Math.random() * 55);
+    if (i === mistakeAt) {
+      shown += "x"; // the slip
+      apply(shown);
+      await ctx.wait(260); // a beat to "notice" it
+      shown = shown.slice(0, -1);
+      apply(shown); // visible backspace correction
+      await ctx.wait(140);
     }
-    _demoSetValue(el, text.slice(0, cursor));
-    if (cursor < text.length) await _demoWait(charDelay);
-    cursor++;
+    if (text[i] === " ") await ctx.wait(70 + Math.random() * 90); // thinking pause at word breaks
   }
 };
 
-// ── Send a prompt to Vera chat — used by demo end card prompt cards ──
-const _demoSendToVera = (prompt) => {
-  // Stop demo overlay
-  window.dispatchEvent(new CustomEvent("vela-demo-stop"));
+const _demoVisible = (el) => !!(el && el.isConnected && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0);
 
-  setTimeout(async () => {
-    // 1. Open Vera chat
-    const veraBtn = _demoFindAll("button").find(b => b.textContent?.includes("Vera") || b.textContent?.includes("🤖"));
-    if (veraBtn) { _demoClick(veraBtn); await _demoWait(500); }
-
-    // 2. Find textarea
-    const ta = _demoFindAll("textarea").find(t => (t.placeholder || "").toLowerCase().includes("tell vera") || (t.placeholder || "").toLowerCase().includes("paste images"));
-    if (!ta) return;
-
-    // 3. Fill with prompt
-    _demoSetValue(ta, prompt);
-    ta.focus();
-    await _demoWait(100);
-
-    // 4. Expand textarea to show full prompt
-    ta.style.height = "auto";
-    ta.style.minHeight = Math.max(80, Math.min(ta.scrollHeight + 4, 160)) + "px";
-    ta.style.transition = "min-height 0.3s, box-shadow 0.3s";
-
-    // 5. Highlight — pulse glow on textarea
-    ta.style.boxShadow = `0 0 0 2px ${T.accent}, 0 0 24px ${T.accent}50`;
-    await _demoWait(1500);
-
-    // 6. Remove highlight
-    ta.style.boxShadow = "";
-    ta.style.minHeight = "";
-
-    // 7. Auto-send
-    const sendBtn = _demoFindAll("button").find(b => (b.textContent || "").trim() === "↑" && !b.disabled);
-    if (sendBtn) _demoClick(sendBtn);
-  }, 400);
-};
-
-
-// Ensure clean state before each scene
-const _demoReset = async () => {
-  document.activeElement?.blur(); await _demoWait(50);
-  _demoKey("Escape"); await _demoWait(150);
-  _demoKey("Escape"); await _demoWait(150);
-  // Exit fullscreen if active — check for header hidden
-  for (let i = 0; i < 3; i++) {
-    if (document.querySelector("header")?.offsetHeight > 0) break;
-    _demoKey("f"); await _demoWait(400);
+const _demoUntil = async (ctx, fn, timeout = 2500) => {
+  const deadline = Date.now() + Math.max(350, Math.round(timeout * ctx.scale));
+  while (Date.now() < deadline) {
+    if (ctx.signal.aborted) throw _demoAbortError();
+    const result = fn();
+    if (result) return result;
+    await _demoWait(50, ctx.signal, ctx.scale);
   }
-  // Close any fixed overlays (PDF modal, export menu etc) — skip demo overlay (z >= 99000)
-  const overlays = _demoFindAll("div").filter((d) => {
-    const z = parseInt(d.style.zIndex || 0);
-    return d.style.position === "fixed" && d.style.inset === "0px" && z > 9000 && z < 99000;
-  });
-  for (const o of overlays) { _demoClick(o); await _demoWait(100); }
-  document.activeElement?.blur(); await _demoWait(100);
+  throw new Error("Demo state did not become ready");
 };
 
-function buildDemoScenes() {
+// Like _demoUntil, but for state driven by real wall-clock timers the app
+// itself owns (e.g. the export modals' per-slide render loop) — the
+// deadline is NOT scaled by the demo's time-scale, only the poll interval
+// is, so a fast/scripted run still waits long enough for real rendering.
+const _demoUntilReal = async (ctx, fn, timeoutMs = 9000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (ctx.signal.aborted) throw _demoAbortError();
+    const result = fn();
+    if (result) return result;
+    await _demoWait(60, ctx.signal, ctx.scale);
+  }
+  throw new Error("Demo state did not become ready");
+};
+
+const _demoSelectSlide = async (ctx, title) => {
+  const state = ctx.getState();
+  for (const lane of (state.lanes || [])) {
+    for (const item of (lane.items || [])) {
+      const index = (item.slides || []).findIndex((slide) => slide.title === title);
+      if (index >= 0) {
+        ctx.dispatch({ type: "SELECT", id: item.id, slideIndex: index });
+        await _demoUntil(ctx, () => {
+          const next = ctx.getState();
+          return next.selectedId === item.id && next.slideIndex === index;
+        });
+        return;
+      }
+    }
+  }
+  throw new Error(`Demo slide not found: ${title}`);
+};
+
+const _demoEditableHeading = () => {
+  const block = _demoFind("[data-block-type='heading']");
+  if (!block) return null;
+  const candidates = [block, ..._demoFindAll("[data-block-type='heading'] *")]
+    .filter((el) => _demoVisible(el) && getComputedStyle(el).cursor === "pointer" && (el.textContent || "").trim().length > 2);
+  return candidates[candidates.length - 1] || null;
+};
+
+// Two toolbar toggles hold their own local component state (not reducer
+// state), so a demo-wide dispatch can't close them — close by re-clicking
+// the same control only if it still reads as "on". Inline hex+alpha style
+// strings (e.g. "#2563eb20") are normalized by the browser to rgba() on
+// read, so compare the resolved background color, not the source string.
+// Defensive: covers an abort mid-scene, in addition to each scene closing
+// itself.
+const _demoToggleIsOn = (btn) => !!btn && getComputedStyle(btn).backgroundColor !== "rgba(0, 0, 0, 0)";
+const _demoCloseBrandingPanel = () => {
+  const btn = _demoFind("button[title='Branding & guidelines']");
+  if (_demoToggleIsOn(btn)) _demoClick(btn);
+};
+const _demoCloseEditToggle = () => {
+  const btn = _demoFind("[data-testid='present-edit-toggle']");
+  if (_demoToggleIsOn(btn)) _demoClick(btn);
+};
+const _demoCloseBatchPanel = () => {
+  const panel = _demoFind("[data-testid='batch-edit-panel']");
+  if (!panel) return;
+  const closeBtn = _demoFind("[data-testid='batch-edit-close']");
+  if (closeBtn) _demoClick(closeBtn);
+  else _demoClick(_demoFind("[data-testid='batch-edit-toggle']"));
+};
+
+const _demoReset = async (ctx) => {
+  const editable = _demoFind("[contenteditable='true']");
+  if (editable) { editable.focus(); _demoKey("Escape"); }
+  document.activeElement?.blur();
+  const galleryClose = _demoFind("[data-testid='gallery-close']");
+  if (galleryClose) _demoClick(galleryClose);
+  if (_demoFind("[data-testid='presenter-view']")) _demoKey("Escape");
+  _demoCloseBrandingPanel();
+  _demoCloseEditToggle();
+  _demoCloseBatchPanel();
+  if (ctx.getState().veraMode !== "editor") ctx.dispatch({ type: "SET_VERA_MODE", mode: "editor" });
+  ctx.ui.setPptxExport(false);
+  ctx.ui.setPdfExport(false);
+  ctx.ui.setExportMenu(false);
+  ctx.ui.setViewMenu(false);
+  ctx.dispatch({ type: "SET_CHAT", open: false });
+  ctx.dispatch({ type: "SET_COMMENTS_PANEL", open: false });
+  ctx.dispatch({ type: "SET_REVIEW_MODE", value: false });
+  if (ctx.getState().fullscreen) ctx.dispatch({ type: "SET_FULLSCREEN", value: false });
+  await _demoWait(180, ctx.signal, ctx.scale);
+};
+
+const _demoEnterPresent = async (ctx) => {
+  document.activeElement?.blur();
+  if (!ctx.getState().fullscreen) ctx.dispatch({ type: "SET_FULLSCREEN", value: true });
+  await _demoUntil(ctx, () => _demoFind("[data-testid='presenter-toggle']"));
+};
+
+const _demoCue = (name) => {
+  window.dispatchEvent(new CustomEvent("vela-demo-cue", { detail: { name } }));
+};
+
+
+// ── Product Story ────────────────────────────────────────────────────
+function buildDemoScenes(ctx) {
   return [
-    // 1. Title card
     {
-      title: "⛵ Vela Slides",
-      subtitle: "AI-native presentations inside Claude.ai",
-      duration: 3500,
+      title: DEMO_SCENE_ORDER[0],
+      subtitle: "Create, edit, present, and export one structured deck.",
+      duration: 5500,
       target: null,
       centered: true,
       children: () => (
         <>
           <div style={{ fontSize: 36, marginBottom: 8 }}>⛵</div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 6 }}>Vela Slides</div>
-          <div style={{ fontSize: 16, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6 }}>AI-native presentations inside Claude.ai</div>
-          <div style={{ fontSize: 13, color: "#475569", fontFamily: FONT.mono, marginTop: 12 }}>Live feature tour · 19 scenes</div>
+          <div data-testid="demo-title" style={{ fontSize: 26, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 4 }}>Vela Slides</div>
+          <div style={{ fontSize: 13, color: T.accent, fontFamily: FONT.mono, fontWeight: 700, marginBottom: 6 }}>v{VELA_VERSION}</div>
+          <div style={{ fontSize: 16, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6 }}>A fast tour of the current product</div>
+          <div data-testid="demo-disclosure" style={{ fontSize: 12, color: "#64748b", fontFamily: FONT.body, lineHeight: 1.5, marginTop: 10, maxWidth: 420 }}>{DEMO_DISCLOSURE}</div>
+          <div style={{ fontSize: 13, color: "#64748b", fontFamily: FONT.mono, marginTop: 12 }}>21 scenes · about 115 seconds</div>
         </>
       ),
-      action: async () => { await _demoReset(); },
-    },
-    // 2. Navigate slides
-    {
-      title: "Navigate with Arrow Keys",
-      subtitle: "← → between slides, ↑ ↓ between modules — automatically crossing boundaries.",
-      duration: 5000,
-      target: () => _demoFind("header"),
       action: async () => {
-        await _demoReset();
-        for (let i = 0; i < 5; i++) { _demoKey("ArrowLeft"); await _demoWait(50); }
-        await _demoWait(300);
-        for (let i = 0; i < 3; i++) { _demoKey("ArrowRight"); await _demoWait(600); }
-        // Module crossing with ↓
-        _demoKey("ArrowDown"); await _demoWait(700);
-        _demoKey("ArrowDown"); await _demoWait(700);
-        _demoKey("ArrowUp"); await _demoWait(500);
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Vela Slides");
+        await ctx.wait(4700);
       },
     },
-    // 3. Fullscreen presenter mode
     {
-      title: "Presenter Mode",
-      subtitle: "Press F for fullscreen. Font scaling with +/−, inline-edit while presenting.",
+      title: DEMO_SCENE_ORDER[1],
+      subtitle: "Use the outline to keep sections and slides in a clear order.",
+      duration: 4500,
+      target: () => _demoFind("[data-testid='toc-tree']"),
+      action: async () => {
+        await _demoReset(ctx);
+        ctx.ui.setTocCollapsed(false);
+        ctx.dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: false, ids: [] });
+        await _demoSelectSlide(ctx, "What is Vela?");
+        _demoCue("outline");
+        await ctx.wait(3800);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[2],
+      subtitle: "Edit text directly on the slide. The tour restores the original title.",
+      duration: 7500,
+      target: () => _demoFind("[contenteditable='true']") || _demoEditableHeading(),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Text Blocks");
+        const heading = await _demoUntil(ctx, _demoEditableHeading);
+        _demoClick(heading);
+        const editable = await _demoUntil(ctx, () => _demoFind("[contenteditable='true']"));
+        try {
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          const range = document.createRange();
+          range.selectNodeContents(editable);
+          selection.addRange(range);
+        } catch {}
+        await ctx.wait(500);
+        await _demoTypeWithMistakes(ctx, (text) => { editable.textContent = text; }, DEMO_EDIT_TEXT);
+        _demoCue("inline-edit");
+        await ctx.wait(2200);
+        editable.focus();
+        _demoKey("Escape"); // cancels the edit — the original title is never saved
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[3],
+      subtitle: "Use flow and step blocks to make a process easy to follow.",
+      duration: 4000,
+      target: () => _demoFind("[data-block-type='flow']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Flows & Loops");
+        await _demoUntil(ctx, () => _demoFind("[data-block-type='flow']"));
+        _demoCue("flow");
+        await ctx.wait(3200);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[4],
+      subtitle: "Use tables, metrics, and grids to explain results.",
+      duration: 4000,
+      target: () => _demoFind("[data-block-type='table']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Data Blocks");
+        await _demoUntil(ctx, () => _demoFind("[data-block-type='table']"));
+        _demoCue("data");
+        await ctx.wait(3200);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[5],
+      subtitle: "Compare options, visualize a pipeline, and map a circular process.",
+      duration: 4000,
+      target: () => _demoFind("[data-block-type='grid']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Comparison, Funnel & Cycle");
+        await _demoUntil(ctx, () => {
+          const body = document.body.textContent || "";
+          return body.includes("Visitors") && body.includes("Describe");
+        });
+        _demoCue("layouts-1");
+        await ctx.wait(3200);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[6],
+      subtitle: "Quadrant analysis and status-aware checklists — hover an item for its ▲▼ reorder arrows.",
+      duration: 4200,
+      target: () => _demoFind("[data-block-type='number-row']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Number Row, Matrix & Checklist");
+        await _demoUntil(ctx, () => {
+          const body = document.body.textContent || "";
+          return body.includes("Quick Wins") && body.includes("Comparison block");
+        });
+        _demoCue("layouts-2");
+        await ctx.wait(3400);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[7],
+      subtitle: "Two-column slides, and up to five pasted images in a balanced layout.",
+      duration: 4000,
+      target: () => _demoFind("[data-block-type='badge']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Columns Layout");
+        await _demoUntil(ctx, () => _demoFind("[data-block-type='badge']"));
+        _demoCue("columns");
+        await ctx.wait(3200);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[8],
+      subtitle: "See the full deck, including each section's title card, then jump straight to a slide — like Smart Merge, the built-in update conflict resolver.",
+      duration: 7200,
+      target: () => _demoFind("[data-testid='gallery-close']")?.parentElement,
+      action: async () => {
+        await _demoReset(ctx);
+        const button = await _demoUntil(ctx, () => _demoFind("[data-testid='editor-gallery-toggle']"));
+        _demoClick(button);
+        await _demoUntil(ctx, () => _demoFind("[data-testid='gallery-close']"));
+        _demoCue("gallery");
+        await ctx.wait(2400);
+        // Jump straight to the "Smart Merge" slide from its gallery card — the
+        // click both selects the slide and closes the gallery (see `jump` in
+        // GalleryView), so this also demos "jump to any slide" for real.
+        const mergeCard = await _demoUntil(ctx, () => _demoFindAll("[data-testid='gallery-slide']").find((el) => (el.textContent || "").includes("Smart Merge")));
+        _demoClick(mergeCard);
+        await _demoUntil(ctx, () => !_demoFind("[data-testid='gallery-close']") && (document.body.textContent || "").includes("Smart Merge"));
+        _demoCue("smart-merge");
+        await ctx.wait(2600);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[9],
+      subtitle: "Set a logo, colors, and brand guidelines once — every slide picks them up.",
+      duration: 4000,
+      target: () => _demoFind("[data-testid='brand-toggle']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Branding & Theming");
+        const btn = await _demoUntil(ctx, () => _demoFind("[data-testid='brand-toggle']"));
+        _demoClick(btn);
+        try {
+          await _demoUntil(ctx, () => _demoToggleIsOn(btn));
+          _demoCue("branding");
+          await ctx.wait(2800);
+        } finally {
+          _demoClick(btn);
+        }
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[10],
+      subtitle: "Switch to review mode and leave threaded comments on any slide.",
+      duration: 4000,
+      target: () => _demoFind("[data-testid='comments-toggle']"),
+      action: async () => {
+        await _demoReset(ctx);
+        const btn = await _demoUntil(ctx, () => _demoFind("[data-testid='comments-toggle']"));
+        _demoClick(btn);
+        try {
+          await _demoUntil(ctx, () => ctx.getState().reviewMode);
+          _demoCue("comments");
+          await ctx.wait(2800);
+        } finally {
+          if (ctx.getState().reviewMode) ctx.dispatch({ type: "SET_REVIEW_MODE", value: false });
+          ctx.dispatch({ type: "SET_COMMENTS_PANEL", open: false });
+        }
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[11],
+      subtitle: "A clean stage, arrow-key navigation, and an Edit toggle for last-minute fixes.",
+      duration: 8500,
+      target: () => _demoFind("[data-testid='present-edit-toggle']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Navigate & Present");
+        await _demoEnterPresent(ctx);
+        _demoCue("present");
+        const editToggle = await _demoUntil(ctx, () => _demoFind("[data-testid='present-edit-toggle']"));
+        _demoClick(editToggle);
+        await ctx.wait(1800);
+        _demoClick(editToggle);
+        await ctx.wait(700);
+        _demoKey("ArrowRight");
+        await ctx.wait(2200);
+        _demoKey("ArrowRight");
+        await ctx.wait(2400);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[12],
+      subtitle: "Pre-authored study notes render offline for the audience — zero live API calls.",
       duration: 6000,
-      target: null,
+      target: () => _demoFind("[data-testid='student-toggle']"),
       action: async () => {
-        await _demoReset();
-        _demoKey("f"); await _demoWait(1200);
-        _demoKey("ArrowRight"); await _demoWait(600);
-        // Quick font scale demo
-        _demoKey("+"); await _demoWait(500);
-        _demoKey("+"); await _demoWait(500);
-        _demoKey("0"); await _demoWait(500);
-        _demoKey("ArrowRight"); await _demoWait(600);
-        _demoKey("f"); await _demoWait(400);
-      },
-    },
-    // 4. Presenter TOC with search
-    {
-      title: "Searchable Table of Contents",
-      subtitle: "Press T in presenter mode — filter across all modules and jump to any slide instantly.",
-      duration: 9000,
-      target: null,
-      action: async () => {
-        await _demoReset();
-        _demoKey("f"); await _demoWait(800);
-        _demoKey("t"); await _demoWait(800);
-        const searchInput = _demoFindAll("input").find((i) => i.placeholder?.toLowerCase().includes("search") || i.placeholder?.toLowerCase().includes("filter"));
-        if (searchInput) {
-          await _demoTypeWithMistakes(searchInput, "flow", [{ at: 2, wrong: "w", pause: 250 }], 80);
-          await _demoWait(1200);
-          _demoSetValue(searchInput, "");
-          await _demoWait(400);
-          await _demoType(searchInput, "data", 80);
-          await _demoWait(1200);
-          _demoSetValue(searchInput, "");
-          await _demoWait(400);
+        // Select the one slide with pre-authored studyNotes before entering
+        // student mode — a slide without them would make StudentPanel call
+        // the live Vera Teacher, which this safe tour must never do.
+        await _demoSelectSlide(ctx, "Student Mode & Study Notes");
+        if (!ctx.getState().fullscreen) await _demoEnterPresent(ctx);
+        const toggle = await _demoUntil(ctx, () => _demoFind("[data-testid='student-toggle']"));
+        _demoClick(toggle);
+        try {
+          await _demoUntil(ctx, () => ctx.getState().veraMode === "student");
+          _demoCue("student");
+          await ctx.wait(4300);
+        } finally {
+          if (ctx.getState().veraMode === "student") _demoClick(toggle);
         }
-        _demoKey("t"); await _demoWait(300);
-        _demoKey("f"); await _demoWait(500);
       },
     },
-    // 5. Theme toggle
     {
-      title: "Dark / Light Theme",
-      subtitle: "Press D to toggle. Every slide adapts instantly — no restyling needed.",
-      duration: 3500,
-      target: () => _demoFind("header"),
+      title: DEMO_SCENE_ORDER[13],
+      subtitle: "See the current slide, next slide, notes, timer, and time budget.",
+      duration: 6500,
+      target: () => _demoFind("[data-testid='presenter-view']"),
       action: async () => {
-        await _demoReset();
-        _demoKey("d"); await _demoWait(1500);
-        _demoKey("d"); await _demoWait(500);
+        await _demoEnterPresent(ctx);
+        const toggle = await _demoUntil(ctx, () => _demoFind("[data-testid='presenter-toggle']"));
+        _demoClick(toggle);
+        await _demoUntil(ctx, () => _demoFind("[data-testid='presenter-view']"));
+        _demoCue("presenter");
+        await ctx.wait(5000);
+        _demoKey("Escape");
+        ctx.dispatch({ type: "SET_FULLSCREEN", value: false });
+        await ctx.wait(300);
       },
     },
-    // 6. Inline WYSIWYG edit
     {
-      title: "Inline Editing",
-      subtitle: "Click any text on a slide to edit it directly. No modal, no sidebar — just click and type.",
-      duration: 7000,
-      target: () => document.querySelector("[contenteditable='true']") || (() => {
-        const h = _demoFindAll("[data-block-type='heading'] [style*='cursor: pointer']");
-        return h.find((el) => el.offsetHeight > 0 && el.textContent?.length > 3) || null;
-      })(),
+      title: DEMO_SCENE_ORDER[14],
+      subtitle: "Point-and-prompt editing: Improve auto-polishes a slide, the 🎯 block icon opens Edit with AI on one block, Variants offers alternate designs, and Batch scopes a prompt across slides.",
+      duration: 8500,
+      target: () => _demoFindAll("button").find((b) => b.title && b.title.startsWith("Auto-improve this slide")),
       action: async () => {
-        await _demoReset();
-        // Find an EditableText wrapper — it has cursor:pointer and is inside a data-block-type
-        const wrappers = _demoFindAll("[data-block-type] [style*='cursor: pointer']");
-        const target = wrappers.find((el) => el.offsetHeight > 0 && el.textContent?.length > 3 && !el.querySelector("button"));
-        if (!target) return;
-
-        // Click to enter edit mode — may need retry
-        for (let attempt = 0; attempt < 3; attempt++) {
-          _demoClick(target); await _demoWait(500);
-          if (document.querySelector("[contenteditable='true']")) break;
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "AI Editing Modes");
+        const improve = await _demoUntil(ctx, () => _demoFindAll("button").find((b) => b.title && b.title.startsWith("Auto-improve this slide")));
+        improve.scrollIntoView?.({ block: "center" });
+        _demoCue("ai-editing");
+        await ctx.wait(3000);
+        const variants = _demoFindAll("button").find((b) => b.title && b.title.startsWith("Generate design variants"));
+        variants?.scrollIntoView?.({ block: "center" });
+        await ctx.wait(2400);
+        // Batch Edit: a real, safe, AI-free scoped-prompt panel (slide/module/
+        // section/all) — opened and closed without ever pressing "Go".
+        const batchToggle = await _demoUntil(ctx, () => _demoFind("[data-testid='batch-edit-toggle']"));
+        _demoClick(batchToggle);
+        try {
+          await _demoUntil(ctx, () => _demoFind("[data-testid='batch-edit-panel']"));
+          _demoCue("batch-edit");
+          await ctx.wait(2200);
+        } finally {
+          const closeBtn = _demoFind("[data-testid='batch-edit-close']");
+          if (closeBtn) _demoClick(closeBtn); else if (_demoFind("[data-testid='batch-edit-panel']")) _demoClick(batchToggle);
         }
-
-        const editable = document.querySelector("[contenteditable='true']");
-        if (editable) {
-          const text = "Edited live in the demo";
-          const mistake = { at: 7, wrong: "lve", pause: 300 };
-          // Clear first
-          editable.innerHTML = "";
-          editable.dispatchEvent(new Event("input", { bubbles: true }));
-          await _demoWait(100);
-          // Type char by char with mistake
-          for (let i = 0; i < text.length; i++) {
-            if (i === mistake.at) {
-              for (let j = 0; j < mistake.wrong.length; j++) {
-                editable.textContent = text.slice(0, i) + mistake.wrong.slice(0, j + 1);
-                editable.dispatchEvent(new Event("input", { bubbles: true }));
-                await _demoWait(45);
-              }
-              await _demoWait(mistake.pause);
-              for (let j = mistake.wrong.length; j > 0; j--) {
-                editable.textContent = text.slice(0, i) + mistake.wrong.slice(0, j - 1);
-                editable.dispatchEvent(new Event("input", { bubbles: true }));
-                await _demoWait(30);
-              }
-              await _demoWait(120);
-            }
-            editable.textContent = text.slice(0, i + 1);
-            editable.dispatchEvent(new Event("input", { bubbles: true }));
-            await _demoWait(50);
-          }
-          await _demoWait(1000);
-          editable.blur(); await _demoWait(300);
-        }
-        // Undo
-        document.activeElement?.blur(); await _demoWait(100);
-        _demoKey("z", { ctrlKey: true }); await _demoWait(300);
       },
     },
-    // 7. Quick edit prompt
     {
-      title: "Quick Edit (E Key)",
-      subtitle: "Describe a change in natural language. Vera rewrites the slide.",
-      duration: 6000,
-      target: () => _demoFindAll("textarea").find((t) => t.placeholder?.includes("What to change")) || _demoFind("header"),
+      title: DEMO_SCENE_ORDER[15],
+      subtitle: "Vera checks the live deck with a built-in response. No network call or token is used.",
+      duration: 8500,
+      target: () => _demoFindAll("*").find((el) => el.children.length === 0 && (el.textContent || "").trim() === "VERA")?.parentElement,
       action: async () => {
-        await _demoReset();
-        _demoKey("e"); await _demoWait(800);
-        // Quick edit uses a textarea, not input
-        const ta = _demoFindAll("textarea").find((t) => t.placeholder?.includes("What to change") || t.placeholder?.includes("change?"));
-        if (ta) {
-          await _demoTypeWithMistakes(ta, "Make the heading bolder with an icon", [{ at: 15, wrong: "biger", pause: 350 }], 40);
-          await _demoWait(800);
-        }
-        _demoKey("Escape"); await _demoWait(300);
-      },
-    },
-    // 8. Shift+I Auto-Improve — LIVE API call
-    {
-      title: "✨ Auto-Improve (Shift+I)",
-      subtitle: "One keystroke. Vera analyzes the slide with visual context and makes it better.",
-      duration: 15000,
-      target: () => _demoFind("header"),
-      action: async () => {
-        await _demoReset();
-        _demoKey("ArrowLeft"); await _demoWait(300);
-        _demoKey("ArrowLeft"); await _demoWait(300);
-        _demoKey("I", { shiftKey: true }); await _demoWait(500);
-        await new Promise((resolve) => {
-          const t0 = Date.now();
-          let sawLoading = false;
-          const poll = () => {
-            const body = document.body.textContent || "";
-            if (body.includes("improving") || body.includes("Improving")) sawLoading = true;
-            const done = sawLoading && !body.includes("improving") && !body.includes("Improving");
-            if ((done && Date.now() - t0 > 2000) || Date.now() - t0 > 12000) { setTimeout(resolve, 1000); return; }
-            setTimeout(poll, 300);
-          };
-          setTimeout(poll, 500);
+        await _demoReset(ctx);
+        ctx.dispatch({ type: "SET_CHAT", open: true });
+        const input = await _demoUntil(ctx, () => _demoFind("[data-testid='vera-chat-input']"));
+        input.focus();
+        await _demoTypeWithMistakes(ctx, (text) => _demoSetInput(input, text), DEMO_AI_PROMPT);
+        await ctx.wait(220);
+        const send = await _demoUntil(ctx, () => {
+          const button = _demoFind("[data-testid='vera-chat-send']");
+          return button && !button.disabled ? button : null;
         });
-        document.activeElement?.blur(); await _demoWait(100);
-        _demoKey("z", { ctrlKey: true }); await _demoWait(300);
+        _demoClick(send);
+        await _demoUntilReal(ctx, () => {
+          const responseReady = _demoFindAll("[data-testid='vera-chat-response']")
+            .some((response) => response.textContent?.includes("I checked the live deck structure"));
+          const trace = _demoFind("[data-testid='vera-tool-trace'][data-tool-name='deck_stats']");
+          return responseReady && trace;
+        }, DEMO_AI_READY_TIMEOUT_MS);
+        _demoCue("vera");
+        await ctx.wait(3600);
+        ctx.dispatch({ type: "SET_CHAT", open: false });
       },
     },
-    // 9. Batch edit panel
     {
-      title: "Batch Edit",
-      subtitle: "Apply changes across slide, module, section, or entire deck in one command.",
+      title: DEMO_SCENE_ORDER[16],
+      subtitle: "One CLI pipeline authors, validates, and ships a deck as an installable skill.",
+      duration: 3800,
+      target: () => _demoFind("[data-block-type='code']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Vela CLI & Skill");
+        await _demoUntil(ctx, () => _demoFind("[data-block-type='code']"));
+        _demoCue("cli");
+        await ctx.wait(3000);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[17],
+      subtitle: "A native desktop window that runs on your own AI agent — with reliable local saves.",
+      duration: 4000,
+      target: () => _demoFind("[data-block-type='callout']"),
+      action: async () => {
+        await _demoReset(ctx);
+        await _demoSelectSlide(ctx, "Vela Desktop — Bring Your Own Agent");
+        await _demoUntil(ctx, () => _demoFind("[data-block-type='callout']"));
+        _demoCue("desktop");
+        await ctx.wait(3200);
+      },
+    },
+    {
+      title: DEMO_SCENE_ORDER[18],
+      subtitle: "Print-ready, vector-quality PDF. This tour previews it and cancels before download.",
       duration: 7000,
-      target: () => _demoFindAll("input").find((i) => i.placeholder?.includes("change across")) || _demoFind("header"),
+      target: () => _demoFind("[data-testid='pdf-export-modal']"),
       action: async () => {
-        await _demoReset();
-        const btn = _demoFindBtn("Batch") || _demoFindBtn("Improve");
-        if (btn) {
-          _demoClick(btn); await _demoWait(600);
-          // Click through scope options
-          const scopeBtns = _demoFindAll("button").filter((b) => {
-            const t = (b.textContent || "").toLowerCase().trim();
-            return t === "slide" || t === "module" || t === "section" || t === "all";
-          });
-          for (const sb of scopeBtns) { _demoClick(sb); await _demoWait(400); }
-          // Wait for input to be ready (autoFocus may take a tick)
-          await _demoWait(300);
-          const input = _demoFindAll("input").find((i) => (i.placeholder || "").includes("change across") || (i.placeholder || "").includes("auto-improve"));
-          if (input) {
-            input.blur(); await _demoWait(100); // release autoFocus
-            await _demoTypeWithMistakes(input, "Light backgrounds, dark text, max 5 bullets", [{ at: 6, wrong: "bac", pause: 280 }], 42);
-            await _demoWait(600);
-          }
-          _demoClick(btn); await _demoWait(300);
-        }
+        await _demoReset(ctx);
+        ctx.ui.setExportMenu(true);
+        const item = await _demoUntil(ctx, () => _demoFind("[data-testid='export-pdf-menu-item']"));
+        _demoClick(item);
+        await _demoUntil(ctx, () => _demoFind("[data-testid='pdf-export-modal']"));
+        const start = await _demoUntil(ctx, () => _demoFind("[data-testid='pdf-export-start']"));
+        _demoClick(start);
+        await _demoUntilReal(ctx, () => _demoFindAll("[data-testid='pdf-export-preview']").length > 0);
+        _demoCue("pdf-export");
+        await ctx.wait(2400);
+        ctx.ui.setPdfExport(false);
       },
     },
-    // 10. Branding panel
     {
-      title: "Branding & Guidelines",
-      subtitle: "Set logo position, accent bar, footer, and persistent AI rules for all edits.",
-      duration: 5000,
-      target: () => _demoFindBtn("Brand"),
-      action: async () => {
-        await _demoReset();
-        const btn = _demoFindBtn("Brand");
-        if (btn) {
-          _demoClick(btn); await _demoWait(500);
-          // Toggle branding enable switch if present
-          const toggles = _demoFindAll("input[type='checkbox'], [role='switch']");
-          if (toggles.length > 0) { _demoClick(toggles[0]); await _demoWait(600); _demoClick(toggles[0]); await _demoWait(400); }
-          // Click logo position options if visible
-          const posOpts = _demoFindAll("button").filter((b) => {
-            const t = (b.textContent || "").toLowerCase();
-            return t.includes("left") || t.includes("right") || t.includes("center") || t.includes("none");
-          });
-          for (const po of posOpts.slice(0, 3)) { _demoClick(po); await _demoWait(350); }
-          await _demoWait(400);
-          _demoClick(btn); await _demoWait(300);
-        }
-      },
-    },
-    // 11. Vera chat — LIVE API call
-    {
-      title: "🤖 Vera — Agentic AI Assistant",
-      subtitle: "20 tools for building, editing, searching, and restyling — right inside the deck.",
-      duration: 20000,
-      target: () => _demoFindAll("textarea").find((t) => (t.placeholder || "").toLowerCase().includes("tell vera")),
-      action: async () => {
-        await _demoReset();
-        const veraBtn = _demoFindBtn("Vera") || _demoFindBtn("🤖");
-        if (veraBtn) { _demoClick(veraBtn); await _demoWait(500); }
-        const ta = _demoFindAll("textarea").find((t) => (t.placeholder || "").toLowerCase().includes("tell vera") || (t.placeholder || "").toLowerCase().includes("paste images"));
-        if (ta) {
-          await _demoTypeWithMistakes(ta, "Run deck_stats and give me a quick health check", [{ at: 4, wrong: "dek", pause: 350 }, { at: 30, wrong: "quik", pause: 300 }], 35);
-          await _demoWait(500);
-          const sendBtn = _demoFindAll("button").find((b) => (b.textContent || "").trim() === "↑" && !b.disabled);
-          if (sendBtn) _demoClick(sendBtn);
-          // Wait for: working... appears → disappears → actual response content visible
-          await new Promise((resolve) => {
-            const t0 = Date.now();
-            let sawWorking = false;
-            const poll = () => {
-              const body = document.body.textContent || "";
-              if (body.includes("working...")) sawWorking = true;
-              const workingGone = sawWorking && !body.includes("working...");
-              // Look for actual response content (deck_stats mentions slides/blocks)
-              const hasResponse = workingGone && (body.includes("slides") || body.includes("modules") || body.includes("blocks")) && Date.now() - t0 > 3000;
-              if (hasResponse || Date.now() - t0 > 14000) { resolve(); return; }
-              setTimeout(poll, 300);
-            };
-            setTimeout(poll, 500);
-          });
-          // Let the viewer read the response
-          await _demoWait(3000);
-        }
-        // Close chat
-        const closeBtn = _demoFindBtn("Vera") || _demoFindBtn("🤖");
-        if (closeBtn) { _demoClick(closeBtn); await _demoWait(300); }
-      },
-    },
-    // 12. JSON export
-    {
-      title: "JSON Import / Export",
-      subtitle: "Copy deck JSON, paste between artifacts, version in Git. Full portability.",
-      duration: 3500,
-      target: () => _demoFindAll("textarea").find((t) => (t.value || "").includes("_vela")),
-      action: async () => {
-        await _demoReset();
-        let btn = _demoFindAll("button").find((b) => (b.textContent || "").includes("Export") && (b.textContent || "").includes("📤"));
-        if (btn) { _demoClick(btn); await _demoWait(400); }
-        btn = _demoFindAll("button").find((b) => (b.textContent || "").includes("Copy") && (b.textContent || "").includes("JSON"));
-        if (btn) { _demoClick(btn); await _demoWait(2000); }
-        _demoKey("Escape"); await _demoWait(200);
-        _demoKey("Escape"); await _demoWait(200);
-      },
-    },
-    // 13. Ratio reflow
-    {
-      title: "Responsive Ratios",
-      subtitle: "Switch between 16:9, 1:1, 4:5, and Fit — slides reflow instantly.",
+      title: DEMO_SCENE_ORDER[19],
+      subtitle: "Native, editable PowerPoint. This tour previews it and cancels before download.",
       duration: 7000,
-      target: () => _demoFindAll("button").find((b) => (b.textContent || "").includes("👁")),
+      target: () => _demoFind("[data-testid='pptx-export-modal']"),
       action: async () => {
-        await _demoReset();
-        const viewBtn = _demoFindAll("button").find((b) => (b.textContent || "").includes("👁"));
-        if (!viewBtn) return;
-        _demoClick(viewBtn); await _demoWait(400);
-        let opt = _demoFindAll("button").find((b) => (b.textContent || "").trim() === "1:1");
-        if (opt) { _demoClick(opt); await _demoWait(1200); }
-        _demoClick(viewBtn); await _demoWait(400);
-        opt = _demoFindAll("button").find((b) => (b.textContent || "").trim() === "4:5");
-        if (opt) { _demoClick(opt); await _demoWait(1200); }
-        _demoClick(viewBtn); await _demoWait(400);
-        opt = _demoFindAll("button").find((b) => (b.textContent || "").trim() === "16:9");
-        if (opt) { _demoClick(opt); await _demoWait(1200); }
-        _demoClick(viewBtn); await _demoWait(400);
-        opt = _demoFindAll("button").find((b) => (b.textContent || "").trim() === "Fit" || (b.textContent || "").trim().endsWith("Fit"));
-        if (opt) { _demoClick(opt); await _demoWait(400); }
+        await _demoReset(ctx);
+        ctx.ui.setExportMenu(true);
+        const item = await _demoUntil(ctx, () => _demoFind("[data-testid='export-pptx-menu-item']"));
+        _demoClick(item);
+        await _demoUntil(ctx, () => _demoFind("[data-testid='pptx-export-modal']"));
+        const start = await _demoUntil(ctx, () => _demoFind("[data-testid='pptx-export-start']"));
+        _demoClick(start);
+        await _demoUntilReal(ctx, () => _demoFindAll("[data-testid='pptx-export-preview']").length > 0);
+        _demoCue("pptx-export");
+        await ctx.wait(2400);
+        ctx.ui.setPptxExport(false);
       },
     },
-    // 14. PDF Export
     {
-      title: "Vector PDF Export",
-      subtitle: "Choose ratio, quality, then watch every slide render to canvas.",
-      duration: 35000,
-      target: null,
-      action: async () => {
-        await _demoReset();
-        // Open Export dropdown → PDF
-        const exportBtn = _demoFindAll("button").find((b) => (b.textContent || "").includes("Export") && (b.textContent || "").includes("📤"));
-        if (exportBtn) { _demoClick(exportBtn); await _demoWait(400); }
-        const pdfBtn = _demoFindAll("button").find((b) => (b.textContent || "").includes("Export PDF"));
-        if (pdfBtn) { _demoClick(pdfBtn); await _demoWait(800); }
-
-        // Cycle through ratios
-        const clickOpt = (label) => { const b = _demoFindAll("button").find((b) => (b.textContent || "").includes(label)); if (b) _demoClick(b); };
-        clickOpt("1:1"); await _demoWait(500);
-        clickOpt("4:5"); await _demoWait(500);
-        clickOpt("16:9"); await _demoWait(500);
-
-        // Cycle through quality
-        clickOpt("Vector"); await _demoWait(400);
-        clickOpt("Standard"); await _demoWait(400);
-        clickOpt("High"); await _demoWait(400);
-
-        // Start export
-        const startBtn = _demoFindAll("button").find((b) => (b.textContent || "").includes("EXPORT") && (b.textContent || "").includes("SLIDES"));
-        if (startBtn) { _demoClick(startBtn); await _demoWait(500); }
-
-        // Wait just until rendering finishes — don't wait for full PDF assembly
-        await new Promise((resolve) => {
-          const t0 = Date.now();
-          let maxProgress = 0;
-          const poll = () => {
-            const body = document.body.textContent || "";
-            // Track rendering progress via "X of Y" text
-            const m = body.match(/Rendering\s+(\d+)\s+of\s+(\d+)/);
-            if (m) maxProgress = Math.max(maxProgress, parseInt(m[1]));
-            // Close early: rendered most slides (last 2 is close enough) or Download appeared
-            const hasDownload = body.includes("Download") || body.includes("download");
-            const nearDone = maxProgress >= 19; // 19 of 21 is enough to impress
-            if (hasDownload || nearDone || Date.now() - t0 > 20000) { resolve(); return; }
-            setTimeout(poll, 150);
-          };
-          setTimeout(poll, 300);
-        });
-        await _demoWait(800); // brief pause to see the thumbnails
-
-        // Close PDF modal — find ✕ in the modal (high z-index overlay)
-        // The PDF modal backdrop is onClick={onClose} at z-index 10001
-        const pdfBackdrop = _demoFindAll("div").find((d) => {
-          const z = parseInt(d.style.zIndex || 0);
-          return d.style.position === "fixed" && z >= 10001 && z < 99000;
-        });
-        if (pdfBackdrop) { _demoClick(pdfBackdrop); await _demoWait(300); }
-      },
-    },
-    // 15. Cost tracker
-    {
-      title: "Session Cost Tracker",
-      subtitle: "Every API call tracked — tokens, cost, type. Full transparency, no surprises.",
-      duration: 3500,
-      target: () => _demoFindAll("button").find((b) => (b.textContent || "").includes("💲")),
-      action: async () => {
-        await _demoReset();
-        const btn = _demoFindAll("button").find((b) => (b.textContent || "").includes("💲"));
-        if (btn) { _demoClick(btn); await _demoWait(2500); _demoClick(btn); await _demoWait(300); }
-      },
-    },
-    // 16. Student Mode (🎓)
-    {
-      title: "🎓 Student Mode",
-      subtitle: "Vera becomes a teaching assistant — auto-notes, SVG diagrams, follow-up questions per slide.",
-      duration: 14000,
-      target: null,
-      action: async () => {
-        await _demoReset();
-        _demoKey("f"); await _demoWait(800);
-        // Activate student mode via testid
-        const btn = _demoFind("[data-testid='student-toggle']");
-        if (btn) _demoClick(btn);
-        await _demoWait(1000);
-        // Wait for streaming to start showing content
-        await _demoWait(4000);
-        // Navigate to next slide to show per-slide history
-        _demoKey("ArrowRight"); await _demoWait(3000);
-        // Navigate back to show cached notes
-        _demoKey("ArrowLeft"); await _demoWait(1500);
-        // Exit student mode
-        const exitBtn = _demoFind("[data-testid='student-toggle']");
-        if (exitBtn) _demoClick(exitBtn);
-        await _demoWait(500);
-        _demoKey("f"); await _demoWait(400);
-      },
-    },
-    // 17. Gallery View (🗂)
-    {
-      title: "🗂 Gallery View",
-      subtitle: "Press G in fullscreen — see all slides as thumbnails, jump to any slide instantly.",
-      duration: 8000,
-      target: null,
-      action: async () => {
-        await _demoReset();
-        _demoKey("f"); await _demoWait(1200);
-        // Focus the fullscreen container so G key reaches the handler
-        const fsContainer = _demoFind("div[tabindex='0']");
-        if (fsContainer) fsContainer.focus();
-        await _demoWait(300);
-        _demoKey("g"); await _demoWait(3500);
-        _demoKey("g"); await _demoWait(500);
-        _demoKey("f"); await _demoWait(400);
-      },
-    },
-    // 18. Keyboard shortcuts
-    {
-      title: "Keyboard Shortcuts (?)",
-      subtitle: "Full shortcut guide — navigation, editing, AI tools, presentation controls.",
-      duration: 3500,
-      target: null,
-      action: async () => {
-        await _demoReset();
-        _demoKey("?"); await _demoWait(2500);
-        _demoKey("?"); await _demoWait(300);
-      },
-    },
-    // 19. End card — centered credits + prompt cards, stays until manually closed
-    {
-      title: "Built with ⛵ Vela Slides",
-      subtitle: "",
-      duration: 999999, // stays until manually closed
-      minDuration: 0,
+      title: DEMO_SCENE_ORDER[20],
+      subtitle: "You saw the editor, semantic blocks, gallery, review, presenting, Vera, and export.",
+      duration: 4000,
       target: null,
       centered: true,
-      children: () => {
-        const prompts = [
-          { emoji: "🧠", label: "Educate", prompt: "Create a 6-slide deck explaining how neural networks learn — from perceptrons to backpropagation. Include a flow diagram and key metrics." },
-          { emoji: "🚀", label: "Pitch", prompt: "Build a 10-slide startup pitch deck for a project management SaaS — problem, solution, market size, product demo, business model, traction, team, competitive landscape, financials, and ask." },
-          { emoji: "👋", label: "Onboard", prompt: "Make a team onboarding deck with 8 slides — company values, org chart, first-week checklist, key tools and logins, communication norms, culture tips, and FAQ." },
-          { emoji: "🪐", label: "Explore", prompt: "Present the solar system in 9 slides — one per planet with key facts, distance from the sun, notable moons, and a timeline of major space exploration missions." },
-        ];
-        return (
-          <>
-            <div style={{ fontSize: 32, marginBottom: 6 }}>⛵</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 4, lineHeight: 1.3 }}>Vela Slides</div>
-            <div style={{ fontSize: 15, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6, marginBottom: 16 }}>AI-native presentation engine for Claude.ai</div>
-
-            {/* Try it — prompt cards */}
-            <div style={{ fontSize: 12, fontFamily: FONT.mono, color: T.accent, letterSpacing: "0.05em", fontWeight: 600, marginBottom: 8 }}>TRY IT — TELL VERA</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18, textAlign: "left", width: "100%" }}>
-              {prompts.map((p) => (
-                <div key={p.label} onClick={() => _demoSendToVera(p.prompt)}
-                  style={{
-                    padding: "10px 12px", borderRadius: 8, cursor: "pointer",
-                    background: T.accent + "08", border: `1px solid ${T.accent}25`,
-                    transition: "all 0.2s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = T.accent + "18"; e.currentTarget.style.borderColor = T.accent + "50"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = T.accent + "08"; e.currentTarget.style.borderColor = T.accent + "25"; }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: FONT.body, marginBottom: 3 }}>{p.emoji} {p.label}</div>
-                  <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.prompt}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ fontSize: 14, color: "#e2e8f0", fontFamily: FONT.body, marginBottom: 12 }}>Created by <strong style={{ color: "#fff", fontWeight: 700 }}>Rui Quintino</strong></div>
-            <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-              {[
-                { icon: "🔗", label: "LinkedIn", url: "https://www.linkedin.com/in/rquintino/" },
-                { icon: "⚡", label: "GitHub", url: "https://github.com/agentiapt/vela-slides" },
-                { icon: "🚀", label: "agentia.pt", url: "https://www.agentia.pt" },
-              ].map((l) => (
-                <span key={l.url} onClick={() => window.open(l.url, "_blank", "noopener,noreferrer")} style={{
-                  fontSize: 12, fontFamily: FONT.mono, color: T.accent, cursor: "pointer",
-                  padding: "4px 12px", borderRadius: 6, border: `1px solid ${T.accent}30`,
-                  background: T.accent + "10", display: "flex", alignItems: "center", gap: 5,
-                }}>{l.icon} {l.label}</span>
-              ))}
-            </div>
-            <div style={{ fontSize: 11, color: "#64748b", fontFamily: FONT.mono, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <span onClick={() => window.open("https://github.com/agentiapt/vela-slides/blob/main/LICENSE", "_blank", "noopener,noreferrer")} style={{ color: T.accent, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 }}>ELv2</span>
-              <span>·</span>
-              <span>© 2025-present Rui Quintino</span>
-            </div>
-          </>
-        );
+      children: () => (
+        <>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⛵</div>
+          <div data-testid="demo-title" style={{ fontSize: 24, fontWeight: 700, color: "#fff", fontFamily: FONT.display, marginBottom: 6 }}>Your story. Built at AI speed.</div>
+          <div style={{ fontSize: 15, color: "#94a3b8", fontFamily: FONT.body, lineHeight: 1.6 }}>Create, refine, present, and export with Vela Slides.</div>
+        </>
+      ),
+      action: async () => {
+        await _demoReset(ctx);
+        await ctx.wait(3500);
       },
-      action: async () => { await _demoReset(); await new Promise(() => {}); /* never resolves — closed via Stop */ },
     },
   ];
 }
 
+const getDemoPlan = () => {
+  const scenes = buildDemoScenes(null);
+  return {
+    titles: scenes.map((scene) => scene.title),
+    durations: scenes.map((scene) => scene.duration),
+    totalDuration: scenes.reduce((sum, scene) => sum + scene.duration, 0),
+  };
+};
 
-// ── Demo Runner Component ────────────────────────────────────────────
-function VelaDemoRunner() {
+// ── Demo Runner ──────────────────────────────────────────────────────
+function VelaDemoRunner({ appState, dispatch, demoUi }) {
   const [running, setRunning] = useState(false);
-  const [scene, setScene] = useState(null);   // { title, subtitle, step, total, rect, progress }
+  const [scene, setScene] = useState(null);
+  const stateRef = useRef(appState);
+  const uiRef = useRef(demoUi);
+  const runningRef = useRef(false);
   const stopRef = useRef(false);
   const skipRef = useRef(false);
+  const controllerRef = useRef(null);
+  const runRef = useRef(null);
+  stateRef.current = appState;
+  uiRef.current = demoUi;
 
-  const run = async () => {
-    if (running) return;
+  const requestStop = () => {
+    stopRef.current = true;
+    controllerRef.current?.abort();
+    setScene(null);
+  };
+
+  const restoreSnapshot = async (snapshot) => {
+    const editable = _demoFind("[contenteditable='true']");
+    if (editable) { editable.focus(); _demoKey("Escape"); }
+    const galleryClose = _demoFind("[data-testid='gallery-close']");
+    if (galleryClose) _demoClick(galleryClose);
+    if (_demoFind("[data-testid='presenter-view']")) _demoKey("Escape");
+    _demoCloseBrandingPanel();
+    _demoCloseEditToggle();
+
+    const ui = uiRef.current;
+    ui.setPptxExport(false);
+    ui.setPdfExport(false);
+    ui.setExportMenu(false);
+    ui.setViewMenu(false);
+    dispatch({ type: "SET_CHAT", open: false });
+    dispatch({ type: "SET_COMMENTS_PANEL", open: false });
+    dispatch({ type: "SET_REVIEW_MODE", value: false });
+    dispatch({ type: "SET_FULLSCREEN", value: false });
+    await _demoWait(100, null, 1);
+
+    if (snapshot.selectedId) {
+      dispatch({ type: "SELECT", id: snapshot.selectedId, slideIndex: snapshot.slideIndex });
+      dispatch({ type: "SET_SLIDE_SELECTION", index: snapshot.slideIndex, indices: snapshot.selectedSlideIndices });
+    } else {
+      dispatch({ type: "DESELECT" });
+    }
+    dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: snapshot.collapsedSections });
+    dispatch({
+      type: "RESTORE_CHAT_STATE",
+      messages: snapshot.chatMessages,
+      loading: snapshot.chatLoading,
+      debug: snapshot.lastDebug,
+      aiWork: snapshot.aiWork,
+    });
+    dispatch({ type: "SET_VERA_MODE", mode: snapshot.veraMode });
+    dispatch({ type: "SET_REVIEW_MODE", value: snapshot.reviewMode });
+    dispatch({ type: "SET_COMMENTS_PANEL", open: snapshot.commentsPanelOpen });
+    dispatch({ type: "SET_CHAT", open: snapshot.chatOpen });
+    if (snapshot.fullscreen) dispatch({ type: "SET_FULLSCREEN", value: true });
+    dispatch({ type: "SET_FONT_SCALE", value: snapshot.fontScale });
+    ui.setTocCollapsed(snapshot.tocCollapsed);
+    ui.setViewMenu(snapshot.viewMenu);
+    ui.setExportMenu(snapshot.exportMenu);
+    ui.setPptxExport(snapshot.pptxExport);
+    ui.setPdfExport(snapshot.pdfExport);
+    await _demoWait(120, null, 1);
+  };
+
+  const run = async (event) => {
+    if (runningRef.current || document.documentElement.dataset.velaDemoRunning === "true") return;
+    document.documentElement.dataset.velaDemoRunning = "true";
+    runningRef.current = true;
     setRunning(true);
     stopRef.current = false;
     skipRef.current = false;
+    const started = Date.now();
+    const failures = [];
+    const rawScale = Number(event?.detail?.timeScale || 1);
+    const scale = Number.isFinite(rawScale) ? Math.max(0.01, Math.min(1, rawScale)) : 1;
+    const reducedMotion = !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const initialState = stateRef.current;
+    const initialUi = uiRef.current;
+    const snapshot = {
+      selectedId: initialState.selectedId,
+      slideIndex: initialState.slideIndex,
+      selectedSlideIndices: [...(initialState.selectedSlideIndices || [])],
+      collapsedSections: [...(initialState.collapsedSections || [])],
+      fullscreen: initialState.fullscreen,
+      fontScale: initialState.fontScale,
+      chatOpen: initialState.chatOpen,
+      chatMessages: initialState.chatMessages.map((message) => ({
+        ...message,
+        tools: message.tools?.map((tool) => ({ ...tool })),
+        jumps: message.jumps?.map((jump) => ({ ...jump })),
+        images: message.images ? [...message.images] : message.images,
+      })),
+      chatLoading: initialState.chatLoading,
+      lastDebug: initialState.lastDebug,
+      aiWork: initialState.aiWork ? { ...initialState.aiWork } : null,
+      reviewMode: initialState.reviewMode,
+      commentsPanelOpen: initialState.commentsPanelOpen,
+      veraMode: initialState.veraMode,
+      tocCollapsed: initialUi.tocCollapsed,
+      viewMenu: initialUi.viewMenu,
+      exportMenu: initialUi.exportMenu,
+      pptxExport: initialUi.pptxExport,
+      pdfExport: initialUi.pdfExport,
+    };
 
-    const scenes = buildDemoScenes();
+    const scenes = buildDemoScenes(null);
     const total = scenes.length;
+    const plannedMs = scenes.reduce((sum, item) => sum + item.duration, 0);
+    let mockStats = { stepCalls: 0, liveCalls: 0 };
 
-    for (let i = 0; i < scenes.length; i++) {
-      if (stopRef.current) break;
-      skipRef.current = false;
+    try {
+      _demoInstallMockAI();
+      for (let i = 0; i < scenes.length; i++) {
+        if (stopRef.current) break;
+        skipRef.current = false;
+        const s = scenes[i];
+        const controller = new AbortController();
+        controllerRef.current = controller;
+        const ctx = {
+          dispatch,
+          getState: () => stateRef.current,
+          ui: {
+            setTocCollapsed: (value) => uiRef.current.setTocCollapsed(value),
+            setViewMenu: (value) => uiRef.current.setViewMenu(value),
+            setExportMenu: (value) => uiRef.current.setExportMenu(value),
+            setPptxExport: (value) => uiRef.current.setPptxExport(value),
+            setPdfExport: (value) => uiRef.current.setPdfExport(value),
+          },
+          signal: controller.signal,
+          scale,
+          wait: (ms) => _demoWait(ms, controller.signal, scale),
+        };
+        const sceneWithContext = buildDemoScenes(ctx)[i];
+        const hasFnTarget = typeof s.target === "function";
+        const targetEl = hasFnTarget ? s.target() : s.target;
+        const rect = targetEl ? targetEl.getBoundingClientRect() : null;
+        setScene({
+          title: s.title,
+          subtitle: s.subtitle,
+          step: i + 1,
+          total,
+          rect: rect ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height } : null,
+          // No rect yet on a target scene means the target hasn't mounted —
+          // action() often creates it. Stay pending (card hidden) instead of
+          // painting the fallback corner, so the card never has to jump once
+          // the real target resolves.
+          pending: hasFnTarget && !rect,
+          progress: (i + 1) / total,
+          centered: s.centered || false,
+          badge: _demoBadgeFor(s.title),
+          reducedMotion,
+          children: typeof s.children === "function" ? s.children() : s.children || null,
+        });
+        window.dispatchEvent(new CustomEvent("vela-demo-scene", { detail: { title: s.title, step: i + 1, total } }));
 
-      const s = scenes[i];
-
-      // Show overlay immediately with target
-      const targetEl = typeof s.target === "function" ? s.target() : s.target;
-      const rect = targetEl ? targetEl.getBoundingClientRect() : null;
-      setScene({
-        title: s.title,
-        subtitle: s.subtitle,
-        step: i + 1,
-        total,
-        rect: rect ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height } : null,
-        progress: (i + 1) / total,
-        centered: s.centered || false,
-        children: typeof s.children === "function" ? s.children() : s.children || null,
-      });
-
-      // Run action — it can signal completion via actionDone
-      let actionDone = false;
-      const actionPromise = s.action().then(() => { actionDone = true; }).catch(() => { actionDone = true; });
-
-      // Wait for: duration expires OR action finishes OR skip/stop
-      // For scenes with long durations (API calls, PDF), action finishing = move on
-      const t0 = Date.now();
-      const minTime = s.minDuration || Math.min(s.duration, 3000); // show overlay at least this long
-      while (Date.now() - t0 < s.duration && !skipRef.current && !stopRef.current) {
-        // If action is done and we've shown the overlay for minimum time, advance
-        if (actionDone && Date.now() - t0 >= minTime) break;
-        await _demoWait(100);
-        if (typeof s.target === "function") {
-          const el = s.target();
-          if (el) {
-            const r = el.getBoundingClientRect();
-            setScene((prev) => ({ ...prev, rect: { top: r.top, left: r.left, width: r.width, height: r.height } }));
+        let actionDone = false;
+        let actionError = null;
+        const actionPromise = Promise.resolve()
+          .then(() => sceneWithContext.action())
+          .catch((error) => { actionError = error; })
+          .finally(() => { actionDone = true; });
+        const duration = Math.max(40, Math.round(s.duration * scale));
+        const t0 = Date.now();
+        let pollTicks = 0;
+        while (Date.now() - t0 < duration && !skipRef.current && !stopRef.current) {
+          await _demoWait(Math.min(100, Math.max(20, duration / 10)), null, 1);
+          pollTicks++;
+          if (hasFnTarget) {
+            const el = s.target();
+            if (el) {
+              const r = el.getBoundingClientRect();
+              setScene((prev) => prev ? ({ ...prev, rect: { top: r.top, left: r.left, width: r.width, height: r.height }, pending: false }) : prev);
+            } else if (pollTicks >= DEMO_TARGET_FALLBACK_TICKS) {
+              // Target still hasn't mounted after a short bound — reveal
+              // anyway (today's fallback corner) so the scene is never
+              // silently hidden for its whole duration.
+              setScene((prev) => (prev && prev.pending) ? ({ ...prev, pending: false }) : prev);
+            }
           }
+          if (actionDone && Date.now() - t0 >= duration) break;
         }
+        if ((skipRef.current || stopRef.current) && !controller.signal.aborted) controller.abort();
+        await actionPromise;
+
+        const aborted = actionError?.name === "AbortError";
+        const ok = !actionError || aborted;
+        if (!ok) failures.push({ title: s.title, error: actionError?.message || String(actionError) });
+        window.dispatchEvent(new CustomEvent("vela-demo-scene-end", {
+          detail: { title: s.title, step: i + 1, ok, skipped: skipRef.current, stopped: stopRef.current },
+        }));
       }
-
-      try { await actionPromise; } catch {}
+    } finally {
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      setScene(null);
+      mockStats = window.__velaDemoAI?.getStats?.() || mockStats;
+      _demoRemoveMockAI();
+      try {
+        await restoreSnapshot(snapshot);
+      } catch (error) {
+        failures.push({ title: "Restore state", error: error?.message || String(error) });
+      } finally {
+        delete document.documentElement.dataset.velaDemoRunning;
+        runningRef.current = false;
+        setRunning(false);
+        const reason = stopRef.current ? "stopped" : failures.length ? "failed" : "complete";
+        window.dispatchEvent(new CustomEvent("vela-demo-complete", {
+          detail: { reason, failures, elapsedMs: Date.now() - started, plannedMs, mockAI: mockStats },
+        }));
+      }
     }
-
-    setScene(null);
-    setRunning(false);
   };
+  runRef.current = run;
 
-  // Listen for custom event
   useEffect(() => {
-    const handler = () => { if (!running) run(); };
-    const stopHandler = () => { stopRef.current = true; setScene(null); setRunning(false); };
-    window.addEventListener("vela-run-demo", handler);
+    const runHandler = (event) => runRef.current?.(event);
+    const stopHandler = () => requestStop();
+    window.addEventListener("vela-run-demo", runHandler);
     window.addEventListener("vela-demo-stop", stopHandler);
-    return () => { window.removeEventListener("vela-run-demo", handler); window.removeEventListener("vela-demo-stop", stopHandler); };
-  }, [running]);
+    return () => {
+      window.removeEventListener("vela-run-demo", runHandler);
+      window.removeEventListener("vela-demo-stop", stopHandler);
+      controllerRef.current?.abort();
+      _demoRemoveMockAI();
+      delete document.documentElement.dataset.velaDemoRunning;
+    };
+  }, []);
+
+  // VELA:DEV-ONLY:BEGIN
+  useEffect(() => {
+    if (!velaTestSurfaceEnabled()) return;
+    window.__velaDemoTest = {
+      plan: () => getDemoPlan(),
+      badges: () => DEMO_FEATURE_BADGES.map((b) => ({ ...b })),
+      run: (timeScale = 0.03) => window.dispatchEvent(new CustomEvent("vela-run-demo", { detail: { timeScale } })),
+      stop: () => window.dispatchEvent(new CustomEvent("vela-demo-stop")),
+    };
+    return () => { delete window.__velaDemoTest; };
+  }, []);
+  // VELA:DEV-ONLY:END
 
   return (
     <>
-      {scene && (
+      {running && scene && (
         <DemoOverlay
           rect={scene.rect}
           title={scene.title}
@@ -852,8 +1074,14 @@ function VelaDemoRunner() {
           total={scene.total}
           progress={scene.progress}
           centered={scene.centered}
-          onSkip={() => { skipRef.current = true; }}
-          onStop={() => { stopRef.current = true; setScene(null); setRunning(false); }}
+          pending={scene.pending}
+          badge={scene.badge}
+          reducedMotion={scene.reducedMotion}
+          onSkip={() => {
+            skipRef.current = true;
+            controllerRef.current?.abort();
+          }}
+          onStop={requestStop}
         >{scene.children}</DemoOverlay>
       )}
     </>

@@ -985,6 +985,12 @@ ${DESIGN_PROMPT_FOOTER}${guidelinesReminder}`;
 
 // ━━━ Vera Chat Step ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function callVeraStep(sysPrompt, messages) {
+  if (typeof window !== "undefined" && typeof document !== "undefined" &&
+      document.documentElement.dataset.velaDemoRunning === "true") {
+    const mock = window.__velaDemoAI;
+    if (!mock || typeof mock.nextStep !== "function") throw new Error("Demo AI response is not available");
+    return mock.nextStep(messages);
+  }
   const text = await callClaudeAPI(sysPrompt, messages, { _callType: "chat" });
   return parseJSONResponse(text) || { message: text, tool_calls: [] };
 }
@@ -1240,5 +1246,3 @@ ${nextJson}
     throw new Error("Failed to parse slide JSON: " + e.message);
   }
 }
-
-

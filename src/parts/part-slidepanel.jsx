@@ -594,9 +594,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       return;
     }
+    // The product tour uses Vela's stable in-app stage and must not depend on
+    // browser Fullscreen API permission or timing.
+    const demoStage = document.documentElement?.dataset.velaDemoRunning === "true";
     // Entering Vela fullscreen → request browser fullscreen
     const el = containerRef.current || document.documentElement;
-    if (!document.fullscreenElement) {
+    if (!demoStage && !document.fullscreenElement) {
       // Try requestFullscreen — may fail in sandboxed iframes (artifacts), that's OK
       el.requestFullscreen?.().catch(() => {});
     }
@@ -998,10 +1001,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
       {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
-      {showImproveInput && <div style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
+      {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
-          <button onClick={() => setShowImproveInput(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
+          <button data-testid="batch-edit-close" onClick={() => setShowImproveInput(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
         </div>
         <ScopeSelector icon="🔄" scope={improveScope} setScope={setImproveScope} concept={concept} slideIndex={slideIndex} slides={slides} currentLane={currentLane} lanes={lanes} isMobile={isMobile} />
         <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
@@ -1233,5 +1236,4 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   );
 }
-
 

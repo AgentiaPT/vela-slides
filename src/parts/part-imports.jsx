@@ -28,6 +28,9 @@ const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer
 // In local mode the channel port must be configured; in artifact mode we optimistically
 // assume the Anthropic proxy is available (Claude.ai injects it).
 const velaAIAvailable = () => {
+  if (typeof window !== "undefined" && typeof document !== "undefined" &&
+      document.documentElement.dataset.velaDemoRunning === "true" &&
+      typeof window.__velaDemoAI?.nextStep === "function") return true;
   // Neutralino desktop runtime: the shell installs a CLI-backed sender;
   // AI availability follows whether that probe succeeded.
   if (typeof window !== "undefined" && window.__velaAgentReady != null) return !!window.__velaAgentReady;
@@ -135,8 +138,18 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.47";
+const VELA_VERSION = "13.57";
 const VELA_CHANGELOG = [
+  { v: "13.57", d: "Tests: raised four UI-battery wait budgets (gallery-open, product-tour completion/stop/callout checks) so a slower CI host does not flake near-miss timeouts." },
+  { v: "13.56", d: ["Demo: the tour card no longer paints in the wrong corner for one frame before jumping to the target — it now stays hidden until the target is known, with a short bounded fallback so a scene is never silently hidden.", "Demo: updated the closing scene's headline and supporting line."] },
+  { v: "13.55", d: ["Demo: added a 20th distinct showcased state — jumping from the gallery straight to the Smart Merge slide, its built-in update conflict resolver — instead of just idling in the gallery.", "Demo: added a generated, CI-checked feature index (DEMO_FEATURES → DEMO_MAP.md) so every showcased state has a verifiable id, deck slide, test hook, action, assertion, and cleanup."] },
+  { v: "13.54", d: ["Demo: rebuilt the product tour as a 21-scene, ~115s LinkedIn-ready walkthrough — opens on the runtime version and the AI-disclosure line, covers 19 features (outline, semantic blocks, inline edit, gallery, branding, review, presenting, presenter dashboard, student mode, Improve/Edit-with-AI/Variants, Vera, CLI/skill, desktop, PDF and PowerPoint export), and marks 6 post-13.0 features with a compact NEW badge.", "Demo: inline editing and the Vera prompt now type with realistic pauses, one typo, and a visible correction instead of an instant paste; the inline edit still cancels and never saves.", "Demo: PDF and PowerPoint export now run for real until small slide previews appear, then close before any download.", "Demo deck: compacted to a focused 21-slide current-product tour with no empty modules or stale release labels; all 6 newer semantic block types kept.", "Tests: expanded contract and in-app coverage for the new scene order, feature/badge count, typed-and-corrected input, and export-preview cues."] },
+  { v: "13.53", d: "Demo: the inline-edit scene now shows a visible temporary title change." },
+  { v: "13.52", d: "Demo: the Vera scene now identifies its response when earlier chat messages are present." },
+  { v: "13.51", d: "Demo: the Vera scene now waits on its visible response and tool trace instead of duplicate internal state." },
+  { v: "13.50", d: "Demo: made the built-in Vera scene reliable during real-time recording and slower browser loads." },
+  { v: "13.49", d: "Demo: Vera now checks the live deck with a safe built-in response, with no network call, token cost, or saved change." },
+  { v: "13.48", d: ["Demo: replaced the old exhaustive script with an 83-second product tour of the editor, semantic blocks, gallery, presenter tools, Vera, and PowerPoint setup.", "Demo: no automatic AI calls, exports, downloads, or external links; stop and skip now cancel work and restore the prior app state.", "Flow loop connectors now use valid SVG line geometry in editor and gallery views."] },
   { v: "13.47", d: "release: regenerated the shipped Vela bundle and packaged artifact for the next release" },
   { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },

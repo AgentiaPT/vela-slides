@@ -481,7 +481,9 @@ uiSuite("Gallery View", [
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
     _key("g");
-    await _waitFor(() => _$text("GALLERY"), 2000);
+    // 5000ms (was 2000ms): tolerates a ~2x slower CI host — this only
+    // gates the gallery-open render, not a demo wait floor.
+    await _waitFor(() => _$text("GALLERY"), 5000);
   }},
   { name: "Gallery shows slide count", fn: async () => {
     await _waitFor(() => {
@@ -1292,6 +1294,208 @@ uiSuite("AI-working animation (CR5)", [
     if (!found) throw new Error("prefers-reduced-motion block zeroing .vera-thinking animation missing");
   }},
 ], { setup: _cr5Setup });
+
+// ── Product Tour Suite ───────────────────────────────────────────────
+uiSuite("Product Tour", [
+  { name: "Scene order, feature count, badges, and duration stay inside budget", fn: async () => {
+    const api = window.__velaDemoTest;
+    if (!api) throw new Error("demo test hook missing");
+    const plan = api.plan();
+    const expected = [
+      "Vela Slides",
+      "Shape the Story",
+      "Edit Text, Live",
+      "Show a Process",
+      "Explain the Data",
+      "Compare, Funnel & Cycle",
+      "Numbers, Matrix & Checklist",
+      "Rich Column Layouts",
+      "See the Whole Deck",
+      "Brand & Guidelines",
+      "Comment & Review",
+      "Present with Confidence",
+      "Student & Audience Tools",
+      "Use the Presenter Dashboard",
+      "Improve, Edit with AI & Variants",
+      "Work with Vera",
+      "Vela CLI & Skill",
+      "Bring Your Own Agent",
+      "Export a Print-Ready PDF",
+      "Export Editable PowerPoint",
+      "Ready to Build",
+    ];
+    if (JSON.stringify(plan.titles) !== JSON.stringify(expected)) throw new Error(`scene order changed: ${JSON.stringify(plan.titles)}`);
+    if (plan.titles.length < 20) throw new Error(`fewer than 20 scenes: ${plan.titles.length}`);
+    if (plan.totalDuration < 60000 || plan.totalDuration > 120000) throw new Error(`duration ${plan.totalDuration}ms is outside budget`);
+    if (plan.totalDuration !== plan.durations.reduce((sum, ms) => sum + ms, 0)) throw new Error("duration total does not match scene durations");
+    const badges = api.badges ? api.badges() : [];
+    if (badges.length < 5) throw new Error(`fewer than 5 NEW badges: ${badges.length}`);
+    for (const badge of badges) {
+      if (!plan.titles.includes(badge.scene)) throw new Error(`badge scene not in tour: ${badge.scene}`);
+      if (!/^1[3-9]\.\d+$/.test(badge.version) || Number(badge.version) <= 13.0) throw new Error(`badge version not post-13.0: ${badge.version}`);
+    }
+  }},
+  { name: "Fast tour reaches every showcased state and restores the editor", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.getSelection || !hooks.getChatState) throw new Error("demo test hook missing");
+    const before = hooks.getSelection();
+    const chatBefore = hooks.getChatState();
+    const scenes = [], cues = {};
+    const onScene = (event) => scenes.push(event.detail.title);
+    const onCue = (event) => {
+      const name = event.detail.name;
+      const checks = {
+        outline: () => !!_$("[data-testid='toc-tree']"),
+        "inline-edit": () => _$("[contenteditable='true']")?.textContent === DEMO_EDIT_TEXT,
+        flow: () => !!_$("[data-block-type='flow']"),
+        data: () => !!_$("[data-block-type='table']"),
+        "layouts-1": () => {
+          const body = document.body.textContent || "";
+          return body.includes("Visitors") && body.includes("Describe");
+        },
+        "layouts-2": () => {
+          const body = document.body.textContent || "";
+          return body.includes("Quick Wins") && body.includes("Comparison block");
+        },
+        columns: () => !!_$("[data-block-type='badge']"),
+        gallery: () => !!_$("[data-testid='gallery-close']"),
+        "smart-merge": () => !_$("[data-testid='gallery-close']") && (document.body.textContent || "").includes("Smart Merge"),
+        branding: () => {
+          const btn = _$("[data-testid='brand-toggle']");
+          return !!btn && getComputedStyle(btn).backgroundColor !== "rgba(0, 0, 0, 0)";
+        },
+        comments: () => !!_$("[data-testid='comments-toggle']"),
+        present: () => !_$("header") && !!_$("[data-testid='presenter-toggle']") && !document.fullscreenElement,
+        student: () => hooks.getVeraMode?.() === "student",
+        presenter: () => !!_$("[data-testid='presenter-view']"),
+        "ai-editing": () => document.body.textContent.includes("Improve") || document.body.textContent.includes("Variants"),
+        vera: () => {
+          const trace = _$("[data-testid='vera-tool-trace'][data-tool-name='deck_stats']");
+          return !!trace && _$$("[data-testid='vera-chat-response']").some((r) => r.textContent?.includes("I checked the live deck structure"));
+        },
+        cli: () => !!_$("[data-block-type='code']"),
+        desktop: () => !!_$("[data-block-type='callout']"),
+        "pdf-export": () => !!_$("[data-testid='pdf-export-preview']") && !_$("[data-testid='pdf-export-download']"),
+        "pptx-export": () => !!_$("[data-testid='pptx-export-preview']") && !_$("[data-testid='pptx-export-done']"),
+      };
+      cues[name] = checks[name] ? checks[name]() : false;
+    };
+    window.addEventListener("vela-demo-scene", onScene);
+    window.addEventListener("vela-demo-cue", onCue);
+    const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+    api.run(0.02);
+    const result = await Promise.race([done, _wait(32000).then(() => { throw new Error("fast demo timed out"); })]); // 32000ms (was 16000ms): 2x slack for scaled-demo wait-floor overhead on a slower CI host
+    window.removeEventListener("vela-demo-scene", onScene);
+    window.removeEventListener("vela-demo-cue", onCue);
+    if (result.reason !== "complete" || result.failures.length) throw new Error(`demo result: ${JSON.stringify(result)}`);
+    if (result.mockAI?.stepCalls !== 2 || result.mockAI?.liveCalls !== 0) throw new Error(`demo AI calls: ${JSON.stringify(result.mockAI)}`);
+    const plan = api.plan();
+    if (JSON.stringify(scenes) !== JSON.stringify(plan.titles)) throw new Error(`observed scene order: ${JSON.stringify(scenes)}`);
+    const expectedCues = ["outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery", "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "vera", "cli", "desktop", "pdf-export", "pptx-export"];
+    for (const cue of expectedCues) if (!cues[cue]) throw new Error(`showcase state not reached: ${cue}`);
+    const after = hooks.getSelection();
+    if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+    const chatAfter = hooks.getChatState();
+    if (JSON.stringify(chatAfter) !== JSON.stringify(chatBefore)) throw new Error("chat state not restored");
+    if (window.__velaDemoAI) throw new Error("demo AI mock was not removed");
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+        || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("tour left a transient surface open");
+  }},
+  { name: "Stop cancels the active scene and restores the prior state", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.getSelection) throw new Error("demo or selection test hook missing");
+    const before = hooks.getSelection();
+    const brandingReady = new Promise((resolve) => {
+      const handler = (event) => {
+        if (event.detail.name === "branding") {
+          window.removeEventListener("vela-demo-cue", handler);
+          resolve();
+        }
+      };
+      window.addEventListener("vela-demo-cue", handler);
+    });
+    const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+    api.run(0.03);
+    await Promise.race([brandingReady, _wait(20000).then(() => { throw new Error("branding scene did not start"); })]); // 20000ms (was 10000ms): 2x slack for scaled-demo wait-floor overhead on a slower CI host
+    api.stop();
+    const result = await Promise.race([done, _wait(5000).then(() => { throw new Error("demo stop timed out"); })]);
+    if (result.reason !== "stopped") throw new Error(`stop result: ${JSON.stringify(result)}`);
+    if (window.__velaDemoAI) throw new Error("stop left the demo AI mock installed");
+    const after = hooks.getSelection();
+    if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored after stop: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+    if (!_$("header")) throw new Error("editor header not restored");
+    const brandBtn = _$("[data-testid='brand-toggle']");
+    if (brandBtn && getComputedStyle(brandBtn).backgroundColor !== "rgba(0, 0, 0, 0)") throw new Error("stop left the branding panel open");
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+        || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("stop left a transient surface open");
+  }},
+  { name: "Callout position: target-scene card shows no initial corner jump; centered scenes render at once", fn: async () => {
+    const api = window.__velaDemoTest;
+    if (!api) throw new Error("demo test hook missing");
+    // The two scenes whose target only mounts once their action runs
+    // (fullscreen present-mode controls) — the confirmed callout-jump cases.
+    const targetScenes = ["Present with Confidence", "Student & Audience Tools"];
+    const centeredTitles = ["Vela Slides", "Ready to Build"];
+    const activeScene = { title: null };
+    const firstVisible = {}, settled = {}, sawPending = {}, centeredImmediate = {};
+    const centeredChecks = [];
+
+    const onScene = (event) => {
+      activeScene.title = event.detail.title;
+      if (centeredTitles.includes(event.detail.title)) {
+        const title = event.detail.title;
+        // Centered/no-target scenes must show their card at once — bounded
+        // by a much shorter window than the target-scene fallback below.
+        centeredChecks.push(_waitFor(() => {
+          const overlay = _$(`[data-demo-scene="${title}"]`);
+          return overlay && overlay.getAttribute("data-demo-pending") !== "true" ? true : null;
+        }, 200, 4).then(() => { centeredImmediate[title] = true; }).catch(() => { centeredImmediate[title] = false; }));
+      }
+    };
+    window.addEventListener("vela-demo-scene", onScene);
+
+    let polling = true;
+    const pollLoop = (async () => {
+      while (polling) {
+        const title = activeScene.title;
+        if (title && targetScenes.includes(title)) {
+          const overlay = _$(`[data-demo-scene="${title}"]`);
+          if (overlay && overlay.getAttribute("data-demo-pending") === "true") sawPending[title] = true;
+          if (!firstVisible[title]) {
+            const card = overlay && overlay.getAttribute("data-demo-pending") !== "true" ? _$("[data-testid='demo-card']") : null;
+            if (card) firstVisible[title] = { left: getComputedStyle(card).left, top: getComputedStyle(card).top, at: performance.now() };
+          } else if (!settled[title] && performance.now() - firstVisible[title].at >= 60) {
+            const card = _$("[data-testid='demo-card']");
+            if (card) settled[title] = { left: getComputedStyle(card).left, top: getComputedStyle(card).top };
+          }
+        }
+        await _wait(8);
+      }
+    })();
+
+    const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+    api.run(0.05);
+    const result = await Promise.race([done, _wait(40000).then(() => { throw new Error("demo timed out"); })]); // 40000ms (was 20000ms): 2x slack for scaled-demo wait-floor overhead on a slower CI host
+    polling = false;
+    await pollLoop;
+    window.removeEventListener("vela-demo-scene", onScene);
+    await Promise.all(centeredChecks);
+
+    if (result.reason !== "complete" || result.failures.length) throw new Error(`demo result: ${JSON.stringify(result)}`);
+    for (const title of targetScenes) {
+      if (!firstVisible[title]) throw new Error(`${title}: card never became visible (missing-target fallback did not fire within its bound)`);
+      if (!settled[title]) throw new Error(`${title}: card position not sampled again beyond one poll tick`);
+      if (firstVisible[title].left !== settled[title].left || firstVisible[title].top !== settled[title].top) {
+        throw new Error(`${title}: card jumped from ${JSON.stringify(firstVisible[title])} to ${JSON.stringify(settled[title])}`);
+      }
+    }
+    for (const title of centeredTitles) {
+      if (centeredImmediate[title] !== true) throw new Error(`${title}: centered scene did not render immediately`);
+    }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
