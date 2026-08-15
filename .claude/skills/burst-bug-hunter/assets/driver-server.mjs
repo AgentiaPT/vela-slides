@@ -9,10 +9,14 @@
 //     "initScript": "<path to JS injected BEFORE load>",       // optional (e.g. storage polyfill)
 //     "viewport":   { "width":1280, "height":720 } }
 // Nothing here knows about any particular app.
-import { chromium } from "playwright";
+import { createRequire } from "module";
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join, resolve, dirname, isAbsolute } from "path";
 import { pathToFileURL } from "url";
+
+// CommonJS resolution honors NODE_PATH, which lets mounted worktrees use a fast
+// package store on the sandbox-local file system.
+const { chromium } = createRequire(import.meta.url)("playwright");
 
 const [url, workdirArg, configPath] = process.argv.slice(2);
 if (!url) { console.error("usage: node driver-server.mjs <app-url> <workdir> [config.json]"); process.exit(2); }
@@ -27,20 +31,30 @@ const READY = cfg.readyExpr || "document.readyState === 'complete'";
 const RESET_EXPR = cfg.resetExpr || null;
 const initPath = rel(cfg.initScript);
 const INIT = initPath && existsSync(initPath) ? readFileSync(initPath, "utf8") : null;
+const verbsPath = rel(cfg.verbs);
 const VIEWPORT = cfg.viewport || { width: 1280, height: 720 };
-const CHROME = process.env.CHROME_PATH || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+const PINNED_CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+const CHROME = process.env.CHROME_PATH || (existsSync(PINNED_CHROME) ? PINNED_CHROME : chromium.executablePath());
 // HARD anti-hang cap: a job (import + run) may never block the loop longer than this.
 // On timeout the job is ABANDONED and the page is reset so the next job starts clean.
 const JOB_TIMEOUT_MS = cfg.jobTimeoutMs || 8000;
 
+const browserBootStarted = Date.now();
 const browser = await chromium.launch({ headless: true, executablePath: CHROME, args: ["--no-sandbox"] });
 const context = await browser.newContext({ viewport: VIEWPORT });
 const page = await context.newPage();
 if (INIT) await page.addInitScript(INIT);
 await page.goto(url, { waitUntil: "load" });
-await page.waitForFunction(READY, { timeout: 30000 });
+await page.waitForFunction(READY, undefined, { timeout: 30000 });
 await page.waitForTimeout(300);
+const browserBootMs = Date.now() - browserBootStarted;
 
+const resetTimesMs = [];
+const resetResult = (result) => {
+  resetTimesMs.push(result.ms);
+  if (resetTimesMs.length > 50) resetTimesMs.shift();
+  return result;
+};
 async function reset() {
   const t0 = Date.now();
   if (RESET_EXPR) {
@@ -51,25 +65,45 @@ async function reset() {
     // Playwright evaluates a string argument as a JS expression IN THE PAGE (sandboxed
     // browser context, not this Node process). RESET_EXPR is trusted repo config.
     await page.evaluate(RESET_EXPR);
-    await page.waitForFunction(READY, { timeout: 15000 });
+    await page.waitForFunction(READY, undefined, { timeout: 15000 });
     await page.waitForTimeout(200);
-    return { reset: true, mode: "in-page", ms: Date.now() - t0 };
+    return resetResult({ reset: true, mode: "in-page", ms: Date.now() - t0 });
   }
   await page.reload({ waitUntil: "load" });
-  await page.waitForFunction(READY, { timeout: 30000 });
+  await page.waitForFunction(READY, undefined, { timeout: 30000 });
   await page.waitForTimeout(300);
-  return { reset: true, mode: "reload", ms: Date.now() - t0 };
+  return resetResult({ reset: true, mode: "reload", ms: Date.now() - t0 });
 }
-const ctx = { reset, shot: async (n) => { const p = join(SHOTS, n.endsWith(".png") ? n : n + ".png"); await page.screenshot({ path: p }); return p; }, sleep: (ms) => page.waitForTimeout(ms) };
+let verbsPromise = null;
+const loadVerbs = () => {
+  if (!verbsPath || !existsSync(verbsPath)) throw new Error("No verb library is configured");
+  verbsPromise ||= import(pathToFileURL(verbsPath).href);
+  return verbsPromise;
+};
+const ctx = {
+  reset,
+  verbs: loadVerbs,
+  shot: async (n) => { const p = join(SHOTS, n.endsWith(".png") ? n : n + ".png"); await page.screenshot({ path: p }); return p; },
+  sleep: (ms) => page.waitForTimeout(ms),
+};
 
 const deadlineFile = join(workdir, "deadline");
 const deadlineTs = () => { try { return existsSync(deadlineFile) ? parseFloat(readFileSync(deadlineFile, "utf8")) : null; } catch { return null; } };
 const remainingMs = () => { const d = deadlineTs(); return d == null ? null : Math.max(0, Math.round(d * 1000 - Date.now())); };
 const pastDeadline = () => { const d = deadlineTs(); return d != null && Date.now() / 1000 > d; };
 let jobs = 0, totalMs = 0;
-const writeStats = () => writeFileSync(join(workdir, "stats.json"), JSON.stringify({ jobs, totalMs, remainingMs: remainingMs(), closed: pastDeadline() }));
+const writeStats = () => writeFileSync(join(workdir, "stats.json"), JSON.stringify({
+  browserBootMs,
+  jobs,
+  totalMs,
+  resets: resetTimesMs.length,
+  resetTimesMs,
+  remainingMs: remainingMs(),
+  closed: pastDeadline(),
+}));
 
-console.log(`[server] app open once: ${url}  (ready='${READY}', reset=${RESET_EXPR ? "in-page" : "reload"})`);
+console.log(`[server] app open once in ${browserBootMs}ms: ${url}  (ready='${READY}', reset=${RESET_EXPR ? "in-page" : "reload"})`);
+writeFileSync(join(workdir, "boot-ms"), `${browserBootMs}\n`);
 writeFileSync(join(workdir, "ready"), String(Date.now())); writeStats();
 let running = true;
 while (running) {

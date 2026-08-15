@@ -23,11 +23,11 @@ export async function selectModule(page, name) {
 export async function present(page) {
   const ok = await page.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => /Present/.test(x.textContent)); if (!b) return false; b.click(); return true; });
   if (!ok) throw new Error("present: no Present button");
-  await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !!fs; }, { timeout: 5000 });
+  await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !!fs; }, undefined, { timeout: 5000 });
 }
 export async function openTOC(page) {
   await page.keyboard.press("Control+e");
-  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='earch']"), { timeout: 4000 });
+  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='earch']"), undefined, { timeout: 4000 });
 }
 export async function jumpTo(page, title) {
   if (!await clickLeafText(page, title, true)) throw new Error(`jumpTo: no TOC row "${title}"`);
@@ -68,15 +68,32 @@ export async function editIcon(page, index = 0) {
   const box = await page.evaluate((i) => { const el = [...document.querySelectorAll("[data-block-type=heading]")][i]; const svg = el && el.querySelector("svg"); if (!svg) return null; const b = svg.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, index);
   if (!box) throw new Error(`editIcon: no icon on heading[${index}]`);
   await page.mouse.click(box.x, box.y);
-  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent), { timeout: 3000 }).catch(() => {});
+  await page.waitForFunction(() => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent), undefined, { timeout: 3000 }).catch(() => {});
   return page.evaluate(() => !!document.querySelector("input[placeholder*='con']") || /Pick an icon|Search icons/i.test(document.body.textContent));
 }
-export async function exitPresent(page) { await page.keyboard.press("f"); await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !fs || !!document.querySelector("header"); }, { timeout: 4000 }).catch(() => {}); }
-export async function openGallery(page) { if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=editor-gallery-toggle]"); if (!b) return false; b.click(); return true; })) throw new Error("openGallery: no editor-gallery-toggle (must be in editor mode, not presenting)"); await page.waitForFunction(() => /GALLERY/.test(document.body.textContent), { timeout: 4000 }); }
+export async function exitPresent(page) { await navKey(page, "f"); await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !fs && !!document.querySelector("header"); }, undefined, { timeout: 4000 }); }
+export async function openGallery(page) { if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=editor-gallery-toggle]"); if (!b) return false; b.click(); return true; })) throw new Error("openGallery: no editor-gallery-toggle (must be in editor mode, not presenting)"); await page.waitForFunction(() => /GALLERY/.test(document.body.textContent), undefined, { timeout: 4000 }); }
 export async function galleryState(page) { return page.evaluate(() => ({ open: /GALLERY/.test(document.body.textContent), hiddenOverlays: document.querySelectorAll("[data-hidden-overlay]").length, hiddenBadges: document.querySelectorAll("[data-hidden-badge]").length })); }
-// Save-status pill: value is 'dirty'|'saving'|'saved'|'error'. After an edit it stays
-// 'dirty' during the ~1.5s autosave debounce, then 'saving' -> 'saved'. Poll ~3s.
-export async function saveStatus(page) { return page.evaluate(() => { const p = document.querySelector("[data-vela-save-status]"); return p ? p.getAttribute("data-vela-save-status") : null; }); }
+// Desktop save-status pill when the native shell supplies one; otherwise the offline
+// harness proves persistence from its in-memory window.storage payload.
+export async function saveStatus(page) { return page.evaluate(async () => {
+  const p = document.querySelector("[data-testid=save-status-pill]");
+  if (p) return p.getAttribute("data-save-state");
+  try { return (await window.storage?.get("vela-deck"))?.value ? "saved" : null; } catch { return null; }
+}); }
+export async function waitForSavedHeading(page, expectedText) {
+  await page.waitForFunction((expected) => {
+    try {
+      const raw = window.__vmem?.["vela-deck"];
+      if (!raw) return false;
+      const deck = JSON.parse(raw);
+      return (deck.lanes || []).some(lane => (lane.items || []).some(item =>
+        (item.slides || []).some(slide => (slide.blocks || []).some(block =>
+          block.type === "heading" && block.text === expected))));
+    } catch { return false; }
+  }, expectedText, { timeout: 6000 });
+  return { status: await saveStatus(page), heading: expectedText };
+}
 export async function dropZoneVisible(page) { return page.evaluate(() => [...document.querySelectorAll("*")].some(e => /Drop deck to load/i.test(e.textContent || ""))); }
 // Simulate a drag over the app root. files:true => a real FILE drag (types include
 // "Files", must show the drop zone); files:false => an internal drag (must NOT).
@@ -96,7 +113,7 @@ export async function openExportMenu(page) {
   if (await page.evaluate(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"))) return;
   if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-menu-toggle]"); if (!b) return false; b.click(); return true; }))
     throw new Error("openExportMenu: no export-menu-toggle (desktop header not mounted?)");
-  await page.waitForFunction(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"), { timeout: 4000 });
+  await page.waitForFunction(() => !!document.querySelector("[data-testid=export-pptx-menu-item]"), undefined, { timeout: 4000 });
 }
 
 // Drive the whole PowerPoint export: open menu → click entry → start → wait for
@@ -108,7 +125,7 @@ export async function exportPptx(page, opts = {}) {
   await openExportMenu(page);
   if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=export-pptx-menu-item]"); if (!b) return false; b.click(); return true; }))
     throw new Error("exportPptx: export-pptx-menu-item vanished before click");
-  await page.waitForFunction(() => !!document.querySelector("[data-testid=pptx-export-modal]"), { timeout: 4000 });
+  await page.waitForFunction(() => !!document.querySelector("[data-testid=pptx-export-modal]"), undefined, { timeout: 4000 });
   if (opts.branding) {
     await page.evaluate(() => { const t = document.querySelector("[data-testid=pptx-export-branding-toggle]"); if (t) t.click(); });
   }
@@ -154,7 +171,7 @@ export async function navKey(page, key, mods = {}) {
 // waits for the fixed full-viewport presenter container to appear.
 export async function presentKey(page) {
   await navKey(page, "f");
-  await page.waitForFunction(() => [...document.querySelectorAll("*")].some(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }), { timeout: 5000 });
+  await page.waitForFunction(() => [...document.querySelectorAll("*")].some(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }), undefined, { timeout: 5000 });
 }
 // CDP touch swipe: dir<0 (finger right→left) = forward/next; dir>0 (left→right) = back/prev.
 export async function swipe(page, dir = -1) {
