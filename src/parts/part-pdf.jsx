@@ -904,7 +904,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
               </div>
 
               {phase === "done" && <>
-                <a href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
+                <a data-testid="pdf-export-download" href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
                   display: "block", width: "100%", padding: "12px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700,
                   background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
                   letterSpacing: 1, textAlign: "center", textDecoration: "none", boxSizing: "border-box",
@@ -967,5 +967,4 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
     </div>
   );
 }
-
 

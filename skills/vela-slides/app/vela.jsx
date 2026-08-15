@@ -138,8 +138,18 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.57";
+const VELA_VERSION = "13.67";
 const VELA_CHANGELOG = [
+  { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
+  { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
+  { v: "13.65", d: "Tests: the toolbar AI-edit isolation test now waits for the deck-epoch reset before reopening Quick Edit, removing a rare timing race in that check." },
+  { v: "13.64", d: ["Reliability: replacement decks now clear AI editor panels, drafts, previews, and errors.", "Reliability: stale editor requests can no longer release or update newer work.", "Tests: added overlapping editor-request coverage."] },
+  { v: "13.63", d: "Tests: the toolbar AI-edit isolation test now closes its own open editor, so it no longer blocks the product tour check for later tests." },
+  { v: "13.62", d: ["Reliability: AI results from replaced decks are discarded across chat, Teacher, and slide tools.", "Local AI: timeouts now finish accurately without waiting for an unavailable late reply."] },
+  { v: "13.61", d: ["Demo: restored work now saves after the product tour without saving tour-only state.", "Tests: strengthened AI activity, PowerPoint preview, and tour feature-map checks."] },
+  { v: "13.60", d: ["Demo: completed product-tour isolation for all AI and late-reply work, deck switches, malformed state, and exact demo content.", "Tests: added shared AI-activity and immutable startup-deck coverage."] },
+  { v: "13.59", d: ["Demo: strengthened product-tour isolation for active AI work, editor drafts, deck identity, and undo state.", "Local preview: canceled pending saves safely when a deck changes.", "Tests: connected the PDF no-download check to the real download control."] },
+  { v: "13.58", d: ["Demo: the product tour now waits for active Vera work to finish and runs only with the bundled demo deck.", "Tests: demo-map validation now requires each named test hook to exist exactly."] },
   { v: "13.57", d: "Tests: raised four UI-battery wait budgets (gallery-open, product-tour completion/stop/callout checks) so a slower CI host does not flake near-miss timeouts." },
   { v: "13.56", d: ["Demo: the tour card no longer paints in the wrong corner for one frame before jumping to the target — it now stays hidden until the target is known, with a short bounded fallback so a scene is never silently hidden.", "Demo: updated the closing scene's headline and supporting line."] },
   { v: "13.55", d: ["Demo: added a 20th distinct showcased state — jumping from the gallery straight to the Smart Merge slide, its built-in update conflict resolver — instead of just idling in the gallery.", "Demo: added a generated, CI-checked feature index (DEMO_FEATURES → DEMO_MAP.md) so every showcased state has a verifiable id, deck slide, test hook, action, assertion, and cleanup."] },
@@ -347,6 +357,11 @@ const uid = () => crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.ran
 //   Slide list: { slides: [ {slide}, {slide}, ... ] }  → Levenshtein match & replace
 //   null/undefined → no-op
 const STARTUP_PATCH = null;
+// VELA:DEV-ONLY:BEGIN
+// Keep one immutable startup fixture before ingress assigns runtime IDs or a UI
+// test mutates shared deck objects. The release build strips this test fixture.
+const VELA_TEST_STARTUP_PATCH = STARTUP_PATCH ? JSON.parse(JSON.stringify(STARTUP_PATCH)) : null;
+// VELA:DEV-ONLY:END
 
 // Levenshtein distance (Wagner-Fischer)
 function levenshtein(a, b) {
@@ -1972,11 +1987,11 @@ const BASE_SIZES = { xs: "0.85rem", sm: "0.95rem", md: "1.05rem", lg: "1.2rem", 
 // ━━━ Style Factories & Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const saveKV = (k, v) => window.storage.set(k, JSON.stringify(v)).catch((e) => { dbg("Storage error:", e); });
 const delKV = (k) => window.storage.delete(k).catch((e) => { dbg("Storage delete error:", e); });
-const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
+const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, _deckEpoch, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
 
 // Distributed storage: master has items with metadata only (no slides)
 const extractMaster = (s) => {
-  const { chatLoading, fullscreen, lastDebug, ...rest } = s;
+  const { chatLoading, fullscreen, lastDebug, _deckEpoch, ...rest } = s;
   return {
     ...rest,
     _version: 2,
@@ -4455,12 +4470,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+let _activeDeckEpoch = init._deckEpoch;
+const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
+const velaSyncDeckEpoch = (epoch) => {
+  if (Number.isSafeInteger(epoch) && epoch >= _activeDeckEpoch) _activeDeckEpoch = epoch;
+};
+const velaDeckEpochIsCurrent = (epoch) => epoch === _activeDeckEpoch;
+// The private epoch must stay numeric and monotonic so deck input and history
+// cannot make a tour mistake a replacement deck for its original deck.
+const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && state._deckEpoch >= 0 ? state._deckEpoch + 1 : 1;
 
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -4471,7 +4495,20 @@ function innerReducer(state, a) {
       _fullRewrite = true;
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
-      const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+      const loaded = {
+        ...state,
+        ...a.payload,
+        veraMode: "editor",
+        teacherHistory: {},
+        teacherLoading: false,
+        chatLoading: false,
+        aiWork: null,
+        lastDebug: "",
+        _deckEpoch: nextDeckEpoch(state),
+      };
+      // A replacement deck cannot inherit an unfinished assistant placeholder
+      // from work that belongs to the prior epoch.
+      if (Array.isArray(loaded.chatMessages)) loaded.chatMessages = loaded.chatMessages.filter((m) => !m?._streaming);
       // CR1: a freshly loaded/switched deck must open straight into the first slide
       // of the first non-empty module — in BOTH editor and presentation modes.
       // Auto-select when there is no selection OR the incoming selectedId does not
@@ -4711,9 +4748,18 @@ function innerReducer(state, a) {
       lastDebug: typeof a.debug === "string" ? a.debug : "",
       aiWork: a.aiWork || null,
     };
+    case "RESTORE_DEMO_STATE": return {
+      ...state,
+      chatMessages: Array.isArray(a.messages) ? a.messages : state.chatMessages,
+      chatLoading: !!a.loading,
+      lastDebug: typeof a.debug === "string" ? a.debug : "",
+      aiWork: a.aiWork || null,
+      teacherHistory: a.teacherHistory && typeof a.teacherHistory === "object" ? a.teacherHistory : {},
+      teacherLoading: !!a.teacherLoading,
+    };
     case "NEW_DECK": {
       _fullRewrite = true;
-      return { ...init, deckTitle: a.title || "Untitled", chatOpen: true, chatMessages: [{ role: "assistant", content: "Setting sail on a new deck — let me build this for you. ⛵🖖", ts: now() }], _bootstrap: { prompt: a.prompt, images: a.images || [] } };
+      return { ...init, deckTitle: a.title || "Untitled", chatOpen: true, chatMessages: [{ role: "assistant", content: "Setting sail on a new deck — let me build this for you. ⛵🖖", ts: now() }], _bootstrap: { prompt: a.prompt, images: a.images || [] }, _deckEpoch: nextDeckEpoch(state) };
     }
     case "CLEAR_BOOTSTRAP": return { ...state, _bootstrap: null };
     case "SET_VERA_MODE": return { ...state, veraMode: a.mode, teacherHistory: {}, teacherLoading: false };
@@ -4790,7 +4836,7 @@ function innerReducer(state, a) {
       return { ...state, branding: b };
     }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
-    case "RESET": return { ...init, chatOpen: state.chatOpen };
+    case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
     default: return state;
   }
@@ -4806,7 +4852,7 @@ function reducer(hist, a) {
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
     // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
     // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
-    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -4834,7 +4880,7 @@ function reducer(hist, a) {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
     // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
-    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -4860,7 +4906,6 @@ function reducer(hist, a) {
   if (NO_HISTORY.has(a.type)) return { ...hist, present: newPresent };
   return { past: [...hist.past, hist.present].slice(-MAX_HISTORY), present: newPresent, future: [] };
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vera Agentic Engine ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tool-use ReAct loop with shared API helpers
@@ -4877,7 +4922,31 @@ const MAX_TOTAL_TOOLS = 40;
 const MAX_MESSAGES_BYTES = 200 * 1024;
 
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
-async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
+let _velaActiveAIRequests = 0;
+const velaHasActiveAIRequests = () => _velaActiveAIRequests > 0;
+const velaBeginAIActivity = () => {
+  if (typeof document !== "undefined" && document.documentElement.dataset.velaDemoRunning === "true") {
+    throw new Error("Live AI is unavailable during the product tour.");
+  }
+  _velaActiveAIRequests++;
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    _velaActiveAIRequests = Math.max(0, _velaActiveAIRequests - 1);
+  };
+};
+
+async function callClaudeAPI(sysPrompt, messages, options = {}) {
+  const endActivity = velaBeginAIActivity();
+  try {
+    return await callClaudeAPIActive(sysPrompt, messages, options);
+  } finally {
+    endActivity();
+  }
+}
+
+async function callClaudeAPIActive(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
   if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
   // Neutralino desktop mode: the host shell installs window.__velaAgentSend
   // that spawns a local coding CLI (Claude Code by default). We bypass the
@@ -5499,20 +5568,22 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
     }
   }
   messages.push({ role: "user", content: studentQuestion || "Generate study notes and follow-up questions for the current slide." });
+  let endActivity = null;
+  let timer = null;
   try {
+    endActivity = velaBeginAIActivity();
     const controller = new AbortController();
     const t0 = performance.now();
     let fullText = "";
 
     // Local mode: route through MCP channel server (no streaming)
     if (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) {
-      const timer = setTimeout(() => controller.abort(), 120000);
+      timer = setTimeout(() => controller.abort(), 120000);
       const r = await fetch(`http://localhost:${VELA_CHANNEL_PORT}/action`, {
         method: "POST", headers: { "Content-Type": "application/json", "x-vela-token": VELA_CHANNEL_TOKEN },
         signal: controller.signal,
         body: JSON.stringify({ action: "complete", _silent: true, system: sysPrompt, messages, temperature: 0.3, max_tokens: 1500, _callType: "teacher" })
       });
-      clearTimeout(timer);
       if (!r.ok) throw new Error(`Channel ${r.status}`);
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || "Channel error");
@@ -5521,13 +5592,12 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
       velaSessionStats.add({ type: "teacher", input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_create_tokens: 0, model: "claude-code-channel", tool_calls: 0, duration_ms: Math.round(performance.now() - t0), stop_reason: "channel" });
     } else {
       // Artifact mode: direct Anthropic API with streaming
-      const timer = setTimeout(() => controller.abort(), 25000);
+      timer = setTimeout(() => controller.abort(), 25000);
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, temperature: 0.3, system: sysPrompt, messages, stream: true, cache_control: { type: "ephemeral" } })
       });
-      clearTimeout(timer);
       if (!r.ok) { const e = await r.text(); throw new Error(`API ${r.status}: ${e.slice(0, 100)}`); }
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
@@ -5563,6 +5633,9 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
     return { notes: null, questions, message };
   } catch (e) {
     return { notes: null, questions: [], message: "Hmm, I had trouble processing that. Try again? 🖖" };
+  } finally {
+    if (timer != null) clearTimeout(timer);
+    endActivity?.();
   }
 }
 
@@ -5858,52 +5931,132 @@ async function callVeraStep(sysPrompt, messages) {
   return parseJSONResponse(text) || { message: text, tool_calls: [] };
 }
 
-// ━━━ SSE late-reply recovery for channel mode ━━━━━━━━━━━━━━━━━━━
-// When a channel request times out, listen for the late reply via SSE
-// and process tool_calls when it arrives, updating the deck.
-function setupLateReplyRecovery(lanes, branding, onUpdate, onToolCall, onFinalize) {
-  if (!VELA_LOCAL_MODE || !VELA_CHANNEL_PORT) return null;
-  let sse = null;
-  try {
-    sse = new EventSource(`http://localhost:${VELA_CHANNEL_PORT}/events`);
-  } catch { return null; }
-  const cleanup = () => { try { sse?.close(); } catch {} };
-  const timeout = setTimeout(cleanup, 120000); // max 2 min wait
-  sse.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (data.type !== "reply" || data._silent) return;
-      const text = data.text;
-      const parsed = parseJSONResponse(text);
-      if (!parsed || !parsed.tool_calls?.length) {
-        // Just a message, show it
-        if (parsed?.message && onFinalize) onFinalize(parsed.message);
-        cleanup();
-        return;
-      }
-      // Execute tool_calls on the late reply
-      const ws = { lanes: JSON.parse(JSON.stringify(lanes)), branding: JSON.parse(JSON.stringify(branding || defaultBranding)) };
-      let totalTools = 0;
-      const jumps = [];
-      for (const tc of parsed.tool_calls) {
-        totalTools++;
-        const toolName = tc.tool || tc.name;
-        const toolInput = tc.input || tc.params || tc;
-        if (onToolCall) onToolCall({ type: "calling", name: toolName, input: toolInput, index: totalTools });
-        const raw = executeTool(toolName, toolInput, ws, []);
-        const result = typeof raw === "object" && raw.text ? raw.text : raw;
-        const toolJumps = typeof raw === "object" && raw.jump ? (Array.isArray(raw.jump) ? raw.jump : [raw.jump]) : [];
-        if (toolJumps.length) jumps.push(...toolJumps);
-        if (onToolCall) onToolCall({ type: "done", name: toolName, input: toolInput, result, jump: toolJumps, index: totalTools });
-      }
-      if (onUpdate) onUpdate(JSON.parse(JSON.stringify(ws.lanes)), `🔧 Late reply: ${totalTools} tools`);
-      if (onFinalize) onFinalize(parsed.message || `Applied ${totalTools} tools from late reply. 🖖`, jumps);
-      cleanup();
-    } catch {}
+// VELA:DEV-ONLY:BEGIN
+// Exercise the real shared lease wrappers with local mocked transports. No
+// probe can reach the network because every fetch/agent transport
+// is replaced before the operation starts.
+async function velaRunAILeaseTests() {
+  const original = {
+    fetch: window.fetch,
+    agentReady: window.__velaAgentReady,
+    agentSend: window.__velaAgentSend,
+    trustGate: window.__velaTrustGate,
   };
-  sse.onerror = cleanup;
-  return cleanup;
+  const waitFor = async (check, timeout = 500) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("AI lease probe timed out");
+  };
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const cases = [];
+  const record = async (name, fn) => {
+    try { await fn(); cases.push({ name, pass: true }); }
+    catch (error) { cases.push({ name, pass: false, error: error?.message || String(error) }); }
+  };
+  try {
+    window.__velaAgentReady = true;
+    window.__velaTrustGate = null;
+
+    await record("callClaudeAPI success and error", async () => {
+      let resolveSend;
+      window.__velaAgentSend = () => new Promise((resolve) => { resolveSend = resolve; });
+      const success = callClaudeAPI("system", [{ role: "user", content: "test" }]);
+      await waitFor(() => typeof resolveSend === "function");
+      assert(velaHasActiveAIRequests(), "API success lease was not active during transport");
+      resolveSend("ok");
+      assert(await success === "ok", "API success result changed");
+      assert(!velaHasActiveAIRequests(), "API success lease did not release");
+
+      let rejectSend;
+      window.__velaAgentSend = () => new Promise((_, reject) => { rejectSend = reject; });
+      const failure = callClaudeAPI("system", [{ role: "user", content: "test" }]).catch(() => "error");
+      await waitFor(() => typeof rejectSend === "function");
+      assert(velaHasActiveAIRequests(), "API error lease was not active during transport");
+      rejectSend(new Error("mock API error"));
+      assert(await failure === "error", "API error was not observed");
+      assert(!velaHasActiveAIRequests(), "API error lease did not release");
+    });
+
+    await record("Teacher stream success and error", async () => {
+      window.__velaAgentReady = null;
+      window.__velaAgentSend = null;
+      const encoder = new TextEncoder();
+      let releaseRead;
+      window.fetch = async () => ({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise((resolve) => { releaseRead = resolve; }),
+          }),
+        },
+      });
+      const success = callVeraTeacher([], null, 0, null, []);
+      await waitFor(() => typeof releaseRead === "function");
+      assert(velaHasActiveAIRequests(), "Teacher success lease was not active during stream");
+      const firstRead = releaseRead;
+      releaseRead = null;
+      firstRead({ done: false, value: encoder.encode('data: {"type":"content_block_delta","delta":{"text":"Study note"}}\n\n') });
+      await waitFor(() => typeof releaseRead === "function");
+      const finishRead = releaseRead;
+      releaseRead = null;
+      finishRead({ done: true });
+      await success;
+      assert(!velaHasActiveAIRequests(), "Teacher success lease did not release");
+
+      let rejectFetch;
+      window.fetch = () => new Promise((_, reject) => { rejectFetch = reject; });
+      const failure = callVeraTeacher([], null, 0, null, []);
+      await waitFor(() => typeof rejectFetch === "function");
+      assert(velaHasActiveAIRequests(), "Teacher error lease was not active during transport");
+      rejectFetch(new Error("mock Teacher error"));
+      await failure;
+      assert(!velaHasActiveAIRequests(), "Teacher error lease did not release");
+    });
+
+    await record("Teacher timeout and repeated lease cleanup", async () => {
+      let timeoutAbort;
+      const originalSetTimeout = window.setTimeout;
+      window.setTimeout = (fn, ms, ...args) => {
+        if (ms === 25000 || ms === 120000) { timeoutAbort = fn; return 999999; }
+        return originalSetTimeout(fn, ms, ...args);
+      };
+      try {
+        window.fetch = (_, options) => new Promise((_, reject) => {
+          options.signal.addEventListener("abort", () => reject(new DOMException("mock timeout", "AbortError")));
+        });
+        const timed = callVeraTeacher([], null, 0, null, []);
+        await waitFor(() => typeof timeoutAbort === "function");
+        assert(velaHasActiveAIRequests(), "Teacher timeout lease was not active while waiting");
+        timeoutAbort();
+        timeoutAbort();
+        await timed;
+        assert(!velaHasActiveAIRequests(), "Teacher timeout lease did not release");
+
+        const endActivity = velaBeginAIActivity();
+        assert(velaHasActiveAIRequests(), "Repeated-cleanup lease was not acquired");
+        endActivity();
+        endActivity();
+        assert(!velaHasActiveAIRequests(), "Repeated cleanup released the lease more than once");
+      } finally {
+        window.setTimeout = originalSetTimeout;
+      }
+    });
+  } finally {
+    window.fetch = original.fetch;
+    window.__velaAgentReady = original.agentReady;
+    window.__velaAgentSend = original.agentSend;
+    window.__velaTrustGate = original.trustGate;
+  }
+  assert(!velaHasActiveAIRequests(), "AI lease count was not zero after probes");
+  return cases;
 }
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
+  window.__velaAILeaseTest = velaRunAILeaseTests;
+}
+// VELA:DEV-ONLY:END
 
 async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages, branding, guidelines, onToolCall, chatHistory, layoutStats) {
   try {
@@ -6037,16 +6190,9 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
     return { message: finalText, lanes: ws.lanes, branding: ws.branding, jumps: uniqueJumps, debug: `🔧 ${totalTools} tools · ${Math.ceil(messages.length / 2)} turns` };
   } catch (e) {
     dbg("Vera error:", e);
-    // Channel timeout: set up SSE late-reply recovery
     const isAbort = e.name === "AbortError" || /abort/i.test(e.message);
     if (isAbort && VELA_LOCAL_MODE && VELA_CHANNEL_PORT) {
-      dbg("Setting up SSE late-reply recovery...");
-      setupLateReplyRecovery(lanes, branding, onUpdate, onToolCall, (msg, jumps) => {
-        // onFinalize: this fires asynchronously when the late reply arrives
-        // The chat panel handles it via the dispatches below
-        if (typeof window.__velaLateReply === "function") window.__velaLateReply(msg, jumps);
-      });
-      return { message: `⏳ Claude Code is still working — reply will be applied when ready. 🖖`, lanes: null, branding: null, jumps: [], debug: `Waiting for late reply...`, _lateReplyPending: true };
+      return { message: "Error: Local AI request timed out. No late reply will be applied. 🔧🖖", lanes: null, branding: null, jumps: [], debug: "Local AI request timed out" };
     }
     return { message: `Error: ${e.message} 🔧🖖`, lanes: null, branding: null, jumps: [], debug: `Error: ${e.message}` };
   }
@@ -6356,7 +6502,7 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
@@ -7079,6 +7225,8 @@ function TeacherMessage({ text }) {
 // regular TeacherPanel.
 function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slide }) {
   const { teacherHistory, teacherLoading } = state;
+  const epochRef = useRef(state._deckEpoch);
+  epochRef.current = state._deckEpoch;
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState(null);
   const scrollRef = useRef(null);
@@ -7094,7 +7242,7 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   useEffect(() => {
     activeKeyRef.current = slideKey;
     setStreamingText(null);
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   // Strip incomplete markdown during streaming (mirrors TeacherPanel)
   const cleanStream = (text) => {
@@ -7110,13 +7258,16 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
     if (!msg || teacherLoading) return;
     if (!q) setInput("");
     const myKey = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
     dispatch({ type: "TEACHER_LOADING", value: true });
     if (activeKeyRef.current === myKey) setStreamingText("");
     const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
-      if (activeKeyRef.current !== myKey) return;
+      if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
       setStreamingText(cleanStream(text));
     });
+    if (!epochIsCurrent()) return;
     if (activeKeyRef.current === myKey) setStreamingText(null);
     const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
@@ -7247,6 +7398,8 @@ function StudentPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
 
 function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   const { teacherHistory, teacherLoading } = state;
+  const epochRef = useRef(state._deckEpoch);
+  epochRef.current = state._deckEpoch;
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState(null);
   const scrollRef = useRef(null);
@@ -7262,9 +7415,11 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   useEffect(() => {
     activeKeyRef.current = slideKey;
     setStreamingText(null);
+    generatingRef.current = null;
+    prefetchedRef.current.clear();
     prevMsgCount.current = (teacherHistory[slideKey] || []).length;
     prevStreamState.current = null;
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   // Scroll to start of newest message — only on user message or stream start, not on finalize
   const prevMsgCount = useRef(messages.length);
@@ -7300,16 +7455,21 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
     if (!selectedId) return;
     const existing = teacherHistory[slideKey];
     if (existing && existing.length > 0) return;
-    if (generatingRef.current === slideKey) return;
-    generatingRef.current = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const generationKey = `${operationEpoch}:${slideKey}`;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
+    if (generatingRef.current === generationKey) return;
+    generatingRef.current = generationKey;
     const myKey = slideKey; // capture for closure
     const timer = setTimeout(async () => {
+      if (!epochIsCurrent()) return;
       dispatch({ type: "TEACHER_LOADING", value: true });
       if (activeKeyRef.current === myKey) setStreamingText("");
       const result = await callVeraTeacher(lanes, selectedId, slideIndex, null, [], (text) => {
-        if (activeKeyRef.current !== myKey) return;
+        if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
         setStreamingText(cleanStream(text));
       });
+      if (!epochIsCurrent()) return;
       if (activeKeyRef.current === myKey) setStreamingText(null);
       const content = result.message || "";
       if (content.trim()) dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content, questions: result.questions });
@@ -7323,31 +7483,45 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
         if (slideIndex + 1 < totalSlides) {
           prefetchedRef.current.add(nextKey);
           const prefResult = await callVeraTeacher(lanes, selectedId, slideIndex + 1, null, []);
+          if (!epochIsCurrent()) return;
           const prefContent = prefResult.message || "";
           if (prefContent.trim()) dispatch({ type: "TEACHER_MSG", key: nextKey, role: "assistant", content: prefContent, questions: prefResult.questions });
         }
       }
     }, 400);
     return () => { clearTimeout(timer); generatingRef.current = null; };
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   const sendQuestion = async (q) => {
     const msg = q || input.trim();
     if (!msg || teacherLoading) return;
     if (!q) setInput("");
     const myKey = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
     dispatch({ type: "TEACHER_LOADING", value: true });
     if (activeKeyRef.current === myKey) setStreamingText("");
     const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
-      if (activeKeyRef.current !== myKey) return;
+      if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
       setStreamingText(cleanStream(text));
     });
+    if (!epochIsCurrent()) return;
     if (activeKeyRef.current === myKey) setStreamingText(null);
     const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
     if (activeKeyRef.current === myKey) dispatch({ type: "TEACHER_LOADING", value: false });
   };
+
+  // VELA:DEV-ONLY:BEGIN
+  useEffect(() => {
+    if (!velaTestSurfaceEnabled()) return;
+    window.__velaTeacherEpochTest = sendQuestion;
+    return () => {
+      if (window.__velaTeacherEpochTest === sendQuestion) delete window.__velaTeacherEpochTest;
+    };
+  }, [sendQuestion]);
+  // VELA:DEV-ONLY:END
 
   return (
     <div data-teacher-panel onWheel={(e) => e.stopPropagation()} style={{ width: "35%", minWidth: 280, maxWidth: 400, background: "#0f1219", borderLeft: `1px solid ${T.accent}40`, display: "flex", flexDirection: "column" }}>
@@ -7452,10 +7626,11 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
     </div>
   );
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
+  const deckEpochRef = useRef(state._deckEpoch);
+  deckEpochRef.current = state._deckEpoch;
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
@@ -7508,6 +7683,31 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runImproveRef = useRef(null);
   const measureRef = useRef(null);
   const [measureSlide, setMeasureSlide] = useState(null);
+  // Each async editor owns its local loading state. Replacement or cancellation
+  // invalidates that owner so an older finalizer cannot unlock a newer request.
+  const operationOwnersRef = useRef({});
+  const claimOperation = (name) => {
+    const owner = {};
+    operationOwnersRef.current[name] = owner;
+    return owner;
+  };
+  const ownsOperation = (name, owner, epoch) =>
+    operationOwnersRef.current[name] === owner
+    && deckEpochRef.current === epoch
+    && velaDeckEpochIsCurrent(epoch);
+  // A cancel path (Stop/Escape/slide-change) invalidates the owner token so the
+  // async finalizer's OWN operationIsCurrent() check now fails — which means
+  // that finalizer can no longer clear the shared aiWork marker itself. The
+  // cancel path must take over that job, but ONLY when this name's slot is
+  // owned right this instant: several cancel paths fire defensively on every
+  // nav/Escape even when nothing of that name is running, and must never clear
+  // a DIFFERENT, still-active operation's aiWork (aiWork is one shared slot
+  // across every named operation).
+  const clearOwnedAiWork = (name) => {
+    const owned = !!operationOwnersRef.current[name];
+    delete operationOwnersRef.current[name];
+    if (owned) dispatch({ type: "SET_AI_WORK", value: null });
+  };
   // Latest props read inside the long-running improve loop (closures go stale),
   // so the background task survives the user navigating to other slides/modules.
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
@@ -7558,9 +7758,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   const stopImprove = useCallback(() => {
     if (improving) {
+      delete operationOwnersRef.current.improve;
       improveCancelRef.current = true;
       setImproving(null);
       setCapturedThumb(null);
+      setBeforeSlides(null);
+      setShowBefore(false);
+      setRevealKey(null);
       setRevealKey(null);
       dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
@@ -7648,16 +7852,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [altOriginal, setAltOriginal] = useState(null); // snapshot of the slide before the first variant was applied
   const altCancelRef = useRef(false);
   // Close the grid keeping whatever variant is currently applied (clicking a tile already applied it live).
-  const stopAlternatives = () => { altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); setAltOriginal(null); };
+  const stopAlternatives = () => { clearOwnedAiWork("alternatives"); altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); setAltOriginal(null); };
   const stopAll = () => { stopImprove(); stopAlternatives(); };
   const currentLane = lanes?.find((l) => l.items.some((i) => i.id === concept.id));
   const [showTimingScope, setShowTimingScope] = useState(false);
   const [estimating, setEstimating] = useState(null); // { current, total, status }
   const [timingScope, setTimingScope] = useState("module");
   const estimateCancelRef = useRef(false);
+  const stopEstimate = () => { clearOwnedAiWork("estimate"); estimateCancelRef.current = true; setEstimating(null); };
 
   // Block-targeted editing
   const [blockEditing, setBlockEditing] = useState(false);
+  useEffect(() => {
+    // The new deck owns every editor field. Old work can finish, but it cannot
+    // keep a panel open, retain a draft, or change the new deck's loading state.
+    operationOwnersRef.current = {};
+    improveCancelRef.current = true;
+    altCancelRef.current = true;
+    estimateCancelRef.current = true;
+    setImproving(null);
+    setCapturedThumb(null);
+    setBeforeSlides(null);
+    setShowBefore(false);
+    setMeasureSlide(null);
+    setRevealKey(null);
+    setShowImproveInput(false);
+    setImprovePrompt("");
+    setShowQuickEdit(false);
+    setQuickEditPrompt("");
+    setQuickEditImage(null);
+    setQuickEditing(false);
+    setShowNewSlide(false);
+    setNewSlidePrompt("");
+    setNewSlideImage(null);
+    setNewSlideGenerating(false);
+    setBlockEditing(false);
+    setShowTimingScope(false);
+    setEstimating(null);
+    setAltLoading(false);
+    setAlternatives(null);
+    setAltPreview(null);
+    setAltOriginal(null);
+  }, [state._deckEpoch]);
 
   // Timing computations
   const moduleTime = sumDurations(slides);
@@ -7673,7 +7909,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   })();
 
   const runEstimate = async () => {
-    if (!aiOk) return;
+    if (!aiOk || estimating) return;
+    const operationEpoch = state._deckEpoch;
     estimateCancelRef.current = false;
     setShowTimingScope(false);
     let jobs = [];
@@ -7691,28 +7928,36 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     jobs = jobs.filter((j) => !j.slideData.timeLock);
     if (jobs.length === 0) { setEstimating(null); return; }
 
+    const operationOwner = claimOperation("estimate");
+    const operationIsCurrent = () => ownsOperation("estimate", operationOwner, operationEpoch);
     setEstimating({ current: 0, total: jobs.length, status: "Estimating..." });
+    dispatch({ type: "SET_AI_WORK", value: { itemId: "*", slideIdx: "*" } });
     try {
       // Batch in chunks of 30 for API sanity
       for (let start = 0; start < jobs.length; start += 30) {
-        if (estimateCancelRef.current) break;
+        if (estimateCancelRef.current || !operationIsCurrent()) break;
         const chunk = jobs.slice(start, start + 30);
         setEstimating({ current: start, total: jobs.length, status: `Estimating ${start + 1}–${start + chunk.length} of ${jobs.length}...` });
         const durations = await estimateTimings(chunk);
-        if (estimateCancelRef.current) break;
+        if (estimateCancelRef.current || !operationIsCurrent()) break;
         for (let i = 0; i < chunk.length; i++) {
           dispatch({ type: "UPDATE_SLIDE", id: chunk[i].itemId, index: chunk[i].slideIdx, patch: { duration: durations[i] }, merge: true });
         }
       }
     } catch (e) {
       dbg("Estimate error:", e);
+      if (!operationIsCurrent()) return;
       // Surface the failure instead of silently leaving partial/unchanged
       // timings — any chunks that succeeded before the error keep their values.
       setEstimating({ current: 1, total: 1, status: "Timing estimation failed — try again", error: true });
-      setTimeout(() => setEstimating(null), 2800);
+      setTimeout(() => { if (operationIsCurrent()) setEstimating(null); }, 2800);
+      dispatch({ type: "SET_AI_WORK", value: null });
       return;
     }
-    setEstimating(null);
+    if (operationIsCurrent()) {
+      setEstimating(null);
+      dispatch({ type: "SET_AI_WORK", value: null });
+    }
   };
   const [navToast, setNavToast] = useState(null); // { module, section, phase }
   const [showMoveToModule, setShowMoveToModule] = useState(false);
@@ -7730,7 +7975,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       hasBranding: !!(branding?.enabled || guidelines?.trim()),
       toggleBranding: () => setShowBranding((v) => !v),
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
-      toggleTiming: () => estimating ? (() => { estimateCancelRef.current = true; setEstimating(null); })() : setShowTimingScope((v) => !v),
+      toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
@@ -8130,11 +8375,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // ── Quick Edit (single slide, prompt-based) ──
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("quickEdit");
+    const operationIsCurrent = () => ownsOperation("quickEdit", operationOwner, operationEpoch);
     setQuickEditing(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
+      if (!operationIsCurrent()) return;
       if (result) {
         if (quickEditImage) replacePastedImage(result, quickEditImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -8150,15 +8399,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Quick edit failed:", e);
     } finally {
-      setQuickEditing(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setQuickEditing(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("blockEdit");
+    const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
     setBlockEditing(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
@@ -8166,6 +8420,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         slides[slideIndex], blockIndex, prompt,
         concept.title, slideIndex + 1, slides.length, branding, guidelines
       );
+      if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
         const curBlocks = [...(slides[slideIndex].blocks || [])];
         curBlocks.splice(blockIndex, 1, ...newBlocks);
@@ -8178,19 +8433,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Block edit failed:", e);
     } finally {
-      setBlockEditing(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setBlockEditing(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   // ── Generate New Slide (prompt-based) ──
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("newSlide");
+    const operationIsCurrent = () => ownsOperation("newSlide", operationOwner, operationEpoch);
     setNewSlideGenerating(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
+      if (!operationIsCurrent()) return;
       if (result) {
         if (newSlideImage) replacePastedImage(result, newSlideImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -8206,15 +8467,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Generate slide failed:", e);
     } finally {
-      setNewSlideGenerating(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setNewSlideGenerating(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   const runImprove = async (prompt, scopeOverride) => {
     if (improving) { stopImprove(); return; }
     if (!aiOk) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("improve");
+    const operationIsCurrent = () => ownsOperation("improve", operationOwner, operationEpoch);
     improveCancelRef.current = false;
     setShowImproveInput(false);
     const scope = scopeOverride || improveScope;
@@ -8252,7 +8518,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       let successes = 0, failures = 0;
 
       for (let j = 0; j < jobs.length; j++) {
-        if (improveCancelRef.current) break;
+        if (improveCancelRef.current || !operationIsCurrent()) break;
         const job = jobs[j];
         // CR5: mark the active job's slide as the one Vera is working on — the scan
         // shows only when THIS job's slide is the one currently on screen (batch
@@ -8263,11 +8529,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // Measure layout in a hidden offscreen host — Improve no longer navigates
         // the visible view, so it keeps running while the user browses elsewhere.
         const layoutStats = await measureSlideLayout(job.slideData);
-        if (improveCancelRef.current) break;
+        if (improveCancelRef.current || !operationIsCurrent()) break;
 
         try {
           const improved = await improveSlide(null, job.slideData, job.itemTitle, job.slideIdx + 1, (scope === "section" ? jobs.length : slides.length), prompt, branding, guidelines, layoutStats);
-          if (improveCancelRef.current) break;
+          if (improveCancelRef.current || !operationIsCurrent()) break;
           // Don't clobber a slide the user (or another action) changed while we worked,
           // and skip ones whose module/slide was removed meanwhile.
           const cur = findItem(lanesRef.current, job.itemId)?.slides?.[job.slideIdx];
@@ -8275,11 +8541,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             failures++;
             setImproving({ current: j + 1, total: jobs.length, status: `⚠ ${job.itemTitle} #${job.slideIdx + 1} gone — skipping` });
             await new Promise((r) => setTimeout(r, 1200));
+            if (!operationIsCurrent()) break;
             continue;
           }
           if (JSON.stringify(cur) !== JSON.stringify(snapshots[`${job.itemId}-${job.slideIdx}`])) {
             setImproving({ current: j + 1, total: jobs.length, status: `↪ ${job.itemTitle} #${job.slideIdx + 1} edited — skipping` });
             await new Promise((r) => setTimeout(r, 1200));
+            if (!operationIsCurrent()) break;
             continue;
           }
           console.log(`[IMPROVE] ${job.itemTitle} #${job.slideIdx + 1} → bg=${improved.bg || "(none)"} bgGradient=${improved.bgGradient || "(none)"} color=${improved.color || "(none)"}`);
@@ -8290,27 +8558,33 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
           setImproving({ current: j + 1, total: jobs.length, status: `${job.itemTitle} #${job.slideIdx + 1} ✓ improved` });
           await new Promise((r) => setTimeout(r, 800));
+          if (!operationIsCurrent()) break;
         } catch (slideErr) {
+          if (!operationIsCurrent()) break;
           failures++;
           console.warn(`Improve failed for ${job.itemTitle} #${job.slideIdx + 1}:`, slideErr?.message || slideErr);
           setImproving({ current: j + 1, total: jobs.length, status: `⚠ ${job.itemTitle} #${job.slideIdx + 1} failed — skipping` });
           await new Promise((r) => setTimeout(r, 1500));
+          if (!operationIsCurrent()) break;
         }
       }
+      if (!operationIsCurrent()) return;
       setMeasureSlide(null);
       dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
-      if (failures > 0) setTimeout(() => setImproving(null), 3000);
+      if (failures > 0) setTimeout(() => { if (operationIsCurrent()) setImproving(null); }, 3000);
       setCapturedThumb(null);
-      setTimeout(() => setRevealKey(null), 1200);
+      setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
     } catch (e) {
       console.error("Improve setup error:", e);
-      setImproving(null);
-      setCapturedThumb(null);
-      setRevealKey(null);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+      if (operationIsCurrent()) {
+        setImproving(null);
+        setCapturedThumb(null);
+        setRevealKey(null);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+      }
     }
   };
   runImproveRef.current = runImprove;
@@ -8318,18 +8592,23 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // ── Alternatives ──
   const runAlternatives = async () => {
     if (!aiOk || altLoading || !slides[slideIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("alternatives");
+    const operationIsCurrent = () => ownsOperation("alternatives", operationOwner, operationEpoch);
     altCancelRef.current = false;
     setAltLoading(true);
     setAlternatives(null);
     setAltPreview(null);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } });
     try {
       const el = slideRef.current;
-      if (!el) { setAltLoading(false); return; }
+      if (!el) return;
       // Use the fail-safe loader so the desktop (CDN-blocked) doesn't hang;
       // without html2canvas we send no screenshot and rely on layout stats.
       const h2c = await loadHtml2Canvas();
+      if (!operationIsCurrent()) return;
       const base64 = h2c ? await captureSlide(el, h2c) : null;
-      if (altCancelRef.current) { setAltLoading(false); return; }
+      if (altCancelRef.current || !operationIsCurrent()) return;
 
       const slideJson = slides[slideIndex];
       const layoutStats = computeSlideLayoutStats(el);
@@ -8338,19 +8617,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
       // Sequential to avoid rate limits — progressive display as each lands
       for (let i = 0; i < ALT_DIRECTIONS.length; i++) {
-        if (altCancelRef.current) break;
+        if (altCancelRef.current || !operationIsCurrent()) break;
         try {
           const result = await generateAlternative(base64, slideJson, concept.title, slideIndex + 1, slides.length, ALT_DIRECTIONS[i].prompt, branding, guidelines, layoutStats);
+          if (!operationIsCurrent()) break;
           alts[i] = { slide: result, label: ALT_DIRECTIONS[i].label, emoji: ALT_DIRECTIONS[i].emoji, error: null };
         } catch (e) {
+          if (!operationIsCurrent()) break;
           alts[i] = { slide: null, label: ALT_DIRECTIONS[i].label, emoji: ALT_DIRECTIONS[i].emoji, error: e?.message || "failed" };
         }
-        if (!altCancelRef.current) setAlternatives([...alts]);
+        if (!altCancelRef.current && operationIsCurrent()) setAlternatives([...alts]);
       }
     } catch (e) {
       dbg("Alternatives error:", e);
+    } finally {
+      if (operationIsCurrent()) {
+        setAltLoading(false);
+        dispatch({ type: "SET_AI_WORK", value: null });
+      }
     }
-    setAltLoading(false);
   };
 
   // Apply a variant live to the slide but keep the grid open, so the user can click
@@ -8374,7 +8659,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     setTimeout(() => setRevealKey(null), 1200);
   };
   // Clear alternatives when slide changes
-  useEffect(() => { setAlternatives(null); setAltLoading(false); setAltPreview(null); setAltOriginal(null); }, [concept.id, slideIndex]);
+  useEffect(() => {
+    clearOwnedAiWork("alternatives");
+    altCancelRef.current = true;
+    setAlternatives(null);
+    setAltLoading(false);
+    setAltPreview(null);
+    setAltOriginal(null);
+  }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
 
@@ -8396,7 +8688,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -8503,7 +8795,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -8609,9 +8901,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
               {quickEditImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
               <button onClick={() => { setShowQuickEdit(false); setQuickEditImage(null); }} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
             </div>
-            <textarea autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
+            <textarea data-testid="quick-edit-input" autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
             {quickEditImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={quickEditImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: `1px solid ${T.border}`, objectFit: "cover" }} /><button onClick={() => setQuickEditImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runQuickEdit} disabled={!aiOk || !quickEditPrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && quickEditPrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Apply edit" : "AI not enabled"}</button>
+            <button data-testid="quick-edit-apply" onClick={runQuickEdit} disabled={!aiOk || !quickEditPrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && quickEditPrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Apply edit" : "AI not enabled"}</button>
           </div>}
           {/* New Slide */}
           {showNewSlide && !newSlideGenerating && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -8639,10 +8931,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span style={{ fontSize: 14, animation: estimating.error ? "none" : "spin 1.5s linear infinite", display: "inline-block" }}>{estimating.error ? "⚠️" : "⏱"}</span>
             <span style={{ fontFamily: FONT.mono, fontSize: 13, color: estimating.error ? T.red : T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
             {!estimating.error && <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>}
-            {!estimating.error && <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
+            {!estimating.error && <button onClick={stopEstimate} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
           </div>}
           {/* Generating spinner */}
-          {(quickEditing || newSlideGenerating) && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+          {(quickEditing || newSlideGenerating) && <div data-testid={quickEditing ? "quick-edit-loading" : "new-slide-loading"} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
             <span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span>
             <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.accent }}>{quickEditing ? "Editing slide..." : "Generating slide..."}</span>
           </div>}
@@ -8650,7 +8942,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
@@ -8691,7 +8983,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   );
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 
 // Drag payload lives in a module-level variable, NOT only in dataTransfer.
@@ -8755,31 +9046,55 @@ function blankSlideFrom(prev) {
 }
 
 // ━━━ AI Slide Adder (inline prompt) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
+function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines, deckEpoch }) {
+  const epochRef = useRef(deckEpoch);
+  epochRef.current = deckEpoch;
+  const operationOwnerRef = useRef(null);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    // The replacement deck owns this editor. An older finalizer must not clear
+    // loading or restore an error after a new request claims the same panel.
+    operationOwnerRef.current = null;
+    setPrompt("");
+    setLoading(false);
+    setError(null);
+  }, [deckEpoch]);
+  useEffect(() => () => { operationOwnerRef.current = null; }, []);
 
   const generate = async () => {
     if (!prompt.trim() || loading) return;
+    const operationEpoch = deckEpoch;
+    const operationOwner = {};
+    operationOwnerRef.current = operationOwner;
+    const operationIsCurrent = () =>
+      operationOwnerRef.current === operationOwner
+      && epochRef.current === operationEpoch
+      && velaDeckEpochIsCurrent(operationEpoch);
     setLoading(true);
     setError(null);
     try {
       const prevSlide = insertIndex > 0 ? item.slides[insertIndex - 1] : null;
       const nextSlide = insertIndex < item.slides.length ? item.slides[insertIndex] : null;
       const slide = await generateAiSlide(prompt.trim(), prevSlide, nextSlide, item.title, item.notes, guidelines);
+      if (!operationIsCurrent()) return;
       if (slide) {
+        // SELECT takes an optional slideIndex, so the insert and the select land
+        // in one synchronous dispatch pair before onClose() unmounts this editor.
+        // A deferred SET_SLIDE_INDEX (via setTimeout) raced onClose()'s unmount
+        // cleanup, which invalidates operationIsCurrent() and can drop slide 0
+        // navigation to the new slide silently.
         dispatch({ type: "INSERT_SLIDE", id: item.id, index: insertIndex, slide });
-        dispatch({ type: "SELECT", id: item.id });
-        setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: insertIndex }), 0);
+        dispatch({ type: "SELECT", id: item.id, slideIndex: insertIndex });
         onClose();
       }
     } catch (e) {
-      setError(e.message || "Generation failed");
+      if (operationIsCurrent()) setError(e.message || "Generation failed");
     } finally {
-      setLoading(false);
+      if (operationIsCurrent()) setLoading(false);
     }
   };
 
@@ -8788,6 +9103,7 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
         <span style={{ fontSize: 10, color: T.accent, fontFamily: FONT.mono, fontWeight: 700, flexShrink: 0 }}>AI+</span>
         <input
+          data-testid="ai-slide-adder-input"
           ref={inputRef}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -8796,11 +9112,11 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
           disabled={loading}
           style={{ ...S.input({ padding: "3px 8px", fontSize: 12, borderRadius: 4 }), opacity: loading ? 0.5 : 1 }}
         />
-        <button onClick={generate} disabled={loading || !prompt.trim()}
+        <button data-testid="ai-slide-adder-generate" onClick={generate} disabled={loading || !prompt.trim()}
           style={{ ...S.primaryBtn({ padding: "3px 8px", fontSize: 10, borderRadius: 4 }), opacity: (loading || !prompt.trim()) ? 0.4 : 1, cursor: (loading || !prompt.trim()) ? "not-allowed" : "pointer", minWidth: 28 }}>
           {loading ? <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⚡</span> : "⚡"}
         </button>
-        <button onClick={onClose} style={S.cancelBtn({ padding: "3px 6px", fontSize: 10, borderRadius: 4 })}>✕</button>
+        <button data-testid="ai-slide-adder-close" onClick={onClose} style={S.cancelBtn({ padding: "3px 6px", fontSize: 10, borderRadius: 4 })}>✕</button>
       </div>
       {loading && <div style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, paddingLeft: 28, display: "flex", alignItems: "center", gap: 4 }}>
         <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>🔧</span> generating slide...
@@ -8817,10 +9133,11 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 // options (CR: add blank slide reusing the previous slide's def, add AI slide,
 // add section). `variant` controls prominence: "empty" (empty section, always
 // visible) vs "row" (between slides, reveal on hover).
-function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
+function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId, deckEpoch }) {
   const [mode, setMode] = useState(null); // null | "menu" | "ai"
   const [pinned, setPinned] = useState(false); // set by click — keeps menu open on mouseout
-  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} />;
+  useEffect(() => { setMode(null); setPinned(false); }, [deckEpoch]);
+  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} deckEpoch={deckEpoch} />;
 
   const close = () => { setMode(null); setPinned(false); };
   const openPinned = (e) => { e.stopPropagation(); setMode("menu"); setPinned(true); }; // click → open + pin
@@ -8840,8 +9157,8 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
   const addSection = (e) => { e.stopPropagation(); dispatch({ type: "SPLIT_ITEM_AT", id: item.id, index: insertIndex, laneId }); close(); };
 
   if (mode === "menu") {
-    const btn = (label, icon, onClick, color) => (
-      <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
+    const btn = (label, icon, onClick, color, testId) => (
+      <button data-testid={testId} onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
         onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, fontSize: 11, lineHeight: 1 }}>{icon}</span>
         <span style={{ lineHeight: 1 }}>{label}</span>
@@ -8852,7 +9169,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
       // swaps content without shifting layout (the between-slide rows were jumping).
       <div style={{ display: "flex", gap: 4, height: 24, boxSizing: "border-box", padding: "0 12px", flexWrap: "nowrap", alignItems: "center", justifyContent: "center" }} onClick={(e) => e.stopPropagation()} onMouseLeave={hoverClose}>
         {btn("Blank", "▭", addBlank)}
-        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent)}
+        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent, "ai-slide-adder-open")}
         {btn("Section", "▤", addSection)}
         <button onClick={(e) => { e.stopPropagation(); close(); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px", lineHeight: 1 }}>✕</button>
       </div>
@@ -8864,7 +9181,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
   // hover menu above so revealing it doesn't shift surrounding rows. Hover reveals
   // the Blank / AI / Section menu; click pins it open.
   return (
-    <div onClick={openPinned} onMouseEnter={hoverOpen}
+    <div data-testid="add-slide-menu-open" onClick={openPinned} onMouseEnter={hoverOpen}
       style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24, boxSizing: "border-box", padding: "0 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s" }}
       title="Add slide or section here"
     >＋ add</div>
@@ -8872,7 +9189,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav, deckEpoch }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
@@ -9069,7 +9386,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         }}>
           {containerOver
             ? <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, pointerEvents: "none" }}>Drop slide here</span>
-            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />}
+            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />}
         </div>
       </div>
     );
@@ -9080,7 +9397,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
     >
-      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
+      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
@@ -9154,7 +9471,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
           </div>
-          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
+          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
       }); })()}
       {ctxMenu && (() => {
@@ -9179,7 +9496,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav, deckEpoch }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -9395,13 +9712,13 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} deckEpoch={deckEpoch} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode, deckEpoch }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
@@ -9465,7 +9782,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} deckEpoch={deckEpoch} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -9475,7 +9792,6 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
   );
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Chat Markdown Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ctx (optional): passes through to parseInline — used by StudentPanel to
@@ -9569,6 +9885,8 @@ function ToolTraceCard({ tool, dispatch }) {
 
 // ━━━ Chat Panel ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
   const scrollRef = useRef(null);
@@ -9605,6 +9923,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (!aiOk) return;
     const msg = directMsg || input.trim();
     if ((!msg && pendingImages.length === 0) || state.chatLoading) return;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => stateRef.current?._deckEpoch === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     const images = directMsg ? [] : [...pendingImages];
     if (!directMsg) { setInput(""); setPendingImages([]); }
     dispatch({ type: "ADD_MSG", role: "user", content: msg || "🖼️", images: images.map((i) => i.dataUrl) });
@@ -9612,10 +9932,13 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     // Add a placeholder assistant message that will accumulate tool traces
     dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
     const onUpdate = (lanes, debug) => {
+      if (!epochIsCurrent()) return;
+      if (document.documentElement.dataset.velaDemoRunning === "true") return;
       dispatch({ type: "LOAD_LANES", lanes });
       dispatch({ type: "SET_DEBUG", text: debug });
     };
     const onToolCall = (evt) => {
+      if (!epochIsCurrent()) return;
       dispatch({ type: "STREAM_TOOL", event: evt });
       // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
       // (chat/engine edits previously animated nothing). On `calling`, scan the
@@ -9635,6 +9958,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const layoutStats = getLayoutStats?.() || null;
     const result = await callVera(msg || "Here are the images I'm attaching.", state.lanes, state.selectedId, state.slideIndex, onUpdate, images, state.branding, state.guidelines, onToolCall, state.chatMessages, layoutStats);
+    if (!epochIsCurrent()) return;
     // Finalize the streaming message: set content + jumps, remove _streaming flag
     dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
     // Auto-navigate to the first changed/created slide
@@ -9643,23 +9967,12 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SELECT", id: j.itemId });
       dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
     }
-    if (result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
-    if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
+    const demoRunning = document.documentElement.dataset.velaDemoRunning === "true";
+    if (!demoRunning && result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
+    if (!demoRunning && result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
     dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
-    // Register late-reply handler for SSE recovery (channel timeout fallback)
-    if (result._lateReplyPending) {
-      window.__velaLateReply = (msg, jumps) => {
-        dispatch({ type: "FINALIZE_STREAM", content: msg, jumps: jumps || [] });
-        if (jumps?.length > 0) {
-          dispatch({ type: "SELECT", id: jumps[0].itemId });
-          dispatch({ type: "SET_SLIDE_INDEX", index: jumps[0].slideIdx ?? 0 });
-        }
-        dispatch({ type: "SET_DEBUG", text: "🔧 Late reply applied" });
-        window.__velaLateReply = null;
-      };
-    }
   };
 
   const slideImageCount = extractSlideImages(state.lanes, state.selectedId, state.slideIndex).length;
@@ -9667,13 +9980,16 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   // Auto-send bootstrap prompt from NewDeckDialog
   useEffect(() => {
     if (!state._bootstrap) return;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => stateRef.current?._deckEpoch === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     const { prompt, images } = state._bootstrap;
     dispatch({ type: "CLEAR_BOOTSTRAP" });
     if (!prompt && images.length === 0) return;
     // Inject images into pendingImages so they're sent with the message
     if (images.length > 0) setPendingImages(images.map((dataUrl, i) => ({ dataUrl, name: `ref-${i + 1}` })));
     // Slight delay to let images state settle, then send
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (!epochIsCurrent()) return;
       const msg = prompt || "Build slides from the attached images.";
       // Replicate the send flow inline (since send() reads pendingImages from state)
       const imgs = images.map((dataUrl, i) => ({ dataUrl, name: `ref-${i + 1}` }));
@@ -9681,10 +9997,24 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "ADD_MSG", role: "user", content: msg, images: imgs.map((i) => i.dataUrl) });
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
-      const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
+      const onUpdate = (lanes, debug) => {
+        if (!epochIsCurrent()) return;
+        dispatch({ type: "LOAD_LANES", lanes });
+        dispatch({ type: "SET_DEBUG", text: debug });
+      };
       // CR5: same canvas "working" mirror as the main send() path (see there).
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
+      const onToolCall = (evt) => {
+        if (!epochIsCurrent()) return;
+        dispatch({ type: "STREAM_TOOL", event: evt });
+        if (evt.type === "calling" && state.selectedId) dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+        if (evt.type === "done" && evt.jump?.length > 0) {
+          dispatch({ type: "SELECT", id: evt.jump[0].itemId });
+          dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 });
+          dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } });
+        }
+      };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
+        if (!epochIsCurrent()) return;
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
         if (result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
@@ -9694,7 +10024,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
-  }, [state._bootstrap]);
+    return () => clearTimeout(timer);
+  }, [state._deckEpoch]); // eslint-disable-line -- NEW_DECK changes the epoch; CLEAR_BOOTSTRAP must not cancel this timer
 
   return (
 
@@ -9771,7 +10102,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       </div>}
       {pendingImages.length > 0 && <div style={{ padding: "4px 10px", display: "flex", gap: 4, flexWrap: "wrap", borderTop: `1px solid ${T.border}` }}>
         {pendingImages.map((img, i) => (
-          <div key={i} style={{ position: "relative" }}>
+          <div key={i} data-demo-unsaved="true" style={{ position: "relative" }}>
             <img src={img.dataUrl} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: `1px solid ${T.border}` }} />
             <span onClick={() => removeImage(i)} style={{ position: "absolute", top: -4, right: -4, width: 14, height: 14, borderRadius: "50%", background: T.red, color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1 }}>×</span>
           </div>
@@ -9923,7 +10254,6 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
     </div>
   );
 }
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vela Battery Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auto-runs on mount, shows toast notification, copy details button
@@ -11753,7 +12083,6 @@ uiSuite("Block item reorder (▲▼) — v13.19", [
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ── Security: SVG sanitizer bypass regression (v12.44) ───────────────
 // The svg block previously used a regex chain that let unquoted and
@@ -13051,7 +13380,109 @@ uiSuite("AI-working animation (CR5)", [
   }},
 ], { setup: _cr5Setup });
 
+// ── AI editor request ownership ─────────────────────────────────────
+const _editorOwnershipSetup = async () => {
+  if (!_hooks().restoreStartupDeck?.()) throw new Error("startup deck fixture missing");
+  await _cr5Setup();
+};
+const _openQuickEditor = async () => {
+  const open = await _waitFor(() => {
+    const button = _$("[data-testid='quick-edit-open']");
+    return button && !button.disabled ? button : null;
+  }, 2000);
+  _click(open);
+  return _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+};
+const _openAiSlideAdder = async () => {
+  _click(await _waitFor(() => _$("[data-testid='add-slide-menu-open']"), 2000));
+  _click(await _waitFor(() => _$("[data-testid='ai-slide-adder-open']"), 1500));
+  return _waitFor(() => _$("[data-testid='ai-slide-adder-input']"), 1500);
+};
+uiSuite("AI editor request ownership", [
+  { name: "Old Quick Edit completion cannot unlock or change the replacement editor", fn: async () => {
+    const hooks = _hooks();
+    const transport = hooks.installDeferredAgentTransport?.();
+    if (!transport || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) throw new Error("editor ownership test hooks missing");
+    try {
+      const oldInput = await _openQuickEditor();
+      _type(oldInput, "old quick edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+
+      hooks.loadReplacementDeckForTest();
+      await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1500);
+      await _wait(80);
+      const newInput = await _openQuickEditor();
+      _type(newInput, "new quick edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 2, 1500);
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD QUICK RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      await _wait(120);
+      const during = hooks.getDeckStateForTest();
+      if (!_$("[data-testid='quick-edit-loading']") || _$("[data-testid='quick-edit-input']")) {
+        throw new Error("old Quick Edit completion unlocked the new request");
+      }
+      if (during.firstBlockText !== "REPLACEMENT CONTENT SENTINEL") {
+        throw new Error(`old Quick Edit changed the replacement deck: ${JSON.stringify(during)}`);
+      }
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "NEW QUICK RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _waitFor(() => hooks.getDeckStateForTest().firstBlockText === "NEW QUICK RESULT", 2000);
+    } finally {
+      while (transport.pending()) transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "cleanup", size: "2xl" }] }));
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Canceled inline slide completion cannot unlock or change a newer adder", fn: async () => {
+    const hooks = _hooks();
+    const transport = hooks.installDeferredAgentTransport?.();
+    if (!transport || !hooks.getDeckStateForTest) throw new Error("inline adder ownership test hooks missing");
+    try {
+      const rowsBefore = _$$("[data-testid='toc-slide-row']").length;
+      const oldInput = await _openAiSlideAdder();
+      _type(oldInput, "old inline slide");
+      _click("[data-testid='ai-slide-adder-generate']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+
+      _click("[data-testid='ai-slide-adder-close']");
+      await _waitFor(() => !_$("[data-testid='ai-slide-adder-input']"), 1500);
+      const newInput = await _openAiSlideAdder();
+      _type(newInput, "new inline slide");
+      _click("[data-testid='ai-slide-adder-generate']");
+      await _waitFor(() => transport.pending() === 2, 1500);
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD INLINE ADD RESULT", size: "2xl" }], duration: 30 }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      await _wait(120);
+      const currentInput = _$("[data-testid='ai-slide-adder-input']");
+      if (!currentInput?.disabled || _$$("[data-testid='toc-slide-row']").length !== rowsBefore) {
+        throw new Error("old inline slide completion unlocked or inserted into the new editor");
+      }
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "NEW INLINE ADD RESULT", size: "2xl" }], duration: 30 }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _waitFor(() => _$$("[data-testid='toc-slide-row']").length === rowsBefore + 1, 2000);
+      await _waitFor(() => hooks.getDeckStateForTest().selectedBlockText === "NEW INLINE ADD RESULT", 2000);
+    } finally {
+      while (transport.pending()) transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "cleanup", size: "2xl" }], duration: 30 }));
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+], { setup: _editorOwnershipSetup });
+
 // ── Product Tour Suite ───────────────────────────────────────────────
+const _productTourSetup = async () => {
+  if (!_hooks().restoreStartupDeck?.()) throw new Error("startup deck fixture missing");
+  await _waitFor(() => window.__velaDemoTest?.deckFingerprint?.() === DEMO_DECK_FINGERPRINT, 3000);
+  await _cr5Setup();
+};
 uiSuite("Product Tour", [
   { name: "Scene order, feature count, badges, and duration stay inside budget", fn: async () => {
     const api = window.__velaDemoTest;
@@ -13091,12 +13522,387 @@ uiSuite("Product Tour", [
       if (!/^1[3-9]\.\d+$/.test(badge.version) || Number(badge.version) <= 13.0) throw new Error(`badge version not post-13.0: ${badge.version}`);
     }
   }},
+  { name: "Tour blocks active AI work and unsupported decks", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api?.unavailableReason || !hooks.setAIWork) throw new Error("demo preflight test hook missing");
+    if (api.unavailableReason()) throw new Error(`bundled demo deck rejected: ${api.unavailableReason()} signature=${api.deckSignature?.()} fingerprint=${api.deckFingerprint?.()}`);
+    if (api.deckFingerprint?.() !== DEMO_DECK_FINGERPRINT) throw new Error(`sanitized startup fingerprint changed: ${api.deckFingerprint?.()}`);
+    if (!api.unavailableReason({ lanes: [], chatLoading: false, aiWork: null }).includes("bundled Vela demo deck")) {
+      throw new Error("unsupported deck was not rejected");
+    }
+    const hostileReason = api.unavailableReason({ lanes: [null, { items: [null, { title: [], slides: {} }] }], chatLoading: false, aiWork: null });
+    if (!hostileReason.includes("bundled Vela demo deck")) throw new Error(`hostile sanitized state was not rejected safely: ${hostileReason}`);
+    hooks.setAIWork({ itemId: "*", slideIdx: 0 });
+    await _wait(50);
+    const button = _$("[data-testid='run-demo']");
+    if (!button?.disabled) throw new Error("tour button stayed enabled during AI work");
+    const blocked = new Promise((resolve) => window.addEventListener("vela-demo-blocked", (event) => resolve(event.detail), { once: true }));
+    api.run(0.02);
+    const detail = await Promise.race([blocked, _wait(1000).then(() => { throw new Error("tour did not report its active-AI block"); })]);
+    if (!detail.reason.includes("Wait for Vera")) throw new Error(`unexpected block reason: ${detail.reason}`);
+    if (document.documentElement.dataset.velaDemoRunning === "true" || _$("[data-testid='demo-overlay']")) {
+      throw new Error("tour started during AI work");
+    }
+    hooks.setAIWork(null);
+    await _wait(50);
+    const releaseAI1 = api.holdAIActivity?.();
+    const releaseAI2 = api.holdAIActivity?.();
+    if (typeof releaseAI1 !== "function" || typeof releaseAI2 !== "function" || !api.unavailableReason().includes("Wait for Vera")) {
+      throw new Error("shared live-AI activity did not block the tour");
+    }
+    releaseAI1();
+    releaseAI1();
+    if (!api.unavailableReason().includes("Wait for Vera")) throw new Error("AI activity lease released another operation");
+    releaseAI2();
+    const draft = document.createElement("textarea");
+    draft.value = "unsent user draft";
+    document.body.appendChild(draft);
+    if (!api.unavailableReason().includes("editor drafts")) throw new Error("unsent draft was not rejected");
+    draft.remove();
+    if (api.unavailableReason()) throw new Error(`tour stayed blocked after draft cleanup: ${api.unavailableReason()}`);
+
+    if (!hooks.injectBlocks?.([{ type: "heading", text: "Changed scene-critical content" }])) throw new Error("could not mutate the fingerprint test slide");
+    await _wait(80);
+    if (!api.unavailableReason().includes("bundled Vela demo deck")) throw new Error("scene-critical content change did not reject tour preflight");
+    if (!hooks.restoreStartupDeck()) throw new Error("could not restore startup fixture after fingerprint test");
+    await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT, 3000);
+
+    const restoreCanonical = async () => {
+      if (!hooks.restoreStartupDeck()) throw new Error("could not restore startup fixture");
+      await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT && !api.unavailableReason(), 3000);
+    };
+    const interruptWithDeckAction = async (label, action, expectedChat) => {
+      await restoreCanonical();
+      hooks.addTeacherMessage("__epoch-test", `old ${label} teacher state`);
+      await _wait(40);
+      const beforeEpoch = hooks.getDeckEpoch?.();
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error(`${label} interruption tour did not start`); })]);
+      action();
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error(`${label} interruption tour did not stop`); })]);
+      if (result.reason !== "stopped") throw new Error(`${label} interruption result: ${JSON.stringify(result)}`);
+      if (hooks.getDeckEpoch?.() !== beforeEpoch + 1) throw new Error(`${label} did not increment the private deck epoch`);
+      if (Object.keys(hooks.getTeacherHistory?.() || {}).length !== 0) throw new Error(`${label} restored Teacher state from the old deck`);
+      const chat = hooks.getChatState?.();
+      if (expectedChat && !chat?.messages?.some((message) => message.content?.includes(expectedChat))) {
+        throw new Error(`${label} restored chat state from the old deck`);
+      }
+      if (document.documentElement.dataset.velaDemoRunning === "true" || window.__velaDemoAI) throw new Error(`${label} left the tour lock or AI mock active`);
+    };
+    await interruptWithDeckAction("LOAD", () => hooks.restoreStartupDeck(), "Deck imported successfully");
+    await interruptWithDeckAction("NEW_DECK", () => hooks.newDeckForTest?.(), "Setting sail on a new deck");
+    if (!hooks.getChatState?.()?.open) throw new Error("NEW_DECK chat state was overwritten by tour cleanup");
+    await interruptWithDeckAction("RESET", () => hooks.resetDeckForTest?.(), "Welcome aboard Vela");
+
+    await restoreCanonical();
+    if (typeof api.runWithMalformedSnapshot !== "function") throw new Error("malformed snapshot test hook missing");
+    const malformedStarted = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+    const malformedDone = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+    api.runWithMalformedSnapshot();
+    await Promise.race([malformedStarted, _wait(1500).then(() => { throw new Error("malformed-state tour did not start"); })]);
+    api.stop();
+    const malformedResult = await Promise.race([malformedDone, _wait(5000).then(() => { throw new Error("malformed-state tour did not stop"); })]);
+    if (malformedResult.reason !== "stopped") throw new Error(`malformed-state result: ${JSON.stringify(malformedResult)}`);
+    if (document.documentElement.dataset.velaDemoRunning === "true" || window.__velaDemoAI) {
+      throw new Error("malformed snapshot or UI state left the tour lock active");
+    }
+    await restoreCanonical();
+  }},
+  { name: "Post-unlock flush saves restored state and the replacement deck", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest) throw new Error("post-demo flush hooks missing");
+    if (!hooks.restoreStartupDeck?.()) throw new Error("startup fixture missing");
+    await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT, 3000);
+
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const storageWrites = [];
+    const localWrites = [];
+    window.storage = {
+      ...(originalStorage || {}),
+      set: async (key, value) => { storageWrites.push({ key, value: JSON.parse(value) }); },
+      delete: async () => {},
+    };
+    window.__velaSendDeckUpdate = (payload) => { localWrites.push(JSON.parse(JSON.stringify(payload))); };
+    try {
+      hooks.setGuidelinesForTest("saved before tour");
+      await _wait(50);
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error("save-flush tour did not start"); })]);
+      api.stop();
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error("save-flush tour did not stop"); })]);
+      if (result.reason !== "stopped") throw new Error(`save-flush result: ${JSON.stringify(result)}`);
+      await _waitFor(() => storageWrites.length === 1, 2000);
+      if (storageWrites[0].value.guidelines !== "saved before tour") throw new Error("actual tour unlock did not save restored browser state");
+      if (localWrites.length) throw new Error("artifact-mode tour used the local save sink");
+
+      storageWrites.length = 0;
+      localWrites.length = 0;
+      const request = hooks.capturePostDemoFlushForTest();
+      document.documentElement.dataset.velaDemoRunning = "true";
+      hooks.setGuidelinesForTest("tour transient");
+      hooks.flushDemoSaveForTest(request, { local: true, storage: false });
+      await _wait(180);
+      if (storageWrites.length || localWrites.length) throw new Error("save sink ran while the tour lock was active");
+      hooks.setGuidelinesForTest("saved before tour");
+      delete document.documentElement.dataset.velaDemoRunning;
+      await _waitFor(() => localWrites.length === 1, 2000);
+      if (storageWrites.length || localWrites[0].guidelines !== "saved before tour") {
+        throw new Error("post-unlock flush persisted tour-generated state");
+      }
+
+      storageWrites.length = 0;
+      localWrites.length = 0;
+      hooks.restoreStartupDeck();
+      await _wait(50);
+      hooks.setGuidelinesForTest("replacement deck state");
+      await _wait(50);
+      const replacement = hooks.capturePostDemoFlushForTest();
+      document.documentElement.dataset.velaDemoRunning = "true";
+      hooks.flushDemoSaveForTest(replacement, { local: true, storage: true });
+      delete document.documentElement.dataset.velaDemoRunning;
+      await _waitFor(() => storageWrites.length === 1 && localWrites.length === 1, 2000);
+      if (storageWrites[0].value.deckTitle !== "Vela Slides — Live Demo" || storageWrites[0].value.guidelines !== "replacement deck state"
+          || localWrites[0].guidelines !== "replacement deck state") {
+        throw new Error("replacement deck state did not flush after unlock");
+      }
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      delete document.documentElement.dataset.velaDemoRunning;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Deck replacement stops the live tour and flushes only replacement state", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) throw new Error("replacement-deck test hooks missing");
+    const originalStorage = window.storage;
+    const storageWrites = [];
+    window.storage = {
+      ...(originalStorage || {}),
+      set: async (key, value) => { storageWrites.push({ key, value: JSON.parse(value) }); },
+      delete: async () => {},
+    };
+    try {
+      const beforeEpoch = hooks.getDeckEpoch();
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error("replacement tour did not start"); })]);
+      if (!hooks.loadReplacementDeckForTest()) throw new Error("replacement deck did not load");
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error("replacement tour did not finalize"); })]);
+      if (result.reason !== "stopped") throw new Error(`replacement tour result: ${JSON.stringify(result)}`);
+      await _waitFor(() => storageWrites.some((write) => write.value.deckTitle === "Replacement deck sentinel"), 2500);
+      const current = hooks.getDeckStateForTest();
+      if (current.epoch !== beforeEpoch + 1
+          || current.deckTitle !== "Replacement deck sentinel"
+          || current.guidelines !== "replacement epoch retained"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.chatLoading || current.aiWork
+          || Object.keys(current.teacherHistory || {}).length) {
+        throw new Error(`replacement state was changed by tour cleanup: ${JSON.stringify(current)}`);
+      }
+      const saved = storageWrites.find((write) => write.value.deckTitle === "Replacement deck sentinel")?.value;
+      if (saved?.guidelines !== "replacement epoch retained"
+          || saved?.lanes?.[0]?.items?.[0]?.title !== "Replacement module sentinel"
+          || saved?.lanes?.[0]?.items?.[0]?.slides?.[0]?.blocks?.[0]?.text !== "REPLACEMENT CONTENT SENTINEL") {
+        throw new Error(`replacement state was not flushed intact: ${JSON.stringify(saved)}`);
+      }
+    } finally {
+      window.storage = originalStorage;
+      delete document.documentElement.dataset.velaDemoRunning;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Old chat and toolbar AI results cannot change a replacement deck", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.installDeferredAgentTransport || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) {
+      throw new Error("deferred AI test hooks missing");
+    }
+    const transport = hooks.installDeferredAgentTransport();
+    const assertReplacement = (label) => {
+      const current = hooks.getDeckStateForTest();
+      if (current.deckTitle !== "Replacement deck sentinel"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.chatLoading || current.aiWork
+          || current.chatMessages.some((message) => /OLD (CHAT|FINAL|TOOLBAR)/.test(message.content || ""))) {
+        throw new Error(`${label} changed replacement state: ${JSON.stringify(current)}`);
+      }
+    };
+    try {
+      hooks.setChatOpenForTest(true);
+      const chatInput = await _waitFor(() => _$("[data-testid='vera-chat-input']"), 1500);
+      _type(chatInput, "old epoch chat request");
+      _click("[data-testid='vera-chat-send']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+      hooks.loadReplacementDeckForTest();
+      transport.resolveNext(JSON.stringify({ message: "OLD CHAT TOOL", tool_calls: [{ tool: "clear_all", input: {} }] }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      transport.resolveNext(JSON.stringify({ message: "OLD FINAL", tool_calls: [] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _wait(120);
+      assertReplacement("old chat result");
+
+      const oldEpoch = hooks.getDeckStateForTest().epoch;
+      hooks.restoreStartupDeck();
+      hooks.setChatOpenForTest(false);
+      // The deck-epoch reset effect closes any stale editor a moment after
+      // restoreStartupDeck(). Wait for the new epoch before opening Quick
+      // Edit, or this click can race the old DOM and hit a closing button.
+      await _waitFor(() => hooks.getDeckStateForTest().epoch === oldEpoch + 1, 1500);
+      const quickOpen = await _waitFor(() => {
+        const button = _$("[data-testid='quick-edit-open']");
+        return button && !button.disabled ? button : null;
+      }, 1500);
+      _click(quickOpen);
+      const quickInput = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+      _type(quickInput, "old toolbar edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+      hooks.loadReplacementDeckForTest();
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD TOOLBAR RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _wait(120);
+      assertReplacement("old toolbar result");
+    } finally {
+      // This test opens the Quick Edit editor. A prior version left it open on
+      // exit, so the next suite's Product Tour preflight saw an open draft and
+      // blocked the tour, timing out later tests. Send the real Escape path the
+      // control already supports so no open editor leaks into later tests.
+      const leakedInput = _$("[data-testid='quick-edit-input']");
+      if (leakedInput) {
+        leakedInput.focus();
+        leakedInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1500).catch(() => {});
+      }
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+    // Regression: an open Quick Edit draft here would block the Product Tour
+    // preflight for every later test in this suite. Fails without the cleanup above.
+    if (_$("[data-testid='quick-edit-input']")) throw new Error("quick-edit-input leaked past toolbar test cleanup");
+  }},
+  { name: "Old Teacher stream cannot change a replacement deck", fn: async () => {
+    const hooks = _hooks();
+    const api = window.__velaDemoTest;
+    const originalFetch = window.fetch;
+    let resolveFetch = null;
+    let oldWork = null;
+    let fetchSettled = false;
+    const settleFetch = (text) => {
+      if (typeof resolveFetch !== "function" || fetchSettled) return false;
+      fetchSettled = true;
+      const encoder = new TextEncoder();
+      let readCount = 0;
+      resolveFetch({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => readCount++ === 0
+              ? { done: false, value: encoder.encode(`data: ${JSON.stringify({ type: "content_block_delta", delta: { text } })}\n\n`) }
+              : { done: true },
+          }),
+        },
+      });
+      return true;
+    };
+    try {
+      const deckAEpochBefore = hooks.getDeckStateForTest?.().epoch;
+      if (!hooks.restoreStartupDeck?.()) throw new Error("could not restore deck A");
+      await _waitFor(() => {
+        const current = hooks.getDeckStateForTest?.();
+        return current?.epoch === deckAEpochBefore + 1 && current.deckTitle === "Vela Slides — Live Demo";
+      }, 1500);
+      if (!hooks.injectStudyNotes(null)) throw new Error("could not remove authored study notes");
+      await _wait(80);
+      window.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+      document.activeElement?.blur?.();
+      _key("f");
+      const studentToggle = await _waitFor(() => _$("[data-testid='student-toggle']"), 3000);
+      _click(studentToggle);
+      await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 3000);
+      const sendQuestion = await _waitFor(() => typeof window.__velaTeacherEpochTest === "function" ? window.__velaTeacherEpochTest : null, 1500);
+      const oldEpoch = hooks.getDeckStateForTest().epoch;
+      oldWork = sendQuestion("old epoch Teacher question");
+      await _waitFor(() => typeof resolveFetch === "function", 2000);
+      await _waitFor(() => {
+        const current = hooks.getDeckStateForTest();
+        return current.teacherLoading && JSON.stringify(current.teacherHistory).includes("old epoch Teacher question");
+      }, 1500);
+      if (!hooks.loadReplacementDeckForTest()) throw new Error("replacement deck did not load");
+      await _waitFor(() => hooks.getDeckStateForTest().epoch === oldEpoch + 1, 1500);
+      settleFetch("OLD TEACHER RESULT\n\n---QUESTIONS---\n1. OLD TEACHER QUESTION?");
+      await Promise.race([oldWork, _wait(2000).then(() => { throw new Error("old Teacher callback did not complete"); })]);
+      await _wait(80);
+      const current = hooks.getDeckStateForTest();
+      const staleTeacherState = JSON.stringify(current.teacherHistory);
+      if (current.deckTitle !== "Replacement deck sentinel"
+          || current.guidelines !== "replacement epoch retained"
+          || current.firstLaneTitle !== "Replacement lane sentinel"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.brandingAccentColor !== "#123456"
+          || current.brandingFooterLeft !== "Replacement branding sentinel"
+          || current.selectedId !== current.firstItemId
+          || current.slideIndex !== 0
+          || current.fullscreen
+          || current.veraMode !== "editor"
+          || current.teacherLoading
+          || current.chatLoading
+          || current.aiWork
+          || Object.keys(current.teacherHistory || {}).length
+          || staleTeacherState.includes("OLD TEACHER RESULT")
+          || staleTeacherState.includes("OLD TEACHER QUESTION")) {
+        throw new Error(`old Teacher stream changed replacement state: ${JSON.stringify(current)}`);
+      }
+      if (api?.unavailableReason?.()?.includes("Wait for Vera")) throw new Error("old Teacher work left an AI activity indicator");
+      const rows = await _waitFor(() => {
+        const found = _$$("[data-testid='toc-slide-row']");
+        return found.length > 1 ? found : null;
+      }, 2000);
+      _click(rows[1]);
+      await _waitFor(() => {
+        const next = hooks.getDeckStateForTest();
+        return next.selectedId === current.firstItemId
+          && next.slideIndex === 1
+          && next.selectedBlockText === "REPLACEMENT NAVIGATION SENTINEL";
+      }, 1500);
+    } finally {
+      settleFetch("");
+      if (oldWork) await Promise.race([oldWork, _wait(500)]).catch(() => {});
+      window.fetch = originalFetch;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "AI activity leases release for mocked API and Teacher timeout work", fn: async () => {
+    if (typeof window.__velaAILeaseTest !== "function") throw new Error("AI lease behavior hook missing");
+    const results = await window.__velaAILeaseTest();
+    const failed = results.filter((result) => !result.pass);
+    if (failed.length) throw new Error(`AI lease probes failed: ${JSON.stringify(failed)}`);
+    if (results.length !== 3) throw new Error(`unexpected AI lease probe count: ${results.length}`);
+  }},
   { name: "Fast tour reaches every showcased state and restores the editor", fn: async () => {
     const api = window.__velaDemoTest;
     const hooks = _hooks();
     if (!api || !hooks.getSelection || !hooks.getChatState) throw new Error("demo test hook missing");
     const before = hooks.getSelection();
     const chatBefore = hooks.getChatState();
+    const historyBefore = hooks.getHistoryCounts?.();
+    hooks.addTeacherMessage?.("__demo-test", "Keep this teacher message");
+    const teacherBefore = hooks.getTeacherHistory?.();
     const scenes = [], cues = {};
     const onScene = (event) => scenes.push(event.detail.title);
     const onCue = (event) => {
@@ -13126,6 +13932,7 @@ uiSuite("Product Tour", [
         student: () => hooks.getVeraMode?.() === "student",
         presenter: () => !!_$("[data-testid='presenter-view']"),
         "ai-editing": () => document.body.textContent.includes("Improve") || document.body.textContent.includes("Variants"),
+        "batch-edit": () => !!_$("[data-testid='batch-edit-panel']"),
         vera: () => {
           const trace = _$("[data-testid='vera-tool-trace'][data-tool-name='deck_stats']");
           return !!trace && _$$("[data-testid='vera-chat-response']").some((r) => r.textContent?.includes("I checked the live deck structure"));
@@ -13133,7 +13940,10 @@ uiSuite("Product Tour", [
         cli: () => !!_$("[data-block-type='code']"),
         desktop: () => !!_$("[data-block-type='callout']"),
         "pdf-export": () => !!_$("[data-testid='pdf-export-preview']") && !_$("[data-testid='pdf-export-download']"),
-        "pptx-export": () => !!_$("[data-testid='pptx-export-preview']") && !_$("[data-testid='pptx-export-done']"),
+        // The scene ends during export rendering. The harness proves the exact
+        // UI boundary: a preview exists and the actionable download anchor does
+        // not. It does not claim to observe browser downloads that no control can start.
+        "pptx-export": () => !!_$("[data-testid='pptx-export-preview']") && !_$("[data-testid='pptx-export-download']"),
       };
       cues[name] = checks[name] ? checks[name]() : false;
     };
@@ -13148,14 +13958,19 @@ uiSuite("Product Tour", [
     if (result.mockAI?.stepCalls !== 2 || result.mockAI?.liveCalls !== 0) throw new Error(`demo AI calls: ${JSON.stringify(result.mockAI)}`);
     const plan = api.plan();
     if (JSON.stringify(scenes) !== JSON.stringify(plan.titles)) throw new Error(`observed scene order: ${JSON.stringify(scenes)}`);
-    const expectedCues = ["outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery", "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "vera", "cli", "desktop", "pdf-export", "pptx-export"];
+    const expectedCues = ["outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery", "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "batch-edit", "vera", "cli", "desktop", "pdf-export", "pptx-export"];
     for (const cue of expectedCues) if (!cues[cue]) throw new Error(`showcase state not reached: ${cue}`);
     const after = hooks.getSelection();
     if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
     const chatAfter = hooks.getChatState();
     if (JSON.stringify(chatAfter) !== JSON.stringify(chatBefore)) throw new Error("chat state not restored");
+    const historyAfter = hooks.getHistoryCounts?.();
+    if (JSON.stringify(historyAfter) !== JSON.stringify(historyBefore)) throw new Error(`undo history changed: before=${JSON.stringify(historyBefore)} after=${JSON.stringify(historyAfter)}`);
+    const teacherAfter = hooks.getTeacherHistory?.();
+    if (JSON.stringify(teacherAfter) !== JSON.stringify(teacherBefore)) throw new Error("teacher history not restored");
+    hooks.clearTeacherHistory?.("__demo-test");
     if (window.__velaDemoAI) throw new Error("demo AI mock was not removed");
-    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='branding-panel']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
         || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("tour left a transient surface open");
   }},
   { name: "Stop cancels the active scene and restores the prior state", fn: async () => {
@@ -13182,9 +13997,11 @@ uiSuite("Product Tour", [
     const after = hooks.getSelection();
     if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored after stop: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
     if (!_$("header")) throw new Error("editor header not restored");
-    const brandBtn = _$("[data-testid='brand-toggle']");
-    if (brandBtn && getComputedStyle(brandBtn).backgroundColor !== "rgba(0, 0, 0, 0)") throw new Error("stop left the branding panel open");
-    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+    await _waitFor(() => {
+      const brandBtn = _$("[data-testid='brand-toggle']");
+      return !_$("[data-testid='branding-panel']") && (!brandBtn || getComputedStyle(brandBtn).backgroundColor === "rgba(0, 0, 0, 0)");
+    }, 1000).catch(() => { throw new Error("stop left the branding panel open"); });
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='branding-panel']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
         || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("stop left a transient surface open");
   }},
   { name: "Callout position: target-scene card shows no initial corner jump; centered scenes render at once", fn: async () => {
@@ -13251,7 +14068,7 @@ uiSuite("Product Tour", [
       if (centeredImmediate[title] !== true) throw new Error(`${title}: centered scene did not render immediately`);
     }
   }},
-], { setup: _selectFirstModule });
+], { setup: _productTourSetup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -13547,12 +14364,93 @@ const DEMO_FEATURES = Object.freeze([
   { id: "student", title: "Student & Audience Tools", introduced: "13.0", isNew: false, deckSlide: "Student Mode & Study Notes", testId: "[data-testid='student-toggle']", cue: "student", action: "Turn on student mode on a slide with study notes.", assertion: "Vera mode is 'student'.", cleanup: "try/finally re-clicks student-toggle.", safety: "safe" },
   { id: "presenter", title: "Use the Presenter Dashboard", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='presenter-view']", cue: "presenter", action: "Open the presenter dashboard.", assertion: "The presenter view is visible.", cleanup: "_demoKey('Escape') and SET_FULLSCREEN false at scene end.", safety: "safe" },
   { id: "ai-editing", title: "Improve, Edit with AI & Variants", introduced: "13.0", isNew: false, deckSlide: "AI Editing Modes", testId: "text:Improve,Variants", cue: "ai-editing", action: "Show the Improve, Edit with AI, and Variants controls.", assertion: "Page text shows Improve or Variants.", cleanup: "Next scene's _demoReset.", safety: "safe" },
+  { id: "batch-edit", title: "Improve, Edit with AI & Variants", introduced: "8.0", isNew: false, deckSlide: "AI Editing Modes", testId: "[data-testid='batch-edit-panel']", cue: "batch-edit", action: "Open the batch-edit panel.", assertion: "The batch-edit panel is visible.", cleanup: "try/finally closes the panel.", safety: "safe" },
   { id: "vera", title: "Work with Vera", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='vera-tool-trace']", cue: "vera", action: "Type a prompt to Vera and send it to the deterministic mock.", assertion: "A deck_stats tool trace and the mock response are visible.", cleanup: "SET_CHAT open:false at scene end.", safety: "safe" },
   { id: "cli", title: "Vela CLI & Skill", introduced: "13.0", isNew: false, deckSlide: "Vela CLI & Skill", testId: "[data-block-type='code']", cue: "cli", action: "Open the Vela CLI & Skill slide.", assertion: "A code block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
   { id: "desktop", title: "Bring Your Own Agent", introduced: "13.20", isNew: true, deckSlide: "Vela Desktop — Bring Your Own Agent", testId: "[data-block-type='callout']", cue: "desktop", action: "Open the Vela Desktop slide.", assertion: "A callout block is visible.", cleanup: "Next scene's _demoReset.", safety: "safe" },
   { id: "pdf-export", title: "Export a Print-Ready PDF", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='pdf-export-preview']", cue: "pdf-export", action: "Start a PDF export and wait for the preview.", assertion: "A PDF preview thumbnail is visible; no download starts.", cleanup: "ctx.ui.setPdfExport(false) at scene end, before any download.", safety: "safe" },
-  { id: "pptx-export", title: "Export Editable PowerPoint", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='pptx-export-preview']", cue: "pptx-export", action: "Start a PPTX export and wait for the preview.", assertion: "A PPTX preview thumbnail is visible; no download starts.", cleanup: "ctx.ui.setPptxExport(false) at scene end, before any download.", safety: "safe" },
+  { id: "pptx-export", title: "Export Editable PowerPoint", introduced: "13.0", isNew: false, deckSlide: null, testId: "[data-testid='pptx-export-preview']", cue: "pptx-export", action: "Start a PPTX export and wait for the preview.", assertion: "A PPTX preview thumbnail is visible while the download control is not available.", cleanup: "ctx.ui.setPptxExport(false) before the download phase.", safety: "safe" },
 ]);
+
+const DEMO_DECK_SIGNATURE = "Audience Tools:Student Mode & Study Notes|Navigate & Present;" +
+  "Live Editor:Gallery View & Smart Merge|Branding & Theming;" +
+  "Product Story:Vela Slides|What is Vela?|By the Numbers;" +
+  "Run and Share Anywhere:Three Runtimes, One Engine|Export & Share|Get Vela — It's Free;" +
+  "Semantic Building Blocks:Text Blocks|Flows & Loops|Data Blocks|Comparison, Funnel & Cycle|Number Row, Matrix & Checklist|SVG Diagrams|Columns Layout;" +
+  "Vera and Agent Workflows:Meet Vera|AI Editing Modes|Vela CLI & Skill|Vela Desktop — Bring Your Own Agent";
+
+const _demoDeckSignature = (state) => {
+  const lanes = Array.isArray(state?.lanes) ? state.lanes : [];
+  const modules = [];
+  for (const lane of lanes) {
+    if (!lane || typeof lane !== "object" || !Array.isArray(lane.items)) continue;
+    for (const item of lane.items) {
+      if (!item || typeof item !== "object") continue;
+      const slides = Array.isArray(item.slides) ? item.slides : [];
+      const titles = slides.map((slide) => slide && typeof slide === "object" && typeof slide.title === "string" ? slide.title : "");
+      modules.push(`${typeof item.title === "string" ? item.title : ""}:${titles.join("|")}`);
+    }
+  }
+  return modules.sort().join(";");
+};
+
+const DEMO_DECK_FINGERPRINT = "98d20d88";
+const _demoFingerprintValue = (value) => {
+  if (Array.isArray(value)) return value.map(_demoFingerprintValue);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    if (key.startsWith("_") || ["id", "createdAt", "updatedAt", "comments"].includes(key)) continue;
+    out[key] = _demoFingerprintValue(value[key]);
+  }
+  return out;
+};
+const _demoHashText = (text) => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+};
+const _demoFingerprintModules = (state) => {
+  const lanes = Array.isArray(state?.lanes) ? state.lanes : [];
+  const modules = [];
+  for (const lane of lanes) {
+    if (!lane || typeof lane !== "object" || !Array.isArray(lane.items)) continue;
+    for (const item of lane.items) {
+      if (!item || typeof item !== "object") continue;
+      modules.push(_demoFingerprintValue({
+        title: typeof item.title === "string" ? item.title : "",
+        notes: typeof item.notes === "string" ? item.notes : "",
+        slides: Array.isArray(item.slides) ? item.slides : [],
+      }));
+    }
+  }
+  return modules.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+};
+const _demoDeckFingerprint = (state) => {
+  try {
+    const deckTitle = typeof state?.deckTitle === "string" ? state.deckTitle : "";
+    return _demoHashText(JSON.stringify({ deckTitle, modules: _demoFingerprintModules(state) }));
+  } catch {
+    return "";
+  }
+};
+
+const _demoHasUnsavedUiDraft = () => {
+  if (typeof document === "undefined") return false;
+  if (document.querySelector("[contenteditable='true'], [data-demo-unsaved='true']")) return true;
+  return Array.from(document.querySelectorAll("textarea, input:not([type]), input[type='text'], input[type='search']"))
+    .some((field) => typeof field.value === "string" && field.value.trim().length > 0);
+};
+
+const getDemoUnavailableReason = (state) => {
+  if (state?.chatLoading || state?.teacherLoading || state?.aiWork || state?._bootstrap || velaHasActiveAIRequests()) {
+    return "Wait for Vera to finish before starting the product tour.";
+  }
+  if (_demoHasUnsavedUiDraft()) return "Save or clear open editor drafts before starting the product tour.";
+  return _demoDeckSignature(state) === DEMO_DECK_SIGNATURE && _demoDeckFingerprint(state) === DEMO_DECK_FINGERPRINT
+    ? ""
+    : "Open the bundled Vela demo deck to run the product tour.";
+};
 
 const _demoCreateMockAI = () => {
   let stepCalls = 0;
@@ -13837,9 +14735,24 @@ const _demoEditableHeading = () => {
 // Defensive: covers an abort mid-scene, in addition to each scene closing
 // itself.
 const _demoToggleIsOn = (btn) => !!btn && getComputedStyle(btn).backgroundColor !== "rgba(0, 0, 0, 0)";
-const _demoCloseBrandingPanel = () => {
+const _demoCloseBrandingPanel = async () => {
+  // A scene abort can schedule its own close one React commit before restore.
+  // Give that close a short chance to land so restore does not click again and
+  // reopen the panel.
+  for (let i = 0; i < 6; i++) {
+    const btn = _demoFind("button[title='Branding & guidelines']");
+    if (!_demoFind("[data-testid='branding-panel']") && !_demoToggleIsOn(btn)) return;
+    await _demoWait(20, null, 1);
+  }
   const btn = _demoFind("button[title='Branding & guidelines']");
-  if (_demoToggleIsOn(btn)) _demoClick(btn);
+  if (_demoFind("[data-testid='branding-panel']") || _demoToggleIsOn(btn)) {
+    _demoClick(btn);
+    for (let i = 0; i < 10; i++) {
+      await _demoWait(20, null, 1);
+      const nextBtn = _demoFind("button[title='Branding & guidelines']");
+      if (!_demoFind("[data-testid='branding-panel']") && !_demoToggleIsOn(nextBtn)) return;
+    }
+  }
 };
 const _demoCloseEditToggle = () => {
   const btn = _demoFind("[data-testid='present-edit-toggle']");
@@ -13860,7 +14773,7 @@ const _demoReset = async (ctx) => {
   const galleryClose = _demoFind("[data-testid='gallery-close']");
   if (galleryClose) _demoClick(galleryClose);
   if (_demoFind("[data-testid='presenter-view']")) _demoKey("Escape");
-  _demoCloseBrandingPanel();
+  await _demoCloseBrandingPanel();
   _demoCloseEditToggle();
   _demoCloseBatchPanel();
   if (ctx.getState().veraMode !== "editor") ctx.dispatch({ type: "SET_VERA_MODE", mode: "editor" });
@@ -14294,7 +15207,62 @@ const getDemoPlan = () => {
 };
 
 // ── Demo Runner ──────────────────────────────────────────────────────
-function VelaDemoRunner({ appState, dispatch, demoUi }) {
+const _demoClone = (value, fallback) => {
+  try { return JSON.parse(JSON.stringify(value)); } catch { return fallback; }
+};
+const _demoPlainObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+const _demoIntegerArray = (value) => Array.isArray(value) ? value.filter(Number.isInteger) : [];
+const _demoStringArray = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+const _demoCaptureSnapshot = (state, ui) => ({
+  deckEpoch: Number.isInteger(state?._deckEpoch) ? state._deckEpoch : 0,
+  selectedId: typeof state?.selectedId === "string" ? state.selectedId : null,
+  slideIndex: Number.isInteger(state?.slideIndex) ? state.slideIndex : 0,
+  selectedSlideIndices: _demoIntegerArray(state?.selectedSlideIndices),
+  collapsedSections: _demoStringArray(state?.collapsedSections),
+  fullscreen: !!state?.fullscreen,
+  fontScale: Number.isFinite(state?.fontScale) ? state.fontScale : 1,
+  chatOpen: !!state?.chatOpen,
+  chatMessages: _demoClone(Array.isArray(state?.chatMessages) ? state.chatMessages : [], []),
+  chatLoading: !!state?.chatLoading,
+  lastDebug: typeof state?.lastDebug === "string" ? state.lastDebug : "",
+  aiWork: _demoClone(_demoPlainObject(state?.aiWork) ? state.aiWork : null, null),
+  teacherHistory: _demoClone(_demoPlainObject(state?.teacherHistory) ? state.teacherHistory : {}, {}),
+  teacherLoading: !!state?.teacherLoading,
+  reviewMode: !!state?.reviewMode,
+  commentsPanelOpen: !!state?.commentsPanelOpen,
+  veraMode: state?.veraMode === "student" ? "student" : "editor",
+  tocCollapsed: !!ui?.tocCollapsed,
+  viewMenu: !!ui?.viewMenu,
+  exportMenu: !!ui?.exportMenu,
+  pptxExport: !!ui?.pptxExport,
+  pdfExport: !!ui?.pdfExport,
+});
+const _demoSelectionExists = (state, selectedId, slideIndex) => {
+  const lanes = Array.isArray(state?.lanes) ? state.lanes : [];
+  for (const lane of lanes) {
+    if (!lane || typeof lane !== "object" || !Array.isArray(lane.items)) continue;
+    const item = lane.items.find((candidate) => candidate && typeof candidate === "object" && candidate.id === selectedId);
+    if (item) return Array.isArray(item.slides) && slideIndex >= 0 && slideIndex < item.slides.length;
+  }
+  return false;
+};
+const _demoFlushRequest = (state, preferCurrent) => {
+  if (!state || typeof state !== "object") return null;
+  const safeState = {
+    ...state,
+    chatMessages: Array.isArray(state.chatMessages) ? state.chatMessages : [],
+    selectedSlideIndices: _demoIntegerArray(state.selectedSlideIndices),
+    collapsedSections: _demoStringArray(state.collapsedSections),
+    aiWork: _demoPlainObject(state.aiWork) ? state.aiWork : null,
+  };
+  return {
+    state: _demoClone(extractSave(safeState), null),
+    epoch: Number.isSafeInteger(state._deckEpoch) ? state._deckEpoch : 0,
+    useCurrent: !!preferCurrent,
+  };
+};
+
+function VelaDemoRunner({ appState, dispatch, demoUi, requestPostDemoFlush }) {
   const [running, setRunning] = useState(false);
   const [scene, setScene] = useState(null);
   const stateRef = useRef(appState);
@@ -14304,6 +15272,7 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
   const skipRef = useRef(false);
   const controllerRef = useRef(null);
   const runRef = useRef(null);
+  const activeFlushRequestRef = useRef(null);
   stateRef.current = appState;
   uiRef.current = demoUi;
 
@@ -14314,12 +15283,13 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
   };
 
   const restoreSnapshot = async (snapshot) => {
+    const sameDeck = () => stateRef.current?._deckEpoch === snapshot.deckEpoch;
     const editable = _demoFind("[contenteditable='true']");
     if (editable) { editable.focus(); _demoKey("Escape"); }
     const galleryClose = _demoFind("[data-testid='gallery-close']");
     if (galleryClose) _demoClick(galleryClose);
     if (_demoFind("[data-testid='presenter-view']")) _demoKey("Escape");
-    _demoCloseBrandingPanel();
+    await _demoCloseBrandingPanel();
     _demoCloseEditToggle();
 
     const ui = uiRef.current;
@@ -14327,27 +15297,36 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
     ui.setPdfExport(false);
     ui.setExportMenu(false);
     ui.setViewMenu(false);
+    if (!sameDeck()) return false;
+
     dispatch({ type: "SET_CHAT", open: false });
     dispatch({ type: "SET_COMMENTS_PANEL", open: false });
     dispatch({ type: "SET_REVIEW_MODE", value: false });
     dispatch({ type: "SET_FULLSCREEN", value: false });
     await _demoWait(100, null, 1);
 
-    if (snapshot.selectedId) {
+    // Cleanup is safe on every deck. Snapshot restoration is not. Recheck after
+    // the async panel cleanup so a deck switch during restore cannot receive
+    // selection, chat, Teacher, or UI state from the prior deck.
+    if (!sameDeck()) return false;
+
+    if (snapshot.selectedId && _demoSelectionExists(stateRef.current, snapshot.selectedId, snapshot.slideIndex)) {
       dispatch({ type: "SELECT", id: snapshot.selectedId, slideIndex: snapshot.slideIndex });
       dispatch({ type: "SET_SLIDE_SELECTION", index: snapshot.slideIndex, indices: snapshot.selectedSlideIndices });
     } else {
       dispatch({ type: "DESELECT" });
     }
     dispatch({ type: "SET_SECTION_COLLAPSED", all: true, collapsed: true, ids: snapshot.collapsedSections });
+    dispatch({ type: "SET_VERA_MODE", mode: snapshot.veraMode });
     dispatch({
-      type: "RESTORE_CHAT_STATE",
+      type: "RESTORE_DEMO_STATE",
       messages: snapshot.chatMessages,
       loading: snapshot.chatLoading,
       debug: snapshot.lastDebug,
       aiWork: snapshot.aiWork,
+      teacherHistory: snapshot.teacherHistory,
+      teacherLoading: snapshot.teacherLoading,
     });
-    dispatch({ type: "SET_VERA_MODE", mode: snapshot.veraMode });
     dispatch({ type: "SET_REVIEW_MODE", value: snapshot.reviewMode });
     dispatch({ type: "SET_COMMENTS_PANEL", open: snapshot.commentsPanelOpen });
     dispatch({ type: "SET_CHAT", open: snapshot.chatOpen });
@@ -14359,58 +15338,53 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
     ui.setPptxExport(snapshot.pptxExport);
     ui.setPdfExport(snapshot.pdfExport);
     await _demoWait(120, null, 1);
+    return true;
   };
 
   const run = async (event) => {
     if (runningRef.current || document.documentElement.dataset.velaDemoRunning === "true") return;
-    document.documentElement.dataset.velaDemoRunning = "true";
-    runningRef.current = true;
-    setRunning(true);
-    stopRef.current = false;
-    skipRef.current = false;
+    const unavailableReason = getDemoUnavailableReason(stateRef.current);
+    if (unavailableReason) {
+      window.dispatchEvent(new CustomEvent("vela-demo-blocked", { detail: { reason: unavailableReason } }));
+      return;
+    }
     const started = Date.now();
     const failures = [];
     const rawScale = Number(event?.detail?.timeScale || 1);
     const scale = Number.isFinite(rawScale) ? Math.max(0.01, Math.min(1, rawScale)) : 1;
     const reducedMotion = !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const initialState = stateRef.current;
-    const initialUi = uiRef.current;
-    const snapshot = {
-      selectedId: initialState.selectedId,
-      slideIndex: initialState.slideIndex,
-      selectedSlideIndices: [...(initialState.selectedSlideIndices || [])],
-      collapsedSections: [...(initialState.collapsedSections || [])],
-      fullscreen: initialState.fullscreen,
-      fontScale: initialState.fontScale,
-      chatOpen: initialState.chatOpen,
-      chatMessages: initialState.chatMessages.map((message) => ({
-        ...message,
-        tools: message.tools?.map((tool) => ({ ...tool })),
-        jumps: message.jumps?.map((jump) => ({ ...jump })),
-        images: message.images ? [...message.images] : message.images,
-      })),
-      chatLoading: initialState.chatLoading,
-      lastDebug: initialState.lastDebug,
-      aiWork: initialState.aiWork ? { ...initialState.aiWork } : null,
-      reviewMode: initialState.reviewMode,
-      commentsPanelOpen: initialState.commentsPanelOpen,
-      veraMode: initialState.veraMode,
-      tocCollapsed: initialUi.tocCollapsed,
-      viewMenu: initialUi.viewMenu,
-      exportMenu: initialUi.exportMenu,
-      pptxExport: initialUi.pptxExport,
-      pdfExport: initialUi.pdfExport,
-    };
+    let initialState = stateRef.current;
+    let initialUi = uiRef.current;
+    // VELA:DEV-ONLY:BEGIN
+    if (velaTestSurfaceEnabled() && event?.detail?.snapshotStateForTest) {
+      initialState = event.detail.snapshotStateForTest;
+      initialUi = event.detail.snapshotUiForTest;
+    }
+    // VELA:DEV-ONLY:END
+    const snapshot = _demoCaptureSnapshot(initialState, initialUi);
 
     const scenes = buildDemoScenes(null);
     const total = scenes.length;
     const plannedMs = scenes.reduce((sum, item) => sum + item.duration, 0);
     let mockStats = { stepCalls: 0, liveCalls: 0 };
+    let lockAcquired = false;
+    let flushRequest = _demoFlushRequest(initialState, false);
+    activeFlushRequestRef.current = flushRequest;
 
     try {
+      document.documentElement.dataset.velaDemoRunning = "true";
+      lockAcquired = true;
+      runningRef.current = true;
+      setRunning(true);
+      stopRef.current = false;
+      skipRef.current = false;
       _demoInstallMockAI();
       for (let i = 0; i < scenes.length; i++) {
         if (stopRef.current) break;
+        if (stateRef.current?._deckEpoch !== snapshot.deckEpoch) {
+          stopRef.current = true;
+          break;
+        }
         skipRef.current = false;
         const s = scenes[i];
         const controller = new AbortController();
@@ -14463,6 +15437,11 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
         let pollTicks = 0;
         while (Date.now() - t0 < duration && !skipRef.current && !stopRef.current) {
           await _demoWait(Math.min(100, Math.max(20, duration / 10)), null, 1);
+          if (stateRef.current?._deckEpoch !== snapshot.deckEpoch) {
+            stopRef.current = true;
+            controller.abort();
+            break;
+          }
           pollTicks++;
           if (hasFnTarget) {
             const el = s.target();
@@ -14480,6 +15459,7 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
         }
         if ((skipRef.current || stopRef.current) && !controller.signal.aborted) controller.abort();
         await actionPromise;
+        if (stateRef.current?._deckEpoch !== snapshot.deckEpoch) stopRef.current = true;
 
         const aborted = actionError?.name === "AbortError";
         const ok = !actionError || aborted;
@@ -14494,12 +15474,21 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
       setScene(null);
       mockStats = window.__velaDemoAI?.getStats?.() || mockStats;
       _demoRemoveMockAI();
+      let restored = false;
       try {
-        await restoreSnapshot(snapshot);
+        restored = await restoreSnapshot(snapshot);
       } catch (error) {
         failures.push({ title: "Restore state", error: error?.message || String(error) });
       } finally {
-        delete document.documentElement.dataset.velaDemoRunning;
+        if (stateRef.current?._deckEpoch !== snapshot.deckEpoch) {
+          flushRequest = _demoFlushRequest(stateRef.current, true) || flushRequest;
+        } else if (restored) {
+          flushRequest.useCurrent = true;
+        }
+        activeFlushRequestRef.current = flushRequest;
+        if (lockAcquired) delete document.documentElement.dataset.velaDemoRunning;
+        if (flushRequest?.state) requestPostDemoFlush?.(flushRequest);
+        activeFlushRequestRef.current = null;
         runningRef.current = false;
         setRunning(false);
         const reason = stopRef.current ? "stopped" : failures.length ? "failed" : "complete";
@@ -14521,7 +15510,15 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
       window.removeEventListener("vela-demo-stop", stopHandler);
       controllerRef.current?.abort();
       _demoRemoveMockAI();
-      delete document.documentElement.dataset.velaDemoRunning;
+      if (document.documentElement.dataset.velaDemoRunning === "true") {
+        let request = activeFlushRequestRef.current;
+        if (request && stateRef.current?._deckEpoch !== request.epoch) {
+          request = _demoFlushRequest(stateRef.current, true);
+        }
+        delete document.documentElement.dataset.velaDemoRunning;
+        if (request?.state) requestPostDemoFlush?.(request);
+        activeFlushRequestRef.current = null;
+      }
     };
   }, []);
 
@@ -14531,6 +15528,26 @@ function VelaDemoRunner({ appState, dispatch, demoUi }) {
     window.__velaDemoTest = {
       plan: () => getDemoPlan(),
       badges: () => DEMO_FEATURE_BADGES.map((b) => ({ ...b })),
+      deckSignature: () => _demoDeckSignature(stateRef.current),
+      deckFingerprint: () => _demoDeckFingerprint(stateRef.current),
+      holdAIActivity: () => velaBeginAIActivity(),
+      unavailableReason: (state) => getDemoUnavailableReason(state || stateRef.current),
+      runWithMalformedSnapshot: (timeScale = 0.02) => {
+        const current = stateRef.current;
+        const malformed = {
+          ...current,
+          chatMessages: { malformed: true },
+          teacherHistory: [],
+          aiWork: 0,
+          selectedSlideIndices: [1, "bad", {}],
+          collapsedSections: ["valid", null, {}],
+        };
+        window.dispatchEvent(new CustomEvent("vela-run-demo", { detail: {
+          timeScale,
+          snapshotStateForTest: malformed,
+          snapshotUiForTest: { tocCollapsed: null, viewMenu: 0, exportMenu: "", pptxExport: null, pdfExport: 0 },
+        } }));
+      },
       run: (timeScale = 0.03) => window.dispatchEvent(new CustomEvent("vela-run-demo", { detail: { timeScale } })),
       stop: () => window.dispatchEvent(new CustomEvent("vela-demo-stop")),
     };
@@ -15483,7 +16500,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
               </div>
 
               {phase === "done" && <>
-                <a href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
+                <a data-testid="pdf-export-download" href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
                   display: "block", width: "100%", padding: "12px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700,
                   background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
                   letterSpacing: 1, textAlign: "center", textDecoration: "none", boxSizing: "border-box",
@@ -15546,7 +16563,6 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
     </div>
   );
 }
-
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vector PDF Export (additional) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -20907,8 +21923,18 @@ function MergePatchDialog({ localDeck, patchDeck, onComplete }) {
 export default function App() {
   const [dark, setDark] = useState(() => typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : true);
   T = dark ? themes.dark : themes.light;
-  const [hist, dispatch] = useReducer(reducer, historyInit);
+  const [hist, rawDispatch] = useReducer(reducer, historyInit);
+  const dispatch = useCallback((action) => {
+    // Mark replacement before React processes its reducer queue. A promise can
+    // settle in the same task as LOAD; this synchronous signal closes that gap.
+    if (action && (action.type === "LOAD" || action.type === "NEW_DECK" || action.type === "RESET")) velaPrepareDeckReplacement();
+    rawDispatch(action);
+  }, []);
   const state = hist.present;
+  velaSyncDeckEpoch(state._deckEpoch);
+  const historyRef = useRef(hist);
+  historyRef.current = hist;
+  const demoUnavailableReason = getDemoUnavailableReason(state);
   const aiOk = useAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
@@ -20942,7 +21968,90 @@ export default function App() {
   const localSyncTimer = useRef(null);
   const _localSyncIncoming = useRef(false);
   const _localSyncState = useRef(null);
+  const postDemoFlushTimer = useRef(null);
+  const postDemoFlushRequest = useRef(null);
+  const postDemoFlushModes = useRef({ local: false, storage: false });
+  const flushLocalStateRef = useRef(null);
+  const flushStorageStateRef = useRef(null);
+  const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
+
+  const demoSaveLocked = () => document.documentElement.dataset.velaDemoRunning === "true";
+  const stateForPostDemoFlush = (request) => {
+    const current = _localSyncState.current;
+    if (!request?.useCurrent) return request?.state;
+    return current?._deckEpoch === request.epoch ? current : null;
+  };
+  flushLocalStateRef.current = (request, allowIncoming = false) => {
+    if (!loaded.current || demoSaveLocked() || (!allowIncoming && _localSyncIncoming.current)) return false;
+    const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
+    if (!source || !window.__velaSendDeckUpdate) return false;
+    const save = extractSave(source);
+    // Never let an empty or transient deck overwrite the local source file.
+    const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
+    if (!save.lanes?.length || !totalSlides) return false;
+    delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
+    delete save.lastDebug; delete save._bootstrap; delete save._version;
+    try {
+      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      return true;
+    } catch (error) {
+      dbg("Local save error:", error);
+      return false;
+    }
+  };
+  flushStorageStateRef.current = (request) => {
+    if (!loaded.current || demoSaveLocked()) return false;
+    const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
+    if (!source) return false;
+    const save = extractSave(source);
+    save.chatMessages = (save.chatMessages || []).map((m) => m.images ? { ...m, images: m.images.map(() => "[img]") } : m);
+    save._version = 3;
+    try {
+      saveKV(MASTER_KEY, save);
+      return true;
+    } catch (error) {
+      dbg("Storage save error:", error);
+      return false;
+    }
+  };
+  requestPostDemoFlushRef.current = (request, modes = { local: VELA_LOCAL_MODE, storage: !VELA_LOCAL_MODE }) => {
+    if (!request?.state) return false;
+    postDemoFlushRequest.current = request;
+    postDemoFlushModes.current = {
+      local: postDemoFlushModes.current.local || !!modes.local,
+      storage: postDemoFlushModes.current.storage || !!modes.storage,
+    };
+    clearTimeout(postDemoFlushTimer.current);
+    const attempt = () => {
+      if (demoSaveLocked() || (postDemoFlushModes.current.local && _localSyncIncoming.current)) {
+        postDemoFlushTimer.current = setTimeout(attempt, 100);
+        return;
+      }
+      const pendingRequest = postDemoFlushRequest.current;
+      const pendingModes = postDemoFlushModes.current;
+      postDemoFlushRequest.current = null;
+      postDemoFlushModes.current = { local: false, storage: false };
+      if (pendingModes.local) flushLocalStateRef.current?.(pendingRequest, true);
+      if (pendingModes.storage) flushStorageStateRef.current?.(pendingRequest);
+    };
+    attempt();
+    return true;
+  };
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(postDemoFlushTimer.current);
+      const pendingRequest = postDemoFlushRequest.current;
+      const pendingModes = postDemoFlushModes.current;
+      if (pendingRequest && !demoSaveLocked()) {
+        if (pendingModes.local) flushLocalStateRef.current?.(pendingRequest, true);
+        if (pendingModes.storage) flushStorageStateRef.current?.(pendingRequest);
+      }
+      postDemoFlushRequest.current = null;
+      postDemoFlushModes.current = { local: false, storage: false };
+    };
+  }, []);
 
   // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // deck-io reports every save transition through window.__velaOnSaveStatus so
@@ -21037,6 +22146,125 @@ export default function App() {
         } : null;
       },
       getVeraMode: () => _localSyncState.current?.veraMode || null,
+      restoreStartupDeck: () => {
+        if (!VELA_TEST_STARTUP_PATCH) return false;
+        const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
+        const sanitized = validateAndSanitizeDeck(raw);
+        sanitized.deckTitle = sanitizeDeckTitle(raw.deckTitle);
+        dispatch({ type: "LOAD", payload: sanitized });
+        return true;
+      },
+      loadReplacementDeckForTest: () => {
+        if (!VELA_TEST_STARTUP_PATCH) return false;
+        const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
+        raw.deckTitle = "Replacement deck sentinel";
+        raw.guidelines = "replacement epoch retained";
+        raw.branding = { ...(raw.branding || {}), accentColor: "#123456", footerLeft: "Replacement branding sentinel" };
+        const rawFirstLane = raw.lanes?.[0];
+        const rawFirstItem = rawFirstLane?.items?.[0];
+        if (rawFirstLane) rawFirstLane.title = "Replacement lane sentinel";
+        if (rawFirstItem) {
+          rawFirstItem.title = "Replacement module sentinel";
+          if (!Array.isArray(rawFirstItem.slides)) rawFirstItem.slides = [];
+          rawFirstItem.slides[0] = { ...(rawFirstItem.slides[0] || {}), blocks: [{ type: "heading", text: "REPLACEMENT CONTENT SENTINEL", size: "2xl" }] };
+          rawFirstItem.slides[1] = { ...(rawFirstItem.slides[1] || rawFirstItem.slides[0]), blocks: [{ type: "heading", text: "REPLACEMENT NAVIGATION SENTINEL", size: "2xl" }] };
+        }
+        const sanitized = validateAndSanitizeDeck(raw);
+        sanitized.deckTitle = sanitizeDeckTitle(raw.deckTitle);
+        sanitized.guidelines = "replacement epoch retained";
+        const firstItem = sanitized.lanes?.[0]?.items?.[0];
+        if (firstItem) {
+          if (!firstItem.slides?.length) firstItem.slides = [{ blocks: [] }];
+        }
+        sanitized.selectedId = firstItem?.id || null;
+        sanitized.slideIndex = 0;
+        dispatch({ type: "LOAD", payload: sanitized });
+        return true;
+      },
+      getDeckStateForTest: () => {
+        const s = _localSyncState.current;
+        const firstLane = s?.lanes?.[0];
+        const firstItem = s?.lanes?.[0]?.items?.[0];
+        let selectedItem = null;
+        for (const lane of (s?.lanes || [])) {
+          selectedItem = lane.items?.find((item) => item.id === s.selectedId) || null;
+          if (selectedItem) break;
+        }
+        return s ? {
+          deckTitle: s.deckTitle,
+          guidelines: s.guidelines,
+          firstLaneTitle: firstLane?.title || null,
+          firstItemId: firstItem?.id || null,
+          firstItemTitle: firstItem?.title || null,
+          firstBlockText: firstItem?.slides?.[0]?.blocks?.[0]?.text || null,
+          selectedBlockText: selectedItem?.slides?.[s.slideIndex]?.blocks?.[0]?.text || null,
+          brandingAccentColor: s.branding?.accentColor || null,
+          brandingFooterLeft: s.branding?.footerLeft || null,
+          epoch: s._deckEpoch,
+          selectedId: s.selectedId,
+          slideIndex: s.slideIndex,
+          fullscreen: !!s.fullscreen,
+          veraMode: s.veraMode,
+          chatLoading: s.chatLoading,
+          teacherLoading: s.teacherLoading,
+          aiWork: s.aiWork,
+          chatMessages: JSON.parse(JSON.stringify(s.chatMessages || [])),
+          teacherHistory: JSON.parse(JSON.stringify(s.teacherHistory || {})),
+        } : null;
+      },
+      setChatOpenForTest: (open) => dispatch({ type: "SET_CHAT", open: !!open }),
+      setVeraModeForTest: (mode) => dispatch({ type: "SET_VERA_MODE", mode }),
+      installDeferredAgentTransport: () => {
+        window.__velaDeferredAI?.restore?.();
+        const originalReady = window.__velaAgentReady;
+        const originalSend = window.__velaAgentSend;
+        const calls = [];
+        const control = {
+          pending: () => calls.length,
+          resolveNext: (reply) => {
+            const call = calls.shift();
+            if (!call) throw new Error("No deferred AI call is pending");
+            call.resolve(reply);
+          },
+          rejectNext: (message) => {
+            const call = calls.shift();
+            if (!call) throw new Error("No deferred AI call is pending");
+            call.reject(new Error(message || "Deferred AI failure"));
+          },
+          restore: () => {
+            window.__velaAgentReady = originalReady;
+            window.__velaAgentSend = originalSend;
+            window.__velaDeferredAI = null;
+            window.dispatchEvent(new Event("vela-agent-update"));
+          },
+        };
+        window.__velaDeferredAI = control;
+        window.__velaAgentReady = true;
+        window.__velaAgentSend = (payload) => new Promise((resolve, reject) => calls.push({ payload, resolve, reject }));
+        window.dispatchEvent(new Event("vela-agent-update"));
+        return control;
+      },
+      getDeckEpoch: () => _localSyncState.current?._deckEpoch ?? null,
+      resetDeckForTest: () => dispatch({ type: "RESET" }),
+      newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
+      getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
+      setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      capturePostDemoFlushForTest: () => {
+        const current = _localSyncState.current;
+        return current ? {
+          state: JSON.parse(JSON.stringify(extractSave(current))),
+          epoch: current._deckEpoch,
+          useCurrent: true,
+        } : null;
+      },
+      flushDemoSaveForTest: (request, modes) => requestPostDemoFlushRef.current?.(request, modes),
+      getHistoryCounts: () => ({
+        past: historyRef.current.past.length,
+        future: historyRef.current.future.length,
+      }),
+      addTeacherMessage: (key, content) => dispatch({ type: "TEACHER_MSG", key, role: "user", content }),
+      getTeacherHistory: () => JSON.parse(JSON.stringify(_localSyncState.current?.teacherHistory || {})),
+      clearTeacherHistory: (key) => dispatch({ type: "TEACHER_CLEAR", key }),
       // Drive the unified AI-working flag without a live AI backend, so the
       // vera-thinking / magic-reveal contract is assertable offline.
       setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
@@ -21051,20 +22279,11 @@ export default function App() {
     // the OLD deck via closure and would write it to the NEW file path after
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
+    clearTimeout(localSyncTimer.current);
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
-    clearTimeout(localSyncTimer.current);
-    localSyncTimer.current = setTimeout(() => {
-      if (window.__velaSendDeckUpdate) {
-        const save = extractSave(state);
-        // Safety: never write an empty deck to disk — this would wipe a real file.
-        const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
-        if (!save.lanes?.length || !totalSlides) return;
-        delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
-        delete save.lastDebug; delete save._bootstrap; delete save._version;
-        window.__velaSendDeckUpdate({ deckTitle: state.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
-      }
-    }, 600);
+    localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
+    return () => clearTimeout(localSyncTimer.current);
   }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
 
   // Receive deck updates from local server (file → browser)
@@ -21438,19 +22657,11 @@ export default function App() {
   // persisting across deck switches and app restarts.
   const saveTimer = useRef(null);
   useEffect(() => {
+    clearTimeout(saveTimer.current);
     if (!loaded.current || VELA_LOCAL_MODE ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const save = extractSave(state);
-        // Strip large binary data from chat messages
-        save.chatMessages = (save.chatMessages || []).map((m) => m.images ? { ...m, images: m.images.map(() => "[img]") } : m);
-        save._version = 3;
-        await saveKV(MASTER_KEY, save);
-        dbg("Storage: saved v3, lanes:", save.lanes?.length, "items:", allItemIds(save.lanes).length);
-      } catch (err) { dbg("Save error:", err); }
-    }, 1500);
+    saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
+    return () => clearTimeout(saveTimer.current);
   }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
 
   // Sync browser tab title with deck title
@@ -21690,7 +22901,7 @@ export default function App() {
           </div>
           {velaIsArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <CostBadge /></>}
-          <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run product tour">{"🎬"}</button>
+          <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
@@ -21766,7 +22977,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
         </div>}
 
         {/* TOC toggle */}
@@ -21883,7 +23094,7 @@ export default function App() {
         }
       }} />}
       {devTestPanels}
-      {!VELA_PRESENTATION_MODE && <VelaDemoRunner appState={state} dispatch={dispatch} demoUi={{ tocCollapsed, setTocCollapsed, viewMenu, setViewMenu, exportMenu, setExportMenu, pptxExport, setPptxExport, pdfExport, setPdfExport }} />}
+      {!VELA_PRESENTATION_MODE && <VelaDemoRunner appState={state} dispatch={dispatch} requestPostDemoFlush={(request) => requestPostDemoFlushRef.current?.(request)} demoUi={{ tocCollapsed, setTocCollapsed, viewMenu, setViewMenu, exportMenu, setExportMenu, pptxExport, setPptxExport, pdfExport, setPdfExport }} />}
     </div>
     </IconPickerContext.Provider>
   );

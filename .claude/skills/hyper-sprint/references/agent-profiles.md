@@ -21,7 +21,7 @@ for the Vela commands and measured baselines.
 | Repository path | `/d/Agentia/vela-slides` |
 | Repository file system | `fuseblk` |
 | Home file system | `overlayfs` |
-| File `.env.vela-dev` | Present |
+| File `.hyper-sprint/copilot-env.sh` | Present |
 | Directory `/home/agent/.local/share/vela-slides/npm/node_modules` | Present |
 | `$HTTPS_PROXY` | Set |
 
@@ -29,7 +29,7 @@ Use this probe:
 
 ```bash
 [ "$HOME" = /home/agent ] \
-  && [ -f .env.vela-dev ] \
+  && [ -f .hyper-sprint/copilot-env.sh ] \
   && [ -d /home/agent/.local/share/vela-slides/npm/node_modules/playwright ] \
   && [ "$(stat -f -c %T .)" = fuseblk ] \
   && echo copilot-cli-sandbox || echo "profile: unknown"
@@ -37,7 +37,7 @@ Use this probe:
 
 ### Package and browser rules
 
-- Source `.env.vela-dev` before a Node or browser command.
+- Source `.hyper-sprint/copilot-env.sh` before a Node or browser command.
 - Keep installed packages under `/home/agent`. Do not put a `node_modules`
   directory on `/d`.
 - The mounted drive does not support the required symbolic link. `NODE_PATH`
@@ -46,7 +46,9 @@ Use this probe:
   use `NODE_PATH`.
 - `CHROME_PATH` selects the browser in
   `/home/agent/.local/share/vela-slides/browsers`.
-- `VRUN_WAIT=25` is required because Vela permits a 20-second burst job.
+- `VRUN_WAIT=30` is required: Vela permits a 20-second burst job plus a
+  5-second recovery budget (25 seconds combined server-side); the client
+  wait must stay above that combined budget, not equal to it.
 - Do not run `playwright install`.
 - Use one warm browser for a hunt. Do not start one browser for each test.
 - Do not run `concat.py` before `burst-boot.sh`. The boot script runs it.

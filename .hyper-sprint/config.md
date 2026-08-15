@@ -4,7 +4,7 @@ Repo facts for the `hyper-sprint` skill (any agent stack). Loaded in Phase 0; ho
 
 - **Branch:** use the base branch you're handed (default `main`). Only the sprint branch + its base are in scope.
 - **Build:** `python3 tools/vela-dev/scripts/concat.py` · **Test:** `python3 tests/test_vela.py` (keep green). Baseline may show ~2 pre-existing failures until node deps are provisioned — record them, don't chase.
-- **Copilot CLI sandbox:** source `.env.vela-dev`, then use
+- **Copilot CLI sandbox:** source `.hyper-sprint/copilot-env.sh`, then use
   `.hyper-sprint/config-copilot-cli-sandbox.md`. Its `burst-boot.sh` call already
   runs the build, so do not run `concat.py` before that call.
 - **Provisioning:** `jsdom` is a **declared** devDependency (`package.json`) needed by two node test suites — `npm i jsdom` is fine (not a new package). Vendored, **never install:** react / react-dom / lucide-react / @babel/standalone (at `vela-neutralino/resources/vendor/`).

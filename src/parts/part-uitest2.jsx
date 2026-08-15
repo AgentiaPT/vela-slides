@@ -1295,7 +1295,109 @@ uiSuite("AI-working animation (CR5)", [
   }},
 ], { setup: _cr5Setup });
 
+// ── AI editor request ownership ─────────────────────────────────────
+const _editorOwnershipSetup = async () => {
+  if (!_hooks().restoreStartupDeck?.()) throw new Error("startup deck fixture missing");
+  await _cr5Setup();
+};
+const _openQuickEditor = async () => {
+  const open = await _waitFor(() => {
+    const button = _$("[data-testid='quick-edit-open']");
+    return button && !button.disabled ? button : null;
+  }, 2000);
+  _click(open);
+  return _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+};
+const _openAiSlideAdder = async () => {
+  _click(await _waitFor(() => _$("[data-testid='add-slide-menu-open']"), 2000));
+  _click(await _waitFor(() => _$("[data-testid='ai-slide-adder-open']"), 1500));
+  return _waitFor(() => _$("[data-testid='ai-slide-adder-input']"), 1500);
+};
+uiSuite("AI editor request ownership", [
+  { name: "Old Quick Edit completion cannot unlock or change the replacement editor", fn: async () => {
+    const hooks = _hooks();
+    const transport = hooks.installDeferredAgentTransport?.();
+    if (!transport || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) throw new Error("editor ownership test hooks missing");
+    try {
+      const oldInput = await _openQuickEditor();
+      _type(oldInput, "old quick edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+
+      hooks.loadReplacementDeckForTest();
+      await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1500);
+      await _wait(80);
+      const newInput = await _openQuickEditor();
+      _type(newInput, "new quick edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 2, 1500);
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD QUICK RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      await _wait(120);
+      const during = hooks.getDeckStateForTest();
+      if (!_$("[data-testid='quick-edit-loading']") || _$("[data-testid='quick-edit-input']")) {
+        throw new Error("old Quick Edit completion unlocked the new request");
+      }
+      if (during.firstBlockText !== "REPLACEMENT CONTENT SENTINEL") {
+        throw new Error(`old Quick Edit changed the replacement deck: ${JSON.stringify(during)}`);
+      }
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "NEW QUICK RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _waitFor(() => hooks.getDeckStateForTest().firstBlockText === "NEW QUICK RESULT", 2000);
+    } finally {
+      while (transport.pending()) transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "cleanup", size: "2xl" }] }));
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Canceled inline slide completion cannot unlock or change a newer adder", fn: async () => {
+    const hooks = _hooks();
+    const transport = hooks.installDeferredAgentTransport?.();
+    if (!transport || !hooks.getDeckStateForTest) throw new Error("inline adder ownership test hooks missing");
+    try {
+      const rowsBefore = _$$("[data-testid='toc-slide-row']").length;
+      const oldInput = await _openAiSlideAdder();
+      _type(oldInput, "old inline slide");
+      _click("[data-testid='ai-slide-adder-generate']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+
+      _click("[data-testid='ai-slide-adder-close']");
+      await _waitFor(() => !_$("[data-testid='ai-slide-adder-input']"), 1500);
+      const newInput = await _openAiSlideAdder();
+      _type(newInput, "new inline slide");
+      _click("[data-testid='ai-slide-adder-generate']");
+      await _waitFor(() => transport.pending() === 2, 1500);
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD INLINE ADD RESULT", size: "2xl" }], duration: 30 }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      await _wait(120);
+      const currentInput = _$("[data-testid='ai-slide-adder-input']");
+      if (!currentInput?.disabled || _$$("[data-testid='toc-slide-row']").length !== rowsBefore) {
+        throw new Error("old inline slide completion unlocked or inserted into the new editor");
+      }
+
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "NEW INLINE ADD RESULT", size: "2xl" }], duration: 30 }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _waitFor(() => _$$("[data-testid='toc-slide-row']").length === rowsBefore + 1, 2000);
+      await _waitFor(() => hooks.getDeckStateForTest().selectedBlockText === "NEW INLINE ADD RESULT", 2000);
+    } finally {
+      while (transport.pending()) transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "cleanup", size: "2xl" }], duration: 30 }));
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+], { setup: _editorOwnershipSetup });
+
 // ── Product Tour Suite ───────────────────────────────────────────────
+const _productTourSetup = async () => {
+  if (!_hooks().restoreStartupDeck?.()) throw new Error("startup deck fixture missing");
+  await _waitFor(() => window.__velaDemoTest?.deckFingerprint?.() === DEMO_DECK_FINGERPRINT, 3000);
+  await _cr5Setup();
+};
 uiSuite("Product Tour", [
   { name: "Scene order, feature count, badges, and duration stay inside budget", fn: async () => {
     const api = window.__velaDemoTest;
@@ -1335,12 +1437,387 @@ uiSuite("Product Tour", [
       if (!/^1[3-9]\.\d+$/.test(badge.version) || Number(badge.version) <= 13.0) throw new Error(`badge version not post-13.0: ${badge.version}`);
     }
   }},
+  { name: "Tour blocks active AI work and unsupported decks", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api?.unavailableReason || !hooks.setAIWork) throw new Error("demo preflight test hook missing");
+    if (api.unavailableReason()) throw new Error(`bundled demo deck rejected: ${api.unavailableReason()} signature=${api.deckSignature?.()} fingerprint=${api.deckFingerprint?.()}`);
+    if (api.deckFingerprint?.() !== DEMO_DECK_FINGERPRINT) throw new Error(`sanitized startup fingerprint changed: ${api.deckFingerprint?.()}`);
+    if (!api.unavailableReason({ lanes: [], chatLoading: false, aiWork: null }).includes("bundled Vela demo deck")) {
+      throw new Error("unsupported deck was not rejected");
+    }
+    const hostileReason = api.unavailableReason({ lanes: [null, { items: [null, { title: [], slides: {} }] }], chatLoading: false, aiWork: null });
+    if (!hostileReason.includes("bundled Vela demo deck")) throw new Error(`hostile sanitized state was not rejected safely: ${hostileReason}`);
+    hooks.setAIWork({ itemId: "*", slideIdx: 0 });
+    await _wait(50);
+    const button = _$("[data-testid='run-demo']");
+    if (!button?.disabled) throw new Error("tour button stayed enabled during AI work");
+    const blocked = new Promise((resolve) => window.addEventListener("vela-demo-blocked", (event) => resolve(event.detail), { once: true }));
+    api.run(0.02);
+    const detail = await Promise.race([blocked, _wait(1000).then(() => { throw new Error("tour did not report its active-AI block"); })]);
+    if (!detail.reason.includes("Wait for Vera")) throw new Error(`unexpected block reason: ${detail.reason}`);
+    if (document.documentElement.dataset.velaDemoRunning === "true" || _$("[data-testid='demo-overlay']")) {
+      throw new Error("tour started during AI work");
+    }
+    hooks.setAIWork(null);
+    await _wait(50);
+    const releaseAI1 = api.holdAIActivity?.();
+    const releaseAI2 = api.holdAIActivity?.();
+    if (typeof releaseAI1 !== "function" || typeof releaseAI2 !== "function" || !api.unavailableReason().includes("Wait for Vera")) {
+      throw new Error("shared live-AI activity did not block the tour");
+    }
+    releaseAI1();
+    releaseAI1();
+    if (!api.unavailableReason().includes("Wait for Vera")) throw new Error("AI activity lease released another operation");
+    releaseAI2();
+    const draft = document.createElement("textarea");
+    draft.value = "unsent user draft";
+    document.body.appendChild(draft);
+    if (!api.unavailableReason().includes("editor drafts")) throw new Error("unsent draft was not rejected");
+    draft.remove();
+    if (api.unavailableReason()) throw new Error(`tour stayed blocked after draft cleanup: ${api.unavailableReason()}`);
+
+    if (!hooks.injectBlocks?.([{ type: "heading", text: "Changed scene-critical content" }])) throw new Error("could not mutate the fingerprint test slide");
+    await _wait(80);
+    if (!api.unavailableReason().includes("bundled Vela demo deck")) throw new Error("scene-critical content change did not reject tour preflight");
+    if (!hooks.restoreStartupDeck()) throw new Error("could not restore startup fixture after fingerprint test");
+    await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT, 3000);
+
+    const restoreCanonical = async () => {
+      if (!hooks.restoreStartupDeck()) throw new Error("could not restore startup fixture");
+      await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT && !api.unavailableReason(), 3000);
+    };
+    const interruptWithDeckAction = async (label, action, expectedChat) => {
+      await restoreCanonical();
+      hooks.addTeacherMessage("__epoch-test", `old ${label} teacher state`);
+      await _wait(40);
+      const beforeEpoch = hooks.getDeckEpoch?.();
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error(`${label} interruption tour did not start`); })]);
+      action();
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error(`${label} interruption tour did not stop`); })]);
+      if (result.reason !== "stopped") throw new Error(`${label} interruption result: ${JSON.stringify(result)}`);
+      if (hooks.getDeckEpoch?.() !== beforeEpoch + 1) throw new Error(`${label} did not increment the private deck epoch`);
+      if (Object.keys(hooks.getTeacherHistory?.() || {}).length !== 0) throw new Error(`${label} restored Teacher state from the old deck`);
+      const chat = hooks.getChatState?.();
+      if (expectedChat && !chat?.messages?.some((message) => message.content?.includes(expectedChat))) {
+        throw new Error(`${label} restored chat state from the old deck`);
+      }
+      if (document.documentElement.dataset.velaDemoRunning === "true" || window.__velaDemoAI) throw new Error(`${label} left the tour lock or AI mock active`);
+    };
+    await interruptWithDeckAction("LOAD", () => hooks.restoreStartupDeck(), "Deck imported successfully");
+    await interruptWithDeckAction("NEW_DECK", () => hooks.newDeckForTest?.(), "Setting sail on a new deck");
+    if (!hooks.getChatState?.()?.open) throw new Error("NEW_DECK chat state was overwritten by tour cleanup");
+    await interruptWithDeckAction("RESET", () => hooks.resetDeckForTest?.(), "Welcome aboard Vela");
+
+    await restoreCanonical();
+    if (typeof api.runWithMalformedSnapshot !== "function") throw new Error("malformed snapshot test hook missing");
+    const malformedStarted = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+    const malformedDone = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+    api.runWithMalformedSnapshot();
+    await Promise.race([malformedStarted, _wait(1500).then(() => { throw new Error("malformed-state tour did not start"); })]);
+    api.stop();
+    const malformedResult = await Promise.race([malformedDone, _wait(5000).then(() => { throw new Error("malformed-state tour did not stop"); })]);
+    if (malformedResult.reason !== "stopped") throw new Error(`malformed-state result: ${JSON.stringify(malformedResult)}`);
+    if (document.documentElement.dataset.velaDemoRunning === "true" || window.__velaDemoAI) {
+      throw new Error("malformed snapshot or UI state left the tour lock active");
+    }
+    await restoreCanonical();
+  }},
+  { name: "Post-unlock flush saves restored state and the replacement deck", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest) throw new Error("post-demo flush hooks missing");
+    if (!hooks.restoreStartupDeck?.()) throw new Error("startup fixture missing");
+    await _waitFor(() => api.deckFingerprint() === DEMO_DECK_FINGERPRINT, 3000);
+
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const storageWrites = [];
+    const localWrites = [];
+    window.storage = {
+      ...(originalStorage || {}),
+      set: async (key, value) => { storageWrites.push({ key, value: JSON.parse(value) }); },
+      delete: async () => {},
+    };
+    window.__velaSendDeckUpdate = (payload) => { localWrites.push(JSON.parse(JSON.stringify(payload))); };
+    try {
+      hooks.setGuidelinesForTest("saved before tour");
+      await _wait(50);
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error("save-flush tour did not start"); })]);
+      api.stop();
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error("save-flush tour did not stop"); })]);
+      if (result.reason !== "stopped") throw new Error(`save-flush result: ${JSON.stringify(result)}`);
+      await _waitFor(() => storageWrites.length === 1, 2000);
+      if (storageWrites[0].value.guidelines !== "saved before tour") throw new Error("actual tour unlock did not save restored browser state");
+      if (localWrites.length) throw new Error("artifact-mode tour used the local save sink");
+
+      storageWrites.length = 0;
+      localWrites.length = 0;
+      const request = hooks.capturePostDemoFlushForTest();
+      document.documentElement.dataset.velaDemoRunning = "true";
+      hooks.setGuidelinesForTest("tour transient");
+      hooks.flushDemoSaveForTest(request, { local: true, storage: false });
+      await _wait(180);
+      if (storageWrites.length || localWrites.length) throw new Error("save sink ran while the tour lock was active");
+      hooks.setGuidelinesForTest("saved before tour");
+      delete document.documentElement.dataset.velaDemoRunning;
+      await _waitFor(() => localWrites.length === 1, 2000);
+      if (storageWrites.length || localWrites[0].guidelines !== "saved before tour") {
+        throw new Error("post-unlock flush persisted tour-generated state");
+      }
+
+      storageWrites.length = 0;
+      localWrites.length = 0;
+      hooks.restoreStartupDeck();
+      await _wait(50);
+      hooks.setGuidelinesForTest("replacement deck state");
+      await _wait(50);
+      const replacement = hooks.capturePostDemoFlushForTest();
+      document.documentElement.dataset.velaDemoRunning = "true";
+      hooks.flushDemoSaveForTest(replacement, { local: true, storage: true });
+      delete document.documentElement.dataset.velaDemoRunning;
+      await _waitFor(() => storageWrites.length === 1 && localWrites.length === 1, 2000);
+      if (storageWrites[0].value.deckTitle !== "Vela Slides — Live Demo" || storageWrites[0].value.guidelines !== "replacement deck state"
+          || localWrites[0].guidelines !== "replacement deck state") {
+        throw new Error("replacement deck state did not flush after unlock");
+      }
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      delete document.documentElement.dataset.velaDemoRunning;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Deck replacement stops the live tour and flushes only replacement state", fn: async () => {
+    const api = window.__velaDemoTest;
+    const hooks = _hooks();
+    if (!api || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) throw new Error("replacement-deck test hooks missing");
+    const originalStorage = window.storage;
+    const storageWrites = [];
+    window.storage = {
+      ...(originalStorage || {}),
+      set: async (key, value) => { storageWrites.push({ key, value: JSON.parse(value) }); },
+      delete: async () => {},
+    };
+    try {
+      const beforeEpoch = hooks.getDeckEpoch();
+      const started = new Promise((resolve) => window.addEventListener("vela-demo-scene", resolve, { once: true }));
+      const done = new Promise((resolve) => window.addEventListener("vela-demo-complete", (event) => resolve(event.detail), { once: true }));
+      api.run(0.02);
+      await Promise.race([started, _wait(1500).then(() => { throw new Error("replacement tour did not start"); })]);
+      if (!hooks.loadReplacementDeckForTest()) throw new Error("replacement deck did not load");
+      const result = await Promise.race([done, _wait(5000).then(() => { throw new Error("replacement tour did not finalize"); })]);
+      if (result.reason !== "stopped") throw new Error(`replacement tour result: ${JSON.stringify(result)}`);
+      await _waitFor(() => storageWrites.some((write) => write.value.deckTitle === "Replacement deck sentinel"), 2500);
+      const current = hooks.getDeckStateForTest();
+      if (current.epoch !== beforeEpoch + 1
+          || current.deckTitle !== "Replacement deck sentinel"
+          || current.guidelines !== "replacement epoch retained"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.chatLoading || current.aiWork
+          || Object.keys(current.teacherHistory || {}).length) {
+        throw new Error(`replacement state was changed by tour cleanup: ${JSON.stringify(current)}`);
+      }
+      const saved = storageWrites.find((write) => write.value.deckTitle === "Replacement deck sentinel")?.value;
+      if (saved?.guidelines !== "replacement epoch retained"
+          || saved?.lanes?.[0]?.items?.[0]?.title !== "Replacement module sentinel"
+          || saved?.lanes?.[0]?.items?.[0]?.slides?.[0]?.blocks?.[0]?.text !== "REPLACEMENT CONTENT SENTINEL") {
+        throw new Error(`replacement state was not flushed intact: ${JSON.stringify(saved)}`);
+      }
+    } finally {
+      window.storage = originalStorage;
+      delete document.documentElement.dataset.velaDemoRunning;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "Old chat and toolbar AI results cannot change a replacement deck", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.installDeferredAgentTransport || !hooks.loadReplacementDeckForTest || !hooks.getDeckStateForTest) {
+      throw new Error("deferred AI test hooks missing");
+    }
+    const transport = hooks.installDeferredAgentTransport();
+    const assertReplacement = (label) => {
+      const current = hooks.getDeckStateForTest();
+      if (current.deckTitle !== "Replacement deck sentinel"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.chatLoading || current.aiWork
+          || current.chatMessages.some((message) => /OLD (CHAT|FINAL|TOOLBAR)/.test(message.content || ""))) {
+        throw new Error(`${label} changed replacement state: ${JSON.stringify(current)}`);
+      }
+    };
+    try {
+      hooks.setChatOpenForTest(true);
+      const chatInput = await _waitFor(() => _$("[data-testid='vera-chat-input']"), 1500);
+      _type(chatInput, "old epoch chat request");
+      _click("[data-testid='vera-chat-send']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+      hooks.loadReplacementDeckForTest();
+      transport.resolveNext(JSON.stringify({ message: "OLD CHAT TOOL", tool_calls: [{ tool: "clear_all", input: {} }] }));
+      await _waitFor(() => transport.pending() === 1, 1500);
+      transport.resolveNext(JSON.stringify({ message: "OLD FINAL", tool_calls: [] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _wait(120);
+      assertReplacement("old chat result");
+
+      const oldEpoch = hooks.getDeckStateForTest().epoch;
+      hooks.restoreStartupDeck();
+      hooks.setChatOpenForTest(false);
+      // The deck-epoch reset effect closes any stale editor a moment after
+      // restoreStartupDeck(). Wait for the new epoch before opening Quick
+      // Edit, or this click can race the old DOM and hit a closing button.
+      await _waitFor(() => hooks.getDeckStateForTest().epoch === oldEpoch + 1, 1500);
+      const quickOpen = await _waitFor(() => {
+        const button = _$("[data-testid='quick-edit-open']");
+        return button && !button.disabled ? button : null;
+      }, 1500);
+      _click(quickOpen);
+      const quickInput = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+      _type(quickInput, "old toolbar edit");
+      _click("[data-testid='quick-edit-apply']");
+      await _waitFor(() => transport.pending() === 1, 1500);
+      hooks.loadReplacementDeckForTest();
+      transport.resolveNext(JSON.stringify({ blocks: [{ type: "heading", text: "OLD TOOLBAR RESULT", size: "2xl" }] }));
+      await _waitFor(() => transport.pending() === 0, 1500);
+      await _wait(120);
+      assertReplacement("old toolbar result");
+    } finally {
+      // This test opens the Quick Edit editor. A prior version left it open on
+      // exit, so the next suite's Product Tour preflight saw an open draft and
+      // blocked the tour, timing out later tests. Send the real Escape path the
+      // control already supports so no open editor leaks into later tests.
+      const leakedInput = _$("[data-testid='quick-edit-input']");
+      if (leakedInput) {
+        leakedInput.focus();
+        leakedInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1500).catch(() => {});
+      }
+      transport.restore();
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+    // Regression: an open Quick Edit draft here would block the Product Tour
+    // preflight for every later test in this suite. Fails without the cleanup above.
+    if (_$("[data-testid='quick-edit-input']")) throw new Error("quick-edit-input leaked past toolbar test cleanup");
+  }},
+  { name: "Old Teacher stream cannot change a replacement deck", fn: async () => {
+    const hooks = _hooks();
+    const api = window.__velaDemoTest;
+    const originalFetch = window.fetch;
+    let resolveFetch = null;
+    let oldWork = null;
+    let fetchSettled = false;
+    const settleFetch = (text) => {
+      if (typeof resolveFetch !== "function" || fetchSettled) return false;
+      fetchSettled = true;
+      const encoder = new TextEncoder();
+      let readCount = 0;
+      resolveFetch({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => readCount++ === 0
+              ? { done: false, value: encoder.encode(`data: ${JSON.stringify({ type: "content_block_delta", delta: { text } })}\n\n`) }
+              : { done: true },
+          }),
+        },
+      });
+      return true;
+    };
+    try {
+      const deckAEpochBefore = hooks.getDeckStateForTest?.().epoch;
+      if (!hooks.restoreStartupDeck?.()) throw new Error("could not restore deck A");
+      await _waitFor(() => {
+        const current = hooks.getDeckStateForTest?.();
+        return current?.epoch === deckAEpochBefore + 1 && current.deckTitle === "Vela Slides — Live Demo";
+      }, 1500);
+      if (!hooks.injectStudyNotes(null)) throw new Error("could not remove authored study notes");
+      await _wait(80);
+      window.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+      document.activeElement?.blur?.();
+      _key("f");
+      const studentToggle = await _waitFor(() => _$("[data-testid='student-toggle']"), 3000);
+      _click(studentToggle);
+      await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 3000);
+      const sendQuestion = await _waitFor(() => typeof window.__velaTeacherEpochTest === "function" ? window.__velaTeacherEpochTest : null, 1500);
+      const oldEpoch = hooks.getDeckStateForTest().epoch;
+      oldWork = sendQuestion("old epoch Teacher question");
+      await _waitFor(() => typeof resolveFetch === "function", 2000);
+      await _waitFor(() => {
+        const current = hooks.getDeckStateForTest();
+        return current.teacherLoading && JSON.stringify(current.teacherHistory).includes("old epoch Teacher question");
+      }, 1500);
+      if (!hooks.loadReplacementDeckForTest()) throw new Error("replacement deck did not load");
+      await _waitFor(() => hooks.getDeckStateForTest().epoch === oldEpoch + 1, 1500);
+      settleFetch("OLD TEACHER RESULT\n\n---QUESTIONS---\n1. OLD TEACHER QUESTION?");
+      await Promise.race([oldWork, _wait(2000).then(() => { throw new Error("old Teacher callback did not complete"); })]);
+      await _wait(80);
+      const current = hooks.getDeckStateForTest();
+      const staleTeacherState = JSON.stringify(current.teacherHistory);
+      if (current.deckTitle !== "Replacement deck sentinel"
+          || current.guidelines !== "replacement epoch retained"
+          || current.firstLaneTitle !== "Replacement lane sentinel"
+          || current.firstItemTitle !== "Replacement module sentinel"
+          || current.firstBlockText !== "REPLACEMENT CONTENT SENTINEL"
+          || current.brandingAccentColor !== "#123456"
+          || current.brandingFooterLeft !== "Replacement branding sentinel"
+          || current.selectedId !== current.firstItemId
+          || current.slideIndex !== 0
+          || current.fullscreen
+          || current.veraMode !== "editor"
+          || current.teacherLoading
+          || current.chatLoading
+          || current.aiWork
+          || Object.keys(current.teacherHistory || {}).length
+          || staleTeacherState.includes("OLD TEACHER RESULT")
+          || staleTeacherState.includes("OLD TEACHER QUESTION")) {
+        throw new Error(`old Teacher stream changed replacement state: ${JSON.stringify(current)}`);
+      }
+      if (api?.unavailableReason?.()?.includes("Wait for Vera")) throw new Error("old Teacher work left an AI activity indicator");
+      const rows = await _waitFor(() => {
+        const found = _$$("[data-testid='toc-slide-row']");
+        return found.length > 1 ? found : null;
+      }, 2000);
+      _click(rows[1]);
+      await _waitFor(() => {
+        const next = hooks.getDeckStateForTest();
+        return next.selectedId === current.firstItemId
+          && next.slideIndex === 1
+          && next.selectedBlockText === "REPLACEMENT NAVIGATION SENTINEL";
+      }, 1500);
+    } finally {
+      settleFetch("");
+      if (oldWork) await Promise.race([oldWork, _wait(500)]).catch(() => {});
+      window.fetch = originalFetch;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+  { name: "AI activity leases release for mocked API and Teacher timeout work", fn: async () => {
+    if (typeof window.__velaAILeaseTest !== "function") throw new Error("AI lease behavior hook missing");
+    const results = await window.__velaAILeaseTest();
+    const failed = results.filter((result) => !result.pass);
+    if (failed.length) throw new Error(`AI lease probes failed: ${JSON.stringify(failed)}`);
+    if (results.length !== 3) throw new Error(`unexpected AI lease probe count: ${results.length}`);
+  }},
   { name: "Fast tour reaches every showcased state and restores the editor", fn: async () => {
     const api = window.__velaDemoTest;
     const hooks = _hooks();
     if (!api || !hooks.getSelection || !hooks.getChatState) throw new Error("demo test hook missing");
     const before = hooks.getSelection();
     const chatBefore = hooks.getChatState();
+    const historyBefore = hooks.getHistoryCounts?.();
+    hooks.addTeacherMessage?.("__demo-test", "Keep this teacher message");
+    const teacherBefore = hooks.getTeacherHistory?.();
     const scenes = [], cues = {};
     const onScene = (event) => scenes.push(event.detail.title);
     const onCue = (event) => {
@@ -1370,6 +1847,7 @@ uiSuite("Product Tour", [
         student: () => hooks.getVeraMode?.() === "student",
         presenter: () => !!_$("[data-testid='presenter-view']"),
         "ai-editing": () => document.body.textContent.includes("Improve") || document.body.textContent.includes("Variants"),
+        "batch-edit": () => !!_$("[data-testid='batch-edit-panel']"),
         vera: () => {
           const trace = _$("[data-testid='vera-tool-trace'][data-tool-name='deck_stats']");
           return !!trace && _$$("[data-testid='vera-chat-response']").some((r) => r.textContent?.includes("I checked the live deck structure"));
@@ -1377,7 +1855,10 @@ uiSuite("Product Tour", [
         cli: () => !!_$("[data-block-type='code']"),
         desktop: () => !!_$("[data-block-type='callout']"),
         "pdf-export": () => !!_$("[data-testid='pdf-export-preview']") && !_$("[data-testid='pdf-export-download']"),
-        "pptx-export": () => !!_$("[data-testid='pptx-export-preview']") && !_$("[data-testid='pptx-export-done']"),
+        // The scene ends during export rendering. The harness proves the exact
+        // UI boundary: a preview exists and the actionable download anchor does
+        // not. It does not claim to observe browser downloads that no control can start.
+        "pptx-export": () => !!_$("[data-testid='pptx-export-preview']") && !_$("[data-testid='pptx-export-download']"),
       };
       cues[name] = checks[name] ? checks[name]() : false;
     };
@@ -1392,14 +1873,19 @@ uiSuite("Product Tour", [
     if (result.mockAI?.stepCalls !== 2 || result.mockAI?.liveCalls !== 0) throw new Error(`demo AI calls: ${JSON.stringify(result.mockAI)}`);
     const plan = api.plan();
     if (JSON.stringify(scenes) !== JSON.stringify(plan.titles)) throw new Error(`observed scene order: ${JSON.stringify(scenes)}`);
-    const expectedCues = ["outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery", "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "vera", "cli", "desktop", "pdf-export", "pptx-export"];
+    const expectedCues = ["outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery", "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "batch-edit", "vera", "cli", "desktop", "pdf-export", "pptx-export"];
     for (const cue of expectedCues) if (!cues[cue]) throw new Error(`showcase state not reached: ${cue}`);
     const after = hooks.getSelection();
     if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
     const chatAfter = hooks.getChatState();
     if (JSON.stringify(chatAfter) !== JSON.stringify(chatBefore)) throw new Error("chat state not restored");
+    const historyAfter = hooks.getHistoryCounts?.();
+    if (JSON.stringify(historyAfter) !== JSON.stringify(historyBefore)) throw new Error(`undo history changed: before=${JSON.stringify(historyBefore)} after=${JSON.stringify(historyAfter)}`);
+    const teacherAfter = hooks.getTeacherHistory?.();
+    if (JSON.stringify(teacherAfter) !== JSON.stringify(teacherBefore)) throw new Error("teacher history not restored");
+    hooks.clearTeacherHistory?.("__demo-test");
     if (window.__velaDemoAI) throw new Error("demo AI mock was not removed");
-    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='branding-panel']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
         || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("tour left a transient surface open");
   }},
   { name: "Stop cancels the active scene and restores the prior state", fn: async () => {
@@ -1426,9 +1912,11 @@ uiSuite("Product Tour", [
     const after = hooks.getSelection();
     if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error(`selection not restored after stop: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
     if (!_$("header")) throw new Error("editor header not restored");
-    const brandBtn = _$("[data-testid='brand-toggle']");
-    if (brandBtn && getComputedStyle(brandBtn).backgroundColor !== "rgba(0, 0, 0, 0)") throw new Error("stop left the branding panel open");
-    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
+    await _waitFor(() => {
+      const brandBtn = _$("[data-testid='brand-toggle']");
+      return !_$("[data-testid='branding-panel']") && (!brandBtn || getComputedStyle(brandBtn).backgroundColor === "rgba(0, 0, 0, 0)");
+    }, 1000).catch(() => { throw new Error("stop left the branding panel open"); });
+    if (_$("[data-testid='demo-overlay']") || _$("[data-testid='branding-panel']") || _$("[data-testid='gallery-close']") || _$("[data-testid='presenter-view']")
         || _$("[data-testid='pptx-export-modal']") || _$("[data-testid='pdf-export-modal']") || _$("[contenteditable='true']")) throw new Error("stop left a transient surface open");
   }},
   { name: "Callout position: target-scene card shows no initial corner jump; centered scenes render at once", fn: async () => {
@@ -1495,7 +1983,7 @@ uiSuite("Product Tour", [
       if (centeredImmediate[title] !== true) throw new Error(`${title}: centered scene did not render immediately`);
     }
   }},
-], { setup: _selectFirstModule });
+], { setup: _productTourSetup });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

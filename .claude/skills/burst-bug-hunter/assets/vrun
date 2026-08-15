@@ -27,7 +27,10 @@ esac
 
 # Client wait is bounded to a few seconds over the server's job cap (VRUN_WAIT, default
 # 15s). The server ALWAYS writes a result within its JOB_TIMEOUT_MS (~8s) even for a
-# hung burst, so a call never blocks longer than this. Never 180s.
+# hung burst, so THIS job's own call never blocks longer than this. A job queued right
+# behind one that just timed out may also wait on the server's bounded recovery budget
+# (recoverBudgetMs, default 5s) — repo configs must keep jobTimeoutMs + recoverBudgetMs
+# comfortably under VRUN_WAIT. Never 180s.
 WAIT_ITERS=$(( ${VRUN_WAIT:-15} * 5 ))
 for _ in $(seq 1 "$WAIT_ITERS"); do
   if [ -f "$OUTBOX/$id.json" ]; then cat "$OUTBOX/$id.json"; rm -f "$OUTBOX/$id.json"; exit 0; fi

@@ -1422,4 +1422,3 @@ uiSuite("Block item reorder (▲▼) — v13.19", [
     await _wait(80);
   }},
 ], { setup: _selectFirstModule });
-

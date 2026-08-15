@@ -11,7 +11,7 @@ Usage:
 Exit code 0 = all pass, 1 = failures.
 """
 
-import sys, os, json, re, subprocess, tempfile, shutil, copy, time
+import sys, os, json, re, subprocess, tempfile, shutil, copy, time, runpy
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")
@@ -555,6 +555,8 @@ def test_security():
         ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
         ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
         ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
+        ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),
+        ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
@@ -1439,7 +1441,7 @@ def test_product_tour():
         fail("Product tour export-start wiring")
 
     engine = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
-    step_region = engine.split("async function callVeraStep", 1)[-1].split("// ━━━ SSE", 1)[0]
+    step_region = engine.split("async function callVeraStep", 1)[-1].split("// VELA:DEV-ONLY:BEGIN", 1)[0]
     mock_guard = 'document.documentElement.dataset.velaDemoRunning === "true"' in step_region
     mock_pos = step_region.find("window.__velaDemoAI")
     live_pos = step_region.find("callClaudeAPI(")
@@ -1454,6 +1456,17 @@ def test_product_tour():
         ok("Product tour Vera turn is deterministic and cannot reach live AI")
     else:
         fail("Product tour mock AI isolation")
+
+    lease_test_name = "AI activity leases release for mocked API and Teacher timeout work"
+    lease_test_fenced = (
+        "// VELA:DEV-ONLY:BEGIN\n// Exercise the real shared lease wrappers" in engine
+        and "window.__velaAILeaseTest = velaRunAILeaseTests;" in engine
+        and lease_test_name in ui
+    )
+    if lease_test_fenced:
+        ok("Mocked AI lease behavior is covered by the DEV-only real-browser test surface")
+    else:
+        fail("Mocked AI lease behavior test surface")
 
     vera_idx = expected.index("Work with Vera")
     cli_idx = expected.index("Vela CLI & Skill")
@@ -1474,16 +1487,60 @@ def test_product_tour():
     cleanup_contract = all(token in demo for token in [
         "_demoInstallMockAI()",
         "_demoRemoveMockAI()",
-        "RESTORE_CHAT_STATE",
+        "RESTORE_DEMO_STATE",
         "mockAI: mockStats",
         "_demoCloseBrandingPanel()",
         "_demoCloseEditToggle()",
+        "DEMO_DECK_SIGNATURE",
+        "DEMO_DECK_FINGERPRINT",
+        "_demoHasUnsavedUiDraft()",
     ])
-    persistence_guards = app.count('document.documentElement.dataset.velaDemoRunning === "true"') >= 2
-    if cleanup_contract and persistence_guards and 'case "RESTORE_CHAT_STATE"' in reducer:
+    persistence_guards = all(token in app for token in [
+        'const demoSaveLocked = () => document.documentElement.dataset.velaDemoRunning === "true"',
+        "if (!loaded.current || demoSaveLocked()",
+        "requestPostDemoFlushRef.current",
+    ])
+    if cleanup_contract and persistence_guards and 'case "RESTORE_DEMO_STATE"' in reducer:
         ok("Product tour removes its AI mock, restores chat, and suppresses saved changes")
     else:
         fail("Product tour mock cleanup and persistence guard")
+
+    save_effect = app.split("// Send deck changes to local server", 1)[-1].split("// Receive deck updates", 1)[0]
+    clear_pos = save_effect.find("clearTimeout(localSyncTimer.current)")
+    guard_pos = save_effect.find("if (!VELA_LOCAL_MODE")
+    if 0 <= clear_pos < guard_pos and "return () => clearTimeout(localSyncTimer.current)" in save_effect:
+        ok("Local sync cancels stale deck-save timers before every guard return and on cleanup")
+    else:
+        fail("Local sync stale save cancellation")
+
+    if ("requestPostDemoFlush" in app
+            and "requestPostDemoFlush?.(flushRequest)" in demo
+            and "Post-unlock flush saves restored state and the replacement deck" in ui):
+        ok("Product tour post-unlock persistence has behavioral browser coverage")
+    else:
+        fail("Product tour post-unlock persistence coverage")
+
+    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    epoch_contract = (
+        reducer.count("_deckEpoch: nextDeckEpoch(state)") == 3
+        and reducer.count("_deckEpoch: hist.present._deckEpoch") == 2
+        and "_deckEpoch, veraMode" in imports_src
+        and "lastDebug, _deckEpoch, ...rest" in imports_src
+        and "if (!sameDeck()) return false;" in demo
+        and "lockAcquired = true;" in demo
+    )
+    if epoch_contract:
+        ok("Deck epoch is private, monotonic across replacement actions, and guarded during tour restore")
+    else:
+        fail("Product tour private deck epoch contract")
+
+    fixture_region = imports_src.split("// VELA:DEV-ONLY:BEGIN", 1)[-1].split("// VELA:DEV-ONLY:END", 1)[0]
+    if ("const VELA_TEST_STARTUP_PATCH" in fixture_region
+            and "sanitized.deckTitle = sanitizeDeckTitle(raw.deckTitle);" in app
+            and "restoreStartupDeck" in app):
+        ok("Product tour tests restore the immutable pre-ingress startup fixture through real sanitization")
+    else:
+        fail("Product tour startup fixture isolation")
 
     cleanup_tokens = [
         "new AbortController()",
@@ -1503,7 +1560,7 @@ def test_product_tour():
     cue_names = set(re.findall(r'_demoCue\("([^"]+)"\)', demo))
     expected_cues = {
         "outline", "inline-edit", "flow", "data", "layouts-1", "layouts-2", "columns", "gallery",
-        "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "vera",
+        "smart-merge", "branding", "comments", "present", "student", "presenter", "ai-editing", "batch-edit", "vera",
         "cli", "desktop", "pdf-export", "pptx-export",
     }
     if expected_cues.issubset(cue_names) and len(expected_cues) >= 20 and 'uiSuite("Product Tour"' in ui:
@@ -1511,7 +1568,6 @@ def test_product_tour():
     else:
         fail("Product tour showcased-state coverage", f"cues={sorted(cue_names)}")
 
-    imports_src = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
     version_match = re.search(r'const VELA_VERSION\s*=\s*"([^"]+)"', imports_src)
     if (version_match
             and 'const DEMO_DISCLOSURE = "Vela Slides is a Dark Software Factory experiment. Code is written and reviewed by AI models.";' in demo
@@ -1557,9 +1613,10 @@ def test_product_tour():
         "run-demo", "demo-overlay", "demo-card", "demo-title", "demo-step", "demo-skip", "demo-stop", "demo-new-badge", "demo-disclosure",
         "vera-chat-input", "vera-chat-send", "vera-chat-response", "vera-tool-trace",
         "toc-tree", "gallery-close", "editor-gallery-toggle", "presenter-toggle", "presenter-view",
-        "student-toggle", "present-edit-toggle", "brand-toggle", "comments-toggle",
+        "student-toggle", "present-edit-toggle", "brand-toggle", "branding-panel", "batch-edit-panel", "comments-toggle",
         "export-pptx-menu-item", "pptx-export-modal", "pptx-export-start", "pptx-export-preview", "pptx-export-done",
-        "export-pdf-menu-item", "pdf-export-modal", "pdf-export-start", "pdf-export-preview",
+        "pptx-export-download",
+        "export-pdf-menu-item", "pdf-export-modal", "pdf-export-start", "pdf-export-preview", "pdf-export-download",
     ]
     combined = demo + app + chat + slidepanel + pdf_src + modals + list_src + slides_src
     missing_ids = [testid for testid in stable_ids if f'data-testid="{testid}"' not in combined]
@@ -1618,6 +1675,20 @@ def test_product_tour():
         ok("DEMO_MAP.md is fresh and DEMO_FEATURES passes its validation")
     else:
         fail("DEMO_MAP.md freshness/validation", (result.stdout + result.stderr).strip())
+
+    demo_map = runpy.run_path(demo_map_script)
+    if not demo_map["source_has_test_id"]("[data-testid='missing-hook']", 'data-testid={testid}', ""):
+        ok("DEMO_MAP validation rejects an unrelated dynamic data-testid attribute")
+    else:
+        fail("DEMO_MAP exact test ID validation")
+
+    mapped_features = demo_map["parse_features"](demo)
+    registered_cues = {feature["cue"] for feature in mapped_features}
+    emitted_cues = set(demo_map["parse_emitted_cues"](demo))
+    if registered_cues == emitted_cues and "batch-edit" in registered_cues:
+        ok("DEMO_MAP registers every emitted cue exactly, including batch edit")
+    else:
+        fail("DEMO_MAP emitted cue equality", f"registered={sorted(registered_cues)} emitted={sorted(emitted_cues)}")
 
 
 # ━━━ IP Hygiene Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

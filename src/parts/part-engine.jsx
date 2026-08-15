@@ -14,7 +14,31 @@ const MAX_TOTAL_TOOLS = 40;
 const MAX_MESSAGES_BYTES = 200 * 1024;
 
 // ━━━ Shared API Helpers (deduped from 3 copies) ━━━━━━━━━━━━━━━━━━━
-async function callClaudeAPI(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
+let _velaActiveAIRequests = 0;
+const velaHasActiveAIRequests = () => _velaActiveAIRequests > 0;
+const velaBeginAIActivity = () => {
+  if (typeof document !== "undefined" && document.documentElement.dataset.velaDemoRunning === "true") {
+    throw new Error("Live AI is unavailable during the product tour.");
+  }
+  _velaActiveAIRequests++;
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    _velaActiveAIRequests = Math.max(0, _velaActiveAIRequests - 1);
+  };
+};
+
+async function callClaudeAPI(sysPrompt, messages, options = {}) {
+  const endActivity = velaBeginAIActivity();
+  try {
+    return await callClaudeAPIActive(sysPrompt, messages, options);
+  } finally {
+    endActivity();
+  }
+}
+
+async function callClaudeAPIActive(sysPrompt, messages, { temperature = 0, maxTokens = 16000, timeoutMs = 30000, _callType = "chat" } = {}) {
   if (!velaAIAvailable()) throw new Error(VELA_AI_UNAVAILABLE_MSG);
   // Neutralino desktop mode: the host shell installs window.__velaAgentSend
   // that spawns a local coding CLI (Claude Code by default). We bypass the
@@ -636,20 +660,22 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
     }
   }
   messages.push({ role: "user", content: studentQuestion || "Generate study notes and follow-up questions for the current slide." });
+  let endActivity = null;
+  let timer = null;
   try {
+    endActivity = velaBeginAIActivity();
     const controller = new AbortController();
     const t0 = performance.now();
     let fullText = "";
 
     // Local mode: route through MCP channel server (no streaming)
     if (VELA_LOCAL_MODE && VELA_CHANNEL_PORT) {
-      const timer = setTimeout(() => controller.abort(), 120000);
+      timer = setTimeout(() => controller.abort(), 120000);
       const r = await fetch(`http://localhost:${VELA_CHANNEL_PORT}/action`, {
         method: "POST", headers: { "Content-Type": "application/json", "x-vela-token": VELA_CHANNEL_TOKEN },
         signal: controller.signal,
         body: JSON.stringify({ action: "complete", _silent: true, system: sysPrompt, messages, temperature: 0.3, max_tokens: 1500, _callType: "teacher" })
       });
-      clearTimeout(timer);
       if (!r.ok) throw new Error(`Channel ${r.status}`);
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || "Channel error");
@@ -658,13 +684,12 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
       velaSessionStats.add({ type: "teacher", input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_create_tokens: 0, model: "claude-code-channel", tool_calls: 0, duration_ms: Math.round(performance.now() - t0), stop_reason: "channel" });
     } else {
       // Artifact mode: direct Anthropic API with streaming
-      const timer = setTimeout(() => controller.abort(), 25000);
+      timer = setTimeout(() => controller.abort(), 25000);
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, temperature: 0.3, system: sysPrompt, messages, stream: true, cache_control: { type: "ephemeral" } })
       });
-      clearTimeout(timer);
       if (!r.ok) { const e = await r.text(); throw new Error(`API ${r.status}: ${e.slice(0, 100)}`); }
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
@@ -700,6 +725,9 @@ async function callVeraTeacher(lanes, selectedId, slideIndex, studentQuestion, c
     return { notes: null, questions, message };
   } catch (e) {
     return { notes: null, questions: [], message: "Hmm, I had trouble processing that. Try again? 🖖" };
+  } finally {
+    if (timer != null) clearTimeout(timer);
+    endActivity?.();
   }
 }
 
@@ -995,52 +1023,132 @@ async function callVeraStep(sysPrompt, messages) {
   return parseJSONResponse(text) || { message: text, tool_calls: [] };
 }
 
-// ━━━ SSE late-reply recovery for channel mode ━━━━━━━━━━━━━━━━━━━
-// When a channel request times out, listen for the late reply via SSE
-// and process tool_calls when it arrives, updating the deck.
-function setupLateReplyRecovery(lanes, branding, onUpdate, onToolCall, onFinalize) {
-  if (!VELA_LOCAL_MODE || !VELA_CHANNEL_PORT) return null;
-  let sse = null;
-  try {
-    sse = new EventSource(`http://localhost:${VELA_CHANNEL_PORT}/events`);
-  } catch { return null; }
-  const cleanup = () => { try { sse?.close(); } catch {} };
-  const timeout = setTimeout(cleanup, 120000); // max 2 min wait
-  sse.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (data.type !== "reply" || data._silent) return;
-      const text = data.text;
-      const parsed = parseJSONResponse(text);
-      if (!parsed || !parsed.tool_calls?.length) {
-        // Just a message, show it
-        if (parsed?.message && onFinalize) onFinalize(parsed.message);
-        cleanup();
-        return;
-      }
-      // Execute tool_calls on the late reply
-      const ws = { lanes: JSON.parse(JSON.stringify(lanes)), branding: JSON.parse(JSON.stringify(branding || defaultBranding)) };
-      let totalTools = 0;
-      const jumps = [];
-      for (const tc of parsed.tool_calls) {
-        totalTools++;
-        const toolName = tc.tool || tc.name;
-        const toolInput = tc.input || tc.params || tc;
-        if (onToolCall) onToolCall({ type: "calling", name: toolName, input: toolInput, index: totalTools });
-        const raw = executeTool(toolName, toolInput, ws, []);
-        const result = typeof raw === "object" && raw.text ? raw.text : raw;
-        const toolJumps = typeof raw === "object" && raw.jump ? (Array.isArray(raw.jump) ? raw.jump : [raw.jump]) : [];
-        if (toolJumps.length) jumps.push(...toolJumps);
-        if (onToolCall) onToolCall({ type: "done", name: toolName, input: toolInput, result, jump: toolJumps, index: totalTools });
-      }
-      if (onUpdate) onUpdate(JSON.parse(JSON.stringify(ws.lanes)), `🔧 Late reply: ${totalTools} tools`);
-      if (onFinalize) onFinalize(parsed.message || `Applied ${totalTools} tools from late reply. 🖖`, jumps);
-      cleanup();
-    } catch {}
+// VELA:DEV-ONLY:BEGIN
+// Exercise the real shared lease wrappers with local mocked transports. No
+// probe can reach the network because every fetch/agent transport
+// is replaced before the operation starts.
+async function velaRunAILeaseTests() {
+  const original = {
+    fetch: window.fetch,
+    agentReady: window.__velaAgentReady,
+    agentSend: window.__velaAgentSend,
+    trustGate: window.__velaTrustGate,
   };
-  sse.onerror = cleanup;
-  return cleanup;
+  const waitFor = async (check, timeout = 500) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("AI lease probe timed out");
+  };
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const cases = [];
+  const record = async (name, fn) => {
+    try { await fn(); cases.push({ name, pass: true }); }
+    catch (error) { cases.push({ name, pass: false, error: error?.message || String(error) }); }
+  };
+  try {
+    window.__velaAgentReady = true;
+    window.__velaTrustGate = null;
+
+    await record("callClaudeAPI success and error", async () => {
+      let resolveSend;
+      window.__velaAgentSend = () => new Promise((resolve) => { resolveSend = resolve; });
+      const success = callClaudeAPI("system", [{ role: "user", content: "test" }]);
+      await waitFor(() => typeof resolveSend === "function");
+      assert(velaHasActiveAIRequests(), "API success lease was not active during transport");
+      resolveSend("ok");
+      assert(await success === "ok", "API success result changed");
+      assert(!velaHasActiveAIRequests(), "API success lease did not release");
+
+      let rejectSend;
+      window.__velaAgentSend = () => new Promise((_, reject) => { rejectSend = reject; });
+      const failure = callClaudeAPI("system", [{ role: "user", content: "test" }]).catch(() => "error");
+      await waitFor(() => typeof rejectSend === "function");
+      assert(velaHasActiveAIRequests(), "API error lease was not active during transport");
+      rejectSend(new Error("mock API error"));
+      assert(await failure === "error", "API error was not observed");
+      assert(!velaHasActiveAIRequests(), "API error lease did not release");
+    });
+
+    await record("Teacher stream success and error", async () => {
+      window.__velaAgentReady = null;
+      window.__velaAgentSend = null;
+      const encoder = new TextEncoder();
+      let releaseRead;
+      window.fetch = async () => ({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => new Promise((resolve) => { releaseRead = resolve; }),
+          }),
+        },
+      });
+      const success = callVeraTeacher([], null, 0, null, []);
+      await waitFor(() => typeof releaseRead === "function");
+      assert(velaHasActiveAIRequests(), "Teacher success lease was not active during stream");
+      const firstRead = releaseRead;
+      releaseRead = null;
+      firstRead({ done: false, value: encoder.encode('data: {"type":"content_block_delta","delta":{"text":"Study note"}}\n\n') });
+      await waitFor(() => typeof releaseRead === "function");
+      const finishRead = releaseRead;
+      releaseRead = null;
+      finishRead({ done: true });
+      await success;
+      assert(!velaHasActiveAIRequests(), "Teacher success lease did not release");
+
+      let rejectFetch;
+      window.fetch = () => new Promise((_, reject) => { rejectFetch = reject; });
+      const failure = callVeraTeacher([], null, 0, null, []);
+      await waitFor(() => typeof rejectFetch === "function");
+      assert(velaHasActiveAIRequests(), "Teacher error lease was not active during transport");
+      rejectFetch(new Error("mock Teacher error"));
+      await failure;
+      assert(!velaHasActiveAIRequests(), "Teacher error lease did not release");
+    });
+
+    await record("Teacher timeout and repeated lease cleanup", async () => {
+      let timeoutAbort;
+      const originalSetTimeout = window.setTimeout;
+      window.setTimeout = (fn, ms, ...args) => {
+        if (ms === 25000 || ms === 120000) { timeoutAbort = fn; return 999999; }
+        return originalSetTimeout(fn, ms, ...args);
+      };
+      try {
+        window.fetch = (_, options) => new Promise((_, reject) => {
+          options.signal.addEventListener("abort", () => reject(new DOMException("mock timeout", "AbortError")));
+        });
+        const timed = callVeraTeacher([], null, 0, null, []);
+        await waitFor(() => typeof timeoutAbort === "function");
+        assert(velaHasActiveAIRequests(), "Teacher timeout lease was not active while waiting");
+        timeoutAbort();
+        timeoutAbort();
+        await timed;
+        assert(!velaHasActiveAIRequests(), "Teacher timeout lease did not release");
+
+        const endActivity = velaBeginAIActivity();
+        assert(velaHasActiveAIRequests(), "Repeated-cleanup lease was not acquired");
+        endActivity();
+        endActivity();
+        assert(!velaHasActiveAIRequests(), "Repeated cleanup released the lease more than once");
+      } finally {
+        window.setTimeout = originalSetTimeout;
+      }
+    });
+  } finally {
+    window.fetch = original.fetch;
+    window.__velaAgentReady = original.agentReady;
+    window.__velaAgentSend = original.agentSend;
+    window.__velaTrustGate = original.trustGate;
+  }
+  assert(!velaHasActiveAIRequests(), "AI lease count was not zero after probes");
+  return cases;
 }
+if (typeof window !== "undefined" && velaTestSurfaceEnabled()) {
+  window.__velaAILeaseTest = velaRunAILeaseTests;
+}
+// VELA:DEV-ONLY:END
 
 async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages, branding, guidelines, onToolCall, chatHistory, layoutStats) {
   try {
@@ -1174,16 +1282,9 @@ async function callVera(msg, lanes, selectedId, slideIndex, onUpdate, chatImages
     return { message: finalText, lanes: ws.lanes, branding: ws.branding, jumps: uniqueJumps, debug: `🔧 ${totalTools} tools · ${Math.ceil(messages.length / 2)} turns` };
   } catch (e) {
     dbg("Vera error:", e);
-    // Channel timeout: set up SSE late-reply recovery
     const isAbort = e.name === "AbortError" || /abort/i.test(e.message);
     if (isAbort && VELA_LOCAL_MODE && VELA_CHANNEL_PORT) {
-      dbg("Setting up SSE late-reply recovery...");
-      setupLateReplyRecovery(lanes, branding, onUpdate, onToolCall, (msg, jumps) => {
-        // onFinalize: this fires asynchronously when the late reply arrives
-        // The chat panel handles it via the dispatches below
-        if (typeof window.__velaLateReply === "function") window.__velaLateReply(msg, jumps);
-      });
-      return { message: `⏳ Claude Code is still working — reply will be applied when ready. 🖖`, lanes: null, branding: null, jumps: [], debug: `Waiting for late reply...`, _lateReplyPending: true };
+      return { message: "Error: Local AI request timed out. No late reply will be applied. 🔧🖖", lanes: null, branding: null, jumps: [], debug: "Local AI request timed out" };
     }
     return { message: `Error: ${e.message} 🔧🖖`, lanes: null, branding: null, jumps: [], debug: `Error: ${e.message}` };
   }

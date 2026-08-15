@@ -31,6 +31,15 @@ must then checkpoint and stop. The orchestrator starts a fresh agent from
 `context.md`, verifies the diff fingerprint, and reads only changed regions
 before it continues. Do not ask an over-limit agent to do more work.
 
+## Agent orchestration policy
+
+- In agent mode, the main agent orchestrates and delegates execution to narrowly scoped subagents.
+- Use a fresh subagent for every task, subgoal, and lifecycle stage. Never reuse a subagent.
+- Keep each scope relevant through its stage.
+- Replace an agent before stale or unrelated material approaches 50% of its context. Apply the same limit to the main session. Fifty-percent context rot is not acceptable.
+- [Copilot CLI/harness] Route  work by risk and complexity: MAI Code 1.1 Flash for easy, low-risk, low-complexity work; Claude Sonnet 5 for medium work; GPT-5.6 Sol for hard, complex, or high-risk work.
+- Keep wording concise.
+
 ## What is Vela?
 
 AI-native presentation engine for Claude.ai. Single-file React app (~1.3MB, 18,421 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.

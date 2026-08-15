@@ -92,6 +92,11 @@ def parse_scene_durations(demo_src):
     region = demo_src.split("function buildDemoScenes(ctx)", 1)[-1].split("const getDemoPlan", 1)[0]
     return [int(x) for x in re.findall(r"\bduration:\s*(\d+)", region)]
 
+def parse_emitted_cues(demo_src):
+    """Return every literal cue emitted by the tour, in source order."""
+    region = demo_src.split("function buildDemoScenes(ctx)", 1)[-1].split("const getDemoPlan", 1)[0]
+    return re.findall(r'_demoCue\("([^"]+)"\)', region)
+
 
 def parse_deck_slide_titles(deck_path):
     import json
@@ -122,7 +127,7 @@ def source_has_test_id(test_id, combined_src, blocks_src):
     m = re.match(r"^\[data-testid='([^']+)'\]$", test_id)
     if m:
         name = m.group(1)
-        return f'data-testid="{name}"' in combined_src or f"data-testid={{" in combined_src
+        return f'data-testid="{name}"' in combined_src
     m = re.match(r"^\[data-block-type='([^']+)'\]$", test_id)
     if m:
         # `data-block-type={b.type}` is a dynamic JSX attribute (no literal
@@ -145,6 +150,19 @@ def validate(features, demo_src, imports_src):
         problems.append("DEMO_FEATURES has duplicate ids")
     if len(features) < MIN_FEATURES:
         problems.append(f"only {len(features)} features (need >= {MIN_FEATURES})")
+
+    registered_cues = [f["cue"] for f in features]
+    emitted_cues = parse_emitted_cues(demo_src)
+    duplicate_registered = sorted({cue for cue in registered_cues if registered_cues.count(cue) > 1})
+    duplicate_emitted = sorted({cue for cue in emitted_cues if emitted_cues.count(cue) > 1})
+    if duplicate_registered:
+        problems.append(f"DEMO_FEATURES has duplicate cues: {duplicate_registered}")
+    if duplicate_emitted:
+        problems.append(f"tour emits repeated cues without registered evidence: {duplicate_emitted}")
+    if set(registered_cues) != set(emitted_cues):
+        missing = sorted(set(emitted_cues) - set(registered_cues))
+        extra = sorted(set(registered_cues) - set(emitted_cues))
+        problems.append(f"registered/emitted cue mismatch (missing registrations={missing}, un-emitted registrations={extra})")
 
     new_features = [f for f in features if f["isNew"]]
     changelog_versions = parse_changelog_versions(imports_src)

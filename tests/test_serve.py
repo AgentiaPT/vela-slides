@@ -1331,6 +1331,14 @@ class TestAgentBackendChannel(unittest.TestCase):
         self.assertTrue(json.loads(r.read())["ok"])
         conn.close()
 
+    def test_events_not_advertised(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/events")
+        r = conn.getresponse()
+        self.assertEqual(r.status, 404)
+        self.assertFalse(json.loads(r.read())["ok"])
+        conn.close()
+
     def test_action_complete(self):
         status, data, _ = self._post("/action", {
             "action": "complete", "system": "SYS",

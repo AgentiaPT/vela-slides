@@ -6,7 +6,7 @@ Use this profile with `.hyper-sprint/config.md`.
 
 ```bash
 [ "$HOME" = /home/agent ] \
-  && [ -f .env.vela-dev ] \
+  && [ -f .hyper-sprint/copilot-env.sh ] \
   && [ -d /home/agent/.local/share/vela-slides/npm/node_modules/playwright ] \
   && [ "$(stat -f -c %T .)" = fuseblk ] \
   && echo copilot-cli-sandbox || echo "profile: unknown"
@@ -14,10 +14,10 @@ Use this profile with `.hyper-sprint/config.md`.
 
 ## Required environment
 
-Source the environment file before Node or browser commands:
+Source the tracked environment bootstrap before Node or browser commands:
 
 ```bash
-. ./.env.vela-dev
+. ./.hyper-sprint/copilot-env.sh
 ```
 
 It sets these paths:
@@ -29,7 +29,8 @@ It sets these paths:
 - command tools: `/home/agent/.local/bin`
 - Chromium:
   `/home/agent/.local/share/vela-slides/browsers/chromium-1194/chrome-linux/chrome`
-- burst client wait: 25 seconds
+- burst client wait: 30 seconds (margin above the combined 25-second
+  server-side budget: 20s job cap + 5s recovery budget)
 
 Do not install packages on `/d`. The repository mount is `fuseblk`, and large
 package trees are slow on this mount. The mounted drive does not support the
@@ -69,7 +70,7 @@ The environment is pre-provisioned. Do not run `npm ci` during normal sprint
 readiness.
 
 ```bash
-. ./.env.vela-dev
+. ./.hyper-sprint/copilot-env.sh
 
 node -e "
   for (const p of ['playwright', 'jsdom', 'react', 'react-dom']) {
@@ -135,7 +136,7 @@ failure.
 Use these commands when a change requires full validation:
 
 ```bash
-. ./.env.vela-dev
+. ./.hyper-sprint/copilot-env.sh
 python3 tests/test_vela.py
 python3 tools/vela-dev/scripts/concat.py
 ```
@@ -185,7 +186,7 @@ them.
 Use the committed AI driver:
 
 ```bash
-. ./.env.vela-dev
+. ./.hyper-sprint/copilot-env.sh
 node tools/vela-dev/scripts/vela-drive.js ai \
   examples/vela-demo.vela \
   --json /home/agent/.local/share/vela-slides/ai-tests.json
