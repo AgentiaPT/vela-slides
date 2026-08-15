@@ -37,6 +37,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { launchChromium } = require('./playwright_browser.cjs');
 
 // ── Config ───────────────────────────────────────────────────────────
 const PORT = 8767; // distinct port per e2e suite (review 8765, journey 8766) so all can co-run concurrently
@@ -66,7 +67,6 @@ function resolvePlaywright() {
 function buildTestHTML() {
   fs.mkdirSync(SERVE_DIR, { recursive: true });
   console.log('Assembling deck...');
-  execSync('python3 tools/vela-dev/scripts/concat.py', { cwd: ROOT, stdio: 'pipe' });
   execSync(
     `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
@@ -298,80 +298,90 @@ async function runTests() {
   console.log('\n⛵ Vela Drag-and-Drop — e2e Reorder Tests\n');
 
   await installHelpers();
+  const fixture = await page.evaluate(() => {
+    const sections = window.__dnd.sectionOrder();
+    return {
+      sections,
+      slideModule: sections.find((title) => window.__dnd.slideRows(title).length >= 3) || null,
+    };
+  });
+  const slideModule = fixture.slideModule;
+  const [firstSection, secondSection] = fixture.sections;
 
   // Sanity: helpers see the expected structure before we touch anything.
   await test('Harness sees module slide rows + section rows', async () => {
-    const titleSlides = await slideOrder('Title');
+    const slides = slideModule ? await slideOrder(slideModule) : [];
     const sections = await sectionOrder();
-    assert(titleSlides.length === 3, `expected 3 slides in "Title", got ${titleSlides.length}: ${JSON.stringify(titleSlides)}`);
-    assert(sections.includes('Data & Metrics') && sections.includes('Code & Visual'),
-      `expected named sections present, got ${JSON.stringify(sections)}`);
+    assert(slideModule && slides.length >= 3,
+      `expected an expanded module with at least 3 slides, got ${JSON.stringify(sections)}`);
+    assert(firstSection && secondSection,
+      `expected at least 2 sections, got ${JSON.stringify(sections)}`);
   });
 
   // ── 1. Reorder slides WITHIN a module ──
-  // "Title" module: [v12.40 · APRIL 2026, You Think. Vela Shows., BY THE NUMBERS]
-  // Drag slide 0 onto the BOTTOM half of the last slide (row 2) → moves it last.
+  // Drag slide 0 onto the BOTTOM half of slide 2 → moves it after slide 2.
   await test('Reorder slide within module (drag first slide to end)', async () => {
-    const before = await slideOrder('Title');
-    eq(before.length, 3, 'precondition: Title has 3 slides');
-    const [a, b, c] = before;
+    const before = await slideOrder(slideModule);
+    assert(before.length >= 3, `${slideModule} must have at least 3 slides`);
+    const [a, b, c, ...rest] = before;
 
-    await drag({ kind: 'slide', src: { module: 'Title', rowIdx: 0 }, tgt: { module: 'Title', rowIdx: 2 }, pos: 'bottom' });
+    await drag({ kind: 'slide', src: { module: slideModule, rowIdx: 0 }, tgt: { module: slideModule, rowIdx: 2 }, pos: 'bottom' });
 
-    const after = await slideOrder('Title');
-    eq(after, [b, c, a], 'slide order after moving first slide to end');
+    const after = await slideOrder(slideModule);
+    eq(after, [b, c, a, ...rest], 'slide order after moving first slide after slide 2');
   });
 
-  // Move it back: drag the now-last slide (a) onto the TOP half of row 0 → first again.
+  // Move it back: drag the moved slide (now row 2) onto the TOP half of row 0.
   await test('Reorder slide within module (drag last slide to front)', async () => {
-    const before = await slideOrder('Title'); // [b, c, a]
-    const [b, c, a] = before;
+    const before = await slideOrder(slideModule);
+    const [b, c, a, ...rest] = before;
 
-    await drag({ kind: 'slide', src: { module: 'Title', rowIdx: 2 }, tgt: { module: 'Title', rowIdx: 0 }, pos: 'top' });
+    await drag({ kind: 'slide', src: { module: slideModule, rowIdx: 2 }, tgt: { module: slideModule, rowIdx: 0 }, pos: 'top' });
 
-    const after = await slideOrder('Title');
-    eq(after, [a, b, c], 'slide order restored: last slide moved to front');
+    const after = await slideOrder(slideModule);
+    eq(after, [a, b, c, ...rest], 'slide order restored: moved slide returned to front');
   });
 
   // ── 2. No-op / invalid slide drop (guards over-eager reordering) ──
   // Drop a slide onto the TOP half of ITSELF → handler computes from===to and bails.
   await test('No-op slide drop (onto itself) leaves order unchanged', async () => {
-    const before = await slideOrder('Title');
+    const before = await slideOrder(slideModule);
 
-    await drag({ kind: 'slide', src: { module: 'Title', rowIdx: 1 }, tgt: { module: 'Title', rowIdx: 1 }, pos: 'top' });
+    await drag({ kind: 'slide', src: { module: slideModule, rowIdx: 1 }, tgt: { module: slideModule, rowIdx: 1 }, pos: 'top' });
 
-    const after = await slideOrder('Title');
+    const after = await slideOrder(slideModule);
     eq(after, before, 'self-drop must not reorder');
   });
 
   // ── 3. Reorder sections / modules ──
-  // Demo order has "Data & Metrics" immediately before "Code & Visual".
-  // Drag "Code & Visual" onto the TOP half of "Data & Metrics" → they swap.
+  // Drag the second section onto the TOP half of the first section.
   await test('Reorder modules (drag a section before another)', async () => {
     const before = await sectionOrder();
-    const di = before.indexOf('Data & Metrics');
-    const ci = before.indexOf('Code & Visual');
-    assert(di >= 0 && ci >= 0, `both sections present (got ${JSON.stringify(before)})`);
-    assert(ci === di + 1, `precondition: "Code & Visual" directly follows "Data & Metrics" (di=${di}, ci=${ci})`);
+    const firstIndex = before.indexOf(firstSection);
+    const secondIndex = before.indexOf(secondSection);
+    assert(firstIndex >= 0 && secondIndex === firstIndex + 1,
+      `precondition: first two sections are adjacent (got ${JSON.stringify(before)})`);
 
-    await drag({ kind: 'section', src: { title: 'Code & Visual' }, tgt: { title: 'Data & Metrics' }, pos: 'top' });
+    await drag({ kind: 'section', src: { title: secondSection }, tgt: { title: firstSection }, pos: 'top' });
 
     const after = await sectionOrder();
-    const di2 = after.indexOf('Data & Metrics');
-    const ci2 = after.indexOf('Code & Visual');
-    assert(ci2 === di2 - 1, `after: "Code & Visual" now directly precedes "Data & Metrics" (di2=${di2}, ci2=${ci2}) — order ${JSON.stringify(after)}`);
+    const firstIndexAfter = after.indexOf(firstSection);
+    const secondIndexAfter = after.indexOf(secondSection);
+    assert(secondIndexAfter === firstIndexAfter - 1,
+      `after: second section must precede first section (order ${JSON.stringify(after)})`);
     // Every other section keeps its identity/count (pure reorder, no loss).
     eq([...after].sort(), [...before].sort(), 'section set unchanged (pure reorder)');
   });
 
-  // Move it back so the run is idempotent: drag "Code & Visual" onto BOTTOM half of "Data & Metrics".
+  // Move it back so the run is idempotent.
   await test('Reorder modules back (restore original section order)', async () => {
-    const before = await sectionOrder(); // Code & Visual, Data & Metrics
-    await drag({ kind: 'section', src: { title: 'Code & Visual' }, tgt: { title: 'Data & Metrics' }, pos: 'bottom' });
+    const before = await sectionOrder();
+    await drag({ kind: 'section', src: { title: secondSection }, tgt: { title: firstSection }, pos: 'bottom' });
     const after = await sectionOrder();
-    const di = after.indexOf('Data & Metrics');
-    const ci = after.indexOf('Code & Visual');
-    assert(ci === di + 1, `restored: "Code & Visual" follows "Data & Metrics" again (order ${JSON.stringify(after)})`);
+    const firstIndex = after.indexOf(firstSection);
+    const secondIndex = after.indexOf(secondSection);
+    assert(secondIndex === firstIndex + 1,
+      `restored: second section follows first section again (order ${JSON.stringify(after)})`);
     eq([...after].sort(), [...before].sort(), 'section set unchanged');
   });
 
@@ -379,7 +389,7 @@ async function runTests() {
   // Drop a section onto its OWN header → handler sees d.itemId === item.id and bails.
   await test('No-op section drop (onto itself) leaves order unchanged', async () => {
     const before = await sectionOrder();
-    await drag({ kind: 'section', src: { title: 'Code & Visual' }, tgt: { title: 'Code & Visual' }, pos: 'top' });
+    await drag({ kind: 'section', src: { title: secondSection }, tgt: { title: secondSection }, pos: 'top' });
     const after = await sectionOrder();
     eq(after, before, 'section self-drop must not reorder');
   });
@@ -397,7 +407,7 @@ async function runTests() {
     if (!skipSetup) { buildTestHTML(); server = await startServer(); }
 
     console.log('Launching browser...');
-    const browser = await chromium.launch();
+    const browser = await launchChromium(chromium);
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     page.setDefaultTimeout(5000);
     page.on('pageerror', (e) => console.log('[pageerror]', e.message));

@@ -142,14 +142,12 @@ Author→ship only (the shipped skill has no preview/AI backend — that lives i
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (361 tests)
-python3 tests/test_vela.py
-
-# 2. Verify template is in sync with parts
-python3 tools/vela-dev/scripts/concat.py
+# Run the same gate definitions that GitHub CI uses
+tools/vela-dev/scripts/ci-local.sh --parallel
 ```
 
-All checks must pass before committing.
+GitHub CI calls this script's `--gate` entries. Keep each gate definition in
+`ci-local.sh`, not in the workflow. All checks must pass before committing.
 
 ## Minimal-diff policy
 

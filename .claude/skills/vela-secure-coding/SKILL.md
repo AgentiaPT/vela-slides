@@ -221,7 +221,7 @@ python3 tests/test_vela.py                      # full suite (unit+integration)
 python3 tools/vela-dev/scripts/concat.py        # monolith must be in sync
 python3 tools/vela-dev/scripts/lint.py --parts src/parts   # key-drift + CSS sink gate
 node tests/test_release_build.cjs               # test surface stripped on release
-tools/vela-dev/scripts/ci-local.sh              # all 8 CI stacks
+tools/vela-dev/scripts/ci-local.sh --parallel   # all CI gates
 ```
 
 A PostToolUse hook (`.claude/hooks/post-edit-lint.py`) auto-runs the lint
