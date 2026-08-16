@@ -85,6 +85,7 @@ evals/results/
 
 # Local working files
 draft/
+.scratch-review
 .vela.json
 opus-4-6.*
 *.jsx
