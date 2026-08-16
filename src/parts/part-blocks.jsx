@@ -1012,14 +1012,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         {block.loop && !isVert && <svg style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 36, width: "100%", overflow: "visible" }}>
           <defs><marker id={`loopArr-${staggerIdx}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={loopCol} /></marker></defs>
           {(() => { const n = items.length; const step = 100 / (n * 2); const x1 = step; const x2 = 100 - step; return <>
-            <path d={`M ${x2}% 4 L ${x2}% 20 L ${x1}% 20 L ${x1}% 4`} fill="none" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" strokeLinejoin="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
+            <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
+            <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
+            <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
             {block.loopLabel && <text x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }}>{block.loopLabel}</text>}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
           <defs><marker id={`loopArrV-${staggerIdx}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={loopCol} /></marker></defs>
           {(() => { const n = items.length; const step = 100 / (n * 2); const y1 = step; const y2 = 100 - step; return <>
-            <path d={`M 4 ${y2}% L 20 ${y2}% L 20 ${y1}% L 4 ${y1}%`} fill="none" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" strokeLinejoin="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
+            <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
+            <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
+            <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
             {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
           </>; })()}
         </svg>}
@@ -1513,4 +1517,3 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     default: return null;
   }
 }
-

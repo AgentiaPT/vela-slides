@@ -14,6 +14,7 @@ const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { launchChromium } = require('./playwright_browser.cjs');
 
 // ── Config ───────────────────────────────────────────────────────────
 const PORT = 8765;
@@ -57,9 +58,8 @@ function resolvePlaywright() {
 function buildTestHTML() {
   fs.mkdirSync(SERVE_DIR, { recursive: true });
 
-  // Rebuild the monolith from parts (dev toolchain), then assemble the deck.
+  // Assemble the committed monolith. The template-sync gate validates it first.
   console.log('Assembling deck...');
-  execSync('python3 tools/vela-dev/scripts/concat.py', { cwd: ROOT, stdio: 'pipe' });
   execSync(
     `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
@@ -290,12 +290,12 @@ async function runTests() {
   await test('Empty state shows no open comments', async () => {
     // Demo deck may have pre-existing comments — clear them first
     const resolveBtn = page.locator('button').filter({ hasText: 'Resolve All' }).first();
-    if (await resolveBtn.isVisible().catch(() => false)) {
+    if (await resolveBtn.isVisible().catch(() => false) && await resolveBtn.isEnabled()) {
       await resolveBtn.click();
       await settle();
     }
     const clearBtn = page.locator('button').filter({ hasText: 'Clear Done' }).first();
-    if (await clearBtn.isVisible().catch(() => false)) {
+    if (await clearBtn.isVisible().catch(() => false) && await clearBtn.isEnabled()) {
       await clearBtn.click();
       await settle();
     }
@@ -538,7 +538,7 @@ async function runTests() {
     }
 
     console.log('Launching browser...');
-    const browser = await chromium.launch();
+    const browser = await launchChromium(chromium);
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     page.setDefaultTimeout(3000);
     // Surface real runtime errors instead of hiding them — a silent throw used to

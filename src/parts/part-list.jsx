@@ -61,31 +61,55 @@ function blankSlideFrom(prev) {
 }
 
 // ━━━ AI Slide Adder (inline prompt) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
+function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines, deckEpoch }) {
+  const epochRef = useRef(deckEpoch);
+  epochRef.current = deckEpoch;
+  const operationOwnerRef = useRef(null);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    // The replacement deck owns this editor. An older finalizer must not clear
+    // loading or restore an error after a new request claims the same panel.
+    operationOwnerRef.current = null;
+    setPrompt("");
+    setLoading(false);
+    setError(null);
+  }, [deckEpoch]);
+  useEffect(() => () => { operationOwnerRef.current = null; }, []);
 
   const generate = async () => {
     if (!prompt.trim() || loading) return;
+    const operationEpoch = deckEpoch;
+    const operationOwner = {};
+    operationOwnerRef.current = operationOwner;
+    const operationIsCurrent = () =>
+      operationOwnerRef.current === operationOwner
+      && epochRef.current === operationEpoch
+      && velaDeckEpochIsCurrent(operationEpoch);
     setLoading(true);
     setError(null);
     try {
       const prevSlide = insertIndex > 0 ? item.slides[insertIndex - 1] : null;
       const nextSlide = insertIndex < item.slides.length ? item.slides[insertIndex] : null;
       const slide = await generateAiSlide(prompt.trim(), prevSlide, nextSlide, item.title, item.notes, guidelines);
+      if (!operationIsCurrent()) return;
       if (slide) {
+        // SELECT takes an optional slideIndex, so the insert and the select land
+        // in one synchronous dispatch pair before onClose() unmounts this editor.
+        // A deferred SET_SLIDE_INDEX (via setTimeout) raced onClose()'s unmount
+        // cleanup, which invalidates operationIsCurrent() and can drop slide 0
+        // navigation to the new slide silently.
         dispatch({ type: "INSERT_SLIDE", id: item.id, index: insertIndex, slide });
-        dispatch({ type: "SELECT", id: item.id });
-        setTimeout(() => dispatch({ type: "SET_SLIDE_INDEX", index: insertIndex }), 0);
+        dispatch({ type: "SELECT", id: item.id, slideIndex: insertIndex });
         onClose();
       }
     } catch (e) {
-      setError(e.message || "Generation failed");
+      if (operationIsCurrent()) setError(e.message || "Generation failed");
     } finally {
-      setLoading(false);
+      if (operationIsCurrent()) setLoading(false);
     }
   };
 
@@ -94,6 +118,7 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
         <span style={{ fontSize: 10, color: T.accent, fontFamily: FONT.mono, fontWeight: 700, flexShrink: 0 }}>AI+</span>
         <input
+          data-testid="ai-slide-adder-input"
           ref={inputRef}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -102,11 +127,11 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
           disabled={loading}
           style={{ ...S.input({ padding: "3px 8px", fontSize: 12, borderRadius: 4 }), opacity: loading ? 0.5 : 1 }}
         />
-        <button onClick={generate} disabled={loading || !prompt.trim()}
+        <button data-testid="ai-slide-adder-generate" onClick={generate} disabled={loading || !prompt.trim()}
           style={{ ...S.primaryBtn({ padding: "3px 8px", fontSize: 10, borderRadius: 4 }), opacity: (loading || !prompt.trim()) ? 0.4 : 1, cursor: (loading || !prompt.trim()) ? "not-allowed" : "pointer", minWidth: 28 }}>
           {loading ? <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⚡</span> : "⚡"}
         </button>
-        <button onClick={onClose} style={S.cancelBtn({ padding: "3px 6px", fontSize: 10, borderRadius: 4 })}>✕</button>
+        <button data-testid="ai-slide-adder-close" onClick={onClose} style={S.cancelBtn({ padding: "3px 6px", fontSize: 10, borderRadius: 4 })}>✕</button>
       </div>
       {loading && <div style={{ fontSize: 9, fontFamily: FONT.mono, color: T.accent, paddingLeft: 28, display: "flex", alignItems: "center", gap: 4 }}>
         <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>🔧</span> generating slide...
@@ -123,10 +148,11 @@ function AiSlideAdder({ item, insertIndex, onClose, dispatch, guidelines }) {
 // options (CR: add blank slide reusing the previous slide's def, add AI slide,
 // add section). `variant` controls prominence: "empty" (empty section, always
 // visible) vs "row" (between slides, reveal on hover).
-function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
+function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId, deckEpoch }) {
   const [mode, setMode] = useState(null); // null | "menu" | "ai"
   const [pinned, setPinned] = useState(false); // set by click — keeps menu open on mouseout
-  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} />;
+  useEffect(() => { setMode(null); setPinned(false); }, [deckEpoch]);
+  if (mode === "ai") return <AiSlideAdder item={item} insertIndex={insertIndex} onClose={() => { setMode(null); setPinned(false); }} dispatch={dispatch} guidelines={guidelines} deckEpoch={deckEpoch} />;
 
   const close = () => { setMode(null); setPinned(false); };
   const openPinned = (e) => { e.stopPropagation(); setMode("menu"); setPinned(true); }; // click → open + pin
@@ -146,8 +172,8 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
   const addSection = (e) => { e.stopPropagation(); dispatch({ type: "SPLIT_ITEM_AT", id: item.id, index: insertIndex, laneId }); close(); };
 
   if (mode === "menu") {
-    const btn = (label, icon, onClick, color) => (
-      <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
+    const btn = (label, icon, onClick, color, testId) => (
+      <button data-testid={testId} onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 8px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: color || T.text, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, lineHeight: 1, cursor: "pointer", whiteSpace: "nowrap" }}
         onMouseEnter={(e) => e.currentTarget.style.background = T.accent + "12"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 12, fontSize: 11, lineHeight: 1 }}>{icon}</span>
         <span style={{ lineHeight: 1 }}>{label}</span>
@@ -158,7 +184,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
       // swaps content without shifting layout (the between-slide rows were jumping).
       <div style={{ display: "flex", gap: 4, height: 24, boxSizing: "border-box", padding: "0 12px", flexWrap: "nowrap", alignItems: "center", justifyContent: "center" }} onClick={(e) => e.stopPropagation()} onMouseLeave={hoverClose}>
         {btn("Blank", "▭", addBlank)}
-        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent)}
+        {btn("AI", "⚡", (e) => { e.stopPropagation(); setMode("ai"); }, T.accent, "ai-slide-adder-open")}
         {btn("Section", "▤", addSection)}
         <button onClick={(e) => { e.stopPropagation(); close(); }} style={{ background: "transparent", border: "none", color: T.textDim, cursor: "pointer", fontSize: 12, padding: "0 4px", lineHeight: 1 }}>✕</button>
       </div>
@@ -170,7 +196,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
   // hover menu above so revealing it doesn't shift surrounding rows. Hover reveals
   // the Blank / AI / Section menu; click pins it open.
   return (
-    <div onClick={openPinned} onMouseEnter={hoverOpen}
+    <div data-testid="add-slide-menu-open" onClick={openPinned} onMouseEnter={hoverOpen}
       style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24, boxSizing: "border-box", padding: "0 12px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, cursor: "pointer", opacity: 0.28, transition: "opacity .15s" }}
       title="Add slide or section here"
     >＋ add</div>
@@ -178,7 +204,7 @@ function AddMenu({ item, insertIndex, dispatch, guidelines, variant, laneId }) {
 }
 
 // ━━━ Slide List with AI Adder ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav }) {
+function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, lanes, dispatch, guidelines, globalMaxSlideDur, slideOffset, slideTimeOffset, laneId, treeNav, deckEpoch }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [containerOver, setContainerOver] = useState(false); // empty-section drop highlight
   const [editingSi, setEditingSi] = useState(null);
@@ -375,7 +401,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         }}>
           {containerOver
             ? <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: T.accent, pointerEvents: "none" }}>Drop slide here</span>
-            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />}
+            : <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />}
         </div>
       </div>
     );
@@ -386,7 +412,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       onDrop={handleContainerDrop}
       onDragLeave={() => setDropTarget(null)}
     >
-      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
+      <AddMenu item={item} insertIndex={0} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
       {(() => { let cumTime = slideTimeOffset || 0; return item.slides.map((s, si) => {
         const title = typeof getSlideTitle === "function" ? getSlideTitle(s, si) : `Slide ${si + 1}`;
         const isActive = selected && slideIndex === si;
@@ -460,7 +486,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
           </div>
-          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} />
+          <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
       }); })()}
       {ctxMenu && (() => {
@@ -485,7 +511,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
 }
 
 // ━━━ Concept Row ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav }) {
+function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideDur, slideIndex, selectedSlideIndices, lanes, guidelines, slideOffset, slideTimeOffset, reviewMode, isFirst, isLast, collapsed, onToggleCollapse, treeNav, deckEpoch }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(item.title);
   const [dropPos, setDropPos] = useState(null); // "top" | "bottom" | null
@@ -701,13 +727,13 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           has the SAME "＋ add" affordance AND the same proven slide-drop container
           as a populated one (fixes both the inconsistency and the can't-drop-into-
           empty-section bug). It renders just the add row when there are no slides. */}
-      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} />}
+      {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} deckEpoch={deckEpoch} />}
     </div>
   );
 }
 
 // ━━━ Module List (flat — no lane headers) ━━━━━━━━━━━━━━━━━━━━━━━━━
-function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode }) {
+function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, collapsedSections, dispatch, maxModuleTime, guidelines, reviewMode, deckEpoch }) {
   const [adding, setAdding] = useState(false);
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
@@ -771,7 +797,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
         const slideTimeOffset = timeOffset;
         offset += (item.slides?.length || 0);
         timeOffset += (item.slides || []).reduce((a, sl) => a + (sl.duration || 0), 0);
-        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} />;
+        return <ConceptRow key={item.id} item={item} selected={selectedId === item.id} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} laneId={itemLaneId} dispatch={dispatch} maxTime={totalDeckTime} globalMaxSlideDur={globalMaxSlideDur} guidelines={guidelines} slideOffset={slideOffset} slideTimeOffset={slideTimeOffset} reviewMode={reviewMode} isFirst={idx === 0} isLast={idx === allItems.length - 1} collapsed={collapsedSet.has(item.id)} onToggleCollapse={(all) => toggleCollapse(item.id, all)} treeNav={treeNav} deckEpoch={deckEpoch} />;
       }); })()}
       {adding ? <div style={{ padding: "4px 12px", display: "flex", gap: 4 }}>
         <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addItem(); if (e.key === "Escape") setAdding(false); }} placeholder="Section name" style={S.input()} />
@@ -781,4 +807,3 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
   );
 }
-

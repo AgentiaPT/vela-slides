@@ -1,19 +1,19 @@
 {
   "deckTitle": "Vela Slides — Live Demo",
-  "guidelines": "",
   "lanes": [
     {
-      "id": "80a9aa93",
-      "title": "Introduction",
+      "id": "demo-lane-1",
+      "title": "Start Here",
       "collapsed": false,
       "items": [
         {
-          "id": "31a0064f",
-          "title": "Title",
+          "id": "demo-module-1",
+          "title": "Product Story",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
-          "order": 0,
+          "order": 1,
           "slides": [
             {
               "title": "Vela Slides",
@@ -22,20 +22,21 @@
               "align": "center",
               "verticalAlign": "center",
               "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#60a5fa",
+              "bgGradient": "linear-gradient(140deg, #0f172a 0%, #1e1b4b 40%, #312e81 70%, #1e3a5f 100%)",
+              "color": "#f1f5f9",
+              "accent": "#818cf8",
               "blocks": [
                 {
                   "type": "spacer",
-                  "h": 32
+                  "h": 24
                 },
                 {
                   "type": "badge",
-                  "text": "v10.2 · MARCH 2026",
+                  "text": "CURRENT PRODUCT",
                   "icon": "Sailboat",
-                  "color": "#60a5fa",
-                  "bg": "#60a5fa15",
-                  "border": "#60a5fa40"
+                  "color": "#c4b5fd",
+                  "bg": "#818cf820",
+                  "border": "#818cf850"
                 },
                 {
                   "type": "spacer",
@@ -43,7 +44,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
                   "align": "center",
                   "maxWidth": "48px"
                 },
@@ -63,10 +64,10 @@
                 },
                 {
                   "type": "heading",
-                  "text": "AI-native presentations inside Claude.ai",
+                  "text": "Agent-native presentations · Claude.ai · Browser · Desktop",
                   "size": "lg",
                   "align": "center",
-                  "color": "#94a3b8"
+                  "color": "#a5b4fc"
                 },
                 {
                   "type": "spacer",
@@ -76,12 +77,12 @@
                   "type": "text",
                   "text": "Think in slides. Let AI build them.\nEvery slide in this deck demonstrates the feature it describes.",
                   "size": "lg",
-                  "color": "#64748b",
+                  "color": "#7c8aaf",
                   "align": "center"
                 },
                 {
                   "type": "spacer",
-                  "h": 32
+                  "h": 24
                 }
               ]
             },
@@ -89,7 +90,8 @@
               "title": "What is Vela?",
               "duration": 60,
               "padding": "48px 64px",
-              "bg": "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
               "color": "#e2e8f0",
               "accent": "#3b82f6",
               "blocks": [
@@ -106,7 +108,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "Vela is a presentation engine that runs as a Claude.ai artifact. Describe your ideas in natural language — Vera, the built-in AI, turns them into structured slides. No design skills. No separate tools. Just intent to output.",
+                  "text": "Vela is an agent-native presentation engine. Run it in a Claude.ai artifact, a local browser, or a native desktop window — and Vera, the built-in AI, turns your descriptions into structured slides. No design skills. No separate tools. Just intent to output.",
                   "size": "lg",
                   "color": "#94a3b8"
                 },
@@ -149,7 +151,7 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Vela runs entirely inside your Claude.ai subscription. No accounts, no installs, no data leaving the artifact sandbox.",
+                  "text": "Same engine, three runtimes — Claude.ai artifact, local browser server, or native desktop. Vera routes to whichever AI backend is available.",
                   "icon": "Shield",
                   "bg": "#3b82f612",
                   "border": "#3b82f630",
@@ -160,91 +162,109 @@
             {
               "title": "By the Numbers",
               "duration": 30,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
+              "padding": "44px 64px",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
               "color": "#e2e8f0",
               "accent": "#3b82f6",
               "blocks": [
                 {
-                  "type": "heading",
-                  "text": "Vela at a Glance",
-                  "size": "2xl",
+                  "type": "badge",
+                  "text": "BY THE NUMBERS",
                   "icon": "BarChart3",
-                  "iconColor": "#3b82f6",
-                  "align": "center"
+                  "color": "#93c5fd",
+                  "bg": "rgba(59,130,246,0.15)"
                 },
                 {
                   "type": "spacer",
-                  "h": 24
+                  "h": 10
+                },
+                {
+                  "type": "heading",
+                  "text": "Vela at a Glance",
+                  "size": "2xl",
+                  "align": "left",
+                  "color": "#f8fafc"
+                },
+                {
+                  "type": "spacer",
+                  "h": 22
                 },
                 {
                   "type": "grid",
                   "cols": 4,
-                  "gap": 20,
+                  "gap": 18,
                   "items": [
                     {
                       "blocks": [
                         {
                           "type": "metric",
-                          "value": "21",
+                          "value": "27",
                           "label": "BLOCK TYPES",
                           "icon": "Layers",
-                          "iconColor": "#3b82f6",
+                          "iconColor": "#60a5fa",
                           "size": "3xl",
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(59,130,246,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(59,130,246,0.25)",
+                      "align": "center"
                     },
                     {
                       "blocks": [
                         {
                           "type": "metric",
-                          "value": "18",
-                          "label": "AI TOOLS",
+                          "value": "22",
+                          "label": "VERA TOOLS",
                           "icon": "Wrench",
                           "iconColor": "#a78bfa",
                           "size": "3xl",
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "metric",
-                          "value": "119",
-                          "label": "TESTS",
-                          "icon": "CheckCircle",
-                          "iconColor": "#34d399",
-                          "size": "3xl",
-                          "labelColor": "#94a3b8"
-                        }
-                      ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(167,139,250,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(167,139,250,0.25)",
+                      "align": "center"
                     },
                     {
                       "blocks": [
                         {
                           "type": "metric",
                           "value": "3",
-                          "label": "FORMATS",
+                          "label": "DECK FORMATS",
+                          "icon": "CheckCircle",
+                          "iconColor": "#34d399",
+                          "size": "3xl",
+                          "labelColor": "#94a3b8"
+                        }
+                      ],
+                      "padding": "22px 16px",
+                      "bg": "rgba(52,211,153,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(52,211,153,0.25)",
+                      "align": "center"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "metric",
+                          "value": "3",
+                          "label": "RUNTIMES",
                           "icon": "FileJson",
                           "iconColor": "#f59e0b",
                           "size": "3xl",
                           "labelColor": "#94a3b8"
                         }
                       ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
+                      "padding": "22px 16px",
+                      "bg": "rgba(245,158,11,0.10)",
+                      "borderRadius": "14px",
+                      "border": "1px solid rgba(245,158,11,0.25)",
+                      "align": "center"
                     }
                   ]
                 },
@@ -253,90 +273,711 @@
                   "h": 24
                 },
                 {
-                  "type": "quote",
+                  "type": "callout",
                   "text": "The gap between thinking and presenting should be zero.",
-                  "author": "Vela design philosophy",
-                  "size": "lg",
-                  "color": "#94a3b8"
+                  "title": "Vela design philosophy",
+                  "icon": "Sparkles",
+                  "bg": "rgba(59,130,246,0.12)",
+                  "border": "#3b82f6",
+                  "color": "#e2e8f0"
                 }
               ]
             }
-          ],
-          "createdAt": "2026-03-23T23:14:42.515Z"
+          ]
         }
       ]
     },
     {
-      "id": "9edd7c13",
-      "title": "What's New — v10",
+      "id": "demo-lane-2",
+      "title": "Create & Design",
       "collapsed": false,
       "items": [
         {
-          "id": "d1445aee",
-          "title": "v10 Features",
-          "notes": "The hero feature for the LinkedIn announcement",
+          "id": "demo-module-2",
+          "title": "Semantic Building Blocks",
+          "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
-          "order": 0,
+          "order": 1,
           "slides": [
             {
-              "title": "Student Mode",
-              "duration": 75,
+              "title": "Text Blocks",
+              "duration": 60,
               "padding": "48px 64px",
-              "bg": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
+              "bg": "#0f172a",
               "color": "#e2e8f0",
-              "accent": "#a78bfa",
+              "accent": "#3b82f6",
               "gap": 24,
               "blocks": [
                 {
-                  "type": "badge",
-                  "text": "NEW IN v10",
-                  "icon": "Sparkles",
-                  "color": "#a78bfa",
-                  "bg": "#a78bfa15",
-                  "border": "#a78bfa40"
+                  "type": "heading",
+                  "text": "Text, Bullets & Quotes",
+                  "size": "2xl",
+                  "icon": "Type",
+                  "iconColor": "#3b82f6"
                 },
                 {
+                  "type": "text",
+                  "text": "Every text element supports **bold** and *italic* markdown. Sizes from xs to 4xl. Headings use Sora, body uses DM Sans, code uses Space Mono.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "divider",
+                  "color": "#334155",
+                  "spacing": 4
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 24,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Bullet Lists",
+                          "size": "lg",
+                          "icon": "List",
+                          "iconColor": "#3b82f6"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Plain text bullets",
+                            "With **inline markdown**",
+                            {
+                              "text": "Custom icons per item",
+                              "icon": "Star"
+                            }
+                          ],
+                          "size": "md",
+                          "gap": 10
+                        }
+                      ],
+                      "padding": "20px",
+                      "bg": "#1e293b",
+                      "borderRadius": "12px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Quote Block",
+                          "size": "lg",
+                          "icon": "Quote",
+                          "iconColor": "#3b82f6"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "quote",
+                          "text": "Semantic blocks carry meaning — a flow is a process, not a box with arrows.",
+                          "author": "Vela Slides",
+                          "size": "md"
+                        }
+                      ],
+                      "padding": "20px",
+                      "bg": "#1e293b",
+                      "borderRadius": "12px"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Flows & Loops",
+              "duration": 60,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "gap": 24,
+              "blocks": [
+                {
                   "type": "heading",
-                  "text": "Student Mode 🎓",
-                  "size": "3xl",
-                  "icon": "GraduationCap",
+                  "text": "Process Visualization",
+                  "size": "2xl",
+                  "icon": "ArrowRight",
+                  "iconColor": "#3b82f6"
+                },
+                {
+                  "type": "text",
+                  "text": "Linear flows, iterative loops, numbered steps, and **gate** checkpoints — all semantic, all themeable.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "flow",
+                  "items": [
+                    {
+                      "icon": "FileInput",
+                      "label": "Input"
+                    },
+                    {
+                      "icon": "Brain",
+                      "label": "Process"
+                    },
+                    {
+                      "icon": "Shield",
+                      "label": "Review",
+                      "gate": true
+                    },
+                    {
+                      "icon": "Rocket",
+                      "label": "Deploy"
+                    }
+                  ],
+                  "connectorStyle": "arrow",
+                  "loop": true,
+                  "loopLabel": "iterate until ready",
+                  "loopColor": "#64748b"
+                },
+                {
+                  "type": "spacer",
+                  "h": 24
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Describe",
+                      "text": "Tell Vera what you need in plain language"
+                    },
+                    {
+                      "title": "Review",
+                      "text": "Preview slides, click to edit inline"
+                    },
+                    {
+                      "title": "Present",
+                      "text": "Fullscreen mode with keyboard navigation"
+                    }
+                  ],
+                  "lineColor": "#3b82f640",
+                  "numberColor": "#3b82f6"
+                }
+              ]
+            },
+            {
+              "title": "Data Blocks",
+              "duration": 60,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#3b82f6",
+              "gap": 20,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Tables, Tags & Progress",
+                  "size": "2xl",
+                  "icon": "Table",
+                  "iconColor": "#3b82f6"
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "table",
+                  "headers": [
+                    "Block Type",
+                    "Use For",
+                    "Key Props"
+                  ],
+                  "rows": [
+                    [
+                      "metric",
+                      "KPIs, stats, counts",
+                      "value, label, icon, trend"
+                    ],
+                    [
+                      "progress",
+                      "Skill bars, completion",
+                      "items[], showValue"
+                    ],
+                    [
+                      "table",
+                      "Structured data",
+                      "headers[], rows[][]"
+                    ],
+                    [
+                      "tag-group",
+                      "Labels, categories",
+                      "items[], variant"
+                    ],
+                    [
+                      "comparison",
+                      "A vs B layouts",
+                      "items[2], dividerLabel"
+                    ],
+                    [
+                      "funnel",
+                      "Conversion pipelines",
+                      "items[], drop, highlight"
+                    ],
+                    [
+                      "cycle",
+                      "Circular processes",
+                      "items[], centerLabel"
+                    ],
+                    [
+                      "number-row",
+                      "Inline big metrics",
+                      "items[], compact, bordered"
+                    ],
+                    [
+                      "matrix",
+                      "2×2 quadrant grids",
+                      "quadrants[], xLeft/yTop"
+                    ],
+                    [
+                      "checklist",
+                      "Status-aware tasks",
+                      "items[], showLabels"
+                    ]
+                  ],
+                  "striped": true,
+                  "headerBg": "#1e293b",
+                  "headerColor": "#3b82f6",
+                  "cellColor": "#cbd5e1",
+                  "borderColor": "#334155",
+                  "size": "sm"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "grid",
+                  "cols": 2,
+                  "gap": 20,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Progress Bars",
+                          "size": "md",
+                          "icon": "BarChart3"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "progress",
+                          "items": [
+                            {
+                              "label": "Block coverage",
+                              "value": 95,
+                              "color": "#3b82f6"
+                            },
+                            {
+                              "label": "PDF fidelity",
+                              "value": 90,
+                              "color": "#a78bfa"
+                            },
+                            {
+                              "label": "Mobile support",
+                              "value": 85,
+                              "color": "#34d399"
+                            }
+                          ],
+                          "showValue": true,
+                          "trackColor": "#1e293b",
+                          "height": 8
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Tag Groups",
+                          "size": "md",
+                          "icon": "Tag"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "tag-group",
+                          "items": [
+                            {
+                              "text": "metric",
+                              "color": "#f59e0b"
+                            },
+                            {
+                              "text": "progress",
+                              "color": "#3b82f6"
+                            },
+                            {
+                              "text": "table",
+                              "color": "#a78bfa"
+                            },
+                            {
+                              "text": "flow",
+                              "color": "#34d399"
+                            },
+                            {
+                              "text": "code",
+                              "color": "#64748b"
+                            },
+                            {
+                              "text": "svg",
+                              "color": "#f472b6"
+                            },
+                            {
+                              "text": "comparison",
+                              "color": "#ef4444"
+                            },
+                            {
+                              "text": "funnel",
+                              "color": "#f97316"
+                            },
+                            {
+                              "text": "cycle",
+                              "color": "#06b6d4"
+                            },
+                            {
+                              "text": "number-row",
+                              "color": "#8b5cf6"
+                            },
+                            {
+                              "text": "matrix",
+                              "color": "#ec4899"
+                            },
+                            {
+                              "text": "checklist",
+                              "color": "#14b8a6"
+                            }
+                          ],
+                          "variant": "filled",
+                          "gap": 8,
+                          "size": "sm"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Comparison, Funnel & Cycle",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#f59e0b",
+              "gap": 16,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Comparison · Funnel · Cycle",
+                  "size": "2xl",
+                  "icon": "GitCompare",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "text",
+                  "text": "Structural analysis blocks — compare options, visualize pipelines, and map circular processes.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 6
+                },
+                {
+                  "type": "grid",
+                  "cols": 3,
+                  "gap": 16,
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "comparison",
+                          "items": [
+                            {
+                              "title": "Before",
+                              "color": "#ef4444",
+                              "items": [
+                                "Manual layout",
+                                "Pixel pushing"
+                              ]
+                            },
+                            {
+                              "title": "After",
+                              "color": "#22c55e",
+                              "items": [
+                                "Semantic blocks",
+                                "AI-generated"
+                              ]
+                            }
+                          ],
+                          "dividerLabel": "VS"
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "funnel",
+                          "items": [
+                            {
+                              "label": "Visitors",
+                              "value": "10K"
+                            },
+                            {
+                              "label": "Signups",
+                              "value": "2.4K"
+                            },
+                            {
+                              "label": "Active",
+                              "value": "800"
+                            },
+                            {
+                              "label": "Paid",
+                              "value": "120"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "cycle",
+                          "items": [
+                            {
+                              "label": "Describe",
+                              "icon": "💬"
+                            },
+                            {
+                              "label": "Build",
+                              "icon": "🔧"
+                            },
+                            {
+                              "label": "Review",
+                              "icon": "👁"
+                            },
+                            {
+                              "label": "Refine",
+                              "icon": "✨"
+                            }
+                          ],
+                          "centerLabel": "Vela"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Number Row, Matrix & Checklist",
+              "duration": 60,
+              "padding": "36px 48px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "gap": 16,
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Number Row · Matrix · Checklist",
+                  "size": "2xl",
+                  "icon": "LayoutGrid",
                   "iconColor": "#a78bfa"
                 },
                 {
                   "type": "text",
-                  "text": "Vera becomes a teaching assistant in presenter mode. Ask questions about any slide — get streaming answers with SVG diagrams, right inside fullscreen.",
-                  "size": "lg",
-                  "color": "#c7d2fe"
+                  "text": "Metric displays, quadrant analysis, and status-aware task tracking.",
+                  "size": "md",
+                  "color": "#94a3b8"
                 },
                 {
                   "type": "spacer",
-                  "h": 12
+                  "h": 6
                 },
                 {
-                  "type": "icon-row",
+                  "type": "number-row",
                   "items": [
                     {
-                      "icon": "MessageSquare",
-                      "text": "Per-slide Q&A with history"
+                      "value": "27",
+                      "label": "Block Types",
+                      "icon": "Layers",
+                      "color": "#3b82f6"
                     },
                     {
-                      "icon": "Cpu",
-                      "text": "Haiku 4.5 + prompt caching"
+                      "value": "20",
+                      "label": "AI Tools",
+                      "icon": "Wrench",
+                      "color": "#a78bfa"
                     },
                     {
-                      "icon": "Zap",
-                      "text": "N+1 prefetch for instant answers"
-                    },
-                    {
-                      "icon": "PenTool",
-                      "text": "SVG diagrams in responses"
+                      "value": "3",
+                      "label": "Formats",
+                      "icon": "FileJson",
+                      "color": "#f59e0b"
                     }
-                  ],
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 8
+                },
+                {
+                  "type": "grid",
                   "cols": 2,
                   "gap": 16,
-                  "iconBg": "#1e1b4b",
-                  "iconColor": "#a78bfa"
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "matrix",
+                          "xLeft": "Low Effort",
+                          "xRight": "High Effort",
+                          "yTop": "High Impact",
+                          "yBottom": "Low Impact",
+                          "quadrants": [
+                            {
+                              "title": "Quick Wins",
+                              "icon": "Zap",
+                              "color": "#22c55e",
+                              "items": [
+                                "Badge block",
+                                "Spacer tweaks"
+                              ]
+                            },
+                            {
+                              "title": "Big Bets",
+                              "icon": "Rocket",
+                              "color": "#3b82f6",
+                              "items": [
+                                "Vera AI engine",
+                                "PDF export"
+                              ]
+                            },
+                            {
+                              "title": "Fill-ins",
+                              "icon": "Clock",
+                              "color": "#f59e0b",
+                              "items": [
+                                "Docs updates",
+                                "Changelog"
+                              ]
+                            },
+                            {
+                              "title": "Avoid",
+                              "icon": "X",
+                              "color": "#ef4444",
+                              "items": [
+                                "Pixel editors",
+                                "Custom fonts"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "checklist",
+                          "items": [
+                            {
+                              "text": "Comparison block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Funnel block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Cycle block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Number-row block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Matrix block",
+                              "status": "done"
+                            },
+                            {
+                              "text": "Checklist block",
+                              "status": "done"
+                            }
+                          ],
+                          "showLabels": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "SVG Diagrams",
+              "duration": 45,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "color": "#e2e8f0",
+              "accent": "#60a5fa",
+              "gap": 20,
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Custom SVG with Theme Tokens",
+                  "size": "2xl",
+                  "icon": "PenTool",
+                  "iconColor": "#60a5fa",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "For diagrams that structured blocks can't express — meshes, fan-outs, custom layouts.",
+                  "size": "md",
+                  "color": "#94a3b8",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 20
+                },
+                {
+                  "type": "svg",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 500 140\"><rect x=\"10\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"60\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Skill</text><rect x=\"150\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"200\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Claude</text><rect x=\"290\" y=\"40\" width=\"100\" height=\"60\" rx=\"8\" fill=\"none\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"340\" y=\"75\" text-anchor=\"middle\" fill=\"{{color}}\" font-size=\"13\" font-family=\"monospace\">Artifact</text><rect x=\"430\" y=\"40\" width=\"60\" height=\"60\" rx=\"8\" fill=\"{{accent}}\" fill-opacity=\"0.15\" stroke=\"{{accent}}\" stroke-width=\"2\"/><text x=\"460\" y=\"75\" text-anchor=\"middle\" fill=\"{{accent}}\" font-size=\"13\" font-family=\"monospace\">You</text><line x1=\"110\" y1=\"70\" x2=\"150\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><line x1=\"250\" y1=\"70\" x2=\"290\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><line x1=\"390\" y1=\"70\" x2=\"430\" y2=\"70\" stroke=\"{{muted}}\" stroke-width=\"1.5\" marker-end=\"url(#arr)\"/><defs><marker id=\"arr\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"{{muted}}\"/></marker></defs></svg>",
+                  "align": "center",
+                  "caption": "Vela pipeline: Skill → Claude → Artifact → You",
+                  "captionSize": "sm",
+                  "captionColor": "#94a3b8"
                 },
                 {
                   "type": "spacer",
@@ -344,14 +985,134 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Try it: enter fullscreen, click 🎓 in the top bar. Ask Vera anything about the current slide — she teaches with context.",
-                  "icon": "Zap",
-                  "bg": "#a78bfa12",
-                  "border": "#a78bfa30",
-                  "color": "#e0e7ff"
+                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens — they adapt to any theme automatically.",
+                  "icon": "Palette",
+                  "bg": "#60a5fa12",
+                  "border": "#60a5fa30"
                 }
               ]
             },
+            {
+              "title": "Columns Layout",
+              "duration": 75,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1b3a 100%)",
+              "color": "#e2e8f0",
+              "accent": "#34d399",
+              "gap": 16,
+              "layout": "cols",
+              "contentFlex": 3,
+              "imageFlex": 2,
+              "splitGap": 28,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "FEATURE SPOTLIGHT",
+                  "icon": "Sparkles",
+                  "color": "#34d399",
+                  "bg": "#34d39915",
+                  "border": "#34d39940"
+                },
+                {
+                  "type": "heading",
+                  "text": "Columns Layout 📐",
+                  "size": "2xl",
+                  "icon": "Columns",
+                  "iconColor": "#34d399"
+                },
+                {
+                  "type": "text",
+                  "text": "Two-column slides using **L** (left) and **R** (right) block arrays — works with any block type.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                }
+              ],
+              "L": [
+                {
+                  "type": "callout",
+                  "text": "Place any blocks side-by-side — text, metrics, flows, tables. Ratio control via **contentFlex / imageFlex**.",
+                  "title": "Flexible Columns",
+                  "icon": "LayoutGrid",
+                  "bg": "#34d39912",
+                  "border": "#34d39930",
+                  "color": "#d1fae5"
+                },
+                {
+                  "type": "steps",
+                  "items": [
+                    {
+                      "title": "Set layout",
+                      "text": "layout: \"cols\""
+                    },
+                    {
+                      "title": "Add header",
+                      "text": "blocks (B) = full-width"
+                    },
+                    {
+                      "title": "Fill columns",
+                      "text": "L = left, R = right"
+                    }
+                  ],
+                  "lineColor": "#34d399",
+                  "numberColor": "#34d399",
+                  "titleColor": "#e2e8f0",
+                  "textColor": "#94a3b8"
+                }
+              ],
+              "R": [
+                {
+                  "type": "metric",
+                  "value": "3:2",
+                  "label": "This Slide's Ratio",
+                  "size": "3xl",
+                  "color": "#34d399",
+                  "icon": "Columns",
+                  "iconColor": "#34d399"
+                },
+                {
+                  "type": "tag-group",
+                  "items": [
+                    {
+                      "text": "1:1 Equal",
+                      "color": "#818cf8"
+                    },
+                    {
+                      "text": "3:2 Wide left",
+                      "color": "#34d399"
+                    },
+                    {
+                      "text": "2:3 Wide right",
+                      "color": "#f59e0b"
+                    },
+                    {
+                      "text": "4:1 Sidebar",
+                      "color": "#f472b6"
+                    }
+                  ],
+                  "variant": "outline",
+                  "gap": 8
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo-lane-3",
+      "title": "Edit & Organize",
+      "collapsed": false,
+      "items": [
+        {
+          "id": "demo-module-3",
+          "title": "Live Editor",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 1,
+          "slides": [
             {
               "title": "Gallery View & Smart Merge",
               "duration": 60,
@@ -463,259 +1224,57 @@
                   "labelColor": "#e2e8f0"
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        }
-      ]
-    },
-    {
-      "id": "6985f0b5",
-      "title": "Block Showcase",
-      "collapsed": false,
-      "items": [
-        {
-          "id": "8053dd20",
-          "title": "Text & Typography",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 0,
-          "slides": [
-            {
-              "title": "Text Blocks",
-              "duration": 60,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#3b82f6",
-              "gap": 24,
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Text, Bullets & Quotes",
-                  "size": "2xl",
-                  "icon": "Type",
-                  "iconColor": "#3b82f6"
-                },
-                {
-                  "type": "text",
-                  "text": "Every text element supports **bold** and *italic* markdown. Sizes from xs to 4xl. Headings use Sora, body uses DM Sans, code uses Space Mono.",
-                  "size": "md",
-                  "color": "#94a3b8"
-                },
-                {
-                  "type": "divider",
-                  "color": "#334155",
-                  "spacing": 4
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "grid",
-                  "cols": 2,
-                  "gap": 24,
-                  "items": [
-                    {
-                      "blocks": [
-                        {
-                          "type": "heading",
-                          "text": "Bullet Lists",
-                          "size": "lg",
-                          "icon": "List",
-                          "iconColor": "#3b82f6"
-                        },
-                        {
-                          "type": "spacer",
-                          "h": 6
-                        },
-                        {
-                          "type": "bullets",
-                          "items": [
-                            "Plain text bullets",
-                            "With **inline markdown**",
-                            {
-                              "text": "Custom icons per item",
-                              "icon": "Star"
-                            }
-                          ],
-                          "size": "md",
-                          "gap": 10
-                        }
-                      ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "heading",
-                          "text": "Quote Block",
-                          "size": "lg",
-                          "icon": "Quote",
-                          "iconColor": "#3b82f6"
-                        },
-                        {
-                          "type": "spacer",
-                          "h": 6
-                        },
-                        {
-                          "type": "quote",
-                          "text": "Semantic blocks carry meaning — a flow is a process, not a box with arrows.",
-                          "author": "Vela Slides",
-                          "size": "md"
-                        }
-                      ],
-                      "padding": "20px",
-                      "bg": "#1e293b",
-                      "borderRadius": "12px"
-                    }
-                  ]
-                }
-              ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        },
-        {
-          "id": "738a1c2b",
-          "title": "Process & Flow",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 1,
-          "slides": [
-            {
-              "title": "Flows & Loops",
-              "duration": 60,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#3b82f6",
-              "gap": 24,
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Process Visualization",
-                  "size": "2xl",
-                  "icon": "ArrowRight",
-                  "iconColor": "#3b82f6"
-                },
-                {
-                  "type": "text",
-                  "text": "Linear flows, iterative loops, and numbered steps — all semantic, all themeable.",
-                  "size": "md",
-                  "color": "#94a3b8"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "flow",
-                  "items": [
-                    {
-                      "icon": "FileInput",
-                      "label": "Input"
-                    },
-                    {
-                      "icon": "Brain",
-                      "label": "Process"
-                    },
-                    {
-                      "icon": "CheckCircle",
-                      "label": "Validate"
-                    },
-                    {
-                      "icon": "Rocket",
-                      "label": "Deploy"
-                    }
-                  ],
-                  "connectorStyle": "arrow",
-                  "loop": true,
-                  "loopLabel": "iterate until ready",
-                  "loopColor": "#64748b"
-                },
-                {
-                  "type": "spacer",
-                  "h": 24
-                },
-                {
-                  "type": "steps",
-                  "items": [
-                    {
-                      "title": "Describe",
-                      "text": "Tell Vera what you need in plain language"
-                    },
-                    {
-                      "title": "Review",
-                      "text": "Preview slides, click to edit inline"
-                    },
-                    {
-                      "title": "Present",
-                      "text": "Fullscreen mode with keyboard navigation"
-                    }
-                  ],
-                  "lineColor": "#3b82f640",
-                  "numberColor": "#3b82f6"
-                }
-              ]
             },
             {
-              "title": "Timeline & Roadmap",
+              "title": "Branding & Theming",
               "duration": 45,
               "padding": "48px 64px",
-              "bg": "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+              "bg": "#0f172a",
               "color": "#e2e8f0",
-              "accent": "#3b82f6",
-              "gap": 24,
+              "accent": "#f59e0b",
+              "gap": 20,
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Vela Release Timeline",
+                  "text": "Consistent Branding Everywhere",
                   "size": "2xl",
-                  "icon": "Calendar",
-                  "iconColor": "#3b82f6"
+                  "icon": "Brush",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "text",
+                  "text": "Set once, apply to every slide. Accent bar, logo position, footer text, and custom colors.",
+                  "size": "md",
+                  "color": "#94a3b8"
                 },
                 {
                   "type": "spacer",
                   "h": 12
                 },
                 {
-                  "type": "timeline",
+                  "type": "icon-row",
                   "items": [
                     {
-                      "date": "v8.0",
-                      "title": "First Release",
-                      "text": "3-zone layout, Vera AI, 20 tools"
+                      "icon": "Paintbrush",
+                      "text": "Accent bar"
                     },
                     {
-                      "date": "v9.0",
-                      "title": "Agentic Editing",
-                      "text": "ReAct loop, mobile-first, variants"
+                      "icon": "Image",
+                      "text": "Logo overlay"
                     },
                     {
-                      "date": "v9.28",
-                      "title": "Vector PDF",
-                      "text": "Crisp text, embedded fonts, image slides"
+                      "icon": "Type",
+                      "text": "Footer text"
                     },
                     {
-                      "date": "v10.0",
-                      "title": "Student Mode",
-                      "text": "Teaching AI, gallery view, smart merge"
-                    },
-                    {
-                      "title": "Gallery & Polish",
-                      "text": "Drag-and-drop reorder, zoom levels, demo prompt cards",
-                      "date": "v10.2",
-                      "icon": "LayoutGrid",
-                      "color": "#f59e0b"
+                      "icon": "Moon",
+                      "text": "Dark / Light"
                     }
                   ],
-                  "direction": "horizontal"
+                  "cols": 2,
+                  "gap": 16,
+                  "iconBg": "#1e293b",
+                  "iconColor": "#f59e0b"
                 },
                 {
                   "type": "spacer",
@@ -723,83 +1282,140 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Each release builds on semantic JSON — the same deck works across all versions without migration.",
-                  "icon": "GitBranch",
-                  "bg": "#3b82f612",
-                  "border": "#3b82f630"
+                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" — done across all slides instantly.",
+                  "icon": "Wand2",
+                  "bg": "#f59e0b12",
+                  "border": "#f59e0b30"
                 }
               ]
             }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        },
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo-lane-4",
+      "title": "Present & Learn",
+      "collapsed": false,
+      "items": [
         {
-          "id": "774ae826",
-          "title": "Data & Metrics",
+          "id": "demo-module-4",
+          "title": "Audience Tools",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
-          "order": 2,
+          "order": 1,
           "slides": [
             {
-              "title": "Data Blocks",
-              "duration": 60,
+              "title": "Student Mode & Study Notes",
+              "duration": 75,
+              "padding": "48px 64px",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
+              "color": "#e2e8f0",
+              "accent": "#a78bfa",
+              "gap": 24,
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "FEATURE SPOTLIGHT",
+                  "icon": "Sparkles",
+                  "color": "#a78bfa",
+                  "bg": "#a78bfa15",
+                  "border": "#a78bfa40"
+                },
+                {
+                  "type": "heading",
+                  "text": "Student Mode 🎓",
+                  "size": "3xl",
+                  "icon": "GraduationCap",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "Vera becomes a teaching assistant in presenter mode. Slides can embed **studyNotes** — offline-first markdown with diagrams, follow-up questions, and a glossary for Kindle-style X-Ray term popups.",
+                  "size": "lg",
+                  "color": "#c7d2fe"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "icon-row",
+                  "items": [
+                    {
+                      "icon": "BookOpen",
+                      "text": "Offline studyNotes — zero API calls"
+                    },
+                    {
+                      "icon": "Microscope",
+                      "text": "X-Ray glossary with term popups"
+                    },
+                    {
+                      "icon": "HelpCircle",
+                      "text": "Pre-authored follow-up questions"
+                    },
+                    {
+                      "icon": "PenTool",
+                      "text": "Inline SVG diagrams in notes"
+                    }
+                  ],
+                  "cols": 2,
+                  "gap": 16,
+                  "iconBg": "#1e1b4b",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "spacer",
+                  "h": 12
+                },
+                {
+                  "type": "callout",
+                  "text": "This slide has studyNotes attached — look for the 🎓 marker. Enter fullscreen, click 🎓 to see offline content with glossary terms you can tap to explore.",
+                  "icon": "Zap",
+                  "bg": "#a78bfa12",
+                  "border": "#a78bfa30",
+                  "color": "#e0e7ff"
+                }
+              ],
+              "studyNotes": {
+                "text": "**Student Mode** transforms Vela into an interactive learning tool. Each slide can embed pre-authored study content that renders with *zero API calls*.\n\nThe key insight: slides contain the presentation narrative, while [studyNotes](#studynotes) contain the deeper learning material. This separation means presenters see clean slides, while students get rich, offline-first study content.\n\nStudy notes support **markdown** formatting, inline [glossary](#glossary) terms (tap to see definitions), and follow-up questions that become interactive when a live API channel is available.",
+                "questions": [
+                  "Why is offline-first important for training environments?",
+                  "How do glossary popups improve comprehension compared to footnotes?",
+                  "When would you use studyNotes vs. live Vera Teacher mode?"
+                ],
+                "glossary": {
+                  "studynotes": {
+                    "definition": "Pre-authored markdown content embedded in slides that renders offline. Includes text, SVG diagrams, follow-up questions, and a glossary for X-Ray term popups."
+                  },
+                  "glossary": {
+                    "definition": "A set of term definitions (max 24) that power Kindle-style X-Ray popups. Terms are linked inline using [term](#key) syntax."
+                  }
+                }
+              }
+            },
+            {
+              "title": "Navigate & Present",
+              "duration": 45,
               "padding": "48px 64px",
               "bg": "#0f172a",
               "color": "#e2e8f0",
-              "accent": "#3b82f6",
+              "accent": "#60a5fa",
               "gap": 20,
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Tables, Tags & Progress",
+                  "text": "Present Like a Pro",
                   "size": "2xl",
-                  "icon": "Table",
-                  "iconColor": "#3b82f6"
+                  "icon": "Presentation",
+                  "iconColor": "#60a5fa"
                 },
                 {
                   "type": "spacer",
                   "h": 8
-                },
-                {
-                  "type": "table",
-                  "headers": [
-                    "Block Type",
-                    "Use For",
-                    "Key Props"
-                  ],
-                  "rows": [
-                    [
-                      "metric",
-                      "KPIs, stats, counts",
-                      "value, label, icon, trend"
-                    ],
-                    [
-                      "progress",
-                      "Skill bars, completion",
-                      "items[], showValue"
-                    ],
-                    [
-                      "table",
-                      "Structured data",
-                      "headers[], rows[][]"
-                    ],
-                    [
-                      "tag-group",
-                      "Labels, categories",
-                      "items[], variant"
-                    ]
-                  ],
-                  "striped": true,
-                  "headerBg": "#1e293b",
-                  "headerColor": "#3b82f6",
-                  "cellColor": "#cbd5e1",
-                  "borderColor": "#334155",
-                  "size": "sm"
-                },
-                {
-                  "type": "spacer",
-                  "h": 16
                 },
                 {
                   "type": "grid",
@@ -810,36 +1426,16 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Progress Bars",
+                          "text": "Navigator Panel",
                           "size": "md",
-                          "icon": "BarChart3"
+                          "icon": "List",
+                          "color": "#60a5fa"
                         },
                         {
-                          "type": "spacer",
-                          "h": 8
-                        },
-                        {
-                          "type": "progress",
-                          "items": [
-                            {
-                              "label": "Block coverage",
-                              "value": 95,
-                              "color": "#3b82f6"
-                            },
-                            {
-                              "label": "PDF fidelity",
-                              "value": 90,
-                              "color": "#a78bfa"
-                            },
-                            {
-                              "label": "Mobile support",
-                              "value": 85,
-                              "color": "#34d399"
-                            }
-                          ],
-                          "showValue": true,
-                          "trackColor": "#1e293b",
-                          "height": 8
+                          "type": "text",
+                          "text": "Lanes and modules on the left. Drag to reorder, click to jump. Press **[** to toggle.",
+                          "size": "sm",
+                          "color": "#94a3b8"
                         }
                       ],
                       "padding": "16px",
@@ -850,45 +1446,56 @@
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Tag Groups",
+                          "text": "Presenter TOC",
                           "size": "md",
-                          "icon": "Tag"
+                          "icon": "Search",
+                          "color": "#60a5fa"
                         },
                         {
-                          "type": "spacer",
-                          "h": 8
+                          "type": "text",
+                          "text": "In fullscreen, hover the left edge for a **searchable table of contents** across all modules.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Inline Editing",
+                          "size": "md",
+                          "icon": "MousePointerClick",
+                          "color": "#60a5fa"
                         },
                         {
-                          "type": "tag-group",
-                          "items": [
-                            {
-                              "text": "metric",
-                              "color": "#f59e0b"
-                            },
-                            {
-                              "text": "progress",
-                              "color": "#3b82f6"
-                            },
-                            {
-                              "text": "table",
-                              "color": "#a78bfa"
-                            },
-                            {
-                              "text": "flow",
-                              "color": "#34d399"
-                            },
-                            {
-                              "text": "code",
-                              "color": "#64748b"
-                            },
-                            {
-                              "text": "svg",
-                              "color": "#f472b6"
-                            }
-                          ],
-                          "variant": "filled",
-                          "gap": 8,
-                          "size": "sm"
+                          "type": "text",
+                          "text": "Click any text on a slide to edit it directly — even in fullscreen. **Bold** and *italic* markdown.",
+                          "size": "sm",
+                          "color": "#94a3b8"
+                        }
+                      ],
+                      "padding": "16px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Cinema Mode",
+                          "size": "md",
+                          "icon": "Monitor",
+                          "color": "#60a5fa"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Claude.ai blocks native fullscreen. Click the **⛵ icon** to get a bookmarklet for true browser fullscreen.",
+                          "size": "sm",
+                          "color": "#94a3b8"
                         }
                       ],
                       "padding": "16px",
@@ -899,132 +1506,23 @@
                 }
               ]
             }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        },
-        {
-          "id": "51f7d8ef",
-          "title": "Code & Visual",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 3,
-          "slides": [
-            {
-              "title": "Code & Callouts",
-              "duration": 60,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#34d399",
-              "gap": 20,
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Code Blocks & Callouts",
-                  "size": "2xl",
-                  "icon": "Code2",
-                  "iconColor": "#34d399"
-                },
-                {
-                  "type": "text",
-                  "text": "Syntax-highlighted code with labels. Callouts for key insights with icon, border, and background.",
-                  "size": "md",
-                  "color": "#94a3b8"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "code",
-                  "text": "// Vela slide JSON — semantic, not visual\n{\n  \"type\": \"flow\",\n  \"items\": [\n    { \"icon\": \"Brain\", \"label\": \"Think\" },\n    { \"icon\": \"Cpu\", \"label\": \"Build\" },\n    { \"icon\": \"Eye\", \"label\": \"Review\" }\n  ],\n  \"loop\": true,\n  \"loopLabel\": \"iterate\"\n}",
-                  "label": "SLIDE JSON",
-                  "size": "sm",
-                  "bg": "#1e293b",
-                  "color": "#e2e8f0"
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "callout",
-                  "text": "JSON-first means AI can reason about your slides. Vera reads, writes, and refactors this structure — no pixel-pushing.",
-                  "icon": "Lightbulb",
-                  "bg": "#34d39912",
-                  "border": "#34d39930",
-                  "color": "#e2e8f0"
-                }
-              ]
-            },
-            {
-              "title": "SVG Diagrams",
-              "duration": 45,
-              "padding": "48px 64px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#60a5fa",
-              "gap": 20,
-              "verticalAlign": "center",
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Custom SVG with Theme Tokens",
-                  "size": "2xl",
-                  "icon": "PenTool",
-                  "iconColor": "#60a5fa",
-                  "align": "center"
-                },
-                {
-                  "type": "text",
-                  "text": "For diagrams that structured blocks can't express — meshes, fan-outs, custom layouts.",
-                  "size": "md",
-                  "color": "#94a3b8",
-                  "align": "center"
-                },
-                {
-                  "type": "spacer",
-                  "h": 20
-                },
-                {
-                  "type": "svg",
-                  "markup": "<svg viewBox='0 0 500 140' xmlns='http://www.w3.org/2000/svg'><rect x='10' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='60' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Skill</text><rect x='150' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='200' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Claude</text><rect x='290' y='40' width='100' height='60' rx='8' fill='none' stroke='{{accent}}' stroke-width='2'/><text x='340' y='75' text-anchor='middle' fill='{{color}}' font-size='13' font-family='monospace'>Artifact</text><rect x='430' y='40' width='60' height='60' rx='8' fill='{{accent}}' fill-opacity='0.15' stroke='{{accent}}' stroke-width='2'/><text x='460' y='75' text-anchor='middle' fill='{{accent}}' font-size='13' font-family='monospace'>You</text><line x1='110' y1='70' x2='150' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='250' y1='70' x2='290' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><line x1='390' y1='70' x2='430' y2='70' stroke='{{muted}}' stroke-width='1.5' marker-end='url(#arr)'/><defs><marker id='arr' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='6' markerHeight='6' orient='auto'><path d='M 0 0 L 10 5 L 0 10 z' fill='{{muted}}'/></marker></defs></svg>",
-                  "align": "center",
-                  "caption": "Vela pipeline: Skill → Claude → Artifact → You",
-                  "captionSize": "sm",
-                  "captionColor": "#94a3b8"
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "callout",
-                  "text": "SVG blocks use {{accent}}, {{color}}, {{muted}}, {{bg}} tokens — they adapt to any theme automatically.",
-                  "icon": "Palette",
-                  "bg": "#60a5fa12",
-                  "border": "#60a5fa30"
-                }
-              ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
+          ]
         }
       ]
     },
     {
-      "id": "c9e295ab",
-      "title": "AI & Platform",
+      "id": "demo-lane-5",
+      "title": "AI & Automation",
       "collapsed": false,
       "items": [
         {
-          "id": "51819d39",
-          "title": "Vera AI",
+          "id": "demo-module-5",
+          "title": "Vera and Agent Workflows",
           "notes": "",
+          "comments": [],
           "status": "done",
           "importance": "must",
-          "order": 0,
+          "order": 1,
           "slides": [
             {
               "title": "Meet Vera",
@@ -1042,7 +1540,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "An agentic AI assistant *inside* the artifact. 20 tools for deck manipulation — she builds, edits, searches, and restyles without leaving the canvas.",
+                  "text": "An agentic AI assistant *inside* every Vela runtime — backend-agnostic, with 20 tools for deck manipulation. She builds, edits, searches, and restyles without leaving the canvas.",
                   "size": "md",
                   "color": "#94a3b8"
                 },
@@ -1262,30 +1760,20 @@
                   ]
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        },
-        {
-          "id": "c28b7a6f",
-          "title": "CLI & Skill",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 1,
-          "slides": [
+            },
             {
               "title": "Vela CLI & Skill",
               "duration": 60,
               "padding": "48px 64px",
-              "bg": "linear-gradient(135deg, #0f172a 0%, #1a2332 100%)",
+              "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a2332 100%)",
               "color": "#e2e8f0",
               "accent": "#34d399",
               "gap": 20,
               "blocks": [
                 {
                   "type": "badge",
-                  "text": "NEW IN v10",
+                  "text": "FEATURE SPOTLIGHT",
                   "icon": "Terminal",
                   "color": "#34d399",
                   "bg": "#34d39915",
@@ -1351,68 +1839,136 @@
                   "color": "#e2e8f0"
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        },
-        {
-          "id": "ec5856d8",
-          "title": "Platform Features",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 1,
-          "slides": [
+            },
             {
-              "title": "Branding & Theming",
-              "duration": 45,
+              "title": "Vela Desktop — Bring Your Own Agent",
+              "duration": 75,
               "padding": "48px 64px",
               "bg": "#0f172a",
+              "bgGradient": "linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%)",
               "color": "#e2e8f0",
               "accent": "#f59e0b",
-              "gap": 20,
               "blocks": [
                 {
-                  "type": "heading",
-                  "text": "Consistent Branding Everywhere",
-                  "size": "2xl",
-                  "icon": "Brush",
-                  "iconColor": "#f59e0b"
-                },
-                {
-                  "type": "text",
-                  "text": "Set once, apply to every slide. Accent bar, logo position, footer text, and custom colors.",
-                  "size": "md",
-                  "color": "#94a3b8"
+                  "type": "badge",
+                  "text": "FEATURE SPOTLIGHT",
+                  "bg": "#f59e0b15",
+                  "color": "#fcd34d",
+                  "border": "#f59e0b40",
+                  "icon": "Sparkles"
                 },
                 {
                   "type": "spacer",
                   "h": 12
                 },
                 {
-                  "type": "icon-row",
+                  "type": "heading",
+                  "text": "Vela Desktop — Bring Your Own Agent",
+                  "size": "2xl",
+                  "icon": "Monitor",
+                  "iconColor": "#f59e0b"
+                },
+                {
+                  "type": "text",
+                  "text": "A native window built on Neutralino.js. Vera’s edits, batch ops, and chat run on *your* machine through a locally-installed coding-agent CLI — no API key, no proxy.",
+                  "size": "md",
+                  "color": "#94a3b8"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "flow",
                   "items": [
                     {
-                      "icon": "Paintbrush",
-                      "text": "Accent bar"
+                      "icon": "Terminal",
+                      "label": "Local CLI"
                     },
                     {
-                      "icon": "Image",
-                      "text": "Logo overlay"
+                      "icon": "Plug",
+                      "label": "Adapter"
                     },
                     {
-                      "icon": "Type",
-                      "text": "Footer text"
+                      "icon": "Bot",
+                      "label": "Vera"
                     },
                     {
-                      "icon": "Moon",
-                      "text": "Dark / Light"
+                      "icon": "Sailboat",
+                      "label": "Vela Engine"
                     }
                   ],
+                  "connectorStyle": "arrow",
+                  "arrowColor": "#f59e0b",
+                  "iconBg": "#1e293b",
+                  "labelColor": "#e2e8f0"
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "grid",
                   "cols": 2,
                   "gap": 16,
-                  "iconBg": "#1e293b",
-                  "iconColor": "#f59e0b"
+                  "items": [
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Pluggable Adapter",
+                          "size": "md",
+                          "icon": "Plug",
+                          "iconColor": "#a78bfa"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "Claude Code adapter ships today (claude -p)",
+                            "GitHub Copilot CLI, Codex CLI on the roadmap",
+                            "Adapter contract is public — add your own"
+                          ],
+                          "size": "sm",
+                          "color": "#cbd5e1"
+                        }
+                      ],
+                      "padding": "14px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    },
+                    {
+                      "blocks": [
+                        {
+                          "type": "heading",
+                          "text": "Per-Deck Trust",
+                          "size": "md",
+                          "icon": "ShieldCheck",
+                          "iconColor": "#34d399"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 6
+                        },
+                        {
+                          "type": "bullets",
+                          "items": [
+                            "First AI action prompts for consent",
+                            "Trust stored at /.vela/trust.json",
+                            "Footer chip shows agent + trust state"
+                          ],
+                          "size": "sm",
+                          "color": "#cbd5e1"
+                        }
+                      ],
+                      "padding": "14px",
+                      "bg": "#1e293b",
+                      "borderRadius": "8px"
+                    }
+                  ]
                 },
                 {
                   "type": "spacer",
@@ -1420,121 +1976,174 @@
                 },
                 {
                   "type": "callout",
-                  "text": "Vera can set branding programmatically: \"Add a red accent bar with 'Acme Corp' in the footer\" — done across all slides instantly.",
-                  "icon": "Wand2",
+                  "text": "Unsigned preview binaries on every release: `linux_x64` · `linux_arm64` · `mac_x64` · `mac_arm64` · `mac_universal` · `win_x64`",
+                  "icon": "Download",
                   "bg": "#f59e0b12",
-                  "border": "#f59e0b30"
+                  "border": "#f59e0b30",
+                  "color": "#fcd34d"
                 }
-              ]
-            },
+              ],
+              "id": "73d92d64",
+              "comments": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo-lane-6",
+      "title": "Export & Ship",
+      "collapsed": false,
+      "items": [
+        {
+          "id": "demo-module-6",
+          "title": "Run and Share Anywhere",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 1,
+          "slides": [
             {
-              "title": "Navigate & Present",
-              "duration": 45,
+              "title": "Three Runtimes, One Engine",
+              "duration": 60,
               "padding": "48px 64px",
               "bg": "#0f172a",
               "color": "#e2e8f0",
-              "accent": "#60a5fa",
-              "gap": 20,
+              "accent": "#a78bfa",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Present Like a Pro",
+                  "text": "Three Runtimes, One Engine",
                   "size": "2xl",
-                  "icon": "Presentation",
-                  "iconColor": "#60a5fa"
+                  "icon": "Layers",
+                  "iconColor": "#a78bfa"
+                },
+                {
+                  "type": "text",
+                  "text": "The same Vela engine renders in three places — Vera transparently routes to whichever AI backend is available in that runtime.",
+                  "size": "md",
+                  "color": "#94a3b8"
                 },
                 {
                   "type": "spacer",
-                  "h": 8
+                  "h": 20
                 },
                 {
                   "type": "grid",
-                  "cols": 2,
-                  "gap": 20,
+                  "cols": 3,
+                  "gap": 16,
                   "items": [
                     {
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Navigator Panel",
-                          "size": "md",
-                          "icon": "List",
-                          "color": "#60a5fa"
+                          "text": "Claude.ai Artifact",
+                          "size": "lg",
+                          "icon": "Cloud",
+                          "iconColor": "#60a5fa"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
                         },
                         {
                           "type": "text",
-                          "text": "Lanes and modules on the left. Drag to reorder, click to jump. Press **[** to toggle.",
+                          "text": "Runs entirely in your browser. Vera uses Claude.ai’s artifact proxy — no setup, no install.",
                           "size": "sm",
                           "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "Zero install",
+                          "bg": "#60a5fa20",
+                          "color": "#bfdbfe",
+                          "border": "#60a5fa40"
                         }
                       ],
                       "padding": "16px",
                       "bg": "#1e293b",
-                      "borderRadius": "8px"
+                      "borderRadius": "10px"
                     },
                     {
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Presenter TOC",
-                          "size": "md",
-                          "icon": "Search",
-                          "color": "#60a5fa"
+                          "text": "Local Browser Server",
+                          "size": "lg",
+                          "icon": "Server",
+                          "iconColor": "#34d399"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
                         },
                         {
                           "type": "text",
-                          "text": "In fullscreen, hover the left edge for a **searchable table of contents** across all modules.",
+                          "text": "Driven by your coding-agent CLI via the channel bridge. File-system access, live reload.",
                           "size": "sm",
                           "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "vela server start",
+                          "bg": "#34d39920",
+                          "color": "#bbf7d0",
+                          "border": "#34d39940"
                         }
                       ],
                       "padding": "16px",
                       "bg": "#1e293b",
-                      "borderRadius": "8px"
+                      "borderRadius": "10px"
                     },
                     {
                       "blocks": [
                         {
                           "type": "heading",
-                          "text": "Inline Editing",
-                          "size": "md",
-                          "icon": "MousePointerClick",
-                          "color": "#60a5fa"
-                        },
-                        {
-                          "type": "text",
-                          "text": "Click any text on a slide to edit it directly — even in fullscreen. **Bold** and *italic* markdown.",
-                          "size": "sm",
-                          "color": "#94a3b8"
-                        }
-                      ],
-                      "padding": "16px",
-                      "bg": "#1e293b",
-                      "borderRadius": "8px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "heading",
-                          "text": "Cinema Mode",
-                          "size": "md",
+                          "text": "Native Desktop",
+                          "size": "lg",
                           "icon": "Monitor",
-                          "color": "#60a5fa"
+                          "iconColor": "#f59e0b"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
                         },
                         {
                           "type": "text",
-                          "text": "Claude.ai blocks native fullscreen. Click the **⛵ icon** to get a bookmarklet for true browser fullscreen.",
+                          "text": "Neutralino window with a pluggable bridge to your local coding-agent CLI. Linux, macOS, Windows.",
                           "size": "sm",
                           "color": "#94a3b8"
+                        },
+                        {
+                          "type": "spacer",
+                          "h": 8
+                        },
+                        {
+                          "type": "badge",
+                          "text": "Feature spotlight",
+                          "bg": "#f59e0b20",
+                          "color": "#fcd34d",
+                          "border": "#f59e0b40"
                         }
                       ],
                       "padding": "16px",
                       "bg": "#1e293b",
-                      "borderRadius": "8px"
+                      "borderRadius": "10px"
                     }
                   ]
                 }
-              ]
+              ],
+              "id": "692e75c4",
+              "comments": []
             },
             {
               "title": "Export & Share",
@@ -1673,25 +2282,7 @@
                   "iconColor": "#34d399"
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
-        }
-      ]
-    },
-    {
-      "id": "533f64c9",
-      "title": "Closing",
-      "collapsed": false,
-      "items": [
-        {
-          "id": "0fd2162a",
-          "title": "Get Started",
-          "notes": "",
-          "status": "done",
-          "importance": "must",
-          "order": 0,
-          "slides": [
+            },
             {
               "title": "Get Vela — It's Free",
               "duration": 20,
@@ -1708,7 +2299,7 @@
                 },
                 {
                   "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
+                  "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
                   "align": "center",
                   "maxWidth": "48px"
                 },
@@ -1840,269 +2431,10 @@
                   "h": 20
                 }
               ]
-            },
-            {
-              "title": "What to Tell Vera",
-              "duration": 60,
-              "padding": "48px 64px",
-              "bg": "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
-              "color": "#e2e8f0",
-              "accent": "#60a5fa",
-              "gap": 20,
-              "blocks": [
-                {
-                  "type": "badge",
-                  "text": "GET STARTED",
-                  "icon": "MessageSquare",
-                  "color": "#60a5fa",
-                  "bg": "#60a5fa15",
-                  "border": "#60a5fa40"
-                },
-                {
-                  "type": "heading",
-                  "text": "Just Tell Vera What You Need",
-                  "size": "2xl",
-                  "icon": "Sparkles",
-                  "iconColor": "#60a5fa"
-                },
-                {
-                  "type": "text",
-                  "text": "Open the Vera chat panel and describe your deck in natural language. Here are some ideas to get started:",
-                  "size": "md",
-                  "color": "#94a3b8"
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "grid",
-                  "cols": 2,
-                  "gap": 16,
-                  "items": [
-                    {
-                      "blocks": [
-                        {
-                          "type": "icon",
-                          "name": "GraduationCap",
-                          "color": "#a78bfa",
-                          "circle": true,
-                          "bg": "#a78bfa20",
-                          "size": "lg"
-                        },
-                        {
-                          "type": "heading",
-                          "text": "Educate",
-                          "size": "md"
-                        },
-                        {
-                          "type": "text",
-                          "text": "\"Create a deck explaining how neural networks learn — from perceptrons to backpropagation\"",
-                          "size": "sm",
-                          "color": "#94a3b8"
-                        }
-                      ],
-                      "padding": "16px",
-                      "bg": "#1e293b",
-                      "borderRadius": "10px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "icon",
-                          "name": "TrendingUp",
-                          "color": "#34d399",
-                          "circle": true,
-                          "bg": "#34d39920",
-                          "size": "lg"
-                        },
-                        {
-                          "type": "heading",
-                          "text": "Pitch",
-                          "size": "md"
-                        },
-                        {
-                          "type": "text",
-                          "text": "\"Build a 12-slide investor pitch for an AI-powered legal assistant — TAM, traction, team, ask\"",
-                          "size": "sm",
-                          "color": "#94a3b8"
-                        }
-                      ],
-                      "padding": "16px",
-                      "bg": "#1e293b",
-                      "borderRadius": "10px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "icon",
-                          "name": "Users",
-                          "color": "#f59e0b",
-                          "circle": true,
-                          "bg": "#f59e0b20",
-                          "size": "lg"
-                        },
-                        {
-                          "type": "heading",
-                          "text": "Onboard",
-                          "size": "md"
-                        },
-                        {
-                          "type": "text",
-                          "text": "\"Make a team onboarding deck — values, first-week checklist, key tools, org chart, and culture\"",
-                          "size": "sm",
-                          "color": "#94a3b8"
-                        }
-                      ],
-                      "padding": "16px",
-                      "bg": "#1e293b",
-                      "borderRadius": "10px"
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "icon",
-                          "name": "Globe",
-                          "color": "#ec4899",
-                          "circle": true,
-                          "bg": "#ec489920",
-                          "size": "lg"
-                        },
-                        {
-                          "type": "heading",
-                          "text": "Explore",
-                          "size": "md"
-                        },
-                        {
-                          "type": "text",
-                          "text": "\"Present the solar system — one slide per planet with key facts, a timeline of exploration, and stunning visuals\"",
-                          "size": "sm",
-                          "color": "#94a3b8"
-                        }
-                      ],
-                      "padding": "16px",
-                      "bg": "#1e293b",
-                      "borderRadius": "10px"
-                    }
-                  ]
-                },
-                {
-                  "type": "callout",
-                  "text": "Tip: Be specific about slide count, sections, and style. Vera works best with clear intent — she can always refine after the first pass.",
-                  "icon": "Lightbulb",
-                  "bg": "#60a5fa12",
-                  "border": "#60a5fa30",
-                  "color": "#e2e8f0"
-                }
-              ]
-            },
-            {
-              "title": "Credits",
-              "duration": 15,
-              "padding": "48px 60px",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#3b82f6",
-              "verticalAlign": "center",
-              "align": "center",
-              "blocks": [
-                {
-                  "type": "spacer",
-                  "h": 24
-                },
-                {
-                  "type": "svg",
-                  "markup": "<svg viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>",
-                  "align": "center",
-                  "maxWidth": "48px"
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "heading",
-                  "text": "Vela Slides",
-                  "size": "4xl",
-                  "align": "center"
-                },
-                {
-                  "type": "spacer",
-                  "h": 4
-                },
-                {
-                  "type": "heading",
-                  "text": "AI-native presentation engine for Claude.ai",
-                  "size": "lg",
-                  "color": "#94a3b8",
-                  "align": "center"
-                },
-                {
-                  "type": "spacer",
-                  "h": 24
-                },
-                {
-                  "type": "text",
-                  "text": "Created by **Rui Quintino**",
-                  "size": "lg",
-                  "align": "center"
-                },
-                {
-                  "type": "spacer",
-                  "h": 16
-                },
-                {
-                  "type": "icon-row",
-                  "items": [
-                    {
-                      "icon": "Linkedin",
-                      "text": "linkedin.com/in/rquintino",
-                      "link": "https://www.linkedin.com/in/rquintino/"
-                    },
-                    {
-                      "icon": "Github",
-                      "text": "agentiapt/vela-slides",
-                      "link": "https://github.com/agentiapt/vela-slides"
-                    },
-                    {
-                      "icon": "Rocket",
-                      "text": "agentia.pt",
-                      "link": "https://agentia.pt"
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "h": 24
-                },
-                {
-                  "type": "text",
-                  "text": "ELv2 — © 2025-present Rui Quintino · Vera AI powered by your Claude.ai subscription",
-                  "size": "md",
-                  "color": "#64748b",
-                  "align": "center"
-                },
-                {
-                  "type": "spacer",
-                  "h": 16
-                }
-              ]
             }
-          ],
-          "createdAt": "2026-03-23T23:14:42.516Z"
+          ]
         }
       ]
-    }
-  ],
-  "selectedId": "31a0064f",
-  "slideIndex": 0,
-  "fontScale": 1,
-  "chatOpen": false,
-  "chatMessages": [
-    {
-      "role": "assistant",
-      "content": "Deck imported successfully! Ready to sail. ⛵🖖",
-      "ts": "2026-03-23T23:14:42.516Z"
     }
   ],
   "branding": {
@@ -2122,8 +2454,5 @@
     "imgMaxWidth": 600,
     "imgQuality": 0.45
   },
-  "veraMode": "editor",
-  "teacherHistory": {},
-  "teacherLoading": false,
-  "_lastPatchId": "demo-v10-2026-03-23d"
+  "guidelines": ""
 }

@@ -1,5 +1,45 @@
 # Vela Slides — CLAUDE.md
 
+## Agent language
+
+All coding agents must use ASD-STE100 Simplified Technical English for user
+messages, agent prompts, plans, reasoning notes, task reports, review findings,
+tool descriptions, and other written work. Use short, direct sentences and one
+meaning for each term. This rule applies to the main agent and all subagents.
+
+Public documentation is the exception. For public documentation, use the
+language and style that are correct for its audience and that match the
+surrounding document. Do not change code, identifiers, quoted source text,
+third-party text, or literal command output to comply with this language rule.
+
+## Agent restart budget
+
+Subagents must keep a session-only `context.md` outside the repository. Update
+it after each completed milestone, before each long test or browser run, and at
+least every 10 tool calls or 5 minutes. It must contain the objective,
+acceptance criteria, owned files, diff fingerprint, decisions, exact validation
+state, artifact paths, open gaps, and ordered next actions. Keep it under 250
+lines. Do not include exploration history, raw logs, screenshots, or diffs.
+
+Context relevance is the primary rule. Restart at a phase boundary when prior
+material is no longer needed, such as discovery to implementation or
+implementation to validation. Restart sooner if failed paths, raw outputs, or
+completed work dominate the active context. The numeric budget is only a
+backstop: restart at the first hard limit of 50 tool calls, 15 minutes, or 3
+completed turns. A long command started below a limit can finish; the agent
+must then checkpoint and stop. The orchestrator starts a fresh agent from
+`context.md`, verifies the diff fingerprint, and reads only changed regions
+before it continues. Do not ask an over-limit agent to do more work.
+
+## Agent orchestration policy
+
+- In agent mode, the main agent orchestrates and delegates execution to narrowly scoped subagents.
+- Use a fresh subagent for every task, subgoal, and lifecycle stage. Never reuse a subagent.
+- Keep each scope relevant through its stage.
+- Replace an agent before stale or unrelated material approaches 50% of its context. Apply the same limit to the main session. Fifty-percent context rot is not acceptable.
+- [Copilot CLI/harness] Route  work by risk and complexity: MAI Code 1.1 Flash for easy, low-risk, low-complexity work; Claude Sonnet 5 for medium work; GPT-5.6 Sol for hard, complex, or high-risk work.
+- Keep wording concise.
+
 ## What is Vela?
 
 AI-native presentation engine for Claude.ai. Single-file React app (~1.3MB, 18,421 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
@@ -102,14 +142,12 @@ Author→ship only (the shipped skill has no preview/AI backend — that lives i
 ## Mandatory: Run CI Checks After Every Change
 
 ```bash
-# 1. Run full test suite (361 tests)
-python3 tests/test_vela.py
-
-# 2. Verify template is in sync with parts
-python3 tools/vela-dev/scripts/concat.py
+# Run the same gate definitions that GitHub CI uses
+tools/vela-dev/scripts/ci-local.sh --parallel
 ```
 
-All checks must pass before committing.
+GitHub CI calls this script's `--gate` entries. Keep each gate definition in
+`ci-local.sh`, not in the workflow. All checks must pass before committing.
 
 ## Minimal-diff policy
 

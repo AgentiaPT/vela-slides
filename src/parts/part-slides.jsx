@@ -245,7 +245,7 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
@@ -968,6 +968,8 @@ function TeacherMessage({ text }) {
 // regular TeacherPanel.
 function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slide }) {
   const { teacherHistory, teacherLoading } = state;
+  const epochRef = useRef(state._deckEpoch);
+  epochRef.current = state._deckEpoch;
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState(null);
   const scrollRef = useRef(null);
@@ -983,7 +985,7 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
   useEffect(() => {
     activeKeyRef.current = slideKey;
     setStreamingText(null);
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   // Strip incomplete markdown during streaming (mirrors TeacherPanel)
   const cleanStream = (text) => {
@@ -999,13 +1001,16 @@ function StaticStudyPanel({ state, dispatch, lanes, selectedId, slideIndex, slid
     if (!msg || teacherLoading) return;
     if (!q) setInput("");
     const myKey = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
     dispatch({ type: "TEACHER_LOADING", value: true });
     if (activeKeyRef.current === myKey) setStreamingText("");
     const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
-      if (activeKeyRef.current !== myKey) return;
+      if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
       setStreamingText(cleanStream(text));
     });
+    if (!epochIsCurrent()) return;
     if (activeKeyRef.current === myKey) setStreamingText(null);
     const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
@@ -1136,6 +1141,8 @@ function StudentPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
 
 function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   const { teacherHistory, teacherLoading } = state;
+  const epochRef = useRef(state._deckEpoch);
+  epochRef.current = state._deckEpoch;
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState(null);
   const scrollRef = useRef(null);
@@ -1151,9 +1158,11 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
   useEffect(() => {
     activeKeyRef.current = slideKey;
     setStreamingText(null);
+    generatingRef.current = null;
+    prefetchedRef.current.clear();
     prevMsgCount.current = (teacherHistory[slideKey] || []).length;
     prevStreamState.current = null;
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   // Scroll to start of newest message — only on user message or stream start, not on finalize
   const prevMsgCount = useRef(messages.length);
@@ -1189,16 +1198,21 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
     if (!selectedId) return;
     const existing = teacherHistory[slideKey];
     if (existing && existing.length > 0) return;
-    if (generatingRef.current === slideKey) return;
-    generatingRef.current = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const generationKey = `${operationEpoch}:${slideKey}`;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
+    if (generatingRef.current === generationKey) return;
+    generatingRef.current = generationKey;
     const myKey = slideKey; // capture for closure
     const timer = setTimeout(async () => {
+      if (!epochIsCurrent()) return;
       dispatch({ type: "TEACHER_LOADING", value: true });
       if (activeKeyRef.current === myKey) setStreamingText("");
       const result = await callVeraTeacher(lanes, selectedId, slideIndex, null, [], (text) => {
-        if (activeKeyRef.current !== myKey) return;
+        if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
         setStreamingText(cleanStream(text));
       });
+      if (!epochIsCurrent()) return;
       if (activeKeyRef.current === myKey) setStreamingText(null);
       const content = result.message || "";
       if (content.trim()) dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content, questions: result.questions });
@@ -1212,31 +1226,45 @@ function TeacherPanel({ state, dispatch, lanes, selectedId, slideIndex }) {
         if (slideIndex + 1 < totalSlides) {
           prefetchedRef.current.add(nextKey);
           const prefResult = await callVeraTeacher(lanes, selectedId, slideIndex + 1, null, []);
+          if (!epochIsCurrent()) return;
           const prefContent = prefResult.message || "";
           if (prefContent.trim()) dispatch({ type: "TEACHER_MSG", key: nextKey, role: "assistant", content: prefContent, questions: prefResult.questions });
         }
       }
     }, 400);
     return () => { clearTimeout(timer); generatingRef.current = null; };
-  }, [slideKey]);
+  }, [slideKey, state._deckEpoch]);
 
   const sendQuestion = async (q) => {
     const msg = q || input.trim();
     if (!msg || teacherLoading) return;
     if (!q) setInput("");
     const myKey = slideKey;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => epochRef.current === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "user", content: msg });
     dispatch({ type: "TEACHER_LOADING", value: true });
     if (activeKeyRef.current === myKey) setStreamingText("");
     const result = await callVeraTeacher(lanes, selectedId, slideIndex, msg, [...messages, { role: "user", content: msg }], (text) => {
-      if (activeKeyRef.current !== myKey) return;
+      if (!epochIsCurrent() || activeKeyRef.current !== myKey) return;
       setStreamingText(cleanStream(text));
     });
+    if (!epochIsCurrent()) return;
     if (activeKeyRef.current === myKey) setStreamingText(null);
     const reply = result.message || "I'm not sure about that one. Could you rephrase? 🖖";
     dispatch({ type: "TEACHER_MSG", key: myKey, role: "assistant", content: reply, questions: result.questions });
     if (activeKeyRef.current === myKey) dispatch({ type: "TEACHER_LOADING", value: false });
   };
+
+  // VELA:DEV-ONLY:BEGIN
+  useEffect(() => {
+    if (!velaTestSurfaceEnabled()) return;
+    window.__velaTeacherEpochTest = sendQuestion;
+    return () => {
+      if (window.__velaTeacherEpochTest === sendQuestion) delete window.__velaTeacherEpochTest;
+    };
+  }, [sendQuestion]);
+  // VELA:DEV-ONLY:END
 
   return (
     <div data-teacher-panel onWheel={(e) => e.stopPropagation()} style={{ width: "35%", minWidth: 280, maxWidth: 400, background: "#0f1219", borderLeft: `1px solid ${T.accent}40`, display: "flex", flexDirection: "column" }}>
@@ -1341,4 +1369,3 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
     </div>
   );
 }
-

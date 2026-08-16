@@ -7,6 +7,110 @@ and record a new one.
 
 ---
 
+## Profile: `copilot-cli-sandbox`
+
+GitHub Copilot CLI sandbox with an isolated kernel, a Windows-mounted repository,
+and a fast Linux-local package store. Read `.hyper-sprint/config-copilot-cli-sandbox.md`
+for the Vela commands and measured baselines.
+
+### Detection markers
+
+| Marker | Expected |
+|---|---|
+| `$HOME` | `/home/agent` |
+| Repository path | `/d/Agentia/vela-slides` |
+| Repository file system | `fuseblk` |
+| Home file system | `overlayfs` |
+| File `.hyper-sprint/copilot-env.sh` | Present |
+| Directory `/home/agent/.local/share/vela-slides/npm/node_modules` | Present |
+| `$HTTPS_PROXY` | Set |
+
+Use this probe:
+
+```bash
+[ "$HOME" = /home/agent ] \
+  && [ -f .hyper-sprint/copilot-env.sh ] \
+  && [ -d /home/agent/.local/share/vela-slides/npm/node_modules/playwright ] \
+  && [ "$(stat -f -c %T .)" = fuseblk ] \
+  && echo copilot-cli-sandbox || echo "profile: unknown"
+```
+
+### Package and browser rules
+
+- Source `.hyper-sprint/copilot-env.sh` before a Node or browser command.
+- Keep installed packages under `/home/agent`. Do not put a `node_modules`
+  directory on `/d`.
+- The mounted drive does not support the required symbolic link. `NODE_PATH`
+  gives Node access to the local package store.
+- The burst driver uses CommonJS package resolution from ESM. This permits it to
+  use `NODE_PATH`.
+- `CHROME_PATH` selects the browser in
+  `/home/agent/.local/share/vela-slides/browsers`.
+- `VRUN_WAIT=30` is required: Vela permits a 20-second burst job plus a
+  5-second recovery budget (25 seconds combined server-side); the client
+  wait must stay above that combined budget, not equal to it.
+- Do not run `playwright install`.
+- Use one warm browser for a hunt. Do not start one browser for each test.
+- Do not run `concat.py` before `burst-boot.sh`. The boot script runs it.
+
+### Measured baseline
+
+- Node: 22.22.2
+- npm: 10.9.7
+- Playwright: 1.61.1
+- Playwright CLI: 0.1.15
+- Chromium: 141
+- FFmpeg: 8.0.1
+- Poppler: 26.01.0
+- Python suite: 504 passed
+- UI battery: 238 passed, 9 skipped, 0 failed
+
+### Known browser facts
+
+- Use the offline render. External CDNs are not required.
+- Use `.hyper-sprint/burst-boot.sh` for Hyper Sprint validation.
+- Use `.hyper-sprint/burst-hunter.json` and `vela-verbs.mjs`.
+- Use `.hyper-sprint/readiness-burst.mjs` for the readiness gate.
+- The app reset is in memory. A reset usually takes 250 to 450 ms.
+- `stats.json` records browser boot time and each warm reset time.
+- In fullscreen presenter mode, real Playwright keyboard input and screenshots
+  can stop. Use `presentKey`, `navKey`, `exitPresent`, and `swipe`. Exit
+  presenter mode before a screenshot.
+- Run browser work as multi-step bursts. One burst gives one structured result.
+- Use one readiness burst in normal work. Use small bursts only for diagnosis.
+- **Emoji font is a recording prerequisite.** This minimal image can have only
+  DejaVu fonts. Chromium then renders emoji used by trusted app chrome as empty
+  square glyphs. This is not a firewall or Lucide failure: Lucide is vendored,
+  and emoji fallback comes from system Fontconfig, not Google Fonts.
+- Before screenshots or video, require
+  `fc-match "Noto Color Emoji" | grep -q "Noto Color Emoji"`. If it is missing
+  and the system package manager is not writable, install the official Ubuntu
+  package into the user font directory:
+
+  ```bash
+  mkdir -p "$VELA_DEV_WORK_ROOT/font-package" "$HOME/.local/share/fonts"
+  cd "$VELA_DEV_WORK_ROOT/font-package"
+  apt-get download -qq fonts-noto-color-emoji
+  dpkg-deb -x fonts-noto-color-emoji_*.deb extracted
+  cp extracted/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf \
+    "$HOME/.local/share/fonts/"
+  fc-cache -f
+  fc-match "Noto Color Emoji"
+  ```
+
+  Restart Chromium after the font cache changes. Run one toolbar screenshot
+  smoke test before a complete recording. Keep the package and font outside
+  the repository. Do not replace app icons to compensate for a missing runner
+  font.
+
+### Sandbox security boundary
+
+Root access is root access inside the isolated kernel. It is not proof of user
+host access. The sandbox also has a Docker socket. Do not use Docker for Vela
+tests. Keep GitHub write operations out of development and validation tasks.
+
+---
+
 ## Profile: `claude-code-cloud-default`
 
 Claude Code's default cloud/remote-execution environment (fresh container per session,

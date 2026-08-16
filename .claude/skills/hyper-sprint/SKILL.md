@@ -207,7 +207,26 @@ the premium context and biases the final gate). Three separate roles:
    cheap/fast for mechanical work **and for verification-drivers** (the per-CR verifiers in
    principle 7 need enough model to follow a spec, not the flagship) — full routing table in
    `references/orchestration.md`.
-12. **Orchestrator, not worker — long-run resilience: heavy sub-agents can die mid-task.**
+12. **Orchestrator, not worker — enforce worker restart budgets.** Every worker owns a
+   session-only `context.md` outside the repository. It updates the file after each
+   completed milestone, before each long validation/browser run, and at least every
+   **10 tool calls or 5 minutes**. The file stays under 250 lines and records only the
+   objective, acceptance, owned files, diff fingerprint, stable decisions, exact test
+   state, artifact paths, open gaps, and ordered next actions. It excludes exploration
+   history, raw logs, screenshots, and diffs.
+
+   **Context relevance is the primary trigger.** Restart at each phase boundary when
+   prior material is no longer needed (for example, discovery → implementation and
+   implementation → validation), or sooner when failed paths, raw outputs, or completed
+   work dominate the active context. The numeric budget is only a backstop: restart at
+   the first hard limit of **50 tool calls, 15 minutes, or 3 completed turns**. A long
+   command started below a limit may finish; then the worker checkpoints and stops. The
+   orchestrator must not send more work to an over-limit agent. It starts a fresh agent
+   from `context.md`; the replacement verifies the diff fingerprint and reads only
+   changed regions before it continues. Track these limits from agent status and restart
+   without waiting for quality to degrade.
+
+   **Long-run resilience:** heavy sub-agents can also die mid-task.
    Session limits, rate limits, and container resets don't wait for a convenient boundary.
    Stagger heavy/long-running sub-agents rather than firing them all at once (so one reset
    doesn't stall the whole fan-out). When one dies, **spawn a replacement sub-agent that

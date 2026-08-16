@@ -65,7 +65,6 @@ CLAUDE_LOCKDOWN = ["--tools", "", "--strict-mcp-config", "--setting-sources", ""
 
 DEFAULT_TIMEOUT = 180       # seconds; a normal completion
 CREATE_TIMEOUT = 300        # seconds; "create" calls generate whole decks
-MAX_SSE_CLIENTS = 4         # cap concurrent /events streams (loopback DoS guard)
 MAX_CONCURRENT = 3          # cap concurrent claude spawns (cost/resource guard —
                             # bounds amplification if the authorized page is ever
                             # compromised, e.g. a deck-driven XSS with the token)
@@ -235,9 +234,6 @@ def run_completion(system, messages, call_type="chat", timeout=None):
 #   POST /action  {action:"complete", system, messages, temperature, max_tokens,
 #                  _callType}  ->  {ok:true, reply:"..."}
 #   GET  /health  -> {ok:true}
-#   GET  /events  -> keep-alive SSE (the frontend only opens this to recover a
-#                    LATE reply after a timeout; we answer /action synchronously,
-#                    so this just stays open and never has to push one).
 #
 # SECURITY: this endpoint spawns the user's `claude` (their credentials, their
 # spend). It MUST NOT be reachable by anything but the local Vela page:
@@ -249,8 +245,8 @@ def run_completion(system, messages, call_type="chat", timeout=None):
 #     CWE-346), so it is deliberately NOT relied on. What actually stops a random
 #     website the user is browsing from driving /action is the MANDATORY,
 #     unforgeable x-vela-token: a foreign page cannot read it, so it cannot call
-#     /action regardless of the Origin it presents. /events and /health carry no
-#     sensitive data (a content-free keep-alive and a readiness ping).
+#     /action regardless of the Origin it presents. /health carries no sensitive
+#     data; it is only a readiness ping.
 # Same defense model as serve.py and the Go gatekeeper (allowedOrigin), with the
 # token as the enforced gate. Residual surface is a pure text completion (CLAUDE_LOCKDOWN).
 
@@ -365,47 +361,8 @@ class _ChannelHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/health":
             self._json(200, {"ok": True, "agent": AGENT_BIN})
-        elif self.path == "/events":
-            self._serve_events()
         else:
             self._json(404, {"ok": False, "error": "not found"})
-
-    def _serve_events(self):
-        # Minimal keep-alive SSE. We always answer /action synchronously, so no
-        # "reply" event is ever pushed here; this endpoint exists only so the
-        # frontend's EventSource (late-reply recovery) connects cleanly instead
-        # of erroring/reconnecting in a loop. Concurrency is capped so a local
-        # process cannot exhaust server threads by opening many streams.
-        srv = self.server
-        with srv._sse_lock:
-            if srv._sse_count >= MAX_SSE_CLIENTS:
-                self._json(503, {"ok": False, "error": "too many event streams"})
-                return
-            srv._sse_count += 1
-        try:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
-            self._cors()
-            self.end_headers()
-            self.wfile.write(b": vela channel\n\n")
-            self.wfile.flush()
-            stop = srv._stop_event
-            waited = 0
-            # Bounded lifetime (just over the client's own 120s cleanup) so a
-            # stream is never held open indefinitely.
-            while not stop.is_set() and waited < 130:
-                if stop.wait(15):
-                    break
-                waited += 15
-                self.wfile.write(b": ping\n\n")
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
-        finally:
-            with srv._sse_lock:
-                srv._sse_count -= 1
 
     def do_POST(self):
         if not self._guard():
@@ -414,8 +371,8 @@ class _ChannelHandler(BaseHTTPRequestHandler):
         # user's `claude`. When a token is configured, only a caller that read it
         # from the serve.py-rendered page (itself behind serve.py's auth) can
         # invoke it — another local user cannot. Constant-time compare. /health
-        # and /events carry nothing sensitive and stay open. Preflight OPTIONS
-        # cannot carry the header, so it is checked here on the real POST only.
+        # carries nothing sensitive and stays open. Preflight OPTIONS cannot
+        # carry the header, so it is checked here on the real POST only.
         token = getattr(self.server, "_token", None)
         if token and not hmac.compare_digest(self.headers.get("x-vela-token", ""), token):
             self._json(401, {"ok": False, "error": "unauthorized"})
@@ -475,9 +432,6 @@ def make_channel_server(port=8787, host="127.0.0.1", token=None):
         host = "127.0.0.1"
     httpd = ThreadingHTTPServer((host, port), _ChannelHandler)
     httpd.daemon_threads = True
-    httpd._stop_event = threading.Event()
-    httpd._sse_lock = threading.Lock()
-    httpd._sse_count = 0
     # Mandatory: never leave /action unauthenticated. A missing token is replaced
     # with a fresh random one (which no external caller knows), closing the
     # tokenless cross-origin-drive hole rather than trusting the request Origin.
@@ -495,11 +449,7 @@ def start_channel_server(port=8787, host="127.0.0.1", token=None):
 
 
 def stop_channel_server(httpd):
-    """Signal any open SSE stream to close, then shut the server down."""
-    try:
-        httpd._stop_event.set()
-    except AttributeError:
-        pass
+    """Shut the channel server down."""
     httpd.shutdown()
     httpd.server_close()
 

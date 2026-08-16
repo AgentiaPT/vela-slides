@@ -2,8 +2,18 @@
 export default function App() {
   const [dark, setDark] = useState(() => typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : true);
   T = dark ? themes.dark : themes.light;
-  const [hist, dispatch] = useReducer(reducer, historyInit);
+  const [hist, rawDispatch] = useReducer(reducer, historyInit);
+  const dispatch = useCallback((action) => {
+    // Mark replacement before React processes its reducer queue. A promise can
+    // settle in the same task as LOAD; this synchronous signal closes that gap.
+    if (action && (action.type === "LOAD" || action.type === "NEW_DECK" || action.type === "RESET")) velaPrepareDeckReplacement();
+    rawDispatch(action);
+  }, []);
   const state = hist.present;
+  velaSyncDeckEpoch(state._deckEpoch);
+  const historyRef = useRef(hist);
+  historyRef.current = hist;
+  const demoUnavailableReason = getDemoUnavailableReason(state);
   const aiOk = useAIAvailable();
   IMG_SETTINGS = { maxWidth: state.branding?.imgMaxWidth ?? defaultBranding.imgMaxWidth, quality: state.branding?.imgQuality ?? defaultBranding.imgQuality };
   const [confirmReset, setConfirmReset] = useState(false);
@@ -37,7 +47,90 @@ export default function App() {
   const localSyncTimer = useRef(null);
   const _localSyncIncoming = useRef(false);
   const _localSyncState = useRef(null);
+  const postDemoFlushTimer = useRef(null);
+  const postDemoFlushRequest = useRef(null);
+  const postDemoFlushModes = useRef({ local: false, storage: false });
+  const flushLocalStateRef = useRef(null);
+  const flushStorageStateRef = useRef(null);
+  const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
+
+  const demoSaveLocked = () => document.documentElement.dataset.velaDemoRunning === "true";
+  const stateForPostDemoFlush = (request) => {
+    const current = _localSyncState.current;
+    if (!request?.useCurrent) return request?.state;
+    return current?._deckEpoch === request.epoch ? current : null;
+  };
+  flushLocalStateRef.current = (request, allowIncoming = false) => {
+    if (!loaded.current || demoSaveLocked() || (!allowIncoming && _localSyncIncoming.current)) return false;
+    const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
+    if (!source || !window.__velaSendDeckUpdate) return false;
+    const save = extractSave(source);
+    // Never let an empty or transient deck overwrite the local source file.
+    const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
+    if (!save.lanes?.length || !totalSlides) return false;
+    delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
+    delete save.lastDebug; delete save._bootstrap; delete save._version;
+    try {
+      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      return true;
+    } catch (error) {
+      dbg("Local save error:", error);
+      return false;
+    }
+  };
+  flushStorageStateRef.current = (request) => {
+    if (!loaded.current || demoSaveLocked()) return false;
+    const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
+    if (!source) return false;
+    const save = extractSave(source);
+    save.chatMessages = (save.chatMessages || []).map((m) => m.images ? { ...m, images: m.images.map(() => "[img]") } : m);
+    save._version = 3;
+    try {
+      saveKV(MASTER_KEY, save);
+      return true;
+    } catch (error) {
+      dbg("Storage save error:", error);
+      return false;
+    }
+  };
+  requestPostDemoFlushRef.current = (request, modes = { local: VELA_LOCAL_MODE, storage: !VELA_LOCAL_MODE }) => {
+    if (!request?.state) return false;
+    postDemoFlushRequest.current = request;
+    postDemoFlushModes.current = {
+      local: postDemoFlushModes.current.local || !!modes.local,
+      storage: postDemoFlushModes.current.storage || !!modes.storage,
+    };
+    clearTimeout(postDemoFlushTimer.current);
+    const attempt = () => {
+      if (demoSaveLocked() || (postDemoFlushModes.current.local && _localSyncIncoming.current)) {
+        postDemoFlushTimer.current = setTimeout(attempt, 100);
+        return;
+      }
+      const pendingRequest = postDemoFlushRequest.current;
+      const pendingModes = postDemoFlushModes.current;
+      postDemoFlushRequest.current = null;
+      postDemoFlushModes.current = { local: false, storage: false };
+      if (pendingModes.local) flushLocalStateRef.current?.(pendingRequest, true);
+      if (pendingModes.storage) flushStorageStateRef.current?.(pendingRequest);
+    };
+    attempt();
+    return true;
+  };
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(postDemoFlushTimer.current);
+      const pendingRequest = postDemoFlushRequest.current;
+      const pendingModes = postDemoFlushModes.current;
+      if (pendingRequest && !demoSaveLocked()) {
+        if (pendingModes.local) flushLocalStateRef.current?.(pendingRequest, true);
+        if (pendingModes.storage) flushStorageStateRef.current?.(pendingRequest);
+      }
+      postDemoFlushRequest.current = null;
+      postDemoFlushModes.current = { local: false, storage: false };
+    };
+  }, []);
 
   // ━━━ Desktop save-status (Neutralino) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // deck-io reports every save transition through window.__velaOnSaveStatus so
@@ -121,6 +214,136 @@ export default function App() {
         for (const l of (s.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) { accent = it.slides?.[s.slideIndex]?.accent || null; break; } }
         return { itemId: s.selectedId, slideIdx: s.slideIndex, accent };
       },
+      getChatState: () => {
+        const s = _localSyncState.current;
+        return s ? {
+          open: s.chatOpen,
+          loading: s.chatLoading,
+          debug: s.lastDebug,
+          aiWork: s.aiWork,
+          messages: s.chatMessages,
+        } : null;
+      },
+      getVeraMode: () => _localSyncState.current?.veraMode || null,
+      restoreStartupDeck: () => {
+        if (!VELA_TEST_STARTUP_PATCH) return false;
+        const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
+        const sanitized = validateAndSanitizeDeck(raw);
+        sanitized.deckTitle = sanitizeDeckTitle(raw.deckTitle);
+        dispatch({ type: "LOAD", payload: sanitized });
+        return true;
+      },
+      loadReplacementDeckForTest: () => {
+        if (!VELA_TEST_STARTUP_PATCH) return false;
+        const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
+        raw.deckTitle = "Replacement deck sentinel";
+        raw.guidelines = "replacement epoch retained";
+        raw.branding = { ...(raw.branding || {}), accentColor: "#123456", footerLeft: "Replacement branding sentinel" };
+        const rawFirstLane = raw.lanes?.[0];
+        const rawFirstItem = rawFirstLane?.items?.[0];
+        if (rawFirstLane) rawFirstLane.title = "Replacement lane sentinel";
+        if (rawFirstItem) {
+          rawFirstItem.title = "Replacement module sentinel";
+          if (!Array.isArray(rawFirstItem.slides)) rawFirstItem.slides = [];
+          rawFirstItem.slides[0] = { ...(rawFirstItem.slides[0] || {}), blocks: [{ type: "heading", text: "REPLACEMENT CONTENT SENTINEL", size: "2xl" }] };
+          rawFirstItem.slides[1] = { ...(rawFirstItem.slides[1] || rawFirstItem.slides[0]), blocks: [{ type: "heading", text: "REPLACEMENT NAVIGATION SENTINEL", size: "2xl" }] };
+        }
+        const sanitized = validateAndSanitizeDeck(raw);
+        sanitized.deckTitle = sanitizeDeckTitle(raw.deckTitle);
+        sanitized.guidelines = "replacement epoch retained";
+        const firstItem = sanitized.lanes?.[0]?.items?.[0];
+        if (firstItem) {
+          if (!firstItem.slides?.length) firstItem.slides = [{ blocks: [] }];
+        }
+        sanitized.selectedId = firstItem?.id || null;
+        sanitized.slideIndex = 0;
+        dispatch({ type: "LOAD", payload: sanitized });
+        return true;
+      },
+      getDeckStateForTest: () => {
+        const s = _localSyncState.current;
+        const firstLane = s?.lanes?.[0];
+        const firstItem = s?.lanes?.[0]?.items?.[0];
+        let selectedItem = null;
+        for (const lane of (s?.lanes || [])) {
+          selectedItem = lane.items?.find((item) => item.id === s.selectedId) || null;
+          if (selectedItem) break;
+        }
+        return s ? {
+          deckTitle: s.deckTitle,
+          guidelines: s.guidelines,
+          firstLaneTitle: firstLane?.title || null,
+          firstItemId: firstItem?.id || null,
+          firstItemTitle: firstItem?.title || null,
+          firstBlockText: firstItem?.slides?.[0]?.blocks?.[0]?.text || null,
+          selectedBlockText: selectedItem?.slides?.[s.slideIndex]?.blocks?.[0]?.text || null,
+          brandingAccentColor: s.branding?.accentColor || null,
+          brandingFooterLeft: s.branding?.footerLeft || null,
+          epoch: s._deckEpoch,
+          selectedId: s.selectedId,
+          slideIndex: s.slideIndex,
+          fullscreen: !!s.fullscreen,
+          veraMode: s.veraMode,
+          chatLoading: s.chatLoading,
+          teacherLoading: s.teacherLoading,
+          aiWork: s.aiWork,
+          chatMessages: JSON.parse(JSON.stringify(s.chatMessages || [])),
+          teacherHistory: JSON.parse(JSON.stringify(s.teacherHistory || {})),
+        } : null;
+      },
+      setChatOpenForTest: (open) => dispatch({ type: "SET_CHAT", open: !!open }),
+      setVeraModeForTest: (mode) => dispatch({ type: "SET_VERA_MODE", mode }),
+      installDeferredAgentTransport: () => {
+        window.__velaDeferredAI?.restore?.();
+        const originalReady = window.__velaAgentReady;
+        const originalSend = window.__velaAgentSend;
+        const calls = [];
+        const control = {
+          pending: () => calls.length,
+          resolveNext: (reply) => {
+            const call = calls.shift();
+            if (!call) throw new Error("No deferred AI call is pending");
+            call.resolve(reply);
+          },
+          rejectNext: (message) => {
+            const call = calls.shift();
+            if (!call) throw new Error("No deferred AI call is pending");
+            call.reject(new Error(message || "Deferred AI failure"));
+          },
+          restore: () => {
+            window.__velaAgentReady = originalReady;
+            window.__velaAgentSend = originalSend;
+            window.__velaDeferredAI = null;
+            window.dispatchEvent(new Event("vela-agent-update"));
+          },
+        };
+        window.__velaDeferredAI = control;
+        window.__velaAgentReady = true;
+        window.__velaAgentSend = (payload) => new Promise((resolve, reject) => calls.push({ payload, resolve, reject }));
+        window.dispatchEvent(new Event("vela-agent-update"));
+        return control;
+      },
+      getDeckEpoch: () => _localSyncState.current?._deckEpoch ?? null,
+      resetDeckForTest: () => dispatch({ type: "RESET" }),
+      newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
+      getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
+      setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      capturePostDemoFlushForTest: () => {
+        const current = _localSyncState.current;
+        return current ? {
+          state: JSON.parse(JSON.stringify(extractSave(current))),
+          epoch: current._deckEpoch,
+          useCurrent: true,
+        } : null;
+      },
+      flushDemoSaveForTest: (request, modes) => requestPostDemoFlushRef.current?.(request, modes),
+      getHistoryCounts: () => ({
+        past: historyRef.current.past.length,
+        future: historyRef.current.future.length,
+      }),
+      addTeacherMessage: (key, content) => dispatch({ type: "TEACHER_MSG", key, role: "user", content }),
+      getTeacherHistory: () => JSON.parse(JSON.stringify(_localSyncState.current?.teacherHistory || {})),
+      clearTeacherHistory: (key) => dispatch({ type: "TEACHER_CLEAR", key }),
       // Drive the unified AI-working flag without a live AI backend, so the
       // vera-thinking / magic-reveal contract is assertable offline.
       setAIWork: (value) => { dispatch({ type: "SET_AI_WORK", value: value || null }); return true; },
@@ -136,18 +359,10 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
-    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current) return;
-    localSyncTimer.current = setTimeout(() => {
-      if (window.__velaSendDeckUpdate) {
-        const save = extractSave(state);
-        // Safety: never write an empty deck to disk — this would wipe a real file.
-        const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
-        if (!save.lanes?.length || !totalSlides) return;
-        delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
-        delete save.lastDebug; delete save._bootstrap; delete save._version;
-        window.__velaSendDeckUpdate({ deckTitle: state.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
-      }
-    }, 600);
+    if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
+        document.documentElement.dataset.velaDemoRunning === "true") return;
+    localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
+    return () => clearTimeout(localSyncTimer.current);
   }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
 
   // Receive deck updates from local server (file → browser)
@@ -521,18 +736,11 @@ export default function App() {
   // persisting across deck switches and app restarts.
   const saveTimer = useRef(null);
   useEffect(() => {
-    if (!loaded.current || VELA_LOCAL_MODE) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const save = extractSave(state);
-        // Strip large binary data from chat messages
-        save.chatMessages = (save.chatMessages || []).map((m) => m.images ? { ...m, images: m.images.map(() => "[img]") } : m);
-        save._version = 3;
-        await saveKV(MASTER_KEY, save);
-        dbg("Storage: saved v3, lanes:", save.lanes?.length, "items:", allItemIds(save.lanes).length);
-      } catch (err) { dbg("Save error:", err); }
-    }, 1500);
+    if (!loaded.current || VELA_LOCAL_MODE ||
+        document.documentElement.dataset.velaDemoRunning === "true") return;
+    saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
+    return () => clearTimeout(saveTimer.current);
   }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
 
   // Sync browser tab title with deck title
@@ -743,8 +951,8 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
+              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
               <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}
@@ -761,7 +969,7 @@ export default function App() {
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
                 {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
-                {total > 0 && <button onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
+                {total > 0 && <button data-testid="export-pdf-menu-item" onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
                 {total > 0 && <button data-testid="export-pptx-menu-item" onClick={() => { setPptxExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> PowerPoint (.pptx)</button>}
                 {total > 0 && <button onClick={() => { exportMarkdown(state, { includeNotes: mdIncludeNotes }); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export Markdown</button>}
                 {total > 0 && (() => { const soReason = velaStandaloneExportGateReason(); return <button onClick={() => { setStandaloneExport(true); setExportMenu(false); }} disabled={!!soReason} title={soReason || "One shareable .html file with this deck baked in"} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: soReason ? T.textDim + "60" : T.text, fontFamily: FONT.body, fontSize: 14, cursor: soReason ? "not-allowed" : "pointer", textAlign: "left" }}>{"🌐"} Standalone HTML</button>; })()}
@@ -772,9 +980,9 @@ export default function App() {
           </div>
           {velaIsArtifactMode() && <><div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <CostBadge /></>}
-          <button onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Run live demo">{"🎬"}</button>
+          <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
@@ -848,7 +1056,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} />}
+          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
         </div>}
 
         {/* TOC toggle */}
@@ -965,10 +1173,8 @@ export default function App() {
         }
       }} />}
       {devTestPanels}
-      {!VELA_PRESENTATION_MODE && <VelaDemoRunner />}
+      {!VELA_PRESENTATION_MODE && <VelaDemoRunner appState={state} dispatch={dispatch} requestPostDemoFlush={(request) => requestPostDemoFlushRef.current?.(request)} demoUi={{ tocCollapsed, setTocCollapsed, viewMenu, setViewMenu, exportMenu, setExportMenu, pptxExport, setPptxExport, pdfExport, setPdfExport }} />}
     </div>
     </IconPickerContext.Provider>
   );
 }
-
-

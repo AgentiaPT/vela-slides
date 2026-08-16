@@ -59,7 +59,7 @@ function ToolTraceCard({ tool, dispatch }) {
   })();
 
   return (
-    <div style={{ borderRadius: 6, border: `1px solid ${running ? T.accent + "40" : T.border}`, overflow: "hidden", fontSize: 13, transition: "all 0.2s" }}>
+    <div data-testid="vera-tool-trace" data-tool-name={tool.name} style={{ borderRadius: 6, border: `1px solid ${running ? T.accent + "40" : T.border}`, overflow: "hidden", fontSize: 13, transition: "all 0.2s" }}>
       {/* Header — always visible */}
       <div onClick={() => !running && setOpen(!open)} style={{ padding: "5px 10px", display: "flex", alignItems: "center", gap: 6, cursor: running ? "default" : "pointer", background: running ? T.accent + "08" : open ? T.bgCard : "transparent", transition: "background 0.15s" }}
         onMouseEnter={(e) => { if (!running) e.currentTarget.style.background = T.bgCard; }}
@@ -91,6 +91,8 @@ function ToolTraceCard({ tool, dispatch }) {
 
 // ━━━ Chat Panel ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
   const scrollRef = useRef(null);
@@ -127,6 +129,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     if (!aiOk) return;
     const msg = directMsg || input.trim();
     if ((!msg && pendingImages.length === 0) || state.chatLoading) return;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => stateRef.current?._deckEpoch === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     const images = directMsg ? [] : [...pendingImages];
     if (!directMsg) { setInput(""); setPendingImages([]); }
     dispatch({ type: "ADD_MSG", role: "user", content: msg || "🖼️", images: images.map((i) => i.dataUrl) });
@@ -134,10 +138,13 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     // Add a placeholder assistant message that will accumulate tool traces
     dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
     const onUpdate = (lanes, debug) => {
+      if (!epochIsCurrent()) return;
+      if (document.documentElement.dataset.velaDemoRunning === "true") return;
       dispatch({ type: "LOAD_LANES", lanes });
       dispatch({ type: "SET_DEBUG", text: debug });
     };
     const onToolCall = (evt) => {
+      if (!epochIsCurrent()) return;
       dispatch({ type: "STREAM_TOOL", event: evt });
       // CR5: mirror "Vera is working" onto the canvas — this is the core of the CR
       // (chat/engine edits previously animated nothing). On `calling`, scan the
@@ -157,6 +164,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
     };
     const layoutStats = getLayoutStats?.() || null;
     const result = await callVera(msg || "Here are the images I'm attaching.", state.lanes, state.selectedId, state.slideIndex, onUpdate, images, state.branding, state.guidelines, onToolCall, state.chatMessages, layoutStats);
+    if (!epochIsCurrent()) return;
     // Finalize the streaming message: set content + jumps, remove _streaming flag
     dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
     // Auto-navigate to the first changed/created slide
@@ -165,23 +173,12 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "SELECT", id: j.itemId });
       dispatch({ type: "SET_SLIDE_INDEX", index: j.slideIdx ?? 0 });
     }
-    if (result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
-    if (result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
+    const demoRunning = document.documentElement.dataset.velaDemoRunning === "true";
+    if (!demoRunning && result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
+    if (!demoRunning && result.branding) dispatch({ type: "SET_BRANDING", branding: result.branding });
     dispatch({ type: "SET_DEBUG", text: result.debug || "" });
     dispatch({ type: "SET_LOADING", value: false });
     dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe: never leave a slide stuck shimmering
-    // Register late-reply handler for SSE recovery (channel timeout fallback)
-    if (result._lateReplyPending) {
-      window.__velaLateReply = (msg, jumps) => {
-        dispatch({ type: "FINALIZE_STREAM", content: msg, jumps: jumps || [] });
-        if (jumps?.length > 0) {
-          dispatch({ type: "SELECT", id: jumps[0].itemId });
-          dispatch({ type: "SET_SLIDE_INDEX", index: jumps[0].slideIdx ?? 0 });
-        }
-        dispatch({ type: "SET_DEBUG", text: "🔧 Late reply applied" });
-        window.__velaLateReply = null;
-      };
-    }
   };
 
   const slideImageCount = extractSlideImages(state.lanes, state.selectedId, state.slideIndex).length;
@@ -189,13 +186,16 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
   // Auto-send bootstrap prompt from NewDeckDialog
   useEffect(() => {
     if (!state._bootstrap) return;
+    const operationEpoch = state._deckEpoch;
+    const epochIsCurrent = () => stateRef.current?._deckEpoch === operationEpoch && velaDeckEpochIsCurrent(operationEpoch);
     const { prompt, images } = state._bootstrap;
     dispatch({ type: "CLEAR_BOOTSTRAP" });
     if (!prompt && images.length === 0) return;
     // Inject images into pendingImages so they're sent with the message
     if (images.length > 0) setPendingImages(images.map((dataUrl, i) => ({ dataUrl, name: `ref-${i + 1}` })));
     // Slight delay to let images state settle, then send
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (!epochIsCurrent()) return;
       const msg = prompt || "Build slides from the attached images.";
       // Replicate the send flow inline (since send() reads pendingImages from state)
       const imgs = images.map((dataUrl, i) => ({ dataUrl, name: `ref-${i + 1}` }));
@@ -203,10 +203,24 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       dispatch({ type: "ADD_MSG", role: "user", content: msg, images: imgs.map((i) => i.dataUrl) });
       dispatch({ type: "SET_LOADING", value: true });
       dispatch({ type: "ADD_MSG", role: "assistant", content: "", tools: [], _streaming: true });
-      const onUpdate = (lanes, debug) => { dispatch({ type: "LOAD_LANES", lanes }); dispatch({ type: "SET_DEBUG", text: debug }); };
+      const onUpdate = (lanes, debug) => {
+        if (!epochIsCurrent()) return;
+        dispatch({ type: "LOAD_LANES", lanes });
+        dispatch({ type: "SET_DEBUG", text: debug });
+      };
       // CR5: same canvas "working" mirror as the main send() path (see there).
-      const onToolCall = (evt) => { dispatch({ type: "STREAM_TOOL", event: evt }); if (evt.type === "calling" && state.selectedId) { dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } }); } if (evt.type === "done" && evt.jump?.length > 0) { dispatch({ type: "SELECT", id: evt.jump[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 }); dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } }); } };
+      const onToolCall = (evt) => {
+        if (!epochIsCurrent()) return;
+        dispatch({ type: "STREAM_TOOL", event: evt });
+        if (evt.type === "calling" && state.selectedId) dispatch({ type: "SET_AI_WORK", value: { itemId: state.selectedId, slideIdx: state.slideIndex } });
+        if (evt.type === "done" && evt.jump?.length > 0) {
+          dispatch({ type: "SELECT", id: evt.jump[0].itemId });
+          dispatch({ type: "SET_SLIDE_INDEX", index: evt.jump[0].slideIdx ?? 0 });
+          dispatch({ type: "SET_AI_WORK", value: { itemId: evt.jump[0].itemId, slideIdx: evt.jump[0].slideIdx ?? 0 } });
+        }
+      };
       callVera(msg, state.lanes, state.selectedId, state.slideIndex, onUpdate, imgs, state.branding, state.guidelines, onToolCall, state.chatMessages).then((result) => {
+        if (!epochIsCurrent()) return;
         dispatch({ type: "FINALIZE_STREAM", content: result.message, jumps: result.jumps });
         if (result.jumps?.length > 0) { dispatch({ type: "SELECT", id: result.jumps[0].itemId }); dispatch({ type: "SET_SLIDE_INDEX", index: result.jumps[0].slideIdx ?? 0 }); }
         if (result.lanes) dispatch({ type: "LOAD_LANES", lanes: result.lanes });
@@ -216,7 +230,8 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
         dispatch({ type: "SET_AI_WORK", value: null }); // CR5 fail-safe
       });
     }, 100);
-  }, [state._bootstrap]);
+    return () => clearTimeout(timer);
+  }, [state._deckEpoch]); // eslint-disable-line -- NEW_DECK changes the epoch; CLEAR_BOOTSTRAP must not cancel this timer
 
   return (
 
@@ -271,7 +286,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
             {m.role === "assistant" && m._streaming && m._thinking && <div style={{ padding: "4px 10px", borderRadius: 6, fontSize: 13, fontFamily: FONT.mono, color: T.accent, display: "flex", alignItems: "center", gap: 6 }}><span style={{ animation: "spin 1s linear infinite", display: "inline-block", fontSize: 10 }}>⚡</span> thinking...</div>}
             {/* Assistant text */}
             {m.role === "assistant" && m.content && m._system && <div style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontFamily: FONT.mono, color: T.textDim, textAlign: "center", opacity: 0.7 }}>{m.content}</div>}
-            {m.role === "assistant" && m.content && !m._system && <div style={{ padding: "8px 10px", borderRadius: 6, fontSize: 14, lineHeight: 1.5, fontFamily: FONT.body, background: T.bgCard, color: T.textMuted, wordBreak: "break-word" }}><ChatMarkdown text={m.content} /></div>}
+            {m.role === "assistant" && m.content && !m._system && <div data-testid="vera-chat-response" style={{ padding: "8px 10px", borderRadius: 6, fontSize: 14, lineHeight: 1.5, fontFamily: FONT.body, background: T.bgCard, color: T.textMuted, wordBreak: "break-word" }}><ChatMarkdown text={m.content} /></div>}
             {/* Jump links */}
             {m.jumps?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "0 4px" }}>
               {m.jumps.map((j, k) => (
@@ -293,7 +308,7 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       </div>}
       {pendingImages.length > 0 && <div style={{ padding: "4px 10px", display: "flex", gap: 4, flexWrap: "wrap", borderTop: `1px solid ${T.border}` }}>
         {pendingImages.map((img, i) => (
-          <div key={i} style={{ position: "relative" }}>
+          <div key={i} data-demo-unsaved="true" style={{ position: "relative" }}>
             <img src={img.dataUrl} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: `1px solid ${T.border}` }} />
             <span onClick={() => removeImage(i)} style={{ position: "absolute", top: -4, right: -4, width: 14, height: 14, borderRadius: "50%", background: T.red, color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1 }}>×</span>
           </div>
@@ -302,12 +317,12 @@ function ChatPanel({ state, dispatch, isMobile, getLayoutStats }) {
       <div style={{ padding: "8px 10px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, flexDirection: "column" }}>
         {!aiOk && <div style={{ padding: "4px 8px", fontSize: 11, fontFamily: FONT.mono, color: T.amber, background: T.amber + "15", borderRadius: 4, textAlign: "center" }}>{VELA_AI_UNAVAILABLE_MSG}</div>}
         <div style={{ display: "flex", gap: 6 }}>
-        <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onPaste={handlePaste}
+        <textarea data-testid="vera-chat-input" ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onPaste={handlePaste}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           placeholder={!aiOk ? "AI features not enabled" : pendingImages.length > 0 ? "Describe what to do with images..." : "Tell Vera... (paste images here)"}
           disabled={!aiOk}
           rows={2} style={S.input({ padding: "6px 8px", borderRadius: 4, resize: "none", lineHeight: 1.4, opacity: aiOk ? 1 : 0.5 })} />
-        <button onClick={() => send()} disabled={!aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0)} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined}
+        <button data-testid="vera-chat-send" onClick={() => send()} disabled={!aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0)} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined}
           style={{ padding: "0 12px", background: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? T.border : T.accent, color: "#fff", border: "none", borderRadius: 4, cursor: !aiOk || state.chatLoading || (!input.trim() && pendingImages.length === 0) ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, alignSelf: "stretch" }}>↑</button>
         </div>
       </div>
@@ -445,5 +460,3 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
     </div>
   );
 }
-
-

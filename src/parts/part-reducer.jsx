@@ -5,12 +5,21 @@
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+let _activeDeckEpoch = init._deckEpoch;
+const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
+const velaSyncDeckEpoch = (epoch) => {
+  if (Number.isSafeInteger(epoch) && epoch >= _activeDeckEpoch) _activeDeckEpoch = epoch;
+};
+const velaDeckEpochIsCurrent = (epoch) => epoch === _activeDeckEpoch;
+// The private epoch must stay numeric and monotonic so deck input and history
+// cannot make a tour mistake a replacement deck for its original deck.
+const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && state._deckEpoch >= 0 ? state._deckEpoch + 1 : 1;
 
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -21,7 +30,20 @@ function innerReducer(state, a) {
       _fullRewrite = true;
       // Mark all modules as loaded (safe to save)
       if (a.payload?.lanes) for (const l of a.payload.lanes) for (const i of l.items) _loadedMods.add(i.id);
-      const loaded = { ...state, ...a.payload, veraMode: "editor", teacherHistory: {}, teacherLoading: false };
+      const loaded = {
+        ...state,
+        ...a.payload,
+        veraMode: "editor",
+        teacherHistory: {},
+        teacherLoading: false,
+        chatLoading: false,
+        aiWork: null,
+        lastDebug: "",
+        _deckEpoch: nextDeckEpoch(state),
+      };
+      // A replacement deck cannot inherit an unfinished assistant placeholder
+      // from work that belongs to the prior epoch.
+      if (Array.isArray(loaded.chatMessages)) loaded.chatMessages = loaded.chatMessages.filter((m) => !m?._streaming);
       // CR1: a freshly loaded/switched deck must open straight into the first slide
       // of the first non-empty module — in BOTH editor and presentation modes.
       // Auto-select when there is no selection OR the incoming selectedId does not
@@ -254,9 +276,25 @@ function innerReducer(state, a) {
     case "SET_COMMENTS_PANEL": return { ...state, commentsPanelOpen: a.open };
     case "SET_CHAT": return { ...state, chatOpen: a.open };
     case "RESET_CHAT": return { ...state, chatMessages: [{ role: "assistant", content: "Chat cleared. What's next? ⛵🖖", ts: now() }], chatLoading: false };
+    case "RESTORE_CHAT_STATE": return {
+      ...state,
+      chatMessages: Array.isArray(a.messages) ? a.messages : state.chatMessages,
+      chatLoading: !!a.loading,
+      lastDebug: typeof a.debug === "string" ? a.debug : "",
+      aiWork: a.aiWork || null,
+    };
+    case "RESTORE_DEMO_STATE": return {
+      ...state,
+      chatMessages: Array.isArray(a.messages) ? a.messages : state.chatMessages,
+      chatLoading: !!a.loading,
+      lastDebug: typeof a.debug === "string" ? a.debug : "",
+      aiWork: a.aiWork || null,
+      teacherHistory: a.teacherHistory && typeof a.teacherHistory === "object" ? a.teacherHistory : {},
+      teacherLoading: !!a.teacherLoading,
+    };
     case "NEW_DECK": {
       _fullRewrite = true;
-      return { ...init, deckTitle: a.title || "Untitled", chatOpen: true, chatMessages: [{ role: "assistant", content: "Setting sail on a new deck — let me build this for you. ⛵🖖", ts: now() }], _bootstrap: { prompt: a.prompt, images: a.images || [] } };
+      return { ...init, deckTitle: a.title || "Untitled", chatOpen: true, chatMessages: [{ role: "assistant", content: "Setting sail on a new deck — let me build this for you. ⛵🖖", ts: now() }], _bootstrap: { prompt: a.prompt, images: a.images || [] }, _deckEpoch: nextDeckEpoch(state) };
     }
     case "CLEAR_BOOTSTRAP": return { ...state, _bootstrap: null };
     case "SET_VERA_MODE": return { ...state, veraMode: a.mode, teacherHistory: {}, teacherLoading: false };
@@ -333,7 +371,7 @@ function innerReducer(state, a) {
       return { ...state, branding: b };
     }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
-    case "RESET": return { ...init, chatOpen: state.chatOpen };
+    case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
     default: return state;
   }
@@ -349,7 +387,7 @@ function reducer(hist, a) {
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
     // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
     // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
-    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -377,7 +415,7 @@ function reducer(hist, a) {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
     // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
-    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections };
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -403,5 +441,3 @@ function reducer(hist, a) {
   if (NO_HISTORY.has(a.type)) return { ...hist, present: newPresent };
   return { past: [...hist.past, hist.present].slice(-MAX_HISTORY), present: newPresent, future: [] };
 }
-
-

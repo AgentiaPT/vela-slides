@@ -1,6 +1,8 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
+  const deckEpochRef = useRef(state._deckEpoch);
+  deckEpochRef.current = state._deckEpoch;
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
@@ -53,6 +55,31 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const runImproveRef = useRef(null);
   const measureRef = useRef(null);
   const [measureSlide, setMeasureSlide] = useState(null);
+  // Each async editor owns its local loading state. Replacement or cancellation
+  // invalidates that owner so an older finalizer cannot unlock a newer request.
+  const operationOwnersRef = useRef({});
+  const claimOperation = (name) => {
+    const owner = {};
+    operationOwnersRef.current[name] = owner;
+    return owner;
+  };
+  const ownsOperation = (name, owner, epoch) =>
+    operationOwnersRef.current[name] === owner
+    && deckEpochRef.current === epoch
+    && velaDeckEpochIsCurrent(epoch);
+  // A cancel path (Stop/Escape/slide-change) invalidates the owner token so the
+  // async finalizer's OWN operationIsCurrent() check now fails — which means
+  // that finalizer can no longer clear the shared aiWork marker itself. The
+  // cancel path must take over that job, but ONLY when this name's slot is
+  // owned right this instant: several cancel paths fire defensively on every
+  // nav/Escape even when nothing of that name is running, and must never clear
+  // a DIFFERENT, still-active operation's aiWork (aiWork is one shared slot
+  // across every named operation).
+  const clearOwnedAiWork = (name) => {
+    const owned = !!operationOwnersRef.current[name];
+    delete operationOwnersRef.current[name];
+    if (owned) dispatch({ type: "SET_AI_WORK", value: null });
+  };
   // Latest props read inside the long-running improve loop (closures go stale),
   // so the background task survives the user navigating to other slides/modules.
   const lanesRef = useRef(lanes); lanesRef.current = lanes;
@@ -103,9 +130,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   const stopImprove = useCallback(() => {
     if (improving) {
+      delete operationOwnersRef.current.improve;
       improveCancelRef.current = true;
       setImproving(null);
       setCapturedThumb(null);
+      setBeforeSlides(null);
+      setShowBefore(false);
+      setRevealKey(null);
       setRevealKey(null);
       dispatch({ type: "SET_AI_WORK", value: null }); // CR5: cancel clears the scan
     }
@@ -193,16 +224,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [altOriginal, setAltOriginal] = useState(null); // snapshot of the slide before the first variant was applied
   const altCancelRef = useRef(false);
   // Close the grid keeping whatever variant is currently applied (clicking a tile already applied it live).
-  const stopAlternatives = () => { altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); setAltOriginal(null); };
+  const stopAlternatives = () => { clearOwnedAiWork("alternatives"); altCancelRef.current = true; setAltLoading(false); setAlternatives(null); setAltPreview(null); setAltOriginal(null); };
   const stopAll = () => { stopImprove(); stopAlternatives(); };
   const currentLane = lanes?.find((l) => l.items.some((i) => i.id === concept.id));
   const [showTimingScope, setShowTimingScope] = useState(false);
   const [estimating, setEstimating] = useState(null); // { current, total, status }
   const [timingScope, setTimingScope] = useState("module");
   const estimateCancelRef = useRef(false);
+  const stopEstimate = () => { clearOwnedAiWork("estimate"); estimateCancelRef.current = true; setEstimating(null); };
 
   // Block-targeted editing
   const [blockEditing, setBlockEditing] = useState(false);
+  useEffect(() => {
+    // The new deck owns every editor field. Old work can finish, but it cannot
+    // keep a panel open, retain a draft, or change the new deck's loading state.
+    operationOwnersRef.current = {};
+    improveCancelRef.current = true;
+    altCancelRef.current = true;
+    estimateCancelRef.current = true;
+    setImproving(null);
+    setCapturedThumb(null);
+    setBeforeSlides(null);
+    setShowBefore(false);
+    setMeasureSlide(null);
+    setRevealKey(null);
+    setShowImproveInput(false);
+    setImprovePrompt("");
+    setShowQuickEdit(false);
+    setQuickEditPrompt("");
+    setQuickEditImage(null);
+    setQuickEditing(false);
+    setShowNewSlide(false);
+    setNewSlidePrompt("");
+    setNewSlideImage(null);
+    setNewSlideGenerating(false);
+    setBlockEditing(false);
+    setShowTimingScope(false);
+    setEstimating(null);
+    setAltLoading(false);
+    setAlternatives(null);
+    setAltPreview(null);
+    setAltOriginal(null);
+  }, [state._deckEpoch]);
 
   // Timing computations
   const moduleTime = sumDurations(slides);
@@ -218,7 +281,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   })();
 
   const runEstimate = async () => {
-    if (!aiOk) return;
+    if (!aiOk || estimating) return;
+    const operationEpoch = state._deckEpoch;
     estimateCancelRef.current = false;
     setShowTimingScope(false);
     let jobs = [];
@@ -236,28 +300,36 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     jobs = jobs.filter((j) => !j.slideData.timeLock);
     if (jobs.length === 0) { setEstimating(null); return; }
 
+    const operationOwner = claimOperation("estimate");
+    const operationIsCurrent = () => ownsOperation("estimate", operationOwner, operationEpoch);
     setEstimating({ current: 0, total: jobs.length, status: "Estimating..." });
+    dispatch({ type: "SET_AI_WORK", value: { itemId: "*", slideIdx: "*" } });
     try {
       // Batch in chunks of 30 for API sanity
       for (let start = 0; start < jobs.length; start += 30) {
-        if (estimateCancelRef.current) break;
+        if (estimateCancelRef.current || !operationIsCurrent()) break;
         const chunk = jobs.slice(start, start + 30);
         setEstimating({ current: start, total: jobs.length, status: `Estimating ${start + 1}–${start + chunk.length} of ${jobs.length}...` });
         const durations = await estimateTimings(chunk);
-        if (estimateCancelRef.current) break;
+        if (estimateCancelRef.current || !operationIsCurrent()) break;
         for (let i = 0; i < chunk.length; i++) {
           dispatch({ type: "UPDATE_SLIDE", id: chunk[i].itemId, index: chunk[i].slideIdx, patch: { duration: durations[i] }, merge: true });
         }
       }
     } catch (e) {
       dbg("Estimate error:", e);
+      if (!operationIsCurrent()) return;
       // Surface the failure instead of silently leaving partial/unchanged
       // timings — any chunks that succeeded before the error keep their values.
       setEstimating({ current: 1, total: 1, status: "Timing estimation failed — try again", error: true });
-      setTimeout(() => setEstimating(null), 2800);
+      setTimeout(() => { if (operationIsCurrent()) setEstimating(null); }, 2800);
+      dispatch({ type: "SET_AI_WORK", value: null });
       return;
     }
-    setEstimating(null);
+    if (operationIsCurrent()) {
+      setEstimating(null);
+      dispatch({ type: "SET_AI_WORK", value: null });
+    }
   };
   const [navToast, setNavToast] = useState(null); // { module, section, phase }
   const [showMoveToModule, setShowMoveToModule] = useState(false);
@@ -275,7 +347,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       hasBranding: !!(branding?.enabled || guidelines?.trim()),
       toggleBranding: () => setShowBranding((v) => !v),
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
-      toggleTiming: () => estimating ? (() => { estimateCancelRef.current = true; setEstimating(null); })() : setShowTimingScope((v) => !v),
+      toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
@@ -594,9 +666,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       return;
     }
+    // The product tour uses Vela's stable in-app stage and must not depend on
+    // browser Fullscreen API permission or timing.
+    const demoStage = document.documentElement?.dataset.velaDemoRunning === "true";
     // Entering Vela fullscreen → request browser fullscreen
     const el = containerRef.current || document.documentElement;
-    if (!document.fullscreenElement) {
+    if (!demoStage && !document.fullscreenElement) {
       // Try requestFullscreen — may fail in sandboxed iframes (artifacts), that's OK
       el.requestFullscreen?.().catch(() => {});
     }
@@ -672,11 +747,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // ── Quick Edit (single slide, prompt-based) ──
   const runQuickEdit = async () => {
     if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("quickEdit");
+    const operationIsCurrent = () => ownsOperation("quickEdit", operationOwner, operationEpoch);
     setQuickEditing(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
       const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
+      if (!operationIsCurrent()) return;
       if (result) {
         if (quickEditImage) replacePastedImage(result, quickEditImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -692,15 +771,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Quick edit failed:", e);
     } finally {
-      setQuickEditing(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setQuickEditing(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
   const runBlockEdit = async (blockIndex, prompt) => {
     if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("blockEdit");
+    const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
     setBlockEditing(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
@@ -708,6 +792,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         slides[slideIndex], blockIndex, prompt,
         concept.title, slideIndex + 1, slides.length, branding, guidelines
       );
+      if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
         const curBlocks = [...(slides[slideIndex].blocks || [])];
         curBlocks.splice(blockIndex, 1, ...newBlocks);
@@ -720,19 +805,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Block edit failed:", e);
     } finally {
-      setBlockEditing(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setBlockEditing(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   // ── Generate New Slide (prompt-based) ──
   const runNewSlide = async () => {
     if (!aiOk || !newSlidePrompt.trim() || newSlideGenerating) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("newSlide");
+    const operationIsCurrent = () => ownsOperation("newSlide", operationOwner, operationEpoch);
     setNewSlideGenerating(true);
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slides.length } }); // CR5 (future new-slide index)
     try {
       const result = await generateSlide(concept.title, slides.length, newSlidePrompt.trim(), branding, guidelines, newSlideImage?.base64 || null);
+      if (!operationIsCurrent()) return;
       if (result) {
         if (newSlideImage) replacePastedImage(result, newSlideImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -748,15 +839,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     } catch (e) {
       console.error("Generate slide failed:", e);
     } finally {
-      setNewSlideGenerating(false);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
-      setTimeout(() => setRevealKey(null), 1200);
+      if (operationIsCurrent()) {
+        setNewSlideGenerating(false);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+        setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
+      }
     }
   };
 
   const runImprove = async (prompt, scopeOverride) => {
     if (improving) { stopImprove(); return; }
     if (!aiOk) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("improve");
+    const operationIsCurrent = () => ownsOperation("improve", operationOwner, operationEpoch);
     improveCancelRef.current = false;
     setShowImproveInput(false);
     const scope = scopeOverride || improveScope;
@@ -794,7 +890,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       let successes = 0, failures = 0;
 
       for (let j = 0; j < jobs.length; j++) {
-        if (improveCancelRef.current) break;
+        if (improveCancelRef.current || !operationIsCurrent()) break;
         const job = jobs[j];
         // CR5: mark the active job's slide as the one Vera is working on — the scan
         // shows only when THIS job's slide is the one currently on screen (batch
@@ -805,11 +901,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // Measure layout in a hidden offscreen host — Improve no longer navigates
         // the visible view, so it keeps running while the user browses elsewhere.
         const layoutStats = await measureSlideLayout(job.slideData);
-        if (improveCancelRef.current) break;
+        if (improveCancelRef.current || !operationIsCurrent()) break;
 
         try {
           const improved = await improveSlide(null, job.slideData, job.itemTitle, job.slideIdx + 1, (scope === "section" ? jobs.length : slides.length), prompt, branding, guidelines, layoutStats);
-          if (improveCancelRef.current) break;
+          if (improveCancelRef.current || !operationIsCurrent()) break;
           // Don't clobber a slide the user (or another action) changed while we worked,
           // and skip ones whose module/slide was removed meanwhile.
           const cur = findItem(lanesRef.current, job.itemId)?.slides?.[job.slideIdx];
@@ -817,11 +913,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             failures++;
             setImproving({ current: j + 1, total: jobs.length, status: `⚠ ${job.itemTitle} #${job.slideIdx + 1} gone — skipping` });
             await new Promise((r) => setTimeout(r, 1200));
+            if (!operationIsCurrent()) break;
             continue;
           }
           if (JSON.stringify(cur) !== JSON.stringify(snapshots[`${job.itemId}-${job.slideIdx}`])) {
             setImproving({ current: j + 1, total: jobs.length, status: `↪ ${job.itemTitle} #${job.slideIdx + 1} edited — skipping` });
             await new Promise((r) => setTimeout(r, 1200));
+            if (!operationIsCurrent()) break;
             continue;
           }
           console.log(`[IMPROVE] ${job.itemTitle} #${job.slideIdx + 1} → bg=${improved.bg || "(none)"} bgGradient=${improved.bgGradient || "(none)"} color=${improved.color || "(none)"}`);
@@ -832,27 +930,33 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
           setImproving({ current: j + 1, total: jobs.length, status: `${job.itemTitle} #${job.slideIdx + 1} ✓ improved` });
           await new Promise((r) => setTimeout(r, 800));
+          if (!operationIsCurrent()) break;
         } catch (slideErr) {
+          if (!operationIsCurrent()) break;
           failures++;
           console.warn(`Improve failed for ${job.itemTitle} #${job.slideIdx + 1}:`, slideErr?.message || slideErr);
           setImproving({ current: j + 1, total: jobs.length, status: `⚠ ${job.itemTitle} #${job.slideIdx + 1} failed — skipping` });
           await new Promise((r) => setTimeout(r, 1500));
+          if (!operationIsCurrent()) break;
         }
       }
+      if (!operationIsCurrent()) return;
       setMeasureSlide(null);
       dispatch({ type: "SET_AI_WORK", value: null }); // CR5: batch done — clear the scan
 
       // Background-friendly: leave the user wherever they navigated — don't snap the view back.
       setImproving(failures > 0 ? { current: jobs.length, total: jobs.length, status: `Done — ${successes}✓ ${failures}⚠` } : null);
-      if (failures > 0) setTimeout(() => setImproving(null), 3000);
+      if (failures > 0) setTimeout(() => { if (operationIsCurrent()) setImproving(null); }, 3000);
       setCapturedThumb(null);
-      setTimeout(() => setRevealKey(null), 1200);
+      setTimeout(() => { if (operationIsCurrent()) setRevealKey(null); }, 1200);
     } catch (e) {
       console.error("Improve setup error:", e);
-      setImproving(null);
-      setCapturedThumb(null);
-      setRevealKey(null);
-      dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+      if (operationIsCurrent()) {
+        setImproving(null);
+        setCapturedThumb(null);
+        setRevealKey(null);
+        dispatch({ type: "SET_AI_WORK", value: null }); // CR5
+      }
     }
   };
   runImproveRef.current = runImprove;
@@ -860,18 +964,23 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // ── Alternatives ──
   const runAlternatives = async () => {
     if (!aiOk || altLoading || !slides[slideIndex]) return;
+    const operationEpoch = state._deckEpoch;
+    const operationOwner = claimOperation("alternatives");
+    const operationIsCurrent = () => ownsOperation("alternatives", operationOwner, operationEpoch);
     altCancelRef.current = false;
     setAltLoading(true);
     setAlternatives(null);
     setAltPreview(null);
+    dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } });
     try {
       const el = slideRef.current;
-      if (!el) { setAltLoading(false); return; }
+      if (!el) return;
       // Use the fail-safe loader so the desktop (CDN-blocked) doesn't hang;
       // without html2canvas we send no screenshot and rely on layout stats.
       const h2c = await loadHtml2Canvas();
+      if (!operationIsCurrent()) return;
       const base64 = h2c ? await captureSlide(el, h2c) : null;
-      if (altCancelRef.current) { setAltLoading(false); return; }
+      if (altCancelRef.current || !operationIsCurrent()) return;
 
       const slideJson = slides[slideIndex];
       const layoutStats = computeSlideLayoutStats(el);
@@ -880,19 +989,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
       // Sequential to avoid rate limits — progressive display as each lands
       for (let i = 0; i < ALT_DIRECTIONS.length; i++) {
-        if (altCancelRef.current) break;
+        if (altCancelRef.current || !operationIsCurrent()) break;
         try {
           const result = await generateAlternative(base64, slideJson, concept.title, slideIndex + 1, slides.length, ALT_DIRECTIONS[i].prompt, branding, guidelines, layoutStats);
+          if (!operationIsCurrent()) break;
           alts[i] = { slide: result, label: ALT_DIRECTIONS[i].label, emoji: ALT_DIRECTIONS[i].emoji, error: null };
         } catch (e) {
+          if (!operationIsCurrent()) break;
           alts[i] = { slide: null, label: ALT_DIRECTIONS[i].label, emoji: ALT_DIRECTIONS[i].emoji, error: e?.message || "failed" };
         }
-        if (!altCancelRef.current) setAlternatives([...alts]);
+        if (!altCancelRef.current && operationIsCurrent()) setAlternatives([...alts]);
       }
     } catch (e) {
       dbg("Alternatives error:", e);
+    } finally {
+      if (operationIsCurrent()) {
+        setAltLoading(false);
+        dispatch({ type: "SET_AI_WORK", value: null });
+      }
     }
-    setAltLoading(false);
   };
 
   // Apply a variant live to the slide but keep the grid open, so the user can click
@@ -916,7 +1031,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     setTimeout(() => setRevealKey(null), 1200);
   };
   // Clear alternatives when slide changes
-  useEffect(() => { setAlternatives(null); setAltLoading(false); setAltPreview(null); setAltOriginal(null); }, [concept.id, slideIndex]);
+  useEffect(() => {
+    clearOwnedAiWork("alternatives");
+    altCancelRef.current = true;
+    setAlternatives(null);
+    setAltLoading(false);
+    setAltPreview(null);
+    setAltOriginal(null);
+  }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
 
@@ -938,7 +1060,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -998,10 +1120,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
       {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
-      {showImproveInput && <div style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
+      {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
-          <button onClick={() => setShowImproveInput(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
+          <button data-testid="batch-edit-close" onClick={() => setShowImproveInput(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
         </div>
         <ScopeSelector icon="🔄" scope={improveScope} setScope={setImproveScope} concept={concept} slideIndex={slideIndex} slides={slides} currentLane={currentLane} lanes={lanes} isMobile={isMobile} />
         <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
@@ -1045,7 +1167,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -1151,9 +1273,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
               {quickEditImage && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.green }}>📎 img</span>}
               <button onClick={() => { setShowQuickEdit(false); setQuickEditImage(null); }} style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: 0 }}>✕</button>
             </div>
-            <textarea autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
+            <textarea data-testid="quick-edit-input" autoFocus value={quickEditPrompt} onChange={(e) => setQuickEditPrompt(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && quickEditPrompt.trim()) { e.preventDefault(); runQuickEdit(); } if (e.key === "Escape") { setShowQuickEdit(false); setQuickEditImage(null); } }} onPaste={(e) => { const items = e.clipboardData?.items; if (!items) return; for (const item of items) { if (item.type.startsWith("image/")) { e.preventDefault(); e.stopPropagation(); const file = item.getAsFile(); const reader = new FileReader(); reader.onload = () => { setQuickEditImage({ base64: reader.result.split(",")[1], preview: reader.result }); }; reader.readAsDataURL(file); break; } } }} placeholder={"What to change? (paste image)\nE.g.: Add bullet, change colors"} style={{ ...S.input({ fontSize: 13 }), minHeight: 44, maxHeight: 80, resize: "vertical", lineHeight: 1.4, background: T.bg }} />
             {quickEditImage && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><img src={quickEditImage.preview} alt="ref" style={{ height: 28, borderRadius: 4, border: `1px solid ${T.border}`, objectFit: "cover" }} /><button onClick={() => setQuickEditImage(null)} style={S.btn({ fontSize: 9, color: T.red, padding: "1px 5px" })}>✕</button></div>}
-            <button onClick={runQuickEdit} disabled={!aiOk || !quickEditPrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && quickEditPrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Apply edit" : "AI not enabled"}</button>
+            <button data-testid="quick-edit-apply" onClick={runQuickEdit} disabled={!aiOk || !quickEditPrompt.trim()} title={!aiOk ? VELA_AI_UNAVAILABLE_MSG : undefined} style={S.primaryBtn({ padding: "5px 14px", fontSize: 13, width: "100%", opacity: aiOk && quickEditPrompt.trim() ? 1 : 0.4 })}>{aiOk ? "Apply edit" : "AI not enabled"}</button>
           </div>}
           {/* New Slide */}
           {showNewSlide && !newSlideGenerating && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1181,10 +1303,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span style={{ fontSize: 14, animation: estimating.error ? "none" : "spin 1.5s linear infinite", display: "inline-block" }}>{estimating.error ? "⚠️" : "⏱"}</span>
             <span style={{ fontFamily: FONT.mono, fontSize: 13, color: estimating.error ? T.red : T.amber, fontWeight: 600, flex: 1 }}>{estimating.status}</span>
             {!estimating.error && <div style={{ width: 80, height: 3, background: T.border, borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${(estimating.current / estimating.total) * 100}%`, transition: "width 0.3s" }} /></div>}
-            {!estimating.error && <button onClick={() => { estimateCancelRef.current = true; setEstimating(null); }} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
+            {!estimating.error && <button onClick={stopEstimate} style={S.btn({ padding: "2px 8px", fontSize: 10, color: T.amber })}>stop</button>}
           </div>}
           {/* Generating spinner */}
-          {(quickEditing || newSlideGenerating) && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+          {(quickEditing || newSlideGenerating) && <div data-testid={quickEditing ? "quick-edit-loading" : "new-slide-loading"} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
             <span style={{ fontSize: 14, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</span>
             <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.accent }}>{quickEditing ? "Editing slide..." : "Generating slide..."}</span>
           </div>}
@@ -1192,7 +1314,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
@@ -1233,5 +1355,3 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   );
 }
-
-

@@ -11,7 +11,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - (untitled): __DEBUG dbg VELA_LOCAL_MODE VELA_CHANNEL_PORT VELA_CHANNEL_TOKEN VELA_PRESENTATION_MODE
 - AI Capability Detection: velaAIAvailable VELA_AI_UNAVAILABLE_MSG velaIsArtifactMode useAIAvailable velaClipboard velaClipboardWriteSlide velaClipboardReadSlide velaClipboardWriteSlides velaClipboardReadSlides VELA_VERSION VELA_CHANGELOG
 - Session Cost Tracker: VELA_PRICING velaSessionStats MASTER_KEY MOD_PREFIX uid
-- Startup Patch System: STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
+- Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
@@ -52,20 +52,19 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Inline Comment Card (review mode): InlineCommentCard SlideContent
 
 ### part-reducer.jsx
-- Reducer: init NO_HISTORY MAX_HISTORY innerReducer
+- Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch NO_HISTORY MAX_HISTORY innerReducer
 - Comment Actions: historyInit reducer
 
 ### part-engine.jsx
 - Vera Agentic Engine: MAX_TOOLS_PER_TURN MAX_TOTAL_TOOLS MAX_MESSAGES_BYTES
-- Shared API Helpers (deduped from 3 copies): callClaudeAPI parseJSONResponse restoreImageSrcs preserveImages restoreKeepOriginal stripImageSrcs replacePastedImage
+- Shared API Helpers (deduped from 3 copies): _velaActiveAIRequests velaHasActiveAIRequests velaBeginAIActivity callClaudeAPI callClaudeAPIActive parseJSONResponse restoreImageSrcs preserveImages restoreKeepOriginal stripImageSrcs replacePastedImage
 - Tool Execution Engine: executeTool
 - System Prompts: buildSystemPrompt extractSlideImages
 - Vera Teacher Mode: buildTeacherPrompt callVeraTeacher
 - Shared Design Prompt Builder: CANVAS_RULES buildDesignCtx DESIGN_PROMPT_FOOTER
 - Slide Design API (shared by improve + alternatives): callSlideDesignAPI improveSlide quickEditSlide blockEditSlide generateSlide ALT_DIRECTIONS
 - Timing Estimation: estimateTimings generateAlternative
-- Vera Chat Step: callVeraStep
-- SSE late-reply recovery for channel mode: setupLateReplyRecovery callVera
+- Vera Chat Step: callVeraStep velaRunAILeaseTests callVera
 - AI Slide Generator (TOC inline): generateAiSlide
 
 ### part-slides.jsx
@@ -116,13 +115,16 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sprint 7-1 UX batch: _headerSlideCount
 - Multi-select / Context menu / Move picker (Features 4–6): _clickMod _rightClick _tocRows _exitFullscreen _editorSetup _savePill _saveState
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
+- AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
+- Product Tour Suite: _productTourSetup
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
-- Spotlight Overlay: DemoOverlay
-- Demo Scene Helpers: _demoWait _demoKey _demoClick _demoFind _demoFindAll _demoFindBtn _demoRect _demoSetValue _demoType _demoTypeWithMistakes
-- Send a prompt to Vera chat — used by demo end card prompt cards: _demoSendToVera _demoReset buildDemoScenes
-- Demo Runner Component: VelaDemoRunner
+- Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
+- Spotlight Overlay: DemoNewBadge DEMO_TARGET_FALLBACK_TICKS DemoOverlay
+- Demo Helpers: _demoAbortError _demoWait _demoFind _demoFindAll _demoKey _demoClick _demoSetInput _demoTypeWithMistakes _demoVisible _demoUntil _demoUntilReal _demoSelectSlide _demoEditableHeading _demoToggleIsOn _demoCloseBrandingPanel _demoCloseEditToggle _demoCloseBatchPanel _demoReset _demoEnterPresent _demoCue
+- Product Story: buildDemoScenes getDemoPlan
+- Demo Runner: _demoClone _demoPlainObject _demoIntegerArray _demoStringArray _demoCaptureSnapshot _demoSelectionExists _demoFlushRequest VelaDemoRunner
 
 ### part-pdf-fonts.jsx
 - PDF Fonts: COMPRESSED_FONTS
@@ -209,7 +211,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - CLEAR_BOOTSTRAP: part-chat.jsx
 - CLEAR_RESOLVED_COMMENTS: part-app-modals.jsx
 - CYCLE_STATUS: (no direct dispatch site)
-- DESELECT: part-app.jsx
+- DESELECT: part-app.jsx part-demo.jsx
 - DRAG_REORDER: part-list.jsx
 - DUPLICATE_SLIDE: part-list.jsx part-slidepanel.jsx
 - FINALIZE_STREAM: part-chat.jsx
@@ -235,35 +237,37 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - REOPEN_COMMENT: part-canvas.jsx
 - REORDER: part-list.jsx
 - REORDER_SLIDE: part-list.jsx part-slides.jsx
-- RESET: (no direct dispatch site)
+- RESET: part-app.jsx
 - RESET_CHAT: part-chat.jsx
 - RESOLVE_ALL_COMMENTS: part-app-modals.jsx
 - RESOLVE_COMMENT: part-app-modals.jsx part-list.jsx part-slides.jsx
-- SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
+- RESTORE_CHAT_STATE: (no direct dispatch site)
+- RESTORE_DEMO_STATE: part-demo.jsx
+- SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-demo.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
 - SET_BRANDING: part-chat.jsx part-slides.jsx
-- SET_CHAT: part-app.jsx part-chat.jsx
-- SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
+- SET_CHAT: part-app.jsx part-chat.jsx part-demo.jsx
+- SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
-- SET_FONT_SCALE: part-slidepanel.jsx
-- SET_FULLSCREEN: part-app.jsx part-slidepanel.jsx
-- SET_GUIDELINES: part-slides.jsx
+- SET_FONT_SCALE: part-demo.jsx part-slidepanel.jsx
+- SET_FULLSCREEN: part-app.jsx part-demo.jsx part-slidepanel.jsx
+- SET_GUIDELINES: part-app.jsx part-slides.jsx
 - SET_IMPORTANCE: part-list.jsx
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
-- SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-slidepanel.jsx
-- SET_SECTION_COLLAPSED: part-list.jsx
+- SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
+- SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
 - SET_SLIDES: part-slidepanel.jsx
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
-- SET_SLIDE_SELECTION: part-list.jsx
+- SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
 - SET_STATUS: (no direct dispatch site)
 - SET_TITLE: part-app.jsx
-- SET_VERA_MODE: part-slidepanel.jsx part-slides.jsx
+- SET_VERA_MODE: part-app.jsx part-demo.jsx part-slidepanel.jsx part-slides.jsx
 - SPLIT_ITEM_AT: part-list.jsx
 - STREAM_TOOL: part-chat.jsx
-- TEACHER_CLEAR: part-slides.jsx
+- TEACHER_CLEAR: part-app.jsx part-slides.jsx
 - TEACHER_LOADING: part-slides.jsx
-- TEACHER_MSG: part-slides.jsx
+- TEACHER_MSG: part-app.jsx part-slides.jsx
 - TOGGLE_LANE: (no direct dispatch site)
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
@@ -305,13 +309,15 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 476
-- part-blocks.jsx: 748-line unbannered stretch after line 769
-- part-slidepanel.jsx: 405-line unbannered stretch after line 175
-- part-slidepanel.jsx: 378-line unbannered stretch after line 860
+- part-imports.jsx: 860-line unbannered stretch after line 505
+- part-blocks.jsx: 751-line unbannered stretch after line 769
+- part-slidepanel.jsx: 446-line unbannered stretch after line 206
+- part-slidepanel.jsx: 394-line unbannered stretch after line 964
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
-- part-demo.jsx: 577-line unbannered stretch after line 194
-- part-pdf.jsx: 390-line unbannered stretch after line 582
+- part-uitest2.jsx: 593-line unbannered stretch after line 1395
+- part-demo.jsx: 407-line unbannered stretch after line 510
+- part-demo.jsx: 373-line unbannered stretch after line 917
+- part-pdf.jsx: 389-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
 - part-pdf-vector.jsx: 479-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1209

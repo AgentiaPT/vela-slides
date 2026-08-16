@@ -7,7 +7,7 @@
  * state, performs a real UI action, and asserts the delta.
  *
  * Harness: reuses the proven, CDN-free recipe from tests/test_review_ui.cjs —
- * concat.py → assemble.py(examples/vela-demo.vela) → Node-transpiled JSX served
+ * assemble.py(examples/vela-demo.vela) → Node-transpiled JSX served
  * over a local http server, booted in the pinned Chromium. No network beyond the
  * local server (the React/lucide CDNs are blocked in this container). Deterministic:
  * no AI/Vera calls — every mutation uses a non-AI affordance (inline click-to-edit,
@@ -31,6 +31,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { launchChromium } = require('./playwright_browser.cjs');
 
 // ── Config ───────────────────────────────────────────────────────────
 const PORT = 8766; // distinct from test_review_ui.cjs (:8765) so both can co-run
@@ -60,7 +61,6 @@ function resolvePlaywright() {
 function buildTestHTML() {
   fs.mkdirSync(SERVE_DIR, { recursive: true });
   console.log('Assembling deck...');
-  execSync('python3 tools/vela-dev/scripts/concat.py', { cwd: ROOT, stdio: 'pipe' });
   execSync(
     `python3 skills/vela-slides/scripts/assemble.py examples/vela-demo.vela --output "${ASSEMBLED}"`,
     { cwd: ROOT, stdio: 'pipe' }
@@ -515,7 +515,7 @@ async function runJourney() {
     if (!skipSetup) { buildTestHTML(); server = await startServer(); }
 
     console.log('Launching browser...');
-    const browser = await chromium.launch();
+    const browser = await launchChromium(chromium);
     // A context lets us grant clipboard perms (copy/paste add-slide) + accept downloads.
     const context = await browser.newContext({
       viewport: { width: 1400, height: 900 },

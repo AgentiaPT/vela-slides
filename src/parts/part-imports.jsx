@@ -28,6 +28,9 @@ const VELA_PRESENTATION_MODE = false; // overridden to true for read-only viewer
 // In local mode the channel port must be configured; in artifact mode we optimistically
 // assume the Anthropic proxy is available (Claude.ai injects it).
 const velaAIAvailable = () => {
+  if (typeof window !== "undefined" && typeof document !== "undefined" &&
+      document.documentElement.dataset.velaDemoRunning === "true" &&
+      typeof window.__velaDemoAI?.nextStep === "function") return true;
   // Neutralino desktop runtime: the shell installs a CLI-backed sender;
   // AI availability follows whether that probe succeeded.
   if (typeof window !== "undefined" && window.__velaAgentReady != null) return !!window.__velaAgentReady;
@@ -135,8 +138,28 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.47";
+const VELA_VERSION = "13.67";
 const VELA_CHANGELOG = [
+  { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
+  { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
+  { v: "13.65", d: "Tests: the toolbar AI-edit isolation test now waits for the deck-epoch reset before reopening Quick Edit, removing a rare timing race in that check." },
+  { v: "13.64", d: ["Reliability: replacement decks now clear AI editor panels, drafts, previews, and errors.", "Reliability: stale editor requests can no longer release or update newer work.", "Tests: added overlapping editor-request coverage."] },
+  { v: "13.63", d: "Tests: the toolbar AI-edit isolation test now closes its own open editor, so it no longer blocks the product tour check for later tests." },
+  { v: "13.62", d: ["Reliability: AI results from replaced decks are discarded across chat, Teacher, and slide tools.", "Local AI: timeouts now finish accurately without waiting for an unavailable late reply."] },
+  { v: "13.61", d: ["Demo: restored work now saves after the product tour without saving tour-only state.", "Tests: strengthened AI activity, PowerPoint preview, and tour feature-map checks."] },
+  { v: "13.60", d: ["Demo: completed product-tour isolation for all AI and late-reply work, deck switches, malformed state, and exact demo content.", "Tests: added shared AI-activity and immutable startup-deck coverage."] },
+  { v: "13.59", d: ["Demo: strengthened product-tour isolation for active AI work, editor drafts, deck identity, and undo state.", "Local preview: canceled pending saves safely when a deck changes.", "Tests: connected the PDF no-download check to the real download control."] },
+  { v: "13.58", d: ["Demo: the product tour now waits for active Vera work to finish and runs only with the bundled demo deck.", "Tests: demo-map validation now requires each named test hook to exist exactly."] },
+  { v: "13.57", d: "Tests: raised four UI-battery wait budgets (gallery-open, product-tour completion/stop/callout checks) so a slower CI host does not flake near-miss timeouts." },
+  { v: "13.56", d: ["Demo: the tour card no longer paints in the wrong corner for one frame before jumping to the target — it now stays hidden until the target is known, with a short bounded fallback so a scene is never silently hidden.", "Demo: updated the closing scene's headline and supporting line."] },
+  { v: "13.55", d: ["Demo: added a 20th distinct showcased state — jumping from the gallery straight to the Smart Merge slide, its built-in update conflict resolver — instead of just idling in the gallery.", "Demo: added a generated, CI-checked feature index (DEMO_FEATURES → DEMO_MAP.md) so every showcased state has a verifiable id, deck slide, test hook, action, assertion, and cleanup."] },
+  { v: "13.54", d: ["Demo: rebuilt the product tour as a 21-scene, ~115s LinkedIn-ready walkthrough — opens on the runtime version and the AI-disclosure line, covers 19 features (outline, semantic blocks, inline edit, gallery, branding, review, presenting, presenter dashboard, student mode, Improve/Edit-with-AI/Variants, Vera, CLI/skill, desktop, PDF and PowerPoint export), and marks 6 post-13.0 features with a compact NEW badge.", "Demo: inline editing and the Vera prompt now type with realistic pauses, one typo, and a visible correction instead of an instant paste; the inline edit still cancels and never saves.", "Demo: PDF and PowerPoint export now run for real until small slide previews appear, then close before any download.", "Demo deck: compacted to a focused 21-slide current-product tour with no empty modules or stale release labels; all 6 newer semantic block types kept.", "Tests: expanded contract and in-app coverage for the new scene order, feature/badge count, typed-and-corrected input, and export-preview cues."] },
+  { v: "13.53", d: "Demo: the inline-edit scene now shows a visible temporary title change." },
+  { v: "13.52", d: "Demo: the Vera scene now identifies its response when earlier chat messages are present." },
+  { v: "13.51", d: "Demo: the Vera scene now waits on its visible response and tool trace instead of duplicate internal state." },
+  { v: "13.50", d: "Demo: made the built-in Vera scene reliable during real-time recording and slower browser loads." },
+  { v: "13.49", d: "Demo: Vera now checks the live deck with a safe built-in response, with no network call, token cost, or saved change." },
+  { v: "13.48", d: ["Demo: replaced the old exhaustive script with an 83-second product tour of the editor, semantic blocks, gallery, presenter tools, Vera, and PowerPoint setup.", "Demo: no automatic AI calls, exports, downloads, or external links; stop and skip now cancel work and restore the prior app state.", "Flow loop connectors now use valid SVG line geometry in editor and gallery views."] },
   { v: "13.47", d: "release: regenerated the shipped Vela bundle and packaged artifact for the next release" },
   { v: "13.46", d: ["security: hardened the deck-SVG CSS filter against indirection-based bypasses of its value checks", "security: inline style on deck SVG is now restricted to an allowlist of paint/text properties", "security: CSS values in deck SVG are now restricted to an allowlist of functions as well as properties", "security: the shared CSS value filter and url() encoder now fail closed on the same class", "regression tests added (real-browser + sanitizer round-trip)"] },
   { v: "13.45", d: "internal: split modal/dialog components out of part-app.jsx into part-app-modals.jsx, no functional change" },
@@ -334,6 +357,11 @@ const uid = () => crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.ran
 //   Slide list: { slides: [ {slide}, {slide}, ... ] }  → Levenshtein match & replace
 //   null/undefined → no-op
 const STARTUP_PATCH = null;
+// VELA:DEV-ONLY:BEGIN
+// Keep one immutable startup fixture before ingress assigns runtime IDs or a UI
+// test mutates shared deck objects. The release build strips this test fixture.
+const VELA_TEST_STARTUP_PATCH = STARTUP_PATCH ? JSON.parse(JSON.stringify(STARTUP_PATCH)) : null;
+// VELA:DEV-ONLY:END
 
 // Levenshtein distance (Wagner-Fischer)
 function levenshtein(a, b) {
@@ -1959,11 +1987,11 @@ const BASE_SIZES = { xs: "0.85rem", sm: "0.95rem", md: "1.05rem", lg: "1.2rem", 
 // ━━━ Style Factories & Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const saveKV = (k, v) => window.storage.set(k, JSON.stringify(v)).catch((e) => { dbg("Storage error:", e); });
 const delKV = (k) => window.storage.delete(k).catch((e) => { dbg("Storage delete error:", e); });
-const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
+const extractSave = (s) => { const { chatLoading, fullscreen, lastDebug, _bootstrap, _deckEpoch, veraMode, teacherHistory, teacherLoading, reviewMode, commentsPanelOpen, ...rest } = s; if (rest.chatMessages) rest.chatMessages = rest.chatMessages.filter((m) => !m._system); return rest; };
 
 // Distributed storage: master has items with metadata only (no slides)
 const extractMaster = (s) => {
-  const { chatLoading, fullscreen, lastDebug, ...rest } = s;
+  const { chatLoading, fullscreen, lastDebug, _deckEpoch, ...rest } = s;
   return {
     ...rest,
     _version: 2,

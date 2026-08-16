@@ -731,7 +731,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   if (useVector) return <VectorPdfExportModal slides={slides} branding={branding} deckTitle={deckTitle} onClose={onClose} initialRatio={ratio} />;
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div onClick={onClose} data-testid="pdf-export-modal" style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, width: "min(480px, 94vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
@@ -817,7 +817,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>}
-            <button onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
+            <button data-testid="pdf-export-start" onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
               letterSpacing: 1, transition: "opacity .15s",
@@ -866,7 +866,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
                   </div>
                   {/* Large current/latest slide */}
                   {latestThumb ? <div style={{ position: "relative", flexShrink: 0 }}>
-                    <img src={latestThumb} alt="" style={{
+                    <img data-testid="pdf-export-preview" src={latestThumb} alt="" style={{
                       width: bigW, height: bigH, objectFit: "cover",
                       borderRadius: 6, border: `2px solid ${T.accent}`,
                       boxShadow: `0 8px 32px ${T.accent}30, 0 4px 16px rgba(0,0,0,0.4)`,
@@ -904,7 +904,7 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
               </div>
 
               {phase === "done" && <>
-                <a href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
+                <a data-testid="pdf-export-download" href={pdfDataUri} download={`${safeTitle}.pdf`} style={{
                   display: "block", width: "100%", padding: "12px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700,
                   background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
                   letterSpacing: 1, textAlign: "center", textDecoration: "none", boxSizing: "border-box",
@@ -967,5 +967,4 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
     </div>
   );
 }
-
 

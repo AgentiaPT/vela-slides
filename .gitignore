@@ -49,6 +49,7 @@ tmp*
 # Repro/debug scripts and screenshots
 tests/repro_*
 tests/screenshots/
+.scratch-review/
 
 # System dotfiles (WSL artifacts)
 .bash_profile

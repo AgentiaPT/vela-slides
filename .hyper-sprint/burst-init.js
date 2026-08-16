@@ -1,7 +1,7 @@
 // burst-init.js — Vela-specific pre-boot init injected by the burst-bug-hunter server
 // (config: initScript). Installs an in-memory async window.storage polyfill so the
-// save-status / persistence path is exercisable in the offline render (no host storage).
-// The small write delay makes the Saving -> Saved transition observable.
+// persistence path is exercisable offline. The small write delay makes completion
+// observable after the app's autosave debounce.
 (() => {
   const m = {};
   window.__vmem = m;
