@@ -206,6 +206,23 @@ export default function App() {
       // Replace the current slide's blocks (Editor UX / alignment suites: place
       // a known centered heading and assert the editor path renders it centered).
       injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // Keep the slide object identity while its block arrangement changes. This
+      // reproduces storage/live-update renders that must not reuse old image caps.
+      mutateBlocksInPlaceForTest: (blocks, extra) => {
+        const s = _localSyncState.current;
+        if (!s?.selectedId) return false;
+        let selectedItem = null;
+        for (const lane of (s.lanes || [])) {
+          selectedItem = lane.items?.find((item) => item.id === s.selectedId) || null;
+          if (selectedItem) break;
+        }
+        const currentSlide = selectedItem?.slides?.[s.slideIndex];
+        if (!currentSlide) return false;
+        currentSlide.blocks = blocks;
+        Object.assign(currentSlide, extra || {});
+        dispatch({ type: "SET_GUIDELINES", guidelines: s.guidelines });
+        return true;
+      },
       // On-screen slide identity {itemId, slideIdx, accent} for assertions.
       getSelection: () => {
         const s = _localSyncState.current;

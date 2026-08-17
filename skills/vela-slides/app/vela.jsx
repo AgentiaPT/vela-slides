@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.67";
+const VELA_VERSION = "13.68";
 const VELA_CHANGELOG = [
+  { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
   { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
   { v: "13.65", d: "Tests: the toolbar AI-edit isolation test now waits for the deck-epoch reset before reopening Quick Edit, removing a rare timing race in that check." },
@@ -3234,7 +3235,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -3349,24 +3350,37 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
 
-    case "image":
+    case "image": {
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
-        {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
-          ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
-          : block._gridCell
+      const gridHasMaxHeight = block._gridCell && block.maxHeight != null;
+      const gridMediaStyle = block._gridCell ? {
+        position: "relative",
+        flex: gridHasMaxHeight ? "0 1 auto" : "1 1 0",
+        width: "100%",
+        height: gridHasMaxHeight ? block.maxHeight : undefined,
+        maxHeight: gridHasMaxHeight ? block.maxHeight : "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      } : null;
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+        {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
+          {block.src ? <img src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
           // uniform cell instead of ballooning the row off-canvas — and, critically,
           // it contributes 0 to the auto-height fit measurement, so a tall image no
           // longer forces an over-aggressive slide fit-scale.
-          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-          : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+            { position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+          } /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", width: "100%", padding: 32, boxSizing: "border-box", color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        </div> : block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
+          ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
+    }
 
     case "code":
       return <CodeBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
@@ -4144,7 +4158,30 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const _vis = (arr) => presenting ? (arr || []).filter((b) => !(b && b.hidden)) : (arr || []);
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
-  const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  const layout = slide.layout || "stack";
+  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  const isSplit = layout === "image-right" || layout === "image-left";
+  const colsL = isCols ? _vis(slide.L) : [];
+  const colsR = isCols ? _vis(slide.R) : [];
+  const isMediaOnlyColumn = (column) =>
+    column.some((b) => b && b.type === "image") &&
+    column.every((b) => b && (b.type === "image" || b.type === "spacer" || b.type === "divider"));
+  const colsLMediaOnly = isMediaOnlyColumn(colsL);
+  const colsRMediaOnly = isMediaOnlyColumn(colsR);
+  const hasMediaOnlyColumn = colsLMediaOnly || colsRMediaOnly;
+  const hasDirectColumnImage = colsL.some((b) => b?.type === "image") || colsR.some((b) => b?.type === "image");
+  // Deck values must not reach CSS directly. Unknown values use the normal
+  // layout default instead of becoming an invalid justifyContent value.
+  const verticalAlignToJustify = (value) => {
+    if (value === "top") return "flex-start";
+    // Safe alignment keeps the requested position while content fits. If it
+    // overflows, the browser starts at the top instead of clipping the top.
+    if (value === "center") return "safe center";
+    if (value === "bottom") return "safe flex-end";
+    return null;
+  };
+  const explicitJustify = verticalAlignToJustify(slide.verticalAlign);
+  const requestedJustify = explicitJustify || (align === "center" ? "center" : "flex-start");
   // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
   // and bgImage already are — defense-in-depth so this fetching sink can't be
   // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
@@ -4155,9 +4192,34 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);
+  const layoutContentKey = JSON.stringify({
+    index, presenting, reviewMode, fontScale, layout, align,
+    verticalAlign: slide.verticalAlign ?? null,
+    padding: slide.padding ?? null,
+    gap: slide.gap ?? null,
+    splitGap: slide.splitGap ?? null,
+    contentFlex: slide.contentFlex ?? null,
+    imageFlex: slide.imageFlex ?? null,
+    imageCols: slide.imageCols ?? null,
+    blocks,
+    L: colsL,
+    R: colsR,
+    comments: reviewMode ? (slide.comments || null) : null,
+  });
+  const layoutGenerationState = useRef({ key: null, value: 0 });
+  if (layoutGenerationState.current.key !== layoutContentKey) {
+    layoutGenerationState.current = {
+      key: layoutContentKey,
+      value: layoutGenerationState.current.value + 1,
+    };
+  }
+  const layoutGeneration = layoutGenerationState.current.value;
+  const currentLayoutGeneration = useRef(layoutGeneration);
+  currentLayoutGeneration.current = layoutGeneration;
   const [fitScale, setFitScale] = useState(1);
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
+  const [colsImageFit, setColsImageFit] = useState(null);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
@@ -4185,57 +4247,307 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   }, [onEdit, blocks]);
 
   useLayoutEffect(() => {
+    const SCALE_FLOOR = 0.35;
+    const MIN_IMAGE_VISUAL_H = 24;
+    const MIN_CONTAINED_VISUAL_H = 1;
+    const EDGE_ALLOWANCE_VISUAL = 4;
+    const generation = layoutGeneration;
+    let cancelled = false, scheduledFrame = 0;
+    const pendingReasons = new Set();
+    const isCurrent = () => !cancelled && currentLayoutGeneration.current === generation;
+
+    const applyGeometry = (inner, scale) => {
+      const scaled = scale < 0.9995;
+      inner.style.transform = scaled ? `scale(${scale})` : "none";
+      inner.style.width = scaled ? `${100 / scale}%` : "100%";
+      inner.style.maxWidth = scaled ? `${100 / scale}%` : "100%";
+      inner.style.height = scaled && (isSplit || isCols)
+        ? `${100 / scale}%`
+        : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
+      void inner.offsetHeight;
+    };
+
     const measure = () => {
+      if (!isCurrent()) return;
       const inner = innerRef.current, outer = outerRef.current;
       if (!inner || !outer) return;
-      inner.style.transform = "none";
-      inner.style.width = "100%";
-      inner.style.height = "auto";
-      void inner.scrollHeight;
-      const cs = getComputedStyle(outer);
-      const availH = outer.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      // In a side-by-side layout the CONTENT column drives the height: the image
-      // conforms to it (see splitImgMaxH below) and must never push the whole
-      // slide to scale down. So for split we measure the content column alone,
-      // not inner.scrollHeight — which would include a tall square/portrait image
-      // and shrink the text beside it (the bug this fixes).
-      let contentH = 0;
-      if (isSplit) {
-        const contentEl = inner.querySelector("[data-split-content]");
-        contentH = contentEl ? contentEl.scrollHeight : 0;
+      const outerStyle = getComputedStyle(outer);
+      const availH = outer.clientHeight
+        - parseFloat(outerStyle.paddingTop)
+        - parseFloat(outerStyle.paddingBottom);
+
+      const columnPairs = [["left", colsL], ["right", colsR]];
+      const resetColumnImages = () => {
+        for (const [side, column] of columnPairs) {
+          const columnEl = inner.querySelector(`[data-cols-side="${side}"]`);
+          if (!columnEl) continue;
+          for (let blockIndex = 0; blockIndex < column.length; blockIndex++) {
+            const block = column[blockIndex];
+            if (block?.type !== "image") continue;
+            const child = columnEl.querySelector(`:scope > [data-column-block-index="${blockIndex}"]`);
+            const img = child?.querySelector("img");
+            if (img) img.style.maxHeight = block.maxHeight != null ? block.maxHeight : "100%";
+          }
+        }
+      };
+
+      const measureColumn = (side, column, scale) => {
+        const columnEl = inner.querySelector(`[data-cols-side="${side}"]`);
+        if (!columnEl) return null;
+        const style = getComputedStyle(columnEl);
+        const children = Array.from(columnEl.children);
+        const gap = parseFloat(style.rowGap) || 0;
+        const allowance = EDGE_ALLOWANCE_VISUAL / scale;
+        const availableHeight = Math.max(0, columnEl.clientHeight
+          - parseFloat(style.paddingTop)
+          - parseFloat(style.paddingBottom)
+          - allowance);
+        const childByIndex = new Map(children
+          .filter((child) => child.dataset.columnBlockIndex != null)
+          .map((child) => [Number(child.dataset.columnBlockIndex), child]));
+        const entries = [];
+        const imageByChild = new Map();
+        for (let blockIndex = 0; blockIndex < column.length; blockIndex++) {
+          const block = column[blockIndex];
+          if (block?.type !== "image") continue;
+          const child = childByIndex.get(blockIndex);
+          const img = child?.querySelector("img") || null;
+          const measuredHeight = img ? img.getBoundingClientRect().height / scale : 0;
+          const loaded = !!(img?.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+          const pending = !!(img && !img.complete);
+          const explicitZero = block.maxHeight === 0
+            || (typeof block.maxHeight === "string" && /^0(?:\.0+)?(?:px|%)?$/.test(block.maxHeight.trim()));
+          const needsCap = (loaded || pending) && !explicitZero;
+          // An image that is still loading reserves one useful slot. A completed
+          // 0x0 or failed image reserves none, but its block index stays present.
+          const demand = measuredHeight > 0.01
+            ? measuredHeight
+            : (needsCap ? MIN_IMAGE_VISUAL_H / scale : 0);
+          const entry = { blockIndex, child, img, demand, needsCap };
+          entries.push(entry);
+          if (child && img) imageByChild.set(child, entry);
+        }
+        const fixedHeight = children.reduce((sum, child) => {
+          const entry = imageByChild.get(child);
+          const childHeight = child.getBoundingClientRect().height / scale;
+          const imageHeight = entry?.img ? entry.img.getBoundingClientRect().height / scale : 0;
+          return sum + Math.max(0, childHeight - imageHeight);
+        }, 0) + gap * Math.max(0, children.length - 1);
+        const renderedEntries = entries.filter((entry) => entry.needsCap);
+        const imageDemand = renderedEntries.reduce((sum, entry) => sum + entry.demand, 0);
+        const minimumDemand = renderedEntries.reduce(
+          (sum, entry) => sum + Math.min(entry.demand, MIN_IMAGE_VISUAL_H / scale), 0
+        );
+        const imageBudget = availableHeight - fixedHeight;
+        return {
+          side, column, columnEl, style, children, entries, fixedHeight, availableHeight, scale,
+          imageBudget, fullDemand: fixedHeight + imageDemand,
+          minimumDemand: fixedHeight + minimumDemand,
+          canFitUseful: renderedEntries.length === 0 || imageBudget >= minimumDemand - fixedHeight - 0.5,
+        };
+      };
+
+      const evaluateColumns = (scale) => {
+        applyGeometry(inner, scale);
+        resetColumnImages();
+        void inner.offsetHeight;
+        const models = columnPairs.map(([side, column]) => measureColumn(side, column, scale)).filter(Boolean);
+        const innerOverflow = Math.max(0, inner.scrollHeight - inner.clientHeight);
+        const feasible = innerOverflow <= EDGE_ALLOWANCE_VISUAL / scale
+          && models.every((model) => model.minimumDemand <= model.availableHeight + 0.5);
+        return { scale, models, innerOverflow, feasible };
+      };
+
+      const allocateCaps = (model, budget = model.imageBudget) => {
+        const caps = new Array(model.column.length).fill(null);
+        let remaining = Math.max(0, budget);
+        let open = model.entries
+          .filter((entry) => entry.needsCap)
+          .map((entry) => ({
+            ...entry,
+            floor: Math.min(entry.demand, MIN_CONTAINED_VISUAL_H / model.scale),
+          }));
+        while (open.length) {
+          const share = remaining / open.length;
+          const satisfied = open.filter((entry) => entry.demand <= share);
+          if (!satisfied.length) {
+            // At the scale floor, fixed content can leave no image budget. Keep
+            // every loaded image finite instead of restoring its uncapped 100%.
+            open.forEach((entry) => {
+              caps[entry.blockIndex] = Math.max(entry.floor, Math.min(entry.demand, share));
+            });
+            break;
+          }
+          satisfied.forEach((entry) => {
+            caps[entry.blockIndex] = entry.demand;
+            remaining -= entry.demand;
+          });
+          open = open.filter((entry) => entry.demand > share);
+        }
+        return caps;
+      };
+
+      const applyCaps = (model, caps) => {
+        for (const entry of model.entries) {
+          const cap = caps[entry.blockIndex];
+          if (entry.img && Number.isFinite(cap)) entry.img.style.maxHeight = `${cap}px`;
+        }
+      };
+
+      if (isCols && hasDirectColumnImage) {
+        const natural = evaluateColumns(1);
+        const fullOverflow = Math.max(
+          natural.innerOverflow,
+          ...natural.models.map((model) => Math.max(0, model.fullDemand - (model.imageBudget + model.fixedHeight))),
+          0,
+        );
+        const naturalScale = Math.max(SCALE_FLOOR, Math.min(1, availH / (availH + fullOverflow)));
+        let finalScale = 1;
+        if (!natural.feasible) {
+          const floor = evaluateColumns(SCALE_FLOOR);
+          if (!floor.feasible) {
+            finalScale = SCALE_FLOOR;
+          } else {
+            let low = SCALE_FLOOR, high = 1;
+            if (naturalScale > SCALE_FLOOR + 0.001) {
+              const seeded = evaluateColumns(naturalScale);
+              if (seeded.feasible) low = naturalScale; else high = naturalScale;
+            }
+            for (let pass = 0; pass < 6; pass++) {
+              const probe = (low + high) / 2;
+              if (evaluateColumns(probe).feasible) low = probe; else high = probe;
+            }
+            finalScale = low;
+          }
+        }
+
+        let final = evaluateColumns(finalScale);
+        const capsBySide = { left: new Array(colsL.length).fill(null), right: new Array(colsR.length).fill(null) };
+        const budgetsBySide = {};
+        for (const model of final.models) {
+          budgetsBySide[model.side] = model.imageBudget;
+          capsBySide[model.side] = allocateCaps(model, budgetsBySide[model.side]);
+          applyCaps(model, capsBySide[model.side]);
+        }
+        void inner.offsetHeight;
+
+        // The reserved allowance covers normal rounding. This one bounded
+        // correction also checks centered and bottom-aligned content at both edges.
+        for (let pass = 0; pass < 2; pass++) {
+          let corrected = false;
+          for (const model of final.models) {
+            const caps = capsBySide[model.side];
+            if (!caps.some((cap) => Number.isFinite(cap))) continue;
+            const columnRect = model.columnEl.getBoundingClientRect();
+            const visible = model.children
+              .map((child) => child.getBoundingClientRect())
+              .filter((rect) => rect.height > 0.25);
+            if (!visible.length) continue;
+            const topEdge = columnRect.top + parseFloat(model.style.paddingTop) * finalScale;
+            const bottomEdge = columnRect.bottom - parseFloat(model.style.paddingBottom) * finalScale;
+            const topOverflow = Math.max(0, topEdge - Math.min(...visible.map((rect) => rect.top)));
+            const bottomOverflow = Math.max(0, Math.max(...visible.map((rect) => rect.bottom)) - bottomEdge);
+            const overflow = topOverflow + bottomOverflow;
+            if (overflow > 0.5) {
+              corrected = true;
+              budgetsBySide[model.side] = Math.max(
+                0,
+                budgetsBySide[model.side] - overflow / finalScale - 1 / finalScale
+              );
+              capsBySide[model.side] = allocateCaps(model, budgetsBySide[model.side]);
+              applyCaps(model, capsBySide[model.side]);
+            }
+          }
+          if (!corrected) break;
+          void inner.offsetHeight;
+        }
+        void inner.offsetHeight;
+        setColsImageFit({ generation, left: capsBySide.left, right: capsBySide.right });
+        setSplitImgMaxH(null);
+        setFitScale(finalScale);
+        setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
+        return;
       }
+
+      setColsImageFit(null);
+      applyGeometry(inner, 1);
+      // In a side-by-side layout the content column drives the scale. The image
+      // cap is computed only after the reciprocal final height is active.
+      const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
+      const contentH = contentEl ? contentEl.scrollHeight : 0;
       const ih = isSplit ? contentH : inner.scrollHeight;
-      if (ih > availH && ih > 0) {
-        const s = Math.max(availH / ih, 0.35);
-        inner.style.transform = `scale(${s})`;
-        inner.style.width = `${100 / s}%`;
-        inner.style.height = isSplit ? "100%" : "";
-        setFitScale(s);
-        setFitJustify("flex-start");
-      } else {
-        inner.style.transform = "none";
-        inner.style.width = "100%";
-        inner.style.height = isSplit ? "100%" : "";
-        setFitScale(1);
-        setFitJustify(requestedJustify);
+      const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      applyGeometry(inner, finalScale);
+      let splitCap = null;
+      if (isSplit && contentEl) {
+        const imageCol = inner.querySelector("[data-split-image]");
+        const finalContentH = contentEl.scrollHeight;
+        const finalImageH = Math.max(0, (imageCol?.clientHeight || 0) - (EDGE_ALLOWANCE_VISUAL * 2) / finalScale);
+        if (finalContentH > 0 && finalImageH > 0) {
+          splitCap = Math.min(finalImageH, Math.max(finalContentH, 140 / finalScale));
+        }
       }
-      // Cap a side image to the content's height (never beyond the slide): a
-      // taller image shrinks to match the text, a shorter one keeps its size and
-      // centers — so the image conforms to the content instead of out-sizing it.
-      setSplitImgMaxH(isSplit && contentH > 0 ? Math.min(availH, Math.max(contentH, 140)) : null);
+      setSplitImgMaxH(splitCap);
+      setFitScale(finalScale);
+      setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
     };
+
+    const scheduleMeasure = (reason) => {
+      if (!isCurrent()) return;
+      pendingReasons.add(reason);
+      if (scheduledFrame) return;
+      scheduledFrame = requestAnimationFrame(() => {
+        scheduledFrame = 0;
+        if (!isCurrent()) return;
+        pendingReasons.clear();
+        measure();
+      });
+    };
+
     measure();
-    if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
-  }, [slide, index, requestedJustify]);
+    scheduleMeasure("mount");
+    const imageNodes = Array.from(innerRef.current?.querySelectorAll("img") || []);
+    const settledImages = new WeakSet();
+    const handleImageSettled = (event) => {
+      const img = event.currentTarget;
+      if (settledImages.has(img)) return;
+      settledImages.add(img);
+      scheduleMeasure("image");
+    };
+    imageNodes.forEach((img) => {
+      img.addEventListener("load", handleImageSettled);
+      img.addEventListener("error", handleImageSettled);
+    });
+    if (document.fonts?.ready) {
+      Promise.resolve(document.fonts.ready).then(
+        () => scheduleMeasure("fonts"),
+        () => scheduleMeasure("fonts")
+      );
+    }
+    let lastOuterSize = `${outerRef.current?.clientWidth || 0}x${outerRef.current?.clientHeight || 0}`;
+    const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+      const nextSize = `${outerRef.current?.clientWidth || 0}x${outerRef.current?.clientHeight || 0}`;
+      if (nextSize === lastOuterSize) return;
+      lastOuterSize = nextSize;
+      scheduleMeasure("resize");
+    }) : null;
+    if (resizeObserver && outerRef.current) resizeObserver.observe(outerRef.current);
+    return () => {
+      cancelled = true;
+      if (scheduledFrame) cancelAnimationFrame(scheduledFrame);
+      resizeObserver?.disconnect();
+      imageNodes.forEach((img) => {
+        img.removeEventListener("load", handleImageSettled);
+        img.removeEventListener("error", handleImageSettled);
+      });
+    };
+  }, [layoutGeneration, requestedJustify]);
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
-  const layout = slide.layout || "stack";
-  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
-  const colsL = isCols ? _vis(slide.L) : [];
-  const colsR = isCols ? _vis(slide.R) : [];
+  const activeColsImageFit = colsImageFit?.generation === layoutGeneration ? colsImageFit : null;
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -4317,13 +4629,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     if (!comments) return [block];
     return [block, ...comments];
   };
+  const renderColumnBlocks = (column, offset, caps) => {
+    return column.flatMap((b, i) => {
+      const cap = b?.type === "image" ? caps?.[i] : null;
+      const fitted = Number.isFinite(cap) ? { ...b, maxHeight: cap, fit: "contain" } : b;
+      const [block, ...comments] = renderBlockWithComments(fitted, i + offset);
+      return [React.cloneElement(block, { "data-column-block-index": i }), ...comments];
+    });
+  };
 
   // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
   // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
   // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
   // the image block's _gridCell flag). An incomplete last row is centered by giving
   // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
-  const renderImageGrid = (idxs, region) => {
+  const renderImageGrid = (idxs, region, alignWithinColumn = false) => {
     const runLen = idxs.length;
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
@@ -4333,9 +4653,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;
     const gap = slide.gap || 12;
+    // Grid images are absolute-fill cells, so they have no intrinsic grid
+    // height. Use one balanced 140px row per grid row only when the author
+    // requests alignment. The default path still fills all available height.
+    const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)
@@ -4385,6 +4709,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const renderBlocks = () => {
     if (isCols) {
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+      // Balance fitting sides around media. If the generic side drives an
+      // auto-fit, keep that side top-safe while the fitted media stays centered.
+      const colsLJustify = explicitJustify || (hasMediaOnlyColumn && (fitScale >= 1 || colsLMediaOnly) ? "safe center" : "flex-start");
+      const colsRJustify = explicitJustify || (hasMediaOnlyColumn && (fitScale >= 1 || colsRMediaOnly) ? "safe center" : "flex-start");
       const colsRow = (
         <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
           {/* Outer stays overflow:"visible" so a column-edge block's hover toolbar
@@ -4394,13 +4722,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
               room lands inside it while its content area still lines up exactly
               where it used to (padding cancels the top/right position shift). */}
           <div key="__cols-L" style={{ flex: slide.contentFlex || 1, minWidth: 0, overflow: "visible" }}>
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
-              {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+            <div data-cols-side="left" style={{ display: "flex", flexDirection: "column", justifyContent: colsLJustify, gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {renderColumnBlocks(colsL, blocks.length, activeColsImageFit?.left)}
             </div>
           </div>
           <div key="__cols-R" style={{ flex: slide.imageFlex || 1, minWidth: 0, overflow: "visible" }}>
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
-              {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+            <div data-cols-side="right" style={{ display: "flex", flexDirection: "column", justifyContent: colsRJustify, gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {renderColumnBlocks(colsR, blocks.length + colsL.length, activeColsImageFit?.right)}
             </div>
           </div>
         </div>
@@ -4413,15 +4741,15 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Fallback: if no images found, render as stack
       if (imageIdxs.length === 0) return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const imageOnRight = layout === "image-right";
-      // Both columns share one vertical alignment so their content lines up.
-      // Default (no explicit verticalAlign): center each column when everything
-      // fits (fitScale === 1), so a short content block sits at the side image's
-      // vertical middle instead of crowding the top and leaving a gap below — a
-      // square/tall image otherwise dominates while top-aligned content looks
-      // shrunken. When content overflows (fitScale < 1) we keep flex-start so the
-      // scaled column reads top-down; an explicit verticalAlign is always honored.
-      const splitJustify = slide.verticalAlign ? fitJustify : (fitScale < 1 ? "flex-start" : "center");
-      const contentCol = <div key="__content" data-split-content style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
+      // Safe alignment balances fitting content but falls back to the top when
+      // it overflows. The media side stays centered unless the author sets an
+      // explicit vertical alignment.
+      const splitContentJustify = explicitJustify || "safe center";
+      const splitImageJustify = explicitJustify || "center";
+      // A full-height grid leaves no free space for justifyContent. Keep the
+      // default fill behavior, but give an explicitly aligned grid a measured
+      // height so top, center, and bottom produce distinct positions.
+      const contentCol = <div key="__content" data-split-content style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitContentJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
@@ -4429,8 +4757,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // balanced instead of stacking vertically. Single image keeps the height-capped
       // column so a lone side image conforms to the content column's height.
       const imageCol = imageIdxs.length >= 2
-        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
-        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+        ? <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitImageJustify, minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half", !!explicitJustify)}</div>
+        : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
@@ -4440,7 +4768,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   return (
     <SlideErrorBoundary>
       <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, boxSizing: "border-box" }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
@@ -4461,8 +4789,6 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     </SlideErrorBoundary>
   );
 }
-
-
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Reducer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // collapsedSections: array of item ids whose TOC section is folded. View state only —
@@ -11961,6 +12287,466 @@ uiSuite("Editor UX (CR1–CR3)", [
       if (Math.abs(leftGap - rightGap) > cr.width * 0.2) throw new Error(`glyphs not centered — leftGap=${leftGap.toFixed(1)} rightGap=${rightGap.toFixed(1)}`);
     }
   }},
+  { name: "CR4: side layouts balance media and safely map vertical alignment", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const image = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E", maxHeight: 120 };
+    // No maxHeight and a very tall intrinsic size (200x3000). A media-only
+    // cols side must contain it with its spacer and divider, not crop it.
+    const bigImage = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='3000'%3E%3Crect%20width='200'%20height='3000'%20fill='%23ef4444'/%3E%3C/svg%3E" };
+    const heavy = Array.from({ length: 18 }, (_, i) => ({ type: "text", text: `OVERFLOW ROW ${i + 1} ` + "content ".repeat(12) }));
+    const expected = { top: "flex-start", center: "safe center", bottom: "safe flex-end" };
+    const justify = (el) => getComputedStyle(el).justifyContent;
+    const presenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+    const scopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : presenterScope();
+    const inset = (el) => {
+      const child = Array.from(el.children).find((node) => node.getBoundingClientRect().height > 1);
+      if (!child) throw new Error("layout column has no visible child");
+      return child.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    };
+    const waitForColumns = async (leftSelector, rightSelector) => {
+      const left = await _waitFor(() => _$(leftSelector), 3000);
+      const right = await _waitFor(() => _$(rightSelector), 3000);
+      await _wait(180);
+      return [left, right];
+    };
+
+    for (const layout of ["image-left", "image-right"]) {
+      for (const [value, css] of Object.entries(expected)) {
+        if (!hooks.injectBlocks([{ type: "heading", text: `${layout} ${value}` }, image], { layout, verticalAlign: value, L: undefined, R: undefined })) {
+          throw new Error(`could not inject ${layout} ${value}`);
+        }
+        const [contentCol, imageCol] = await waitForColumns("[data-split-content]", "[data-split-image]");
+        if (justify(contentCol) !== css || justify(imageCol) !== css) {
+          throw new Error(`${layout} ${value} mapped to ${justify(contentCol)}/${justify(imageCol)}, expected ${css}`);
+        }
+      }
+
+      hooks.injectBlocks([{ type: "heading", text: `${layout} balanced` }, image], { layout, verticalAlign: undefined, L: undefined, R: undefined });
+      let [contentCol, imageCol] = await waitForColumns("[data-split-content]", "[data-split-image]");
+      if (inset(contentCol) < 20 || inset(imageCol) < 20) throw new Error(`${layout} did not center both fitting sides`);
+
+      hooks.injectBlocks([...heavy, image], { layout, verticalAlign: undefined, L: undefined, R: undefined });
+      [contentCol, imageCol] = await waitForColumns("[data-split-content]", "[data-split-image]");
+      const contentRect = contentCol.getBoundingClientRect();
+      const contentChildren = Array.from(contentCol.children).filter((node) => node.getBoundingClientRect().height > 1);
+      const firstRect = contentChildren[0]?.getBoundingClientRect();
+      const lastRect = contentChildren[contentChildren.length - 1]?.getBoundingClientRect();
+      if (!firstRect || firstRect.top < contentRect.top - 1.5 || lastRect.bottom > contentRect.bottom + 1.5) {
+        throw new Error(`${layout} scaled content is clipped`);
+      }
+      if (inset(imageCol) < 20) throw new Error(`${layout} overflow moved the image away from center`);
+    }
+
+    hooks.injectBlocks([], { layout: "cols", verticalAlign: undefined, L: [image, { type: "spacer", h: 8 }], R: [{ type: "heading", text: "COLS BALANCED" }] });
+    let [leftCol, rightCol] = await waitForColumns("[data-cols-side='left']", "[data-cols-side='right']");
+    if (inset(leftCol) < 20 || inset(rightCol) < 20) throw new Error("media-side cols did not center both fitting sides");
+
+    hooks.injectBlocks([], { layout: "cols", verticalAlign: undefined, L: [image, { type: "spacer", h: 8 }], R: heavy });
+    [leftCol, rightCol] = await waitForColumns("[data-cols-side='left']", "[data-cols-side='right']");
+    if (inset(leftCol) < 20) throw new Error("media-side cols overflow moved the image away from center");
+    if (inset(rightCol) > 14) throw new Error(`media-side cols overflow content did not start at the top (inset=${inset(rightCol).toFixed(1)})`);
+
+    const assertMediaContained = async (mode) => {
+      const marker = `COLS FIT MEDIA ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null,
+        splitGap: null, contentFlex: null, imageFlex: null,
+        L: [bigImage, { type: "spacer", h: 18 }, { type: "divider", spacing: 8 }],
+        R: [{ type: "heading", text: marker }],
+      });
+      const scope = await _waitFor(() => {
+        const current = scopeFor(mode);
+        return current?.textContent.includes(marker) && current.querySelector("[data-cols-side='left'] img") ? current : null;
+      }, 3000);
+      await _wait(220);
+      const column = scope.querySelector("[data-cols-side='left']");
+      const img = column.querySelector("img");
+      const canvas = column.parentElement?.parentElement?.parentElement?.parentElement;
+      if (!canvas) throw new Error(`${mode}: cols canvas not found`);
+      const cr = canvas.getBoundingClientRect();
+      const ir = img.getBoundingClientRect();
+      const childRects = Array.from(column.children).map((node) => node.getBoundingClientRect()).filter((r) => r.height > 0);
+      const contentTop = Math.min(...childRects.map((r) => r.top));
+      const contentBottom = Math.max(...childRects.map((r) => r.bottom));
+      if (ir.top < cr.top - 1.5 || ir.bottom > cr.bottom + 1.5) {
+        throw new Error(`${mode}: fitted image edges outside canvas (${(ir.top - cr.top).toFixed(1)}, ${(cr.bottom - ir.bottom).toFixed(1)})`);
+      }
+      if (contentTop < cr.top - 1.5 || contentBottom > cr.bottom + 1.5) {
+        throw new Error(`${mode}: media sequence edges outside canvas (${(contentTop - cr.top).toFixed(1)}, ${(cr.bottom - contentBottom).toFixed(1)})`);
+      }
+      const ratio = ir.height / ir.width;
+      if (Math.abs(ratio - 15) > 0.2) throw new Error(`${mode}: fitted image changed aspect ratio to ${ratio.toFixed(2)}`);
+      if (getComputedStyle(img).objectFit !== "contain") throw new Error(`${mode}: fitted image did not use contain`);
+    };
+
+    await assertMediaContained("editor");
+    _key("f");
+    await _waitFor(() => presenterScope(), 3000);
+    try {
+      await assertMediaContained("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+
+    for (const [value, css] of Object.entries(expected)) {
+      hooks.injectBlocks([], { layout: "cols", verticalAlign: value, L: [image], R: [{ type: "heading", text: `COLS ${value}` }] });
+      [leftCol, rightCol] = await waitForColumns("[data-cols-side='left']", "[data-cols-side='right']");
+      if (justify(leftCol) !== css || justify(rightCol) !== css) {
+        throw new Error(`cols ${value} mapped to ${justify(leftCol)}/${justify(rightCol)}, expected ${css}`);
+      }
+    }
+
+    hooks.injectBlocks([], { layout: "cols", verticalAlign: "invalid", L: [{ type: "heading", text: "LEFT" }], R: [{ type: "text", text: "RIGHT" }] });
+    [leftCol, rightCol] = await waitForColumns("[data-cols-side='left']", "[data-cols-side='right']");
+    if (justify(leftCol) !== "flex-start" || justify(rightCol) !== "flex-start") throw new Error("invalid alignment did not use the generic cols default");
+
+    hooks.injectBlocks([{ type: "heading", text: "INVALID SPLIT" }, image], { layout: "image-right", verticalAlign: "invalid", L: undefined, R: undefined });
+    const [invalidContent, invalidImage] = await waitForColumns("[data-split-content]", "[data-split-image]");
+    if (justify(invalidContent) === "invalid" || justify(invalidImage) === "invalid") throw new Error("invalid deck alignment reached CSS");
+  }},
+  { name: "CR4: mixed cols contain tall images and balance aspect ratios in editor and presenter", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const portrait = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='3000'%3E%3Crect%20width='200'%20height='3000'%20fill='%23ef4444'/%3E%3C/svg%3E" };
+    const landscape = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E" };
+    const presenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+    const scopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : presenterScope();
+    const waitForCase = async (mode, marker, imageCount) => {
+      const column = await _waitFor(() => {
+        const scope = scopeFor(mode);
+        const candidate = scope?.querySelector("[data-cols-side='left']");
+        const images = candidate?.querySelectorAll("img");
+        return scope?.textContent.includes(marker) && images?.length === imageCount &&
+          Array.from(images).every((img) => img.complete && img.naturalWidth > 0) ? candidate : null;
+      }, 3000);
+      await _wait(220);
+      return column;
+    };
+    const assertContained = (mode, label, column) => {
+      const columnRect = column.getBoundingClientRect();
+      const children = Array.from(column.children).filter((node) => node.getBoundingClientRect().height > 0);
+      const images = Array.from(column.querySelectorAll(":scope > [data-block-type='image'] img"));
+      if (!children.length || !images.length) throw new Error(`${mode} ${label}: column content not found`);
+      for (const img of images) {
+        const rect = img.getBoundingClientRect();
+        if (rect.top < columnRect.top - 1.5 || rect.bottom > columnRect.bottom + 1.5) {
+          throw new Error(`${mode} ${label}: image exceeds column bounds by ${(columnRect.top - rect.top).toFixed(1)}/${(rect.bottom - columnRect.bottom).toFixed(1)}px`);
+        }
+        if (getComputedStyle(img).objectFit !== "contain") throw new Error(`${mode} ${label}: image does not use contain fitting`);
+        const expectedRatio = img.naturalHeight / img.naturalWidth;
+        if (Math.abs(rect.height / rect.width - expectedRatio) > 0.03) {
+          throw new Error(`${mode} ${label}: image aspect ratio changed`);
+        }
+      }
+      const contentTop = Math.min(...children.map((node) => node.getBoundingClientRect().top));
+      const contentBottom = Math.max(...children.map((node) => node.getBoundingClientRect().bottom));
+      if (contentTop < columnRect.top - 1.5 || contentBottom > columnRect.bottom + 1.5) {
+        throw new Error(`${mode} ${label}: direct block sequence exceeds column bounds`);
+      }
+      return { columnRect, children, images };
+    };
+    const assertBalanced = (mode, column) => {
+      const { columnRect, children, images } = assertContained(mode, "mixed ratios", column);
+      const style = getComputedStyle(column);
+      const layoutScale = column.offsetHeight > 0 ? columnRect.height / column.offsetHeight : 1;
+      const padding = (parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)) * layoutScale;
+      const gap = (parseFloat(style.rowGap) || 0) * layoutScale;
+      const imageWrappers = new Map(images.map((img) => [img.closest("[data-block-type='image']"), img]));
+      const fixedHeight = children.reduce((sum, child) => {
+        const childRect = child.getBoundingClientRect();
+        const img = imageWrappers.get(child);
+        return sum + (img ? Math.max(0, childRect.height - img.getBoundingClientRect().height) : childRect.height);
+      }, 0) + gap * Math.max(0, children.length - 1);
+      const imageBudget = columnRect.height - padding - fixedHeight;
+      const fairShare = imageBudget / images.length;
+      const contentWidth = columnRect.width - (parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)) * layoutScale;
+      for (const img of images) {
+        const rect = img.getBoundingClientRect();
+        const naturalWidth = Math.min(contentWidth, img.naturalWidth * layoutScale);
+        const naturalDemand = naturalWidth * img.naturalHeight / img.naturalWidth;
+        const minimumUsefulHeight = Math.min(fairShare, naturalDemand);
+        if (rect.height + 3 < minimumUsefulHeight) {
+          throw new Error(`${mode} mixed ratios: image height ${rect.height.toFixed(1)}px is below its balanced ${minimumUsefulHeight.toFixed(1)}px share`);
+        }
+      }
+      const types = children.map((node) => node.dataset.blockType).filter(Boolean);
+      if (types.join(",") !== "image,image,spacer,divider") throw new Error(`${mode} mixed ratios: direct block order changed (${types.join(",")})`);
+      if (children[2].getBoundingClientRect().height <= 1 || children[3].getBoundingClientRect().height <= 1) {
+        throw new Error(`${mode} mixed ratios: spacer or divider effect collapsed`);
+      }
+    };
+    const assertMode = async (mode) => {
+      const labelMarker = `MIXED LABEL ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null,
+        splitGap: null, contentFlex: null, imageFlex: null,
+        L: [portrait, { type: "text", text: labelMarker }],
+        R: [{ type: "heading", text: labelMarker }],
+      });
+      let column = await waitForCase(mode, labelMarker, 1);
+      const labelLayout = assertContained(mode, "image and text", column);
+      const labelTypes = labelLayout.children.map((node) => node.dataset.blockType).filter(Boolean);
+      if (labelTypes.join(",") !== "image,text") throw new Error(`${mode} image and text: direct block order changed (${labelTypes.join(",")})`);
+
+      const ratioMarker = `MIXED RATIOS ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null,
+        splitGap: null, contentFlex: null, imageFlex: null,
+        L: [portrait, landscape, { type: "spacer", h: 18 }, { type: "divider", spacing: 8 }],
+        R: [{ type: "heading", text: ratioMarker }],
+      });
+      column = await waitForCase(mode, ratioMarker, 2);
+      assertBalanced(mode, column);
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => presenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "CR4: scaled split and cols use the full visual canvas in editor and presenter", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const image = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E" };
+    const splitHeavy = Array.from({ length: 29 }, (_, i) => ({ type: "text", text: `SCALED SPLIT ${i + 1} ` + "content ".repeat(12) }));
+    const colsDriver = Array.from({ length: 29 }, (_, i) => ({ type: "text", text: `SCALED DRIVER ${i + 1} ` + "content ".repeat(5) }));
+    const colsTarget = (marker) => Array.from({ length: 29 }, (_, i) => ({ type: "text", text: i === 0 ? marker : `SCALED COL ${i + 1}` }));
+    const presenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+    const scopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : presenterScope();
+    const scaleOf = (inner) => {
+      const transform = getComputedStyle(inner).transform;
+      return transform === "none" ? 1 : new DOMMatrixReadOnly(transform).a;
+    };
+    const waitForMarker = async (mode, marker, selector) => {
+      const el = await _waitFor(() => {
+        const scope = scopeFor(mode);
+        const candidate = scope?.querySelector(selector);
+        return candidate && scope.textContent.includes(marker) ? candidate : null;
+      }, 3000);
+      await _wait(220);
+      return el;
+    };
+    const injectCols = (mode, value) => {
+      const marker = `SCALED COLS ${mode} ${value || "default"}`;
+      if (!hooks.injectBlocks([], {
+        layout: "cols", align: "left", verticalAlign: value, padding: null, gap: null,
+        splitGap: null, contentFlex: null, imageFlex: null,
+        L: colsTarget(marker), R: colsDriver,
+      })) throw new Error(`could not inject ${marker}`);
+      return marker;
+    };
+    const readCols = (column) => {
+      const inner = column.parentElement?.parentElement?.parentElement;
+      const canvas = inner?.parentElement;
+      if (!inner || !canvas) throw new Error("scaled cols canvas not found");
+      const cr = canvas.getBoundingClientRect();
+      const children = Array.from(column.children).filter((node) => node.getBoundingClientRect().height > 1);
+      if (children.length !== 29) throw new Error(`scaled cols rendered ${children.length}/29 blocks`);
+      const first = children[0].getBoundingClientRect();
+      const last = children[children.length - 1].getBoundingClientRect();
+      return {
+        inner, canvas, scale: scaleOf(inner),
+        firstTop: first.top - cr.top,
+        bottomGap: cr.bottom - last.bottom,
+        expectedBottomGap: parseFloat(getComputedStyle(canvas).paddingBottom) * (cr.height / canvas.offsetHeight),
+        visible: children.filter((node) => {
+          const r = node.getBoundingClientRect();
+          const clip = column.getBoundingClientRect();
+          return r.bottom > clip.top + 0.5 && r.top < clip.bottom - 0.5;
+        }).length,
+      };
+    };
+    const assertMode = async (mode) => {
+      for (const layout of ["image-left", "image-right"]) {
+        const marker = `SCALED SPLIT ${mode} ${layout}`;
+        if (!hooks.injectBlocks([...splitHeavy.map((b, i) => i === 0 ? { ...b, text: marker } : b), image], {
+          layout, align: "left", verticalAlign: undefined, padding: null, gap: null,
+          splitGap: null, contentFlex: null, imageFlex: null, L: undefined, R: undefined,
+        })) throw new Error(`could not inject ${marker}`);
+        const imageCol = await waitForMarker(mode, marker, "[data-split-image]");
+        const inner = imageCol.parentElement;
+        const canvas = inner?.parentElement;
+        const img = imageCol.querySelector("img");
+        const contentCol = scopeFor(mode)?.querySelector("[data-split-content]");
+        if (!inner || !canvas || !img || !contentCol) throw new Error(`${mode} ${layout}: scaled split layout not found`);
+        const scale = scaleOf(inner);
+        if (scale > 0.351) throw new Error(`${mode} ${layout}: case did not reach the 0.35 fit floor (${scale.toFixed(3)})`);
+        const cr = canvas.getBoundingClientRect();
+        const ir = img.getBoundingClientRect();
+        const center = (ir.top + ir.height / 2 - cr.top) / cr.height;
+        if (center < 0.44 || center > 0.56) throw new Error(`${mode} ${layout}: image center is ${(center * 100).toFixed(1)}% of canvas height`);
+        const contentChildren = Array.from(contentCol.children).filter((node) => node.getBoundingClientRect().height > 1);
+        const first = contentChildren[0]?.getBoundingClientRect();
+        const last = contentChildren[contentChildren.length - 1]?.getBoundingClientRect();
+        if (!first || first.top < cr.top - 1.5 || last.bottom > cr.bottom + 1.5) {
+          throw new Error(`${mode} ${layout}: scaled content exceeds canvas bounds`);
+        }
+      }
+
+      let marker = injectCols(mode, undefined);
+      let column = await waitForMarker(mode, marker, "[data-cols-side='left']");
+      let measured = readCols(column);
+      if (measured.scale > 0.351) throw new Error(`${mode} default cols did not reach the 0.35 fit floor (${measured.scale.toFixed(3)})`);
+      if (measured.visible !== 29) throw new Error(`${mode} default cols show ${measured.visible}/29 blocks`);
+      if (column.scrollHeight > column.clientHeight + 2) {
+        throw new Error(`${mode} default cols still clip internally (${column.scrollHeight}/${column.clientHeight})`);
+      }
+      if (measured.firstTop < -1.5 || measured.bottomGap < -1.5) {
+        throw new Error(`${mode} default cols exceed canvas bounds (${measured.firstTop.toFixed(1)}, ${measured.bottomGap.toFixed(1)})`);
+      }
+
+      const positions = {};
+      for (const value of ["top", "center", "bottom"]) {
+        marker = injectCols(mode, value);
+        column = await waitForMarker(mode, marker, "[data-cols-side='left']");
+        measured = readCols(column);
+        if (measured.firstTop < -1.5 || measured.bottomGap < -1.5) {
+          throw new Error(`${mode} ${value} cols exceed canvas bounds (${measured.firstTop.toFixed(1)}, ${measured.bottomGap.toFixed(1)})`);
+        }
+        positions[value] = measured;
+      }
+      if (!(positions.top.firstTop + 8 < positions.center.firstTop && positions.center.firstTop + 8 < positions.bottom.firstTop)) {
+        throw new Error(`${mode} cols top/center/bottom are not distinct (${positions.top.firstTop.toFixed(1)}, ${positions.center.firstTop.toFixed(1)}, ${positions.bottom.firstTop.toFixed(1)})`);
+      }
+      if (Math.abs(positions.bottom.bottomGap - positions.bottom.expectedBottomGap) > 4) {
+        throw new Error(`${mode} bottom cols gap is ${positions.bottom.bottomGap.toFixed(1)}px, expected ${positions.bottom.expectedBottomGap.toFixed(1)}px`);
+      }
+      if (getComputedStyle(positions.bottom.inner).flexShrink !== "0") throw new Error(`${mode} scaled bottom cols can still shrink`);
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => presenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "CR4: auto-fit keeps distinct top/center/bottom positions in editor and presenter", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const image = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E" };
+    // Keep the total at the allowed 30 blocks: 29 text blocks plus one image.
+    const heavy = Array.from({ length: 29 }, (_, i) => ({ type: "text", text: `SAFE OVERFLOW ${i + 1} ` + "content ".repeat(12) }));
+    const presenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+    const scopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : presenterScope();
+    const getLayout = (mode, marker) => {
+      const scope = scopeFor(mode);
+      const content = scope?.querySelector("[data-split-content]");
+      if (!content || !content.textContent.includes(marker)) return null;
+      return { content, canvas: content.parentElement?.parentElement };
+    };
+    const collectPositions = async (mode) => {
+      const positions = {};
+      for (const value of ["top", "center", "bottom"]) {
+        const marker = `SAFE OVERFLOW 1`;
+        if (!hooks.injectBlocks([...heavy, image], {
+          layout: "image-right", verticalAlign: value, padding: null, gap: null,
+          splitGap: null, contentFlex: null, imageFlex: null, L: undefined, R: undefined,
+        })) {
+          throw new Error(`could not inject ${mode} ${value} overflow case`);
+        }
+        await _waitFor(() => getLayout(mode, marker), 3000);
+        await _wait(220);
+        const layout = getLayout(mode, marker);
+        if (!layout?.canvas) throw new Error(`${mode} ${value}: slide canvas not found`);
+        const first = Array.from(layout.content.children).find((node) => node.getBoundingClientRect().height > 1);
+        if (!first) throw new Error(`${mode} ${value}: no visible content block`);
+        const transform = getComputedStyle(layout.content.parentElement).transform;
+        const scale = transform === "none" ? 1 : new DOMMatrixReadOnly(transform).a;
+        if (scale > 0.351) throw new Error(`${mode} ${value}: case did not reach the 0.35 fit floor (scale=${scale.toFixed(3)})`);
+        const last = Array.from(layout.content.children).reverse().find((node) => node.getBoundingClientRect().height > 1);
+        if (!last) throw new Error(`${mode} ${value}: no final visible content block`);
+        const topDelta = first.getBoundingClientRect().top - layout.canvas.getBoundingClientRect().top;
+        const bottomGap = layout.canvas.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
+        if (topDelta < -1.5) throw new Error(`${mode} ${value}: first block clipped ${(-topDelta).toFixed(1)}px above the canvas`);
+        if (bottomGap < -1.5) throw new Error(`${mode} ${value}: final block clipped ${(-bottomGap).toFixed(1)}px below the canvas`);
+        positions[value] = { top: topDelta, bottomGap };
+      }
+      if (!(positions.top.top + 8 < positions.center.top && positions.center.top + 8 < positions.bottom.top)) {
+        throw new Error(`${mode}: auto-fit positions are not distinct (${positions.top.top.toFixed(1)}, ${positions.center.top.toFixed(1)}, ${positions.bottom.top.toFixed(1)})`);
+      }
+      if (!(positions.top.bottomGap > positions.center.bottomGap + 8 && positions.center.bottomGap > positions.bottom.bottomGap + 8)) {
+        throw new Error(`${mode}: auto-fit bottom gaps are not distinct (${positions.top.bottomGap.toFixed(1)}, ${positions.center.bottomGap.toFixed(1)}, ${positions.bottom.bottomGap.toFixed(1)})`);
+      }
+    };
+
+    await collectPositions("editor");
+    _key("f");
+    await _waitFor(() => presenterScope(), 3000);
+    try {
+      await collectPositions("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "CR4: split image grid has distinct top/center/bottom positions", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const image = { type: "image", src: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='400'%20height='100'%3E%3Crect%20width='400'%20height='100'%20fill='%233b82f6'/%3E%3C/svg%3E" };
+    const presenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+    const scopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : presenterScope();
+    const getLayout = (mode, marker) => {
+      const scope = scopeFor(mode);
+      const content = scope?.querySelector("[data-split-content]");
+      const imageCol = scope?.querySelector("[data-split-image]");
+      const grid = imageCol?.querySelector("[data-image-grid='half']");
+      if (!content || !content.textContent.includes(marker) || !imageCol || !grid) return null;
+      return { content, imageCol, grid, canvas: content.parentElement?.parentElement };
+    };
+    const collectPositions = async (mode) => {
+      const positions = {}, heights = {};
+      for (const value of ["top", "center", "bottom"]) {
+        const marker = `GRID ALIGN ${mode} ${value}`;
+        if (!hooks.injectBlocks([{ type: "heading", text: marker }, image, image], { layout: "image-right", verticalAlign: value, L: undefined, R: undefined })) {
+          throw new Error(`could not inject ${marker}`);
+        }
+        await _waitFor(() => getLayout(mode, marker), 3000);
+        await _wait(220);
+        const layout = getLayout(mode, marker);
+        if (!layout?.canvas) throw new Error(`${marker}: layout not found`);
+        const gr = layout.grid.getBoundingClientRect();
+        const cr = layout.canvas.getBoundingClientRect();
+        const ir = layout.imageCol.getBoundingClientRect();
+        positions[value] = gr.top - cr.top;
+        heights[value] = gr.height;
+        if (gr.height >= ir.height - 4) throw new Error(`${marker}: grid still consumes the full image column`);
+      }
+      if (!(positions.top + 8 < positions.center && positions.center + 8 < positions.bottom)) {
+        throw new Error(`${mode}: grid positions are not distinct (${positions.top.toFixed(1)}, ${positions.center.toFixed(1)}, ${positions.bottom.toFixed(1)})`);
+      }
+      const heightRange = Math.max(...Object.values(heights)) - Math.min(...Object.values(heights));
+      if (heightRange > 2) throw new Error(`${mode}: alignment changed grid size by ${heightRange.toFixed(1)}px`);
+    };
+
+    await collectPositions("editor");
+    hooks.injectBlocks([{ type: "heading", text: "GRID DEFAULT" }, image, image], { layout: "image-right", verticalAlign: undefined, L: undefined, R: undefined });
+    await _waitFor(() => getLayout("editor", "GRID DEFAULT"), 3000);
+    await _wait(220);
+    const defaultLayout = getLayout("editor", "GRID DEFAULT");
+    if (Math.abs(defaultLayout.grid.getBoundingClientRect().height - defaultLayout.imageCol.getBoundingClientRect().height) > 3) {
+      throw new Error("default split grid no longer fills the image column");
+    }
+
+    _key("f");
+    await _waitFor(() => presenterScope(), 3000);
+    try {
+      await collectPositions("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
   { name: "CR4/D2: image grid never overflows the slide canvas (N=4, heavy-text, portrait)", fn: async () => {
     if (typeof _hooks().injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
     // Tiny data-URI images with explicit intrinsic aspect ratios (SVG viewBox).
@@ -12041,6 +12827,507 @@ uiSuite("Editor UX (CR1–CR3)", [
     // suites, but we blank it to a minimal heading to reduce noise.
     try { _hooks().injectBlocks([{ type: "heading", text: "" }]); } catch {}
     await _wait(80);
+  }},
+], { setup: _selectFirstModule });
+
+// ── Image measurement and reciprocal layout — v13.68 round 6 ──────
+const _r6PresenterScope = () => _$("[data-testid='present-edit-toggle']")?.closest("[style*='position: fixed']") || null;
+const _r6ScopeFor = (mode) => mode === "editor" ? _$("[data-testid='slide-viewport']") : _r6PresenterScope();
+const _r6ScaleOf = (column) => {
+  const inner = column.parentElement?.parentElement?.parentElement;
+  const transform = inner ? getComputedStyle(inner).transform : "none";
+  return transform === "none" ? 1 : new DOMMatrixReadOnly(transform).a;
+};
+const _r6ColumnMetrics = (column) => {
+  const rect = column.getBoundingClientRect();
+  const scale = column.offsetHeight > 0 ? rect.height / column.offsetHeight : 1;
+  const style = getComputedStyle(column);
+  const topEdge = rect.top + parseFloat(style.paddingTop) * scale;
+  const bottomEdge = rect.bottom - parseFloat(style.paddingBottom) * scale;
+  const children = Array.from(column.children)
+    .map((child) => child.getBoundingClientRect())
+    .filter((childRect) => childRect.height > 0.25);
+  return {
+    rect, topEdge, bottomEdge,
+    topOverflow: children.length ? Math.max(0, topEdge - Math.min(...children.map((childRect) => childRect.top))) : 0,
+    bottomOverflow: children.length ? Math.max(0, Math.max(...children.map((childRect) => childRect.bottom)) - bottomEdge) : 0,
+  };
+};
+const _r6WaitCase = async (mode, marker, selector, imageCount) => {
+  const element = await _waitFor(() => {
+    const scope = _r6ScopeFor(mode);
+    const candidate = scope?.querySelector(selector);
+    const images = candidate ? Array.from(candidate.querySelectorAll("img")) : [];
+    return scope?.textContent.includes(marker) && candidate
+      && (imageCount == null || images.filter((img) => img.naturalWidth > 0).length === imageCount)
+      ? candidate : null;
+  }, 3000);
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return element;
+};
+const _r6AssertEdges = (label, column, tolerance = 1.5) => {
+  const metrics = _r6ColumnMetrics(column);
+  if (metrics.topOverflow > tolerance || metrics.bottomOverflow > tolerance) {
+    throw new Error(`${label}: column exceeds top/bottom by ${metrics.topOverflow.toFixed(1)}/${metrics.bottomOverflow.toFixed(1)}px`);
+  }
+  return metrics;
+};
+const _r6Svg = (width, height, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${width}'%20height='${height}'%3E%3Crect%20width='${width}'%20height='${height}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+
+uiSuite("Image measurement round 6", [
+  { name: "R6: zero initial image budget still fits five mixed images in editor and presenter", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const images = Array.from({ length: 5 }, (_, i) => ({
+      type: "image", src: _r6Svg(180 + i * 10, 1500 + i * 100, ["ef4444", "f59e0b", "10b981", "3b82f6", "8b5cf6"][i]),
+      caption: `CAPTION ${i + 1}`,
+    }));
+    const driver = Array.from({ length: 29 }, (_, i) => ({ type: "text", text: `R6 ZERO DRIVER ${i + 1} ` + "content ".repeat(40) }));
+    const assertMode = async (mode) => {
+      const marker = `R6 ZERO BUDGET ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null, splitGap: null,
+        contentFlex: null, imageFlex: null,
+        L: [...images, { type: "text", text: "Fixed mixed copy ".repeat(70) }, { type: "spacer", h: 18 }, { type: "divider", spacing: 8 }],
+        R: driver.map((block, i) => i === 0 ? { ...block, text: marker } : block),
+      });
+      const column = await _r6WaitCase(mode, marker, "[data-cols-side='left']", 5);
+      const scale = _r6ScaleOf(column);
+      if (scale > 0.351) throw new Error(`${mode}: zero-budget case did not reach the 0.35 floor (${scale.toFixed(3)})`);
+      const realImages = Array.from(column.querySelectorAll("img")).filter((img) => img.naturalWidth > 0);
+      const uncapped = realImages.filter((img) => !(parseFloat(img.style.maxHeight) > 0));
+      if (uncapped.length) throw new Error(`${mode}: ${uncapped.length} real image(s) have no final cap`);
+      if (realImages.some((img) => img.getBoundingClientRect().height < 18)) {
+        throw new Error(`${mode}: zero-budget fitting reduced an image below a useful visual height`);
+      }
+      _r6AssertEdges(`${mode} zero-budget mixed column`, column);
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => _r6PresenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "R6: final reciprocal caps use available media and split height in editor and presenter", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const portrait = { type: "image", src: _r6Svg(200, 3000, "ef4444") };
+    const media = Array.from({ length: 5 }, (_, i) => ({ ...portrait, src: _r6Svg(200 + i * 5, 3000 + i * 100, "3b82f6") }));
+    const driver = Array.from({ length: 29 }, (_, i) => ({ type: "text", text: `R6 RECIPROCAL ${i + 1} ` + "content ".repeat(8) }));
+    const assertMode = async (mode) => {
+      const mediaMarker = `R6 MEDIA ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null, splitGap: null,
+        contentFlex: null, imageFlex: null,
+        L: media, R: driver.map((block, i) => i === 0 ? { ...block, text: mediaMarker } : block),
+      });
+      const column = await _r6WaitCase(mode, mediaMarker, "[data-cols-side='left']", 5);
+      const metrics = _r6AssertEdges(`${mode} reciprocal media column`, column);
+      const images = Array.from(column.querySelectorAll("img")).filter((img) => img.naturalWidth > 0);
+      const usedHeight = images.reduce((sum, img) => sum + img.getBoundingClientRect().height, 0);
+      if (usedHeight < (metrics.bottomEdge - metrics.topEdge) * 0.65) {
+        throw new Error(`${mode}: final media caps use only ${usedHeight.toFixed(1)}px of ${(metrics.bottomEdge - metrics.topEdge).toFixed(1)}px`);
+      }
+
+      const splitMarker = `R6 SPLIT ${mode}`;
+      hooks.injectBlocks([
+        ...driver.map((block, i) => i === 0 ? { ...block, text: splitMarker } : block),
+        portrait,
+      ], { layout: "image-right", verticalAlign: undefined, padding: null, gap: null, splitGap: null, L: undefined, R: undefined });
+      const imageCol = await _r6WaitCase(mode, splitMarker, "[data-split-image]", 1);
+      const img = imageCol.querySelector("img");
+      const imageRect = img.getBoundingClientRect();
+      const columnRect = imageCol.getBoundingClientRect();
+      if (imageRect.height < columnRect.height * 0.72) {
+        throw new Error(`${mode}: split portrait uses only ${imageRect.height.toFixed(1)}px of ${columnRect.height.toFixed(1)}px`);
+      }
+      if (imageRect.top < columnRect.top - 1.5 || imageRect.bottom > columnRect.bottom + 1.5) {
+        throw new Error(`${mode}: final split image cap exceeds its column by ${(columnRect.top - imageRect.top).toFixed(1)}/${(imageRect.bottom - columnRect.bottom).toFixed(1)}px`);
+      }
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => _r6PresenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "R6: normal mixed columns keep both edges inside rounding allowance", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const mixed = [
+      { type: "image", src: _r6Svg(220, 2200, "ef4444"), caption: "PORTRAIT" },
+      { type: "image", src: _r6Svg(800, 240, "3b82f6"), caption: "LANDSCAPE" },
+      { type: "image", src: _r6Svg(400, 400, "10b981"), caption: "SQUARE" },
+      { type: "text", text: "Normal mixed-media copy." },
+      { type: "spacer", h: 12 },
+      { type: "divider", spacing: 6 },
+    ];
+    const assertMode = async (mode) => {
+      const marker = `R6 ROUNDING ${mode}`;
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: "center", padding: null, gap: null, splitGap: null,
+        contentFlex: null, imageFlex: null,
+        L: mixed, R: [{ type: "heading", text: marker }],
+      });
+      const column = await _r6WaitCase(mode, marker, "[data-cols-side='left']", 3);
+      const scale = _r6ScaleOf(column);
+      if (scale < 0.99) throw new Error(`${mode}: normal mixed column unexpectedly scaled to ${scale.toFixed(3)}`);
+      _r6AssertEdges(`${mode} normal mixed column`, column, 1);
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => _r6PresenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+  { name: "R6: cap identity survives empty and 0x0 images while fonts.ready is delayed", fn: async () => {
+    const hooks = _hooks();
+    if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+    const blocks = [
+      { type: "image", src: "" },
+      { type: "image", src: _r6Svg(0, 0, "64748b") },
+      { type: "image", src: _r6Svg(200, 3000, "ef4444") },
+      { type: "image", src: _r6Svg(700, 200, "3b82f6") },
+      { type: "spacer", h: 16 },
+      { type: "divider", spacing: 8 },
+    ];
+    const assertMode = async (mode) => {
+      const marker = `R6 CAP IDENTITY ${mode}`;
+      const ownFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+      Object.defineProperty(document, "fonts", { configurable: true, value: { ready: new Promise(() => {}) } });
+      try {
+        hooks.injectBlocks([], {
+          layout: "cols", verticalAlign: undefined, padding: null, gap: null, splitGap: null,
+          contentFlex: null, imageFlex: null,
+          L: blocks, R: [{ type: "heading", text: marker }],
+        });
+        const column = await _r6WaitCase(mode, marker, "[data-cols-side='left']", 2);
+        for (const blockIndex of [2, 3]) {
+          const img = column.querySelector(`:scope > [data-column-block-index="${blockIndex}"] img`);
+          if (!img || !(parseFloat(img.style.maxHeight) > 0)) {
+            throw new Error(`${mode}: real image at stable block ${blockIndex} is uncapped before fonts.ready`);
+          }
+          if (getComputedStyle(img).objectFit !== "contain") {
+            throw new Error(`${mode}: real image at stable block ${blockIndex} lost contain fitting`);
+          }
+        }
+        _r6AssertEdges(`${mode} delayed-font cap identity`, column);
+      } finally {
+        if (ownFonts) Object.defineProperty(document, "fonts", ownFonts);
+        else delete document.fonts;
+      }
+    };
+
+    await assertMode("editor");
+    _key("f");
+    await _waitFor(() => _r6PresenterScope(), 3000);
+    try {
+      await assertMode("presenter");
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 3000).catch(() => {});
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Image measurement and grid flow — v13.68 round 7 ─────────────
+const _r7Frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+const _r7LoadedColumn = async (marker, selector = "[data-cols-side='left']", count = null) => {
+  const column = await _waitFor(() => {
+    const scope = _r6ScopeFor("editor");
+    const candidate = scope?.querySelector(selector);
+    const images = candidate ? Array.from(candidate.querySelectorAll("img")) : [];
+    return scope?.textContent.includes(marker) && candidate
+      && (count == null || images.filter((img) => img.naturalWidth > 0).length === count)
+      ? candidate : null;
+  }, 3000);
+  await _r7Frame();
+  await _r7Frame();
+  return column;
+};
+const _r7Caps = (column) => Array.from(column.querySelectorAll("img"))
+  .filter((img) => img.naturalWidth > 0)
+  .map((img) => ({ css: img.style.maxHeight, value: parseFloat(img.style.maxHeight) }));
+const _r7AssertFiniteCaps = (label, column) => {
+  const rawCaps = _r7Caps(column);
+  if (!rawCaps.length || rawCaps.some((cap) => !Number.isFinite(cap.value) || !cap.css.endsWith("px"))) {
+    throw new Error(`${label}: a loaded image has no finite pixel cap (${rawCaps.map((cap) => cap.css || "unset").join(",")})`);
+  }
+  return rawCaps.map((cap) => cap.value);
+};
+
+uiSuite("Image measurement round 7", [
+  { name: "R7: impossible image budgets use finite containment caps", fn: async () => {
+    const hooks = _hooks();
+    const images = Array.from({ length: 4 }, (_, i) => ({
+      type: "image",
+      src: _r6Svg(180 + i * 10, 2600 + i * 200, ["ef4444", "f59e0b", "10b981", "3b82f6"][i]),
+      caption: `R7 FLOOR CAPTION ${i + 1}`,
+    }));
+    const fixed = Array.from({ length: 26 }, (_, i) => ({
+      type: "text",
+      text: `R7 FIXED ${i + 1} ` + "fixed content ".repeat(90),
+    }));
+    const marker = "R7 IMPOSSIBLE BUDGET";
+    hooks.injectBlocks([], {
+      layout: "cols", verticalAlign: undefined, padding: null, gap: null,
+      splitGap: null, contentFlex: null, imageFlex: null,
+      L: [...images, ...fixed],
+      R: [{ type: "heading", text: marker }],
+    });
+    const column = await _r7LoadedColumn(marker, "[data-cols-side='left']", 4);
+    const scale = _r6ScaleOf(column);
+    if (scale > 0.351) throw new Error(`impossible budget did not reach the scale floor (${scale.toFixed(3)})`);
+    const caps = _r7AssertFiniteCaps("impossible budget", column);
+    if (Math.max(...caps) > 4) throw new Error(`impossible budget did not degrade to the containment floor (${caps.join(",")})`);
+    const tallest = Math.max(...Array.from(column.querySelectorAll("img")).map((img) => img.getBoundingClientRect().height));
+    if (tallest > 2) throw new Error(`impossible budget image still uses ${tallest.toFixed(1)} visual px`);
+  }},
+  { name: "R7: zero correction budgets never restore 100 percent image height", fn: async () => {
+    const hooks = _hooks();
+    const marker = "R7 ZERO CORRECTION";
+    const fixed = Array.from({ length: 24 }, (_, i) => ({
+      type: "text",
+      text: `R7 CORRECTION ${i + 1} ` + "dense copy ".repeat(70),
+    }));
+    hooks.injectBlocks([], {
+      layout: "cols", verticalAlign: "bottom", padding: null, gap: null,
+      splitGap: null, contentFlex: null, imageFlex: null,
+      L: [
+        { type: "image", src: _r6Svg(200, 3200, "ef4444") },
+        { type: "image", src: _r6Svg(220, 3400, "3b82f6") },
+        { type: "spacer", h: 18 },
+        { type: "divider", spacing: 8 },
+        ...fixed,
+      ],
+      R: [{ type: "heading", text: marker }],
+    });
+    const column = await _r7LoadedColumn(marker, "[data-cols-side='left']", 2);
+    const caps = _r7AssertFiniteCaps("zero correction", column);
+    if (caps.some((cap) => cap <= 0)) throw new Error(`zero correction produced a non-positive cap (${caps.join(",")})`);
+    if (Array.from(column.querySelectorAll("img")).some((img) => img.style.maxHeight === "100%")) {
+      throw new Error("zero correction restored max-height:100%");
+    }
+  }},
+  { name: "R7: new content has finite caps before its first painted frame", fn: async () => {
+    const hooks = _hooks();
+    hooks.injectBlocks([], {
+      layout: "cols", verticalAlign: undefined,
+      L: [{ type: "image", src: _r6Svg(900, 180, "10b981") }],
+      R: [{ type: "heading", text: "R7 OLD CONTENT" }],
+    });
+    await _r7LoadedColumn("R7 OLD CONTENT", "[data-cols-side='left']", 1);
+
+    const marker = "R7 NEW CONTENT";
+    const scope = _r6ScopeFor("editor");
+    const samples = [];
+    let observing = true;
+    const read = (phase) => {
+      const currentScope = _r6ScopeFor("editor");
+      if (!currentScope?.textContent.includes(marker)) return false;
+      const column = currentScope.querySelector("[data-cols-side='left']");
+      const images = column ? Array.from(column.querySelectorAll("img")) : [];
+      if (images.length !== 3) return false;
+      samples.push({
+        phase,
+        caps: images.map((img) => img.style.maxHeight),
+        heights: images.map((img) => img.getBoundingClientRect().height),
+      });
+      return true;
+    };
+    const observer = new MutationObserver(() => {
+      if (observing && read("commit")) observing = false;
+    });
+    observer.observe(scope, { childList: true, subtree: true, characterData: true });
+    const frameSamples = new Promise((resolve, reject) => {
+      const started = performance.now();
+      const tick = () => {
+        read(`frame-${samples.filter((sample) => sample.phase.startsWith("frame-")).length + 1}`);
+        if (samples.filter((sample) => sample.phase.startsWith("frame-")).length >= 3) return resolve();
+        if (performance.now() - started > 3000) return reject(new Error("new content did not render in three frames"));
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    if (typeof hooks.mutateBlocksInPlaceForTest !== "function") {
+      throw new Error("in-place block mutation test hook is missing");
+    }
+    hooks.mutateBlocksInPlaceForTest([], {
+      layout: "cols", verticalAlign: undefined,
+      L: [
+        { type: "image", src: _r6Svg(180, 3000, "ef4444") },
+        { type: "spacer", h: 12 },
+        { type: "image", src: _r6Svg(800, 200, "3b82f6") },
+        { type: "image", src: _r6Svg(400, 900, "8b5cf6") },
+      ],
+      R: [{ type: "heading", text: marker }],
+    });
+    try {
+      await frameSamples;
+    } finally {
+      observer.disconnect();
+    }
+    if (!samples.some((sample) => sample.phase === "commit")) {
+      throw new Error("new content had no pre-paint commit sample");
+    }
+    for (const sample of samples) {
+      const finitePixelCaps = sample.caps.every((value) =>
+        value.endsWith("px") && Number.isFinite(parseFloat(value))
+      );
+      if (!finitePixelCaps) {
+        throw new Error(`${sample.phase}: stale or missing cap mapping (${sample.caps.join(",")})`);
+      }
+      if (sample.heights.some((height) => height > 500)) {
+        throw new Error(`${sample.phase}: new image overflowed before correction (${sample.heights.join(",")})`);
+      }
+    }
+  }},
+  { name: "R7: delayed fonts ready always runs a current-generation measure", fn: async () => {
+    const hooks = _hooks();
+    let resolveFonts;
+    const ready = new Promise((resolve) => { resolveFonts = resolve; });
+    const ownFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { ready } });
+    const marker = "R7 DELAYED FONTS";
+    try {
+      hooks.injectBlocks([], {
+        layout: "cols", verticalAlign: undefined, padding: null, gap: null,
+        splitGap: null, contentFlex: null, imageFlex: null,
+        L: [
+          { type: "image", src: _r6Svg(200, 3000, "ef4444") },
+          { type: "image", src: _r6Svg(220, 3200, "3b82f6") },
+          { type: "text", text: "R7 font measurement driver." },
+        ],
+        R: [{ type: "heading", text: marker }],
+      });
+      const column = await _r7LoadedColumn(marker, "[data-cols-side='left']", 2);
+      await _r7Frame();
+      await _r7Frame();
+      const loadedImages = Array.from(column.querySelectorAll("img")).filter((img) => img.naturalWidth > 0);
+      loadedImages[0]?.dispatchEvent(new Event("load"));
+      await _r7Frame();
+      await _r7Frame();
+      const before = _r7AssertFiniteCaps("fonts before", column).reduce((sum, cap) => sum + cap, 0);
+      const fixed = column.querySelector(":scope > [data-column-block-index='2']");
+      if (!fixed) throw new Error("font measurement fixed block is missing");
+      fixed.style.paddingBottom = "180px";
+      resolveFonts();
+      await _r7Frame();
+      await _r7Frame();
+      await _r7Frame();
+      const after = _r7AssertFiniteCaps("fonts after", column).reduce((sum, cap) => sum + cap, 0);
+      if (after > before - 140) {
+        throw new Error(`fonts-ready did not recalculate caps (${before.toFixed(1)} -> ${after.toFixed(1)})`);
+      }
+    } finally {
+      if (ownFonts) Object.defineProperty(document, "fonts", ownFonts);
+      else delete document.fonts;
+    }
+  }},
+  { name: "R7: split-grid media obeys each explicit maximum height", fn: async () => {
+    const hooks = _hooks();
+    const marker = "R7 GRID MAX HEIGHT";
+    hooks.injectBlocks([
+      { type: "heading", text: marker },
+      { type: "image", src: _r6Svg(300, 1200, "ef4444"), maxHeight: 46 },
+      { type: "image", src: _r6Svg(600, 300, "3b82f6"), maxHeight: 74 },
+    ], { layout: "image-right", verticalAlign: undefined, L: undefined, R: undefined });
+    const imageCol = await _r7LoadedColumn(marker, "[data-split-image]", 2);
+    const scale = imageCol.offsetHeight > 0 ? imageCol.getBoundingClientRect().height / imageCol.offsetHeight : 1;
+    const media = Array.from(imageCol.querySelectorAll("[data-image-grid-media]"));
+    if (media.length !== 2) throw new Error(`split grid has ${media.length}/2 media areas`);
+    const heights = media.map((node) => node.getBoundingClientRect().height);
+    if (heights[0] > 46 * scale + 1 || heights[1] > 74 * scale + 1) {
+      throw new Error(`split-grid maxHeight was ignored (${heights.map((h) => h.toFixed(1)).join(",")})`);
+    }
+    if (heights[1] <= heights[0] + 5 * scale) {
+      throw new Error(`split-grid media maxima are not independent (${heights.map((h) => h.toFixed(1)).join(",")})`);
+    }
+  }},
+  { name: "R7: split-grid captions stay in flow below the media area", fn: async () => {
+    const hooks = _hooks();
+    const marker = "R7 GRID CAPTIONS";
+    hooks.injectBlocks([
+      { type: "heading", text: marker },
+      { type: "image", src: _r6Svg(300, 1200, "ef4444"), caption: "PORTRAIT CAPTION" },
+      { type: "image", src: _r6Svg(900, 240, "3b82f6"), caption: "LANDSCAPE CAPTION" },
+    ], { layout: "image-right", verticalAlign: undefined, L: undefined, R: undefined });
+    const imageCol = await _r7LoadedColumn(marker, "[data-split-image]", 2);
+    await _wait(220);
+    const cells = Array.from(imageCol.querySelectorAll("[data-testid='image-grid-cell']"));
+    if (cells.length !== 2) throw new Error(`split grid has ${cells.length}/2 caption cells`);
+    const mediaTops = [];
+    for (const cell of cells) {
+      const media = cell.querySelector("[data-image-grid-media]");
+      const caption = media?.nextElementSibling;
+      if (!media || !caption) throw new Error("split-grid media or caption flow node is missing");
+      const mr = media.getBoundingClientRect();
+      const tr = caption.getBoundingClientRect();
+      mediaTops.push(mr.top);
+      if (tr.top < mr.bottom + 3) {
+        throw new Error(`caption overlaps media by ${(mr.bottom - tr.top).toFixed(1)}px`);
+      }
+      if (getComputedStyle(media.querySelector("img")).objectFit !== "contain") {
+        throw new Error("split-grid image lost contain fitting");
+      }
+    }
+    if (Math.max(...mediaTops) - Math.min(...mediaTops) > 3) {
+      throw new Error("split-grid media areas lost row alignment");
+    }
+  }},
+  { name: "R7: resize recalculates final reciprocal caps without rounding overflow", fn: async () => {
+    const hooks = _hooks();
+    const marker = "R7 RESIZE ROUNDING";
+    hooks.injectBlocks([], {
+      layout: "cols", verticalAlign: "center", padding: null, gap: null,
+      splitGap: null, contentFlex: null, imageFlex: null,
+      L: [
+        { type: "image", src: _r6Svg(220, 2200, "ef4444"), caption: "PORTRAIT" },
+        { type: "image", src: _r6Svg(800, 240, "3b82f6"), caption: "LANDSCAPE" },
+        { type: "image", src: _r6Svg(400, 400, "10b981"), caption: "SQUARE" },
+        { type: "text", text: "R7 mixed-media resize copy." },
+        { type: "spacer", h: 12 },
+        { type: "divider", spacing: 6 },
+      ],
+      R: [{ type: "heading", text: marker }],
+    });
+    let column = await _r7LoadedColumn(marker, "[data-cols-side='left']", 3);
+    _r6AssertEdges("resize before", column, 1);
+    const before = _r7AssertFiniteCaps("resize before", column).reduce((sum, cap) => sum + cap, 0);
+    const viewport = _$("[data-testid='slide-viewport']");
+    if (!viewport) throw new Error("slide viewport is missing");
+    const originalHeight = viewport.style.height;
+    try {
+      viewport.style.height = "360px";
+      await _wait(80);
+      await _r7Frame();
+      await _r7Frame();
+      column = _$("[data-cols-side='left']");
+      _r6AssertEdges("resize after", column, 1);
+      const after = _r7AssertFiniteCaps("resize after", column).reduce((sum, cap) => sum + cap, 0);
+      if (after >= before - 20) {
+        throw new Error(`resize did not recalculate reciprocal caps (${before.toFixed(1)} -> ${after.toFixed(1)})`);
+      }
+    } finally {
+      viewport.style.height = originalHeight;
+      await _wait(80);
+    }
   }},
 ], { setup: _selectFirstModule });
 
@@ -22127,6 +23414,23 @@ export default function App() {
       // Replace the current slide's blocks (Editor UX / alignment suites: place
       // a known centered heading and assert the editor path renders it centered).
       injectBlocks: (blocks, extra) => _patchCurrent({ blocks, ...(extra || {}) }),
+      // Keep the slide object identity while its block arrangement changes. This
+      // reproduces storage/live-update renders that must not reuse old image caps.
+      mutateBlocksInPlaceForTest: (blocks, extra) => {
+        const s = _localSyncState.current;
+        if (!s?.selectedId) return false;
+        let selectedItem = null;
+        for (const lane of (s.lanes || [])) {
+          selectedItem = lane.items?.find((item) => item.id === s.selectedId) || null;
+          if (selectedItem) break;
+        }
+        const currentSlide = selectedItem?.slides?.[s.slideIndex];
+        if (!currentSlide) return false;
+        currentSlide.blocks = blocks;
+        Object.assign(currentSlide, extra || {});
+        dispatch({ type: "SET_GUIDELINES", guidelines: s.guidelines });
+        return true;
+      },
       // On-screen slide identity {itemId, slideIdx, accent} for assertions.
       getSelection: () => {
         const s = _localSyncState.current;

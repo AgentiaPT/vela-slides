@@ -705,7 +705,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { flex: 1, height: "100%", minHeight: 0 } : {}) }}
+    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -820,24 +820,37 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       {canEdit && <AddItem label="Add point" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"bullets"))} />}
       </div>;
 
-    case "image":
+    case "image": {
       // _gridCell: this image is a cell in a multi-image grid — fill the cell and
       // letterbox (objectFit:contain) so mixed aspect ratios sit in uniform cells.
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, width: "100%", height: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
-        {block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
-          ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
-          : block._gridCell
+      const gridHasMaxHeight = block._gridCell && block.maxHeight != null;
+      const gridMediaStyle = block._gridCell ? {
+        position: "relative",
+        flex: gridHasMaxHeight ? "0 1 auto" : "1 1 0",
+        width: "100%",
+        height: gridHasMaxHeight ? block.maxHeight : undefined,
+        maxHeight: gridHasMaxHeight ? block.maxHeight : "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      } : null;
+      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+        {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
+          {block.src ? <img src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
           // uniform cell instead of ballooning the row off-canvas — and, critically,
           // it contributes 0 to the auto-height fit measurement, so a tall image no
           // longer forces an over-aggressive slide fit-scale.
-          ? { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-          : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight || "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
-        } /> : <div style={{ ...(block._gridCell ? { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" } : {}), padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+            { position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: 0, objectFit: block.fit || "contain", borderRadius: block.rounded ?? 8, boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+          } /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", width: "100%", padding: 32, boxSizing: "border-box", color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
+        </div> : block.src ? <img src={block.src} alt={block.alt || ""} style={block._solo
+          ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
+          : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
+        } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
       </div></ZoomWrap>;
+    }
 
     case "code":
       return <CodeBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.67";
+const VELA_VERSION = "13.68";
 const VELA_CHANGELOG = [
+  { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
   { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
   { v: "13.65", d: "Tests: the toolbar AI-edit isolation test now waits for the deck-epoch reset before reopening Quick Edit, removing a rare timing race in that check." },
