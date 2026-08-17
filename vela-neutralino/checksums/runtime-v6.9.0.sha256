@@ -1,0 +1,21 @@
+# Neutralino runtime v6.9.0 — pinned per-binary SHA256
+#
+# Source: https://github.com/neutralinojs/neutralinojs/releases/tag/v6.9.0
+# Upstream ZIP digest (sha256 of the release asset, computed locally):
+#   sha256:ff33dd68979cffc36e4e7e73d1bab4cbcdf2c036aad72ca32876fde51a32df14
+#   asset: neutralinojs-v6.9.0.zip
+#
+# Per-binary hashes were extracted from that ZIP and cross-checked against the
+# local `vela-neutralino/bin/` populated by an independent `neu update` run.
+# All 7 matched.
+#
+# Format: <sha256>  <relative path under vela-neutralino/>
+# Used by scripts/verify-runtime.py to fail the build if `neu update` ever
+# produces a binary that does not match these pins.
+e5dfc6a2b2eeb1e7011e3bb987a1e85d5331ec87eadc04d57beb5b02dcc92b67  bin/neutralino-linux_arm64
+ac45424d24a9f0d19092391ddf68781e4a3a1a037a0288a5034729ae6cdb370b  bin/neutralino-linux_armhf
+47cb0b6e60706f6dff83ed98e198c753580f21f210e3dd87e00719701247fc9d  bin/neutralino-linux_x64
+ef5e8cfd96df35d811d47a127f5be54db50114f1f6b5c075218ca78a07e7a66f  bin/neutralino-mac_arm64
+6c93f2e8fca9a02ce9f09851559d5323c5ef0a75847dd0913e7c6dad5a4e30b6  bin/neutralino-mac_universal
+02616220c49f0e7063145d1d606a27f12d2b7951e23efdd077e5300947481099  bin/neutralino-mac_x64
+0eecd0c7f6c955b441e586def6e89c27c295f144d6d9061dd358c3f3907ff3b3  bin/neutralino-win_x64.exe
