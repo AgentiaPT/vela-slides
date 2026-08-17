@@ -109,6 +109,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Test Runner: UI_TEST_SUITES uiSuite runUITests
 - TOC Collapse / Keyboard-Tree Suite (CR2): _tocHeaders _tocToggle _tocCollapsed _tocDriveState _tocEnsureExpanded _tocEnsureCollapsed _focusTocHeader _selectTocHeader
 - Vera AI Integration Suite (live API calls): _veraChat
+- Image measurement and reciprocal layout — v13.68 round 6: _r6PresenterScope _r6ScopeFor _r6ScaleOf _r6ColumnMetrics _r6WaitCase _r6AssertEdges _r6Svg
+- Image measurement and grid flow — v13.68 round 7: _r7Frame _r7LoadedColumn _r7Caps _r7AssertFiniteCaps
 
 ### part-uitest2.jsx
 - Review / Comments Suite: _reviewPanelOpen _reviewToggleBtn _setReviewMode
@@ -305,14 +307,18 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - Student Mode
 - Study Notes
 - Editor UX (CR1–CR3)
+- Image measurement round 6
+- Image measurement round 7
 - Block item reorder (▲▼) — v13.19
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 505
-- part-blocks.jsx: 751-line unbannered stretch after line 769
+- part-imports.jsx: 860-line unbannered stretch after line 506
+- part-blocks.jsx: 764-line unbannered stretch after line 769
+- part-canvas.jsx: 414-line unbannered stretch after line 24
 - part-slidepanel.jsx: 446-line unbannered stretch after line 206
 - part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
 - part-demo.jsx: 407-line unbannered stretch after line 510

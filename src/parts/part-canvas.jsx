@@ -47,7 +47,30 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const _vis = (arr) => presenting ? (arr || []).filter((b) => !(b && b.hidden)) : (arr || []);
   const blocks = _vis(slide.blocks);
   const align = slide.align || "left";
-  const requestedJustify = slide.verticalAlign || (align === "center" ? "center" : "flex-start");
+  const layout = slide.layout || "stack";
+  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  const isSplit = layout === "image-right" || layout === "image-left";
+  const colsL = isCols ? _vis(slide.L) : [];
+  const colsR = isCols ? _vis(slide.R) : [];
+  const isMediaOnlyColumn = (column) =>
+    column.some((b) => b && b.type === "image") &&
+    column.every((b) => b && (b.type === "image" || b.type === "spacer" || b.type === "divider"));
+  const colsLMediaOnly = isMediaOnlyColumn(colsL);
+  const colsRMediaOnly = isMediaOnlyColumn(colsR);
+  const hasMediaOnlyColumn = colsLMediaOnly || colsRMediaOnly;
+  const hasDirectColumnImage = colsL.some((b) => b?.type === "image") || colsR.some((b) => b?.type === "image");
+  // Deck values must not reach CSS directly. Unknown values use the normal
+  // layout default instead of becoming an invalid justifyContent value.
+  const verticalAlignToJustify = (value) => {
+    if (value === "top") return "flex-start";
+    // Safe alignment keeps the requested position while content fits. If it
+    // overflows, the browser starts at the top instead of clipping the top.
+    if (value === "center") return "safe center";
+    if (value === "bottom") return "safe flex-end";
+    return null;
+  };
+  const explicitJustify = verticalAlignToJustify(slide.verticalAlign);
+  const requestedJustify = explicitJustify || (align === "center" ? "center" : "flex-start");
   // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
   // and bgImage already are — defense-in-depth so this fetching sink can't be
   // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
@@ -58,9 +81,34 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   const outerRef = useRef(null);
   const innerRef = useRef(null);
+  const layoutContentKey = JSON.stringify({
+    index, presenting, reviewMode, fontScale, layout, align,
+    verticalAlign: slide.verticalAlign ?? null,
+    padding: slide.padding ?? null,
+    gap: slide.gap ?? null,
+    splitGap: slide.splitGap ?? null,
+    contentFlex: slide.contentFlex ?? null,
+    imageFlex: slide.imageFlex ?? null,
+    imageCols: slide.imageCols ?? null,
+    blocks,
+    L: colsL,
+    R: colsR,
+    comments: reviewMode ? (slide.comments || null) : null,
+  });
+  const layoutGenerationState = useRef({ key: null, value: 0 });
+  if (layoutGenerationState.current.key !== layoutContentKey) {
+    layoutGenerationState.current = {
+      key: layoutContentKey,
+      value: layoutGenerationState.current.value + 1,
+    };
+  }
+  const layoutGeneration = layoutGenerationState.current.value;
+  const currentLayoutGeneration = useRef(layoutGeneration);
+  currentLayoutGeneration.current = layoutGeneration;
   const [fitScale, setFitScale] = useState(1);
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
+  const [colsImageFit, setColsImageFit] = useState(null);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
@@ -88,57 +136,307 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   }, [onEdit, blocks]);
 
   useLayoutEffect(() => {
+    const SCALE_FLOOR = 0.35;
+    const MIN_IMAGE_VISUAL_H = 24;
+    const MIN_CONTAINED_VISUAL_H = 1;
+    const EDGE_ALLOWANCE_VISUAL = 4;
+    const generation = layoutGeneration;
+    let cancelled = false, scheduledFrame = 0;
+    const pendingReasons = new Set();
+    const isCurrent = () => !cancelled && currentLayoutGeneration.current === generation;
+
+    const applyGeometry = (inner, scale) => {
+      const scaled = scale < 0.9995;
+      inner.style.transform = scaled ? `scale(${scale})` : "none";
+      inner.style.width = scaled ? `${100 / scale}%` : "100%";
+      inner.style.maxWidth = scaled ? `${100 / scale}%` : "100%";
+      inner.style.height = scaled && (isSplit || isCols)
+        ? `${100 / scale}%`
+        : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
+      void inner.offsetHeight;
+    };
+
     const measure = () => {
+      if (!isCurrent()) return;
       const inner = innerRef.current, outer = outerRef.current;
       if (!inner || !outer) return;
-      inner.style.transform = "none";
-      inner.style.width = "100%";
-      inner.style.height = "auto";
-      void inner.scrollHeight;
-      const cs = getComputedStyle(outer);
-      const availH = outer.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      // In a side-by-side layout the CONTENT column drives the height: the image
-      // conforms to it (see splitImgMaxH below) and must never push the whole
-      // slide to scale down. So for split we measure the content column alone,
-      // not inner.scrollHeight — which would include a tall square/portrait image
-      // and shrink the text beside it (the bug this fixes).
-      let contentH = 0;
-      if (isSplit) {
-        const contentEl = inner.querySelector("[data-split-content]");
-        contentH = contentEl ? contentEl.scrollHeight : 0;
+      const outerStyle = getComputedStyle(outer);
+      const availH = outer.clientHeight
+        - parseFloat(outerStyle.paddingTop)
+        - parseFloat(outerStyle.paddingBottom);
+
+      const columnPairs = [["left", colsL], ["right", colsR]];
+      const resetColumnImages = () => {
+        for (const [side, column] of columnPairs) {
+          const columnEl = inner.querySelector(`[data-cols-side="${side}"]`);
+          if (!columnEl) continue;
+          for (let blockIndex = 0; blockIndex < column.length; blockIndex++) {
+            const block = column[blockIndex];
+            if (block?.type !== "image") continue;
+            const child = columnEl.querySelector(`:scope > [data-column-block-index="${blockIndex}"]`);
+            const img = child?.querySelector("img");
+            if (img) img.style.maxHeight = block.maxHeight != null ? block.maxHeight : "100%";
+          }
+        }
+      };
+
+      const measureColumn = (side, column, scale) => {
+        const columnEl = inner.querySelector(`[data-cols-side="${side}"]`);
+        if (!columnEl) return null;
+        const style = getComputedStyle(columnEl);
+        const children = Array.from(columnEl.children);
+        const gap = parseFloat(style.rowGap) || 0;
+        const allowance = EDGE_ALLOWANCE_VISUAL / scale;
+        const availableHeight = Math.max(0, columnEl.clientHeight
+          - parseFloat(style.paddingTop)
+          - parseFloat(style.paddingBottom)
+          - allowance);
+        const childByIndex = new Map(children
+          .filter((child) => child.dataset.columnBlockIndex != null)
+          .map((child) => [Number(child.dataset.columnBlockIndex), child]));
+        const entries = [];
+        const imageByChild = new Map();
+        for (let blockIndex = 0; blockIndex < column.length; blockIndex++) {
+          const block = column[blockIndex];
+          if (block?.type !== "image") continue;
+          const child = childByIndex.get(blockIndex);
+          const img = child?.querySelector("img") || null;
+          const measuredHeight = img ? img.getBoundingClientRect().height / scale : 0;
+          const loaded = !!(img?.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+          const pending = !!(img && !img.complete);
+          const explicitZero = block.maxHeight === 0
+            || (typeof block.maxHeight === "string" && /^0(?:\.0+)?(?:px|%)?$/.test(block.maxHeight.trim()));
+          const needsCap = (loaded || pending) && !explicitZero;
+          // An image that is still loading reserves one useful slot. A completed
+          // 0x0 or failed image reserves none, but its block index stays present.
+          const demand = measuredHeight > 0.01
+            ? measuredHeight
+            : (needsCap ? MIN_IMAGE_VISUAL_H / scale : 0);
+          const entry = { blockIndex, child, img, demand, needsCap };
+          entries.push(entry);
+          if (child && img) imageByChild.set(child, entry);
+        }
+        const fixedHeight = children.reduce((sum, child) => {
+          const entry = imageByChild.get(child);
+          const childHeight = child.getBoundingClientRect().height / scale;
+          const imageHeight = entry?.img ? entry.img.getBoundingClientRect().height / scale : 0;
+          return sum + Math.max(0, childHeight - imageHeight);
+        }, 0) + gap * Math.max(0, children.length - 1);
+        const renderedEntries = entries.filter((entry) => entry.needsCap);
+        const imageDemand = renderedEntries.reduce((sum, entry) => sum + entry.demand, 0);
+        const minimumDemand = renderedEntries.reduce(
+          (sum, entry) => sum + Math.min(entry.demand, MIN_IMAGE_VISUAL_H / scale), 0
+        );
+        const imageBudget = availableHeight - fixedHeight;
+        return {
+          side, column, columnEl, style, children, entries, fixedHeight, availableHeight, scale,
+          imageBudget, fullDemand: fixedHeight + imageDemand,
+          minimumDemand: fixedHeight + minimumDemand,
+          canFitUseful: renderedEntries.length === 0 || imageBudget >= minimumDemand - fixedHeight - 0.5,
+        };
+      };
+
+      const evaluateColumns = (scale) => {
+        applyGeometry(inner, scale);
+        resetColumnImages();
+        void inner.offsetHeight;
+        const models = columnPairs.map(([side, column]) => measureColumn(side, column, scale)).filter(Boolean);
+        const innerOverflow = Math.max(0, inner.scrollHeight - inner.clientHeight);
+        const feasible = innerOverflow <= EDGE_ALLOWANCE_VISUAL / scale
+          && models.every((model) => model.minimumDemand <= model.availableHeight + 0.5);
+        return { scale, models, innerOverflow, feasible };
+      };
+
+      const allocateCaps = (model, budget = model.imageBudget) => {
+        const caps = new Array(model.column.length).fill(null);
+        let remaining = Math.max(0, budget);
+        let open = model.entries
+          .filter((entry) => entry.needsCap)
+          .map((entry) => ({
+            ...entry,
+            floor: Math.min(entry.demand, MIN_CONTAINED_VISUAL_H / model.scale),
+          }));
+        while (open.length) {
+          const share = remaining / open.length;
+          const satisfied = open.filter((entry) => entry.demand <= share);
+          if (!satisfied.length) {
+            // At the scale floor, fixed content can leave no image budget. Keep
+            // every loaded image finite instead of restoring its uncapped 100%.
+            open.forEach((entry) => {
+              caps[entry.blockIndex] = Math.max(entry.floor, Math.min(entry.demand, share));
+            });
+            break;
+          }
+          satisfied.forEach((entry) => {
+            caps[entry.blockIndex] = entry.demand;
+            remaining -= entry.demand;
+          });
+          open = open.filter((entry) => entry.demand > share);
+        }
+        return caps;
+      };
+
+      const applyCaps = (model, caps) => {
+        for (const entry of model.entries) {
+          const cap = caps[entry.blockIndex];
+          if (entry.img && Number.isFinite(cap)) entry.img.style.maxHeight = `${cap}px`;
+        }
+      };
+
+      if (isCols && hasDirectColumnImage) {
+        const natural = evaluateColumns(1);
+        const fullOverflow = Math.max(
+          natural.innerOverflow,
+          ...natural.models.map((model) => Math.max(0, model.fullDemand - (model.imageBudget + model.fixedHeight))),
+          0,
+        );
+        const naturalScale = Math.max(SCALE_FLOOR, Math.min(1, availH / (availH + fullOverflow)));
+        let finalScale = 1;
+        if (!natural.feasible) {
+          const floor = evaluateColumns(SCALE_FLOOR);
+          if (!floor.feasible) {
+            finalScale = SCALE_FLOOR;
+          } else {
+            let low = SCALE_FLOOR, high = 1;
+            if (naturalScale > SCALE_FLOOR + 0.001) {
+              const seeded = evaluateColumns(naturalScale);
+              if (seeded.feasible) low = naturalScale; else high = naturalScale;
+            }
+            for (let pass = 0; pass < 6; pass++) {
+              const probe = (low + high) / 2;
+              if (evaluateColumns(probe).feasible) low = probe; else high = probe;
+            }
+            finalScale = low;
+          }
+        }
+
+        let final = evaluateColumns(finalScale);
+        const capsBySide = { left: new Array(colsL.length).fill(null), right: new Array(colsR.length).fill(null) };
+        const budgetsBySide = {};
+        for (const model of final.models) {
+          budgetsBySide[model.side] = model.imageBudget;
+          capsBySide[model.side] = allocateCaps(model, budgetsBySide[model.side]);
+          applyCaps(model, capsBySide[model.side]);
+        }
+        void inner.offsetHeight;
+
+        // The reserved allowance covers normal rounding. This one bounded
+        // correction also checks centered and bottom-aligned content at both edges.
+        for (let pass = 0; pass < 2; pass++) {
+          let corrected = false;
+          for (const model of final.models) {
+            const caps = capsBySide[model.side];
+            if (!caps.some((cap) => Number.isFinite(cap))) continue;
+            const columnRect = model.columnEl.getBoundingClientRect();
+            const visible = model.children
+              .map((child) => child.getBoundingClientRect())
+              .filter((rect) => rect.height > 0.25);
+            if (!visible.length) continue;
+            const topEdge = columnRect.top + parseFloat(model.style.paddingTop) * finalScale;
+            const bottomEdge = columnRect.bottom - parseFloat(model.style.paddingBottom) * finalScale;
+            const topOverflow = Math.max(0, topEdge - Math.min(...visible.map((rect) => rect.top)));
+            const bottomOverflow = Math.max(0, Math.max(...visible.map((rect) => rect.bottom)) - bottomEdge);
+            const overflow = topOverflow + bottomOverflow;
+            if (overflow > 0.5) {
+              corrected = true;
+              budgetsBySide[model.side] = Math.max(
+                0,
+                budgetsBySide[model.side] - overflow / finalScale - 1 / finalScale
+              );
+              capsBySide[model.side] = allocateCaps(model, budgetsBySide[model.side]);
+              applyCaps(model, capsBySide[model.side]);
+            }
+          }
+          if (!corrected) break;
+          void inner.offsetHeight;
+        }
+        void inner.offsetHeight;
+        setColsImageFit({ generation, left: capsBySide.left, right: capsBySide.right });
+        setSplitImgMaxH(null);
+        setFitScale(finalScale);
+        setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
+        return;
       }
+
+      setColsImageFit(null);
+      applyGeometry(inner, 1);
+      // In a side-by-side layout the content column drives the scale. The image
+      // cap is computed only after the reciprocal final height is active.
+      const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
+      const contentH = contentEl ? contentEl.scrollHeight : 0;
       const ih = isSplit ? contentH : inner.scrollHeight;
-      if (ih > availH && ih > 0) {
-        const s = Math.max(availH / ih, 0.35);
-        inner.style.transform = `scale(${s})`;
-        inner.style.width = `${100 / s}%`;
-        inner.style.height = isSplit ? "100%" : "";
-        setFitScale(s);
-        setFitJustify("flex-start");
-      } else {
-        inner.style.transform = "none";
-        inner.style.width = "100%";
-        inner.style.height = isSplit ? "100%" : "";
-        setFitScale(1);
-        setFitJustify(requestedJustify);
+      const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      applyGeometry(inner, finalScale);
+      let splitCap = null;
+      if (isSplit && contentEl) {
+        const imageCol = inner.querySelector("[data-split-image]");
+        const finalContentH = contentEl.scrollHeight;
+        const finalImageH = Math.max(0, (imageCol?.clientHeight || 0) - (EDGE_ALLOWANCE_VISUAL * 2) / finalScale);
+        if (finalContentH > 0 && finalImageH > 0) {
+          splitCap = Math.min(finalImageH, Math.max(finalContentH, 140 / finalScale));
+        }
       }
-      // Cap a side image to the content's height (never beyond the slide): a
-      // taller image shrinks to match the text, a shorter one keeps its size and
-      // centers — so the image conforms to the content instead of out-sizing it.
-      setSplitImgMaxH(isSplit && contentH > 0 ? Math.min(availH, Math.max(contentH, 140)) : null);
+      setSplitImgMaxH(splitCap);
+      setFitScale(finalScale);
+      setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
     };
+
+    const scheduleMeasure = (reason) => {
+      if (!isCurrent()) return;
+      pendingReasons.add(reason);
+      if (scheduledFrame) return;
+      scheduledFrame = requestAnimationFrame(() => {
+        scheduledFrame = 0;
+        if (!isCurrent()) return;
+        pendingReasons.clear();
+        measure();
+      });
+    };
+
     measure();
-    if (document.fonts?.ready) document.fonts.ready.then(() => requestAnimationFrame(measure));
-  }, [slide, index, requestedJustify]);
+    scheduleMeasure("mount");
+    const imageNodes = Array.from(innerRef.current?.querySelectorAll("img") || []);
+    const settledImages = new WeakSet();
+    const handleImageSettled = (event) => {
+      const img = event.currentTarget;
+      if (settledImages.has(img)) return;
+      settledImages.add(img);
+      scheduleMeasure("image");
+    };
+    imageNodes.forEach((img) => {
+      img.addEventListener("load", handleImageSettled);
+      img.addEventListener("error", handleImageSettled);
+    });
+    if (document.fonts?.ready) {
+      Promise.resolve(document.fonts.ready).then(
+        () => scheduleMeasure("fonts"),
+        () => scheduleMeasure("fonts")
+      );
+    }
+    let lastOuterSize = `${outerRef.current?.clientWidth || 0}x${outerRef.current?.clientHeight || 0}`;
+    const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+      const nextSize = `${outerRef.current?.clientWidth || 0}x${outerRef.current?.clientHeight || 0}`;
+      if (nextSize === lastOuterSize) return;
+      lastOuterSize = nextSize;
+      scheduleMeasure("resize");
+    }) : null;
+    if (resizeObserver && outerRef.current) resizeObserver.observe(outerRef.current);
+    return () => {
+      cancelled = true;
+      if (scheduledFrame) cancelAnimationFrame(scheduledFrame);
+      resizeObserver?.disconnect();
+      imageNodes.forEach((img) => {
+        img.removeEventListener("load", handleImageSettled);
+        img.removeEventListener("error", handleImageSettled);
+      });
+    };
+  }, [layoutGeneration, requestedJustify]);
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
-  const layout = slide.layout || "stack";
-  const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
-  const colsL = isCols ? _vis(slide.L) : [];
-  const colsR = isCols ? _vis(slide.R) : [];
+  const activeColsImageFit = colsImageFit?.generation === layoutGeneration ? colsImageFit : null;
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
@@ -220,13 +518,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     if (!comments) return [block];
     return [block, ...comments];
   };
+  const renderColumnBlocks = (column, offset, caps) => {
+    return column.flatMap((b, i) => {
+      const cap = b?.type === "image" ? caps?.[i] : null;
+      const fitted = Number.isFinite(cap) ? { ...b, maxHeight: cap, fit: "contain" } : b;
+      const [block, ...comments] = renderBlockWithComments(fitted, i + offset);
+      return [React.cloneElement(block, { "data-column-block-index": i }), ...comments];
+    });
+  };
 
   // Grid a run of >=2 adjacent image blocks (given by their block indices) into a
   // balanced CSS grid. Columns are count-driven via gridColsFor(n, region) unless
   // the author pins slide.imageCols. Each cell fills its track (objectFit:contain via
   // the image block's _gridCell flag). An incomplete last row is centered by giving
   // its first cell a leading column offset (grid is 2x-subdivided so cells span 2).
-  const renderImageGrid = (idxs, region) => {
+  const renderImageGrid = (idxs, region, alignWithinColumn = false) => {
     const runLen = idxs.length;
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
@@ -236,9 +542,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;
     const gap = slide.gap || 12;
+    // Grid images are absolute-fill cells, so they have no intrinsic grid
+    // height. Use one balanced 140px row per grid row only when the author
+    // requests alignment. The default path still fills all available height.
+    const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)
@@ -288,6 +598,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const renderBlocks = () => {
     if (isCols) {
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
+      // Balance fitting sides around media. If the generic side drives an
+      // auto-fit, keep that side top-safe while the fitted media stays centered.
+      const colsLJustify = explicitJustify || (hasMediaOnlyColumn && (fitScale >= 1 || colsLMediaOnly) ? "safe center" : "flex-start");
+      const colsRJustify = explicitJustify || (hasMediaOnlyColumn && (fitScale >= 1 || colsRMediaOnly) ? "safe center" : "flex-start");
       const colsRow = (
         <div key="__cols-row" style={{ display: "flex", flexDirection: "row", gap: slide.splitGap || 32, flex: 1, minHeight: 0 }}>
           {/* Outer stays overflow:"visible" so a column-edge block's hover toolbar
@@ -297,13 +611,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
               room lands inside it while its content area still lines up exactly
               where it used to (padding cancels the top/right position shift). */}
           <div key="__cols-L" style={{ flex: slide.contentFlex || 1, minWidth: 0, overflow: "visible" }}>
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
-              {colsL.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length))}
+            <div data-cols-side="left" style={{ display: "flex", flexDirection: "column", justifyContent: colsLJustify, gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {renderColumnBlocks(colsL, blocks.length, activeColsImageFit?.left)}
             </div>
           </div>
           <div key="__cols-R" style={{ flex: slide.imageFlex || 1, minWidth: 0, overflow: "visible" }}>
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
-              {colsR.flatMap((b, i) => renderBlockWithComments(b, i + blocks.length + colsL.length))}
+            <div data-cols-side="right" style={{ display: "flex", flexDirection: "column", justifyContent: colsRJustify, gap: slide.gap || 12, minWidth: 0, overflow: "hidden", position: "relative", top: -COL_TOOLBAR_PAD, width: `calc(100% + ${COL_TOOLBAR_PAD}px)`, height: `calc(100% + ${COL_TOOLBAR_PAD}px)`, padding: `${COL_TOOLBAR_PAD}px ${COL_TOOLBAR_PAD}px 0 0`, boxSizing: "border-box" }}>
+              {renderColumnBlocks(colsR, blocks.length + colsL.length, activeColsImageFit?.right)}
             </div>
           </div>
         </div>
@@ -316,15 +630,15 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // Fallback: if no images found, render as stack
       if (imageIdxs.length === 0) return blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       const imageOnRight = layout === "image-right";
-      // Both columns share one vertical alignment so their content lines up.
-      // Default (no explicit verticalAlign): center each column when everything
-      // fits (fitScale === 1), so a short content block sits at the side image's
-      // vertical middle instead of crowding the top and leaving a gap below — a
-      // square/tall image otherwise dominates while top-aligned content looks
-      // shrunken. When content overflows (fitScale < 1) we keep flex-start so the
-      // scaled column reads top-down; an explicit verticalAlign is always honored.
-      const splitJustify = slide.verticalAlign ? fitJustify : (fitScale < 1 ? "flex-start" : "center");
-      const contentCol = <div key="__content" data-split-content style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
+      // Safe alignment balances fitting content but falls back to the top when
+      // it overflows. The media side stays centered unless the author sets an
+      // explicit vertical alignment.
+      const splitContentJustify = explicitJustify || "safe center";
+      const splitImageJustify = explicitJustify || "center";
+      // A full-height grid leaves no free space for justifyContent. Keep the
+      // default fill behavior, but give an explicitly aligned grid a measured
+      // height so top, center, and bottom produce distinct positions.
+      const contentCol = <div key="__content" data-split-content style={{ flex: slide.contentFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitContentJustify, gap: slide.gap || 12, minWidth: 0 }}>{contentIdxs.flatMap((i) => renderBlockWithComments(blocks[i], i))}</div>;
       // Apply the measured height cap to each image (unless the author pinned its
       // own maxHeight). A bare number becomes px on the <img>, so it caps the
       // image directly — independent of the wrapper/zoom chrome between here and it.
@@ -332,8 +646,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // balanced instead of stacking vertically. Single image keeps the height-capped
       // column so a lone side image conforms to the content column's height.
       const imageCol = imageIdxs.length >= 2
-        ? <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half")}</div>
-        : <div key="__images" style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
+        ? <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", justifyContent: splitImageJustify, minWidth: 0, height: "100%" }}>{renderImageGrid(imageIdxs, "half", !!explicitJustify)}</div>
+        : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
@@ -343,7 +657,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   return (
     <SlideErrorBoundary>
       <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, boxSizing: "border-box" }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
@@ -364,5 +678,3 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     </SlideErrorBoundary>
   );
 }
-
-
