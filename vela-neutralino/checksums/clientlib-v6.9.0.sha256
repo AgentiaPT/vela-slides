@@ -1,0 +1,13 @@
+# Neutralino client library v6.9.0 — pinned SHA256
+#
+# Source: https://github.com/neutralinojs/neutralino.js/releases/tag/v6.9.0
+# GitHub does not publish a `digest` field for these per-file release assets,
+# so these hashes are trust-on-first-use, captured from the upstream files at
+# the time this pin was committed and cross-checked against a second,
+# independent download of the same release assets. Any drift in CI means the
+# upstream files were modified post-release (which they should not be) — fail
+# the build.
+#
+# Format: <sha256>  <relative path under vela-neutralino/>
+7e9d355ee2e0a0284e4f726b09ed5d7e602b657eacd488b011a6eb390f2a7923  resources/js/neutralino.js
+e5f60474966aa3dafc73186c6902638178b734e2ae736633df20f2528ae28df1  resources/js/neutralino.d.ts
