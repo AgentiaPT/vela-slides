@@ -1009,6 +1009,7 @@ CAPABILITIES = {
                 "split": "vela deck split <deck.vela> --sections \"Title:N,...\" | --flat | --size N — regroup slides into sections (--flat to merge all into one)",
                 "assemble": "vela deck assemble <deck.vela> [--output <path>] — inject deck into JSX artifact",
                 "ship": "vela deck ship <deck.vela> [--output <path>] — validate + assemble in one call",
+                "extract": "vela deck extract <source.jsx> [output.json] — extract STARTUP_PATCH deck JSON from a .jsx artifact",
                 "replace-text": "vela deck replace-text <deck.vela> \"old\" \"new\" — find/replace across all slides (hex colors auto-cascade to rgba)",
                 "stats": "vela deck stats <deck.vela> — health audit: block distribution, missing durations, overflow, monotony issues",
                 "find": "vela deck find <deck.vela> --query \"text\" | --type flow | --missing duration — search slides by content, block type, or missing props",

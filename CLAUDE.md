@@ -132,7 +132,7 @@ flow, media, and layout groups.
 ## CLI — `vela.py`
 
 ```bash
-vela deck list|validate|split|dump|stats|find|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
+vela deck list|validate|split|dump|stats|find|extract|extract-text|patch-text|replace-text|compact|expand|turbo|ship|assemble
 vela slide view|edit|remove|move|duplicate|insert|remove-block
 ```
 Author→ship only (the shipped skill has no preview/AI backend — that lives in
