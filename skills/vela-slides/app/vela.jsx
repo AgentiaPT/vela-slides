@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.69";
+const VELA_VERSION = "13.70";
 const VELA_CHANGELOG = [
+  { v: "13.70", d: ["Tests: made presenter navigation wait for committed UI state instead of fixed browser timing.", "Tests: presenter setup now recovers from a prior fullscreen failure before running editor suites."] },
   { v: "13.69", d: "Tests: isolated the in-app presenter battery from browser-native fullscreen behavior across Chromium upgrades." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
@@ -8621,6 +8622,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Browser Fullscreen API sync ──
   useEffect(() => {
+    if (suppressBrowserFullscreenForTests) return;
     if (!fullscreen) {
       // Exiting Vela fullscreen → exit browser fullscreen if active
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
@@ -11084,6 +11086,10 @@ const _type = (el, text) => {
 const _selectFirstModule = async () => {
   document.activeElement?.blur();
   for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
+  if (!_$("header")) {
+    _key("f");
+    await _waitFor(() => _$("header"), 3000).catch(() => {});
+  }
   const row = _$(".concept-row");
   if (!row) return;
   _click(row);
@@ -11267,18 +11273,17 @@ uiSuite("Presenter", [
   }},
   { name: "Arrow navigation works in fullscreen", fn: async () => {
     const a = _slidePos();
+    if (a == null) throw new Error("No slide on screen in fullscreen");
     _key("ArrowRight");
-    await _wait(250);
-    const b = _slidePos();
+    const b = await _waitFor(() => {
+      const pos = _slidePos();
+      return pos != null && pos !== a ? pos : null;
+    });
     _key("ArrowLeft");
-    await _wait(250);
-    const c = _slidePos();
+    await _waitFor(() => _slidePos() === a);
     // Assert real movement (changed then restored), not just absence of a crash.
     // Tolerant of virtual section-divider cards: checks change + return, not +1.
-    if (a != null && b != null) {
-      if (b === a) throw new Error("ArrowRight did not change slide in fullscreen");
-      if (c != null && c !== a) throw new Error("ArrowLeft did not return to the original slide");
-    }
+    if (b === a) throw new Error("ArrowRight did not change slide in fullscreen");
   }},
   { name: "Present mode shows no edit chrome (CR-03)", fn: async () => {
     // A presented slide must show ZERO edit affordances: no dashed hover-outline

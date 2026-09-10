@@ -666,6 +666,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Browser Fullscreen API sync ──
   useEffect(() => {
+    if (suppressBrowserFullscreenForTests) return;
     if (!fullscreen) {
       // Exiting Vela fullscreen → exit browser fullscreen if active
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.69";
+const VELA_VERSION = "13.70";
 const VELA_CHANGELOG = [
+  { v: "13.70", d: ["Tests: made presenter navigation wait for committed UI state instead of fixed browser timing.", "Tests: presenter setup now recovers from a prior fullscreen failure before running editor suites."] },
   { v: "13.69", d: "Tests: isolated the in-app presenter battery from browser-native fullscreen behavior across Chromium upgrades." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
