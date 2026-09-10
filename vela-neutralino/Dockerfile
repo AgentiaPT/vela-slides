@@ -35,7 +35,7 @@ RUN set -eux; \
     mkdir -p /out/mac_universal && cp /out/mac_arm64/vela-agent /out/mac_universal/vela-agent
 
 # ── Build stage ────────────────────────────────────────────────────────────
-FROM node:22-bookworm AS build
+FROM node:26-bookworm AS build
 
 # python3 (concat/sync/verify scripts) + zip (packaging) + ca-certs (neu update).
 RUN apt-get update \
