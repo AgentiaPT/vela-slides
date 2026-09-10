@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.68";
+const VELA_VERSION = "13.72";
 const VELA_CHANGELOG = [
+  { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
   { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
@@ -15681,7 +15682,7 @@ const _demoDeckSignature = (state) => {
   return modules.sort().join(";");
 };
 
-const DEMO_DECK_FINGERPRINT = "98d20d88";
+const DEMO_DECK_FINGERPRINT = "217e1995";
 const _demoFingerprintValue = (value) => {
   if (Array.isArray(value)) return value.map(_demoFingerprintValue);
   if (!value || typeof value !== "object") return value;
