@@ -501,7 +501,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.id, slideIndex, slides, dispatch]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
-  useLayoutEffect(() => {
+  useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
@@ -659,25 +659,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }
   }, [fullscreen, dispatch]);
 
-  let suppressBrowserFullscreenForTests = false;
-  // VELA:DEV-ONLY:BEGIN
-  suppressBrowserFullscreenForTests = velaTestSurfaceEnabled() && !VELA_LOCAL_MODE;
-  // VELA:DEV-ONLY:END
-
   // ── Browser Fullscreen API sync ──
   useEffect(() => {
-    if (suppressBrowserFullscreenForTests) return;
     if (!fullscreen) {
       // Exiting Vela fullscreen → exit browser fullscreen if active
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       return;
     }
-    // The product tour and test battery use Vela's stable in-app stage and must
-    // not depend on browser Fullscreen API permission, viewport, or timing.
+    // The product tour uses Vela's stable in-app stage and must not depend on
+    // browser Fullscreen API permission or timing.
     const demoStage = document.documentElement?.dataset.velaDemoRunning === "true";
     // Entering Vela fullscreen → request browser fullscreen
     const el = containerRef.current || document.documentElement;
-    if (!demoStage && !suppressBrowserFullscreenForTests && !document.fullscreenElement) {
+    if (!demoStage && !document.fullscreenElement) {
       // Try requestFullscreen — may fail in sandboxed iframes (artifacts), that's OK
       el.requestFullscreen?.().catch(() => {});
     }
@@ -689,7 +683,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
-  }, [fullscreen, dispatch, suppressBrowserFullscreenForTests]);
+  }, [fullscreen, dispatch]);
 
   // ── Scroll wheel navigation (medium sensitivity, crosses modules like arrows) ──
   const scrollAccum = useRef(0);
