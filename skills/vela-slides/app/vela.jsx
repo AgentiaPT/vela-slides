@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.68";
+const VELA_VERSION = "13.69";
 const VELA_CHANGELOG = [
+  { v: "13.69", d: "Tests: isolated the in-app presenter battery from browser-native fullscreen behavior across Chromium upgrades." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },
   { v: "13.66", d: "Reliability: stopping timing estimation or Alternatives now always clears the busy indicator, fixing a case where it could stay stuck after cancelling." },
@@ -8613,6 +8614,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }
   }, [fullscreen, dispatch]);
 
+  let suppressBrowserFullscreenForTests = false;
+  // VELA:DEV-ONLY:BEGIN
+  suppressBrowserFullscreenForTests = velaTestSurfaceEnabled() && !VELA_LOCAL_MODE;
+  // VELA:DEV-ONLY:END
+
   // ── Browser Fullscreen API sync ──
   useEffect(() => {
     if (!fullscreen) {
@@ -8620,12 +8626,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       return;
     }
-    // The product tour uses Vela's stable in-app stage and must not depend on
-    // browser Fullscreen API permission or timing.
+    // The product tour and test battery use Vela's stable in-app stage and must
+    // not depend on browser Fullscreen API permission, viewport, or timing.
     const demoStage = document.documentElement?.dataset.velaDemoRunning === "true";
     // Entering Vela fullscreen → request browser fullscreen
     const el = containerRef.current || document.documentElement;
-    if (!demoStage && !document.fullscreenElement) {
+    if (!demoStage && !suppressBrowserFullscreenForTests && !document.fullscreenElement) {
       // Try requestFullscreen — may fail in sandboxed iframes (artifacts), that's OK
       el.requestFullscreen?.().catch(() => {});
     }
@@ -8637,7 +8643,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
-  }, [fullscreen, dispatch]);
+  }, [fullscreen, dispatch, suppressBrowserFullscreenForTests]);
 
   // ── Scroll wheel navigation (medium sensitivity, crosses modules like arrows) ──
   const scrollAccum = useRef(0);
