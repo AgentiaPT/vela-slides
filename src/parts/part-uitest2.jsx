@@ -472,7 +472,7 @@ uiSuite("Deck Sanitization (XSS)", [
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"));
   }},
   { name: "🗂 gallery button visible", fn: async () => {
@@ -480,7 +480,7 @@ uiSuite("Gallery View", [
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     // 5000ms (was 2000ms): tolerates a ~2x slower CI host — this only
     // gates the gallery-open render, not a demo wait floor.
     await _waitFor(() => _$text("GALLERY"), 5000);
@@ -526,16 +526,16 @@ uiSuite("Gallery View", [
   { name: "G key toggles gallery off", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
     // Ensure we're not in gallery from a previous test
-    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (_$text("GALLERY")) { _globalKey("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => _$text("GALLERY"), 3000);
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => !_$text("GALLERY"), 3000);
   }},
   { name: "Exit fullscreen after gallery tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -576,9 +576,9 @@ uiSuite("Gallery From Editor", [
   }},
   { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    if (_$text("GALLERY")) { _globalKey("g"); await _wait(400); } // ensure closed from a prior test
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
@@ -586,7 +586,7 @@ uiSuite("Gallery From Editor", [
   { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
     document.activeElement?.blur();
     for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
-    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (_$text("GALLERY")) { _globalKey("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
     // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
     const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
     if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
@@ -619,7 +619,7 @@ uiSuite("Gallery From Editor", [
 uiSuite("Presenter View", [
   { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
@@ -627,7 +627,7 @@ uiSuite("Presenter View", [
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("s");
+    _globalKey("s");
     await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
     const timerEl = _$("[data-testid='presenter-timer']");
     if (!timerEl) throw new Error("presenter-timer not found");
@@ -656,7 +656,7 @@ uiSuite("Presenter View", [
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
   { name: "Exit fullscreen after presenter-view tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -665,7 +665,7 @@ uiSuite("Presenter View", [
 uiSuite("Slide Transitions", [
   { name: "Enter fullscreen for transition tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
@@ -684,7 +684,7 @@ uiSuite("Slide Transitions", [
     await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
   }},
   { name: "Exit fullscreen after transition tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -915,12 +915,12 @@ uiSuite("Presenter Ctrl+E (7-1)", [
     try { document.activeElement?.blur?.(); } catch {}
     const isFs = () => !!_$("[style*='position: fixed']");
     // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
-    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _waitFor(isFs, 1200).catch(() => {}); }
+    for (let i = 0; i < 3 && !isFs(); i++) { _globalKey("f"); await _waitFor(isFs, 1200).catch(() => {}); }
     if (!isFs()) throw new Error("could not enter fullscreen");
     const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
-    _key("e", { ctrlKey: true });
+    _globalKey("e", { ctrlKey: true });
     await _waitFor(tocOpen, 2500);
-    _key("e", { ctrlKey: true });
+    _globalKey("e", { ctrlKey: true });
     await _waitFor(() => !tocOpen(), 2500);
     _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
@@ -944,7 +944,7 @@ const _tocRows = () => _$$('[data-testid="toc-slide-row"]');
 // editor's SlidePanel toolbar actually renders for these suites.
 const _exitFullscreen = async () => {
   const inFs = () => _$$("div").some((d) => d.style.position === "fixed" && d.style.inset === "0px" && parseInt(d.style.zIndex || "0", 10) >= 999 && /\d+\s*\/\s*\d+/.test(d.textContent || ""));
-  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
+  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _globalKey("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
 };
 const _editorSetup = async () => { await _exitFullscreen(); await _selectFirstModule(); };
 
@@ -1744,7 +1744,7 @@ uiSuite("Product Tour", [
       await _wait(80);
       window.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
       document.activeElement?.blur?.();
-      _key("f");
+      _globalKey("f");
       const studentToggle = await _waitFor(() => _$("[data-testid='student-toggle']"), 3000);
       _click(studentToggle);
       await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 3000);

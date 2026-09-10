@@ -102,7 +102,7 @@ const _demoDeckSignature = (state) => {
   return modules.sort().join(";");
 };
 
-const DEMO_DECK_FINGERPRINT = "98d20d88";
+const DEMO_DECK_FINGERPRINT = "217e1995";
 const _demoFingerprintValue = (value) => {
   if (Array.isArray(value)) return value.map(_demoFingerprintValue);
   if (!value || typeof value !== "object") return value;

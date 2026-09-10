@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.70";
+const VELA_VERSION = "13.71";
 const VELA_CHANGELOG = [
+  { v: "13.71", d: ["Reliability: keep app-wide keyboard shortcuts attached across slide render commits.", "Tests: route global shortcuts directly to their window listener in the browser battery.", "Demo: refreshed the bundled-deck fingerprint after synchronizing the product-tour fixture."] },
   { v: "13.70", d: ["Tests: made presenter navigation wait for committed UI state instead of fixed browser timing.", "Tests: presenter setup now recovers from a prior fullscreen failure before running editor suites."] },
   { v: "13.69", d: "Tests: isolated the in-app presenter battery from browser-native fullscreen behavior across Chromium upgrades." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
@@ -8457,7 +8458,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.id, slideIndex, slides, dispatch]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
@@ -11037,6 +11038,11 @@ const _key = (key, opts = {}) => {
   const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts });
   target.dispatchEvent(ev);
 };
+// App-wide shortcuts are owned by SlidePanel's window listener. Dispatch them
+// at that sink so a stale focused control cannot intercept the synthetic event.
+const _globalKey = (key, opts = {}) => {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts }));
+};
 // Current global slide position (1-based) and total. Prefers the serve.py /
 // desktop test hook (window.__velaGetCurrentSlide); falls back to the padded
 // "NN / NN" counter SlideContent renders on the displayed slide. The thumbnail
@@ -11087,7 +11093,7 @@ const _selectFirstModule = async () => {
   document.activeElement?.blur();
   for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
   if (!_$("header")) {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000).catch(() => {});
   }
   const row = _$(".concept-row");
@@ -11261,7 +11267,7 @@ uiSuite("Navigation", [
 // ── Presenter Suite ──────────────────────────────────────────────────
 uiSuite("Presenter", [
   { name: "F key enters fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     const fs = await _waitFor(() => _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']"), 1500).catch(() => null);
     if (!fs) throw new Error("No fixed fullscreen element found");
   }},
@@ -11307,13 +11313,13 @@ uiSuite("Presenter", [
     const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
     if (!btn) throw new Error("present-edit-toggle not found in Present view");
     if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
-    _key("E", { shiftKey: true });
+    _globalKey("E", { shiftKey: true });
     await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
-    _key("E", { shiftKey: true });
+    _globalKey("E", { shiftKey: true });
     await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
   }},
   { name: "F key exits fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ], { setup: _selectFirstModule });
@@ -11386,7 +11392,7 @@ uiSuite("Keyboard", [
     // Ensure no input/textarea is focused (keyboard shortcuts skip those)
     document.activeElement?.blur();
     await _wait(100);
-    _key("e");
+    _globalKey("e");
     const panel = await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 1000).catch(() => null);
     // Close it
     _key("Escape");
@@ -11414,7 +11420,7 @@ uiSuite("Keyboard", [
   { name: "Esc closes popups", fn: async () => {
     document.activeElement?.blur();
     await _wait(100);
-    _key("e"); // open something
+    _globalKey("e"); // open something
     await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 800).catch(() => {});
     _key("Escape");
     await _wait(120);
@@ -11620,7 +11626,7 @@ uiSuite("Undo/Redo", [
 uiSuite("Fullscreen Features", [
   { name: "Font scale + increases", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("[style*='position: fixed']"), 1500).catch(() => {});
     _key("+"); await _wait(80);
     // Look for font scale indicator
@@ -11642,7 +11648,7 @@ uiSuite("Fullscreen Features", [
     _key("ArrowLeft"); await _wait(120); // go back
   }},
   { name: "Exit fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -11904,7 +11910,7 @@ uiSuite("Presenter Adv", [
     await _waitFor(() => _$$("svg").find((s) => s.closest("[class*='slide-nav-btn']") || s.closest("[style*='padding: 8px']")));
   }},
   { name: "Exit via F", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -12025,7 +12031,7 @@ uiSuite("Student Mode", [
       if (firstMod) { _click(firstMod); await _wait(300); }
     }
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "🎓 toggle button visible", fn: async () => {
@@ -12130,7 +12136,7 @@ uiSuite("Student Mode", [
     await _waitFor(() => !_$("[data-teacher-panel]"), 5000);
   }},
   { name: "Exit fullscreen after student tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000);
   }},
 ]);
@@ -12160,7 +12166,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Enter fullscreen for study-panel tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "Activate student mode on studyNotes slide", fn: async () => {
@@ -12215,7 +12221,7 @@ uiSuite("Study Notes", [
     await _waitFor(() => !_$("[data-study-panel]"), 3000);
   }},
   { name: "Exit fullscreen after study-notes tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000);
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
@@ -12392,12 +12398,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMediaContained("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMediaContained("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
 
@@ -12513,12 +12519,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12633,12 +12639,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12692,12 +12698,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await collectPositions("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await collectPositions("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12749,12 +12755,12 @@ uiSuite("Editor UX (CR1–CR3)", [
       throw new Error("default split grid no longer fills the image column");
     }
 
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await collectPositions("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12916,12 +12922,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12964,12 +12970,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -12998,12 +13004,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -13046,12 +13052,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -13855,7 +13861,7 @@ uiSuite("Deck Sanitization (XSS)", [
 uiSuite("Gallery View", [
   { name: "Enter fullscreen for gallery tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"));
   }},
   { name: "🗂 gallery button visible", fn: async () => {
@@ -13863,7 +13869,7 @@ uiSuite("Gallery View", [
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     // 5000ms (was 2000ms): tolerates a ~2x slower CI host — this only
     // gates the gallery-open render, not a demo wait floor.
     await _waitFor(() => _$text("GALLERY"), 5000);
@@ -13909,16 +13915,16 @@ uiSuite("Gallery View", [
   { name: "G key toggles gallery off", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
     // Ensure we're not in gallery from a previous test
-    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (_$text("GALLERY")) { _globalKey("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => _$text("GALLERY"), 3000);
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => !_$text("GALLERY"), 3000);
   }},
   { name: "Exit fullscreen after gallery tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -13959,9 +13965,9 @@ uiSuite("Gallery From Editor", [
   }},
   { name: "G key re-opens and Escape closes gallery from the editor", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    if (_$text("GALLERY")) { _key("g"); await _wait(400); } // ensure closed from a prior test
+    if (_$text("GALLERY")) { _globalKey("g"); await _wait(400); } // ensure closed from a prior test
     document.activeElement?.blur(); await _wait(100);
-    _key("g");
+    _globalKey("g");
     await _waitFor(() => _$text("GALLERY"), 2000);
     _key("Escape");
     await _waitFor(() => !_$text("GALLERY"), 2000);
@@ -13969,7 +13975,7 @@ uiSuite("Gallery From Editor", [
   { name: "CR1/D8: gallery page badge total excludes virtual title cards", fn: async () => {
     document.activeElement?.blur();
     for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
-    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (_$text("GALLERY")) { _globalKey("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
     // Enable a title card on the first section so the gallery renders a 🎬 virtual card.
     const tc = _$$("span").find((s) => /Title card/i.test(s.title || ""));
     if (!tc) throw new Error("title-card 🎬 toggle not found in TOC");
@@ -14002,7 +14008,7 @@ uiSuite("Gallery From Editor", [
 uiSuite("Presenter View", [
   { name: "Enter fullscreen (Present) for presenter-view tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
@@ -14010,7 +14016,7 @@ uiSuite("Presenter View", [
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("s");
+    _globalKey("s");
     await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
     const timerEl = _$("[data-testid='presenter-timer']");
     if (!timerEl) throw new Error("presenter-timer not found");
@@ -14039,7 +14045,7 @@ uiSuite("Presenter View", [
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
   { name: "Exit fullscreen after presenter-view tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -14048,7 +14054,7 @@ uiSuite("Presenter View", [
 uiSuite("Slide Transitions", [
   { name: "Enter fullscreen for transition tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
   { name: "slide-transition-fade wrapper present on the active slide", fn: async () => {
@@ -14067,7 +14073,7 @@ uiSuite("Slide Transitions", [
     await _waitFor(() => _$$("[class^='stg-']").length > 0, 2000);
   }},
   { name: "Exit fullscreen after transition tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -14298,12 +14304,12 @@ uiSuite("Presenter Ctrl+E (7-1)", [
     try { document.activeElement?.blur?.(); } catch {}
     const isFs = () => !!_$("[style*='position: fixed']");
     // Ensure we are IN fullscreen (a prior suite may have left it toggled either way).
-    for (let i = 0; i < 3 && !isFs(); i++) { _key("f"); await _waitFor(isFs, 1200).catch(() => {}); }
+    for (let i = 0; i < 3 && !isFs(); i++) { _globalKey("f"); await _waitFor(isFs, 1200).catch(() => {}); }
     if (!isFs()) throw new Error("could not enter fullscreen");
     const tocOpen = () => { const i = _$$("input").find((x) => /search slides/i.test(x.placeholder || "")); return i && i.getBoundingClientRect().x > -50; };
-    _key("e", { ctrlKey: true });
+    _globalKey("e", { ctrlKey: true });
     await _waitFor(tocOpen, 2500);
-    _key("e", { ctrlKey: true });
+    _globalKey("e", { ctrlKey: true });
     await _waitFor(() => !tocOpen(), 2500);
     _key("Escape"); await _wait(300); if (isFs()) { _key("Escape"); await _wait(200); }
   }},
@@ -14327,7 +14333,7 @@ const _tocRows = () => _$$('[data-testid="toc-slide-row"]');
 // editor's SlidePanel toolbar actually renders for these suites.
 const _exitFullscreen = async () => {
   const inFs = () => _$$("div").some((d) => d.style.position === "fixed" && d.style.inset === "0px" && parseInt(d.style.zIndex || "0", 10) >= 999 && /\d+\s*\/\s*\d+/.test(d.textContent || ""));
-  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
+  for (let i = 0; i < 3 && inFs(); i++) { document.activeElement?.blur?.(); _globalKey("f"); await _waitFor(() => !inFs(), 1500).catch(() => {}); }
 };
 const _editorSetup = async () => { await _exitFullscreen(); await _selectFirstModule(); };
 
@@ -15127,7 +15133,7 @@ uiSuite("Product Tour", [
       await _wait(80);
       window.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
       document.activeElement?.blur?.();
-      _key("f");
+      _globalKey("f");
       const studentToggle = await _waitFor(() => _$("[data-testid='student-toggle']"), 3000);
       _click(studentToggle);
       await _waitFor(() => _$("[data-teacher-panel]:not([data-study-panel])"), 3000);
@@ -15692,7 +15698,7 @@ const _demoDeckSignature = (state) => {
   return modules.sort().join(";");
 };
 
-const DEMO_DECK_FINGERPRINT = "98d20d88";
+const DEMO_DECK_FINGERPRINT = "217e1995";
 const _demoFingerprintValue = (value) => {
   if (Array.isArray(value)) return value.map(_demoFingerprintValue);
   if (!value || typeof value !== "object") return value;

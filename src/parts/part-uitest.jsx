@@ -42,6 +42,11 @@ const _key = (key, opts = {}) => {
   const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts });
   target.dispatchEvent(ev);
 };
+// App-wide shortcuts are owned by SlidePanel's window listener. Dispatch them
+// at that sink so a stale focused control cannot intercept the synthetic event.
+const _globalKey = (key, opts = {}) => {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...opts }));
+};
 // Current global slide position (1-based) and total. Prefers the serve.py /
 // desktop test hook (window.__velaGetCurrentSlide); falls back to the padded
 // "NN / NN" counter SlideContent renders on the displayed slide. The thumbnail
@@ -92,7 +97,7 @@ const _selectFirstModule = async () => {
   document.activeElement?.blur();
   for (let i = 0; i < 2; i++) { _key("Escape"); await _wait(80); }
   if (!_$("header")) {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000).catch(() => {});
   }
   const row = _$(".concept-row");
@@ -266,7 +271,7 @@ uiSuite("Navigation", [
 // ── Presenter Suite ──────────────────────────────────────────────────
 uiSuite("Presenter", [
   { name: "F key enters fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     const fs = await _waitFor(() => _$("[style*='position: fixed'][style*='z-index']") || _$("[style*='position:fixed']"), 1500).catch(() => null);
     if (!fs) throw new Error("No fixed fullscreen element found");
   }},
@@ -312,13 +317,13 @@ uiSuite("Presenter", [
     const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"));
     if (!btn) throw new Error("present-edit-toggle not found in Present view");
     if (!/^Edit mode/.test(btn.title)) throw new Error("edit toggle should start OFF while presenting");
-    _key("E", { shiftKey: true });
+    _globalKey("E", { shiftKey: true });
     await _waitFor(() => /^Editing on/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
-    _key("E", { shiftKey: true });
+    _globalKey("E", { shiftKey: true });
     await _waitFor(() => /^Edit mode/.test(_$("[data-testid='present-edit-toggle']")?.title || ""));
   }},
   { name: "F key exits fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ], { setup: _selectFirstModule });
@@ -391,7 +396,7 @@ uiSuite("Keyboard", [
     // Ensure no input/textarea is focused (keyboard shortcuts skip those)
     document.activeElement?.blur();
     await _wait(100);
-    _key("e");
+    _globalKey("e");
     const panel = await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 1000).catch(() => null);
     // Close it
     _key("Escape");
@@ -419,7 +424,7 @@ uiSuite("Keyboard", [
   { name: "Esc closes popups", fn: async () => {
     document.activeElement?.blur();
     await _wait(100);
-    _key("e"); // open something
+    _globalKey("e"); // open something
     await _waitFor(() => _$$("input, textarea").find((el) => el.placeholder?.toLowerCase().includes("change") || el.placeholder?.toLowerCase().includes("edit")), 800).catch(() => {});
     _key("Escape");
     await _wait(120);
@@ -625,7 +630,7 @@ uiSuite("Undo/Redo", [
 uiSuite("Fullscreen Features", [
   { name: "Font scale + increases", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("[style*='position: fixed']"), 1500).catch(() => {});
     _key("+"); await _wait(80);
     // Look for font scale indicator
@@ -647,7 +652,7 @@ uiSuite("Fullscreen Features", [
     _key("ArrowLeft"); await _wait(120); // go back
   }},
   { name: "Exit fullscreen", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -909,7 +914,7 @@ uiSuite("Presenter Adv", [
     await _waitFor(() => _$$("svg").find((s) => s.closest("[class*='slide-nav-btn']") || s.closest("[style*='padding: 8px']")));
   }},
   { name: "Exit via F", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"));
   }},
 ]);
@@ -1030,7 +1035,7 @@ uiSuite("Student Mode", [
       if (firstMod) { _click(firstMod); await _wait(300); }
     }
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "🎓 toggle button visible", fn: async () => {
@@ -1135,7 +1140,7 @@ uiSuite("Student Mode", [
     await _waitFor(() => !_$("[data-teacher-panel]"), 5000);
   }},
   { name: "Exit fullscreen after student tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000);
   }},
 ]);
@@ -1165,7 +1170,7 @@ uiSuite("Study Notes", [
   }},
   { name: "Enter fullscreen for study-panel tests", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => !_$("header"), 3000);
   }},
   { name: "Activate student mode on studyNotes slide", fn: async () => {
@@ -1220,7 +1225,7 @@ uiSuite("Study Notes", [
     await _waitFor(() => !_$("[data-study-panel]"), 3000);
   }},
   { name: "Exit fullscreen after study-notes tests", fn: async () => {
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _$("header"), 3000);
   }},
   { name: "Clean up injected studyNotes", fn: async () => {
@@ -1397,12 +1402,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMediaContained("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMediaContained("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
 
@@ -1518,12 +1523,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -1638,12 +1643,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -1697,12 +1702,12 @@ uiSuite("Editor UX (CR1–CR3)", [
     };
 
     await collectPositions("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await collectPositions("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -1754,12 +1759,12 @@ uiSuite("Editor UX (CR1–CR3)", [
       throw new Error("default split grid no longer fills the image column");
     }
 
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => presenterScope(), 3000);
     try {
       await collectPositions("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -1921,12 +1926,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -1969,12 +1974,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -2003,12 +2008,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
@@ -2051,12 +2056,12 @@ uiSuite("Image measurement round 6", [
     };
 
     await assertMode("editor");
-    _key("f");
+    _globalKey("f");
     await _waitFor(() => _r6PresenterScope(), 3000);
     try {
       await assertMode("presenter");
     } finally {
-      _key("f");
+      _globalKey("f");
       await _waitFor(() => _$("header"), 3000).catch(() => {});
     }
   }},
