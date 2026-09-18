@@ -163,8 +163,40 @@ function buildShadingDict(gradient, coords) {
 }
 
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
-// Characters outside this range get replaced with ?
+// Every PDF font we write declares /Encoding /WinAnsiEncoding. WinAnsi is NOT
+// Latin-1: bytes 0x80-0x9F carry typographic characters whose Unicode code
+// points are above U+00FF (€, the curly quotes, the dashes, …, ™, Š, Œ, ž, ÿ).
+//
+// CANONICAL MAP — one source of truth for "this code point has a real WinAnsi
+// byte". Both pdfStringEncode (which writes the byte) and isEmojiCodepoint
+// (which decides "text or image?") read it, and part-pdf-vector.jsx reads it to
+// look the glyph width up in the font's /Widths array. Keep it that way: when
+// the three disagree, a character is drawn by one path and measured by another,
+// which is exactly how € ended up drawn as a squeezed bitmap at the wrong
+// advance width instead of as a real glyph.
+const WINANSI_FROM_UNICODE = {
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+  0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
+  0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
+  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
+  0x017E: 0x9E, 0x0178: 0x9F,
+};
+
+// Code points WinAnsi cannot encode but that read fine as ASCII. They are text,
+// not emoji, so they must never take the image path either.
+const PDF_ASCII_SUBSTITUTIONS = {
+  0x2192: "->", 0x2190: "<-", 0x21D2: "=>",
+};
+
+// WinAnsi byte for a code point, or -1. ASCII and Latin-1 map to themselves.
+function winAnsiByte(cp) {
+  if (typeof cp !== "number") return -1;
+  if (cp >= 32 && cp <= 255) return cp;
+  const b = WINANSI_FROM_UNICODE[cp];
+  return b === undefined ? -1 : b;
+}
+
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -180,32 +212,20 @@ function pdfStringEncode(str) {
       // Printable ASCII — safe to include directly
       out += ch;
     } else if (c >= 128 && c <= 255) {
-      // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
-      // UTF-8 double-encoding when TextEncoder converts to bytes
+      // Latin-1 chars (©, ·, ×, and every accented letter) — must use octal
+      // escape to avoid UTF-8 double-encoding when TextEncoder converts to bytes
       out += "\\" + c.toString(8).padStart(3, "0");
+    } else if (WINANSI_FROM_UNICODE[c] !== undefined) {
+      // A real WinAnsi glyph (€, curly quotes, dashes, …, ™, …). Write its
+      // WinAnsi BYTE as an octal escape, so the viewer draws the font's own
+      // glyph at the font's own advance width. Octal (not the literal char)
+      // keeps TextEncoder from re-encoding it as multi-byte UTF-8.
+      out += "\\" + WINANSI_FROM_UNICODE[c].toString(8).padStart(3, "0");
+    } else if (PDF_ASCII_SUBSTITUTIONS[c]) {
+      out += PDF_ASCII_SUBSTITUTIONS[c];
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
-      const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
-        0x2192: "->",    // right arrow
-        0x2190: "<-",    // left arrow
-        0x21D2: "=>",    // double right arrow
-      };
-      if (typoMap[c]) {
-        out += typoMap[c];
-      } else {
-        // Emoji and other non-Latin chars: skip (rendered as images)
-        // This avoids misaligned text substitutions
-      }
+      // Emoji and other non-WinAnsi chars: skip (rendered as images)
+      // This avoids misaligned text substitutions
     }
   }
   return out + ")";
@@ -219,9 +239,15 @@ function isEmojiCodepoint(cp) {
   if (cp === 0xFE0F || cp === 0xFE0E || cp === 0x200D) return false;
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
-  // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
-  if (textSubs.includes(cp)) return false;
+  // Anything the PDF text layer can really draw is TEXT, never an image:
+  // a WinAnsi glyph (€, quotes, dashes, …, ™) or an ASCII substitution (arrows).
+  // Same two maps pdfStringEncode writes from, so the two paths cannot drift —
+  // a char treated as text here and dropped there would vanish from the export,
+  // and a char drawn as an image here gets the image box's width, not the
+  // glyph's, which makes it look thin and stretched next to its neighbours.
+  if (WINANSI_FROM_UNICODE[cp] !== undefined) return false;
+  if (PDF_ASCII_SUBSTITUTIONS[cp] !== undefined) return false;
+  // Up/down arrows have no WinAnsi byte and no substitution; they stay images.
   return cp > 0xFF;
 }
 

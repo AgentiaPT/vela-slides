@@ -4801,6 +4801,37 @@ def test_svg_style_recurrence_guards():
         fail("recurrence guards: SVG inline-style layout/position denylist missing")
 
 
+def test_pdf_winansi_metrics():
+    """CR5 — vector PDF glyph metrics for non-ASCII characters.
+
+    Runs tests/test_pdf_winansi.cjs, which builds a REAL PDF with the real
+    exporter and the real embedded TrueType font, then reads the produced bytes
+    back to check that a character such as the Euro sign is written into the
+    text layer with its own WinAnsi byte and laid out at the font's own advance
+    width. Before the fix such characters left the text layer and were painted
+    as a square bitmap squeezed into a narrow box, so they looked thin and
+    stretched beside the digits next to them.
+    """
+    print("\n🔤 PDF vector export — WinAnsi glyph metrics")
+    script = os.path.join(REPO_ROOT, "tests", "test_pdf_winansi.cjs")
+    if not os.path.exists(script):
+        fail("vector PDF WinAnsi metric suite", f"missing: {script}")
+        return
+    try:
+        r = subprocess.run(["node", script], capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+            count = m.group(1) if m else "?"
+            ok(f"vector PDF WinAnsi metric suite ({count} cases)")
+        else:
+            fail("vector PDF WinAnsi metric suite",
+                 f"node tests/test_pdf_winansi.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+    except FileNotFoundError:
+        fail("vector PDF WinAnsi metric suite", "node not on PATH")
+    except subprocess.TimeoutExpired:
+        fail("vector PDF WinAnsi metric suite", "timeout after 120s")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -4831,6 +4862,7 @@ if __name__ == "__main__":
         test_script_context_escape_parity()
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
+        test_pdf_winansi_metrics()
     if run_integration:
         test_integration()
         test_cli_commands()
