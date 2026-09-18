@@ -50,6 +50,7 @@ SKILL_DIR = os.path.join(REPO_ROOT, "skills", "vela-slides")    # lean shipped s
 sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
 from vela import expand_deck as _expand_compact_deck
 from assemble import escape_for_script_context
+import secure_file  # canonical secret-to-disk helper (same dir as this script)
 TEMPLATE_PATH = os.path.join(SKILL_DIR, "app", "vela.jsx")       # shipped monolith
 LOCAL_HTML_PATH = os.path.join(DEV_DIR, "local.html")            # dev preview shell
 BROWSER_JS_PATH = os.path.join(DEV_DIR, "browser.js")            # folder-browser client code
@@ -440,6 +441,10 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
             # O_NONBLOCK so a fifo entry cannot hang the handler.
             flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)  # refuse a symlinked leaf, atomically
+        # SECRET-WRITE-OK: deck content, not a secret. The mode applies only when
+        # O_CREAT makes a NEW deck, as a conservative default for a file the user
+        # then owns; nothing here depends on the mode being enforced, so the
+        # Windows/drvfs no-op costs nothing. Secrets go through secure_file.py.
         fd = os.open(path, flags, 0o600)
         try:
             st = os.fstat(fd)
@@ -556,7 +561,7 @@ class VelaHTTPHandler(http.server.BaseHTTPRequestHandler):
                             return True
 
         # 4. Not authenticated
-        self.send_error(401, "Authentication required. Read token from .vela.env or open the auto-launched browser.")
+        self.send_error(401, "Authentication required. Open the auto-launched browser, or start the server with VELA_TOKEN set.")
         return False
 
     def _check_origin(self):
@@ -998,7 +1003,8 @@ class FileWatcher:
 # ── Main server ────────────────────────────────────────────────────────
 class VelaLocalServer:
     def __init__(self, path, port=3030, host="127.0.0.1", channel_port=0, no_open=False,
-                 no_auth=False, token=None, replace=False, ai_enabled=False):
+                 no_auth=False, token=None, replace=False, ai_enabled=False,
+                 token_file=False):
         self.port = port
         self.host = host
         self.channel_port = channel_port
@@ -1021,6 +1027,11 @@ class VelaLocalServer:
         # Auth state
         self._no_auth = no_auth
         self._auth_token = token or os.environ.get("VELA_TOKEN") or secrets.token_urlsafe(32)
+        # Persisting the token is opt-in and may still be refused (see
+        # _write_token_file). _token_wrote_file records what actually happened,
+        # so the banner never points the user at a file that is not there.
+        self._token_file = token_file
+        self._token_wrote_file = False
         self._sessions = set()
         self._sessions_lock = threading.Lock()
 
@@ -1369,7 +1380,8 @@ class VelaLocalServer:
 
     # ── Run ──────────────────────────────────────────────────────────
 
-    RUNTIME_FILE = ".vela.env"
+    RUNTIME_FILE = ".vela.env"   # discovery only: pid/port/host/mode
+    TOKEN_FILE = ".vela.token"   # secret; only with --token-file, via secure_file
 
     def _runtime_path(self):
         return os.path.join(os.getcwd(), self.RUNTIME_FILE)
@@ -1502,57 +1514,88 @@ class VelaLocalServer:
             return None
 
     def _write_runtime_info(self):
-        """Write .vela.env with auth token, port, pid.
-        Mode 0o600 ensures only the current user can read the token."""
+        """Write .vela.env — discovery data only. Never the auth token.
+
+        SECURITY: this file lands in the launch cwd, which for the usual
+        `serve.py .` IS the served folder, so the same local process that can
+        plant hostile decks can pre-plant this name. It therefore carries
+        nothing worth stealing: pid, port, host and mode, all of which are
+        already visible to any local process through `netstat`/`ps`.
+
+        The auth token used to live here at mode 0600. That mode is a no-op on
+        Windows and on WSL drvfs mounts, so the guarantee the old comment
+        claimed was not deliverable on two supported platforms — and nothing
+        reads the token back anyway (`_read_runtime_info` returns pid and port).
+        The token now goes to the browser through the launch URL, is supplied by
+        the caller through VELA_TOKEN/--token, or is written to a separate,
+        provably owner-only file behind --token-file. See `secure_file.py`.
+
+        Opening O_CREAT|O_TRUNC without O_NOFOLLOW followed a planted symlink
+        and truncated whatever it pointed at, so: unlink first (which acts on
+        the link itself, never its target), then create EXCLUSIVELY. O_EXCL
+        fails on any existing path including a symlink, so the file we write is
+        always one we just made. No O_TRUNC — a refused open must never destroy
+        anything.
+        """
         info = {
             "pid": os.getpid(),
             "port": self.port,
             "host": self.host,
             "mode": "folder",
         }
-        if not self._no_auth:
-            info["token"] = self._auth_token
         rpath = self._runtime_path()
-        # SECURITY: this file carries the auth token, and it is written into the
-        # launch cwd — which for the usual `serve.py .` IS the served folder, so
-        # the same local process that plants hostile decks can pre-plant this name.
-        # Opening it O_CREAT|O_TRUNC without O_NOFOLLOW followed a planted symlink:
-        # it truncated whatever the link pointed at and wrote the token into it.
-        # Remove any existing entry (unlink acts on the link itself, never its
-        # target) and then create EXCLUSIVELY: O_CREAT|O_EXCL fails on an existing
-        # path including a symlink, so the file we write is always one we just
-        # made, owned by us, at mode 0600. No O_TRUNC — there is nothing to
-        # truncate, and a refused open must never destroy anything.
         try:
             os.unlink(rpath)
         except FileNotFoundError:
             pass
         except OSError as e:
-            print(f"  [auth]   WARNING: Could not replace runtime file: {e}")
+            print(f"  [port]   WARNING: Could not replace runtime file: {e}")
             return
         try:
+            # SECRET-WRITE-OK: discovery data only (pid/port/host/mode), all of
+            # which any local process can already read from `ps` and `netstat`.
+            # The mode is a courtesy, not a control, so its being a no-op on
+            # Windows/drvfs changes nothing. The moment anything secret is added
+            # to this file, it must move to secure_file.write_secret() instead.
             fd = os.open(rpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                          | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except OSError as e:
-            # Lost a race to recreate the name, or it reappeared as a symlink.
-            # Fail closed: never write the token to a path we did not create.
-            print(f"  [auth]   WARNING: Could not write runtime file safely: {e}")
+            print(f"  [port]   WARNING: Could not write runtime file safely: {e}")
             return
         try:
-            actual = os.fstat(fd).st_mode & 0o777  # from the fd we own, not a path
             with os.fdopen(fd, "w") as f:
                 json.dump(info, f, indent=2)
         except OSError as e:
             os.close(fd)
-            print(f"  [auth]   WARNING: Could not write runtime file: {e}")
-            return
-        if actual != 0o600 and not self._no_auth:
-            print(f"  [auth]   WARNING: Cannot enforce file permissions on this filesystem.")
-            print(f"           {self.RUNTIME_FILE} token is readable by other users ({oct(actual)}).")
+            print(f"  [port]   WARNING: Could not write runtime file: {e}")
+
+    def _write_token_file(self):
+        """Write the auth token to .vela.token, or write nothing at all.
+
+        Opt-in (--token-file) because persisting a bearer token is a real cost
+        and almost nobody needs it: the browser gets the token from the launch
+        URL, and a script can supply its own through VELA_TOKEN.
+
+        Fail closed. `write_secret` proves the file is owner-only before the
+        token reaches the disk and raises otherwise. We report and carry on
+        WITHOUT the file — the server stays fully usable, only the convenience
+        copy is missing. Never downgrade this to a warning-and-write.
+        """
+        if self._no_auth or not self._token_file:
+            return False
+        tpath = os.path.join(os.getcwd(), self.TOKEN_FILE)
+        try:
+            secure_file.write_secret(tpath, self._auth_token + "\n")
+        except secure_file.InsecureFileError as e:
+            print(f"  [auth]   Token file NOT written: {e}")
+            print(f"           Pass the token yourself instead: "
+                  f"VELA_TOKEN=<your-token> (or --token).")
+            return False
+        return True
 
     def _remove_runtime_files(self):
-        """Remove runtime files (.vela.env, .vela.pid)."""
-        for name in (self.RUNTIME_FILE, ".vela.pid"):
+        """Remove runtime files (.vela.env, .vela.token, .vela.pid)."""
+        for name in (self.RUNTIME_FILE, self.TOKEN_FILE, ".vela.pid"):
             try:
                 os.unlink(os.path.join(os.getcwd(), name))
             except OSError:
@@ -1605,9 +1648,12 @@ class VelaLocalServer:
         # actual bound port so the URL, banner, and runtime file all agree.
         self.port = httpd.server_address[1]
 
-        # Port bound successfully — write runtime info and register cleanup
+        # Port bound successfully — write runtime info and register cleanup.
+        # Register cleanup BEFORE writing the token file, so an interrupt
+        # between the two still removes it.
         self._write_runtime_info()
         self._register_cleanup()
+        self._token_wrote_file = self._write_token_file()
 
         # Template hot reload
         self._start_template_watcher()
@@ -1633,7 +1679,10 @@ class VelaLocalServer:
         if self._no_auth:
             print(f"  Auth:    DISABLED (--no-auth)")
         else:
-            print(f"  Auth:    Token (see {self.RUNTIME_FILE}, or check browser)")
+            if self._token_wrote_file:
+                print(f"  Auth:    Token (see {self.TOKEN_FILE}, or check browser)")
+            else:
+                print(f"  Auth:    Token (in the browser URL; set VELA_TOKEN to script it)")
         if self.ai_enabled:
             print(f"  AI:      ENABLED — Vera runs the local `claude` CLI (its credentials/spend)")
             print(f"           Channel: http://127.0.0.1:{self.channel_port} (loopback, token-gated)  {self._channel_status}")
@@ -1713,12 +1762,14 @@ def main():
     parser.add_argument("--no-open", action="store_true", help="Don't open browser automatically")
     parser.add_argument("--no-auth", action="store_true", help="Disable token authentication (NOT RECOMMENDED)")
     parser.add_argument("--token", default=None, help="Use a specific auth token (default: auto-generated, or VELA_TOKEN env var)")
+    parser.add_argument("--token-file", action="store_true",
+                        help="Also write the auth token to .vela.token (opt-in, POSIX only). Written only if the file can be proven readable by you alone; otherwise it is skipped and the server runs without it — use VELA_TOKEN instead.")
     parser.add_argument("--replace", action="store_true", help="Replace existing server on the same port (kills it)")
     args = parser.parse_args()
 
     server = VelaLocalServer(args.path, port=args.port, host=args.host, channel_port=args.channel_port,
                              no_open=args.no_open, no_auth=args.no_auth, token=args.token,
-                             replace=args.replace, ai_enabled=args.ai)
+                             replace=args.replace, ai_enabled=args.ai, token_file=args.token_file)
     server.run()
 
 

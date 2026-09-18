@@ -142,7 +142,12 @@ python3 tools/vela-dev/scripts/serve.py <folder> --port 3030 --replace
 python3 tools/vela-dev/scripts/serve.py <folder> --no-auth
 ```
 
-The server writes runtime info to `.vela.env` (gitignored). On exit, cleanup handlers remove it automatically.
+The server writes runtime info to `.vela.env` (gitignored): pid, port, host and mode. It carries **no auth token** — the token reaches the browser in the launch URL. To drive the API from a script, supply the token yourself:
+```bash
+VELA_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
+  python3 tools/vela-dev/scripts/serve.py examples/
+```
+`--token-file` additionally writes `.vela.token`, but only where the file can be proven readable by you alone. Windows and WSL `drvfs` mounts cannot give that guarantee through POSIX mode bits, so the file is refused there rather than written unprotected — use `VELA_TOKEN` above instead, which works everywhere. On exit, cleanup handlers remove both files automatically.
 
 ## Build
 

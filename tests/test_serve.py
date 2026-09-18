@@ -2060,16 +2060,19 @@ class TestDeckReadIsBounded(unittest.TestCase):
 
 
 class TestRuntimeFileWrite(unittest.TestCase):
-    """.vela.env carries the auth token and is written into the launch cwd —
-    which for the usual `serve.py .` IS the served folder, so the same process
-    that plants hostile decks can pre-plant this name."""
+    """.vela.env is written into the launch cwd — which for the usual
+    `serve.py .` IS the served folder, so the same process that plants hostile
+    decks can pre-plant this name. It therefore holds no secret, and the token
+    only ever reaches disk through the opt-in, provably owner-only path."""
 
-    def _run_in(self, cwd, decks, token="TESTTOKEN"):
-        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0, token=token)
+    def _run_in(self, cwd, decks, token="TESTTOKEN", token_file=False):
+        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0,
+                              token=token, token_file=token_file)
         prev = os.getcwd()
         os.chdir(cwd)
         try:
             srv._write_runtime_info()
+            srv._token_wrote_file = srv._write_token_file()
         finally:
             os.chdir(prev)
         return srv
@@ -2092,10 +2095,8 @@ class TestRuntimeFileWrite(unittest.TestCase):
         with open(victim, encoding="utf-8") as f:
             body = f.read()
         self.assertEqual(body, "IMPORTANT-USER-FILE", "symlink target was overwritten")
-        self.assertNotIn("TESTTOKEN", body, "auth token written through a symlink")
         written = os.path.join(cwd, ".vela.env")
         self.assertFalse(os.path.islink(written), "runtime file is still a symlink")
-        self.assertEqual(os.stat(written).st_mode & 0o777, 0o600)
 
     def test_normal_write_still_works(self):
         root = tempfile.mkdtemp()
@@ -2103,7 +2104,86 @@ class TestRuntimeFileWrite(unittest.TestCase):
         decks = os.path.join(root, "decks"); os.makedirs(decks)
         self._run_in(root, decks)
         with open(os.path.join(root, ".vela.env"), encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["token"], "TESTTOKEN")
+            info = json.load(f)
+        self.assertEqual(info["port"], 8998)
+        self.assertEqual(info["pid"], os.getpid())
+
+    def test_runtime_file_never_carries_the_token(self):
+        """The discovery file is written with a mode that is a no-op on Windows
+        and on drvfs, so nothing secret may go in it — on ANY platform, and
+        whether or not the operator asked for a token file."""
+        for token_file in (False, True):
+            with self.subTest(token_file=token_file):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                decks = os.path.join(root, "decks"); os.makedirs(decks)
+                self._run_in(root, decks, token_file=token_file)
+                with open(os.path.join(root, ".vela.env"), encoding="utf-8") as f:
+                    body = f.read()
+                self.assertNotIn("TESTTOKEN", body)
+                self.assertNotIn("token", json.loads(body))
+
+    def test_token_file_absent_unless_opted_in(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        srv = self._run_in(root, decks)
+        self.assertFalse(os.path.exists(os.path.join(root, ".vela.token")))
+        self.assertFalse(srv._token_wrote_file)
+
+    def test_token_file_written_owner_only_when_opted_in(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        srv = self._run_in(root, decks, token_file=True)
+        tpath = os.path.join(root, ".vela.token")
+        self.assertTrue(srv._token_wrote_file)
+        with open(tpath, encoding="utf-8") as f:
+            self.assertEqual(f.read().strip(), "TESTTOKEN")
+        if os.name != "nt":
+            self.assertEqual(os.stat(tpath).st_mode & 0o077, 0,
+                             "token file is readable by group or other")
+
+    def test_no_token_file_under_no_auth(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0,
+                              token="TESTTOKEN", token_file=True, no_auth=True)
+        prev = os.getcwd(); os.chdir(root)
+        try:
+            self.assertFalse(srv._write_token_file())
+        finally:
+            os.chdir(prev)
+        self.assertFalse(os.path.exists(os.path.join(root, ".vela.token")))
+
+    def test_token_file_is_not_written_when_permissions_cannot_be_proven(self):
+        """Fail closed: when the filesystem will not give us an owner-only file,
+        the token must not land at all — not land-with-a-warning, which is the
+        exact behaviour this change removes."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        decks = os.path.join(root, "decks"); os.makedirs(decks)
+        srv = VelaLocalServer(decks, port=8998, no_open=True, channel_port=0,
+                              token="TESTTOKEN", token_file=True)
+        real_fstat = os.fstat
+
+        class _Loose:
+            """Mimic a mount that reports group/other bits, e.g. WSL drvfs."""
+            def __init__(self, st): self._st = st
+            def __getattr__(self, n): return getattr(self._st, n)
+            @property
+            def st_mode(self): return (self._st.st_mode & ~0o777) | 0o644
+
+        prev = os.getcwd(); os.chdir(root)
+        os.fstat = lambda fd: _Loose(real_fstat(fd))
+        try:
+            self.assertFalse(srv._write_token_file())
+        finally:
+            os.fstat = real_fstat
+            os.chdir(prev)
+        self.assertFalse(os.path.exists(os.path.join(root, ".vela.token")),
+                         "token file left on disk after a failed permission check")
 
 
 class TestDeckNameSpoofingRejected(unittest.TestCase):

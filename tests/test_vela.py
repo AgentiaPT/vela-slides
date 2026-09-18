@@ -2305,10 +2305,21 @@ def test_server_hardening():
         fail("--replace flag")
 
     # ── Token security ──
-    if 'see .vela.env' in serve_src or 'see {self.RUNTIME_FILE}' in serve_src:
-        ok("Token not printed to console (references .vela.env)")
+    # The token must never be echoed to the console, and the banner must not
+    # send the user to the discovery file for it — that file no longer has it.
+    if re.search(r'print\(f?"[^"]*\{self\._auth_token\}', serve_src):
+        fail("Token printed to console")
+    elif "'token'" in serve_src.split("def _write_runtime_info", 1)[-1].split("def _write_token_file", 1)[0] \
+            or '"token"' in serve_src.split("def _write_runtime_info", 1)[-1].split("def _write_token_file", 1)[0]:
+        fail("Runtime info writer still emits a token field")
     else:
-        fail("Token console display")
+        ok("Token neither printed to console nor written to .vela.env")
+
+    # The token may only reach disk through the canonical, verifying helper.
+    if "secure_file.write_secret" in serve_src and "InsecureFileError" in serve_src:
+        ok("Token persistence goes through secure_file.write_secret")
+    else:
+        fail("Token persistence bypasses the canonical secret-write helper")
 
     # ── subprocess import at module level ──
     if re.search(r'^import subprocess$', serve_src, re.MULTILINE):
@@ -3256,10 +3267,12 @@ def test_serve_auth():
                     ok("Runtime .vela.env has pid, port, host, mode fields")
                 else:
                     fail("Runtime file fields", f"keys={list(info.keys())}")
-                if "token" in info:
-                    ok("Runtime .vela.env includes auth token")
+                # The discovery file is written with a mode that is a no-op on
+                # Windows and on WSL drvfs, so it must never carry a secret.
+                if "token" not in info:
+                    ok("Runtime .vela.env carries no auth token")
                 else:
-                    fail("Runtime file token field")
+                    fail("Runtime file leaks the auth token")
             except json.JSONDecodeError:
                 fail("Runtime .vela.env is valid JSON")
         else:
