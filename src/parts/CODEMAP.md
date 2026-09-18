@@ -273,7 +273,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_LANE: (no direct dispatch site)
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
@@ -316,8 +316,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 545
 - part-blocks.jsx: 764-line unbannered stretch after line 769
 - part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-slidepanel.jsx: 450-line unbannered stretch after line 206
+- part-slidepanel.jsx: 404-line unbannered stretch after line 968
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
@@ -328,3 +328,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 484-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1188 lines)
+- part-app.jsx: 357-line unbannered stretch after line 860
