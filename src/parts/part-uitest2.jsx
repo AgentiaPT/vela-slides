@@ -2495,3 +2495,91 @@ uiSuite("Block link mark + clipboard (CR17/CR6)", [
     return true;
   }},
 ]);
+
+// ── Header reflow — every control stays inside a narrow window ────────
+// The desktop header used to be one row that never wrapped. Below about 680px
+// that row was wider than the window, so the last controls (view switcher,
+// Present, Export, Comments) were laid out past the right edge, with no
+// scrollbar and no menu to reach them. The band 500-680px has no mobile layout
+// either, because the mobile breakpoint is 500px. These tests narrow the app
+// root — the header is a flex child of it, so the header reflows just as it
+// does in a small window — then check that each control is inside the root and
+// answers a hit test at its own centre.
+const HEADER_REFLOW_WIDTHS = [500, 550, 600, 650, 700, 900];
+
+uiSuite("Header reflow", [
+  { name: "Present and the view switcher stay inside the window at every width", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header) throw new Error("no header");
+    // The mobile layout has its own control set — nothing to check here. The
+    // view switcher is desktop-only, so it is the correct mobile guard; guarding
+    // on the action group instead would let this test pass by the group being
+    // absent, which is the very regression it must catch.
+    if (!_$('[data-testid="view-switcher"]')) return true;
+    const root = header.parentElement;
+    const prevW = root.style.width, prevMin = root.style.minWidth;
+    try {
+      for (const w of HEADER_REFLOW_WIDTHS) {
+        root.style.width = w + "px";
+        root.style.minWidth = w + "px";
+        await _wait(80);
+        const box = root.getBoundingClientRect();
+        const present = [...header.querySelectorAll("button")].find((b) => (b.textContent || "").includes("Present"));
+        const targets = [
+          ["Present", present],
+          ["view switcher", _$('[data-testid="view-switcher"]')],
+          ["Gallery segment", _$('[data-testid="view-switch-gallery"]')],
+          ["Export", _$('[data-testid="export-menu-toggle"]')],
+          ["Comments", _$('[data-testid="comments-toggle"]')],
+        ];
+        for (const [label, el] of targets) {
+          if (!el) throw new Error(label + " is missing at " + w + "px");
+          const r = el.getBoundingClientRect();
+          if (r.right > box.right + 0.5 || r.left < box.left - 0.5) {
+            throw new Error(label + " is outside the window at " + w + "px (right " + Math.round(r.right) + " vs " + Math.round(box.right) + ")");
+          }
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+          if (!hit || !(hit === el || el.contains(hit) || hit.contains(el))) {
+            throw new Error(label + " cannot be clicked at " + w + "px");
+          }
+        }
+      }
+    } finally {
+      root.style.width = prevW;
+      root.style.minWidth = prevMin;
+      await _wait(60);
+    }
+    return true;
+  }},
+  { name: "header grows taller instead of hiding a wrapped row", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header) throw new Error("no header");
+    if (!_$('[data-testid="view-switcher"]')) return true;
+    const group = _$('[data-testid="header-actions"]');
+    if (!group) throw new Error("the desktop header has no reflowing action group");
+    const root = header.parentElement;
+    const prevW = root.style.width, prevMin = root.style.minWidth;
+    try {
+      root.style.width = "600px";
+      root.style.minWidth = "600px";
+      await _wait(80);
+      const hb = header.getBoundingClientRect(), gb = group.getBoundingClientRect();
+      if (gb.bottom > hb.bottom + 0.5) throw new Error("the action rows spill out below the header");
+      if (hb.height < 44) throw new Error("header is shorter than its own minimum");
+    } finally {
+      root.style.width = prevW;
+      root.style.minWidth = prevMin;
+      await _wait(60);
+    }
+    return true;
+  }},
+  { name: "reflow does not shrink header type below 13px", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header || !_$('[data-testid="view-switcher"]')) return true;
+    for (const b of header.querySelectorAll("button")) {
+      const size = parseFloat(getComputedStyle(b).fontSize);
+      if (size < 13) throw new Error("a header button uses " + size + "px type");
+    }
+    return true;
+  }},
+]);

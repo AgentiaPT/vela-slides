@@ -123,6 +123,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Product Tour Suite: _productTourSetup
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 - Review mode (CR7) + TOC slide delete (CR14): _rvSlide _rvState _rvSlides
+- Header reflow — every control stays inside a narrow window: HEADER_REFLOW_WIDTHS
 
 ### part-demo.jsx
 - Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
@@ -335,4 +336,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 484-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1188 lines)
-- part-app.jsx: 362-line unbannered stretch after line 860
+- part-app.jsx: 374-line unbannered stretch after line 860
