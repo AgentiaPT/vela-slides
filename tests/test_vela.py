@@ -5500,6 +5500,69 @@ def test_reviewed_flag_round_trip():
             skip("compact round trip (vela.py deck compact unavailable)")
 
 
+def test_link_mark_follows_wrapped_label():
+    """CR17 follow-up — the link mark must ride the LAST line of a WRAPPED label.
+
+    Moving the mark into the layout flow fixed every single-line label, but a
+    label that wraps fills its row: as a FLEX SIBLING the mark was then centred
+    on the whole paragraph and pushed to the block's right edge. The mark is now
+    an INLINE suffix of the label itself, so it flows after the last line. The
+    browser-side proof is the "Link mark placement" UI suite; these assert the
+    source shape that suite depends on, so a refactor cannot quietly undo it.
+    """
+    print("\n\U0001f517 Link mark on a wrapped label (CR17 follow-up)")
+    blocks = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+
+    # The label-bearing items must hand the mark to the label as an inline
+    # suffix — never render it as a sibling node beside the label box.
+    for comp in ("IconRowItem", "BulletItem"):
+        start = blocks.index("function %s(" % comp)
+        end = blocks.index("\n// ━━━", start)
+        body = blocks[start:end]
+        total = body.count("<ItemLinkMark />")
+        as_suffix = body.count("suffix={<ItemLinkMark />}")
+        if total and total == as_suffix:
+            ok("%s gives the mark to its label as an inline suffix" % comp)
+        else:
+            fail("%s gives the mark to its label as an inline suffix" % comp,
+                 "%d mark(s), %d as suffix" % (total, as_suffix))
+        if "...LINK_MARK_LABEL_PAD" in body:
+            ok("%s reserves label room for the mark" % comp)
+        else:
+            fail("%s reserves label room for the mark" % comp, "LINK_MARK_LABEL_PAD not applied")
+
+    # The suffix has to reach the rendered text, through ItemText as well.
+    if re.search(r"function ItemText\(\{[^}]*\bsuffix\b[^}]*\}\)", blocks) and "suffix={suffix}" in blocks:
+        ok("ItemText forwards the suffix to EditableText")
+    else:
+        fail("ItemText forwards the suffix to EditableText")
+    if blocks.count("{prefix}{parseInline(") == blocks.count("{suffix}</div>"):
+        ok("EditableText renders the suffix after the label text")
+    else:
+        fail("EditableText renders the suffix after the label text")
+
+    # A last line that is already full must not orphan the mark onto a line of
+    # its own: the inline variant cancels its own advance, and the label keeps an
+    # equal right padding so the mark still paints inside the block.
+    if "marginRight: -LINK_MARK_ADVANCE" in blocks and "paddingRight: LINK_MARK_ADVANCE" in blocks:
+        ok("the inline mark costs no line width and still paints inside the block")
+    else:
+        fail("the inline mark costs no line width and still paints inside the block")
+    m = re.search(r"const linkMarkStyle = \(presenter, inline\) => \(\{(.*?)\n\}\);", blocks, re.S)
+    if m and "marginLeft: 6" in m.group(1) and "verticalAlign: \"middle\"" in m.group(1):
+        ok("the mark keeps its 6px gap and sits on the text band")
+    else:
+        fail("the mark keeps its 6px gap and sits on the text band")
+
+    # The browser-side regression test must cover BOTH directions — a future
+    # change cannot fix the wrapped case by breaking the single-line one.
+    ui = open(os.path.join(PARTS_DIR, "part-uitest2.jsx"), encoding="utf-8").read()
+    if 'uiSuite("Link mark placement"' in ui and "WRAPPED bullet label" in ui and "SINGLE-LINE label" in ui:
+        ok("the UI battery measures both a wrapped and a single-line label")
+    else:
+        fail("the UI battery measures both a wrapped and a single-line label")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -5540,6 +5603,7 @@ if __name__ == "__main__":
         test_header_narrow_window_reflow()
         test_review_queue_drains_to_zero()
         test_reviewed_flag_round_trip()
+        test_link_mark_follows_wrapped_label()
     if run_integration:
         test_integration()
         test_cli_commands()

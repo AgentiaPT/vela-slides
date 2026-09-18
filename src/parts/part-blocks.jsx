@@ -488,10 +488,10 @@ function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
 }
 
 // Editable text wired to patch an item property
-function ItemText({ block, onChange, editable, idx, prop, style }) {
+function ItemText({ block, onChange, editable, idx, prop, style, suffix }) {
   const items = block.items || [];
   const val = items[idx]?.[prop] || "";
-  return <EditableText text={val} editable={editable}
+  return <EditableText text={val} editable={editable} suffix={suffix}
     onSave={(v) => patchItemAt(block, onChange, idx, { [prop]: v })} style={style} />;
 }
 
@@ -529,14 +529,26 @@ const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, en
 // type and at every label length. (CR17)
 //
 // An item that has its own label line (icon row, bullet) passes markInLabel and
-// puts <ItemLinkMark/> straight after that label, so the marker hugs the LINKED
-// WORDS instead of the widest line of the item. Every other item type keeps the
-// default: the marker is the last child of the item wrapper.
+// feeds <ItemLinkMark/> to that label as an INLINE suffix, so the marker hugs the
+// LINKED WORDS instead of the widest line of the item. Inline is what makes a
+// WRAPPED label work: an inline box flows after the last line, while a flex or
+// block sibling is centred on the whole paragraph and pushed to the container
+// edge. Every other item type keeps the default: the marker is the last child of
+// the item wrapper.
 const ItemLinkMarkContext = React.createContext(null);
 function ItemLinkMark() { return React.useContext(ItemLinkMarkContext); }
-const linkMarkStyle = (presenter) => ({
+// Horizontal room one inline mark needs: its 6px gap plus its 14px circle.
+// The inline variant cancels that advance with an equal negative right margin,
+// so the mark never counts towards line breaking and can never be orphaned onto
+// a line of its own after a label whose last line is full. LINK_MARK_LABEL_PAD
+// gives the label the same amount of right padding, so the mark still paints
+// inside the label box instead of spilling past the block edge.
+const LINK_MARK_ADVANCE = 20;
+const LINK_MARK_LABEL_PAD = { paddingRight: LINK_MARK_ADVANCE };
+const linkMarkStyle = (presenter, inline) => ({
   display: "inline-flex", alignItems: "center", justifyContent: "center", alignSelf: "center",
   flexShrink: 0, marginLeft: 6, width: 14, height: 14, borderRadius: "50%",
+  ...(inline ? { verticalAlign: "middle", marginRight: -LINK_MARK_ADVANCE } : {}),
   background: presenter ? T.accent : T.accent + "80", fontSize: 8, lineHeight: 1,
   cursor: "pointer", transition: "opacity 0.2s",
 });
@@ -565,9 +577,9 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // each other.
   const linkMark = !link ? null
     : (showLinkUI && !clusterVisible && editMode)
-      ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={linkMarkStyle(false)} title={link}>🔗</span>
+      ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={linkMarkStyle(false, markInLabel)} title={link}>🔗</span>
       : (presenting && !noLinkBadge)
-        ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ ...linkMarkStyle(true), color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", opacity: hovered ? 1 : 0.55 }}>🔗</span>
+        ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ ...linkMarkStyle(true, markInLabel), color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", opacity: hovered ? 1 : 0.55 }}>🔗</span>
         : null;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
@@ -613,12 +625,11 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
         <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       </EditableIcon>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* A linked item underlines its own label and carries the link marker on
-            the same line, so the link reads on the text instead of beside the
-            widest line of the item. (CR17) */}
+        {/* A linked item underlines its own label and carries the link marker as
+            an inline suffix of that label, so the marker follows the last line of
+            the title instead of the widest line of the item. (CR17) */}
         <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3, minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: "currentColor", textDecorationThickness: 1, textUnderlineOffset: "3px" } : {}) }} />
-          <ItemLinkMark />
+          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" suffix={<ItemLinkMark />} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3, minWidth: 0, ...(link ? { ...LINK_MARK_LABEL_PAD, textDecoration: "underline", textDecorationColor: "currentColor", textDecorationThickness: 1, textUnderlineOffset: "3px" } : {}) }} />
         </div>
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
@@ -652,16 +663,15 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
           : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
-      {/* The link marker sits on the same line as the bullet text (CR17). The
-          text keeps flex:0 1 auto so the marker follows the words instead of the
-          right edge of the row, and still wraps at the available width. */}
+      {/* The link marker rides INSIDE the label as an inline suffix (CR17), so a
+          label that wraps keeps the marker on its LAST line. A flex sibling was
+          centred on the whole paragraph and pushed to the row's right edge. */}
       <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
         <EditableText text={text} editable={editMode} onSave={(v) => {
           const ni = [...(block.items || [])];
           ni[index] = typeof item === "string" ? v : { ...item, text: v };
           onChange?.({ items: ni });
-        }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: "0 1 auto", minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
-        <ItemLinkMark />
+        }} suffix={<ItemLinkMark />} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: "0 1 auto", minWidth: 0, ...(link ? { ...LINK_MARK_LABEL_PAD, textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
       </div>
     </ItemChrome>
   );
