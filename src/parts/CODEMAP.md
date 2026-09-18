@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch
-- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter useVelaReviewFilter velaFindItem velaReviewSkipIndex NO_HISTORY MAX_HISTORY innerReducer
+- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter useVelaReviewFilter velaFindItem velaSlideNeedsReview velaReviewSkipIndex velaReviewItemsInOrder velaReviewNextTarget NO_HISTORY MAX_HISTORY innerReducer
 - Comment Actions: historyInit reducer
 
 ### part-engine.jsx
@@ -124,6 +124,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 - Review mode (CR7) + TOC slide delete (CR14): _rvSlide _rvState _rvSlides
 - Header reflow — every control stays inside a narrow window: HEADER_REFLOW_WIDTHS
+- Review mode: the approval queue must drain to zero: _rvqSlide _rvqState _rvqLeft _rvqApprove _rvqWith
 
 ### part-demo.jsx
 - Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI

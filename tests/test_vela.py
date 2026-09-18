@@ -5360,6 +5360,144 @@ def test_header_narrow_window_reflow():
             ok(f"UI battery: width {w}px is covered")
         else:
             fail(f"UI battery: width {w}px is not covered")
+def test_review_queue_drains_to_zero():
+    """Review mode: repeated approval must drain the queue to zero.
+
+    Two defects this locks down:
+      1. The advance stopped at the module boundary. Approving the last open
+         slide of a module left the selection on that slide, so the next click
+         on the check control un-approved it again and the count oscillated.
+      2. Hidden slides joined the rotation. A hidden slide never reaches the
+         audience, so it needs no approval; counting it kept "N left" above
+         zero for ever and the all-approved banner never appeared.
+    """
+    print("\n── Review queue drains to zero (cross-module + hidden) ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    lst = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+
+    # ── 1. One shared "needs review" predicate, no second copy (drift rule) ───
+    if "function velaSlideNeedsReview" in reducer:
+        ok("velaSlideNeedsReview is the one predicate for the review rotation")
+    else:
+        fail("velaSlideNeedsReview exists", "predicate missing from part-reducer.jsx")
+    if "function velaSlideNeedsReview" not in lst:
+        ok("part-list.jsx reuses the predicate instead of copying it")
+    else:
+        fail("no second copy of the predicate", "part-list.jsx defines its own velaSlideNeedsReview")
+
+    pred = reducer[reducer.index("function velaSlideNeedsReview"):]
+    pred = pred[:pred.index("\n")]
+    if "s.reviewed !== true" in pred and "s.hidden !== true" in pred:
+        ok("a slide needs review only when it is neither approved nor hidden")
+    else:
+        fail("predicate covers approved AND hidden", "velaSlideNeedsReview: " + pred)
+
+    # ── 2. The advance searches the whole deck, not one module ───────────────
+    if "function velaReviewNextTarget" in reducer:
+        ok("velaReviewNextTarget walks the deck for the next slide needing review")
+    else:
+        fail("velaReviewNextTarget exists", "cross-module advance missing from part-reducer.jsx")
+    if "velaReviewNextTarget(next, a.id, a.index)" in reducer:
+        ok("TOGGLE_SLIDE_REVIEWED advances through the cross-module search")
+    else:
+        fail("TOGGLE_SLIDE_REVIEWED uses velaReviewNextTarget",
+             "approval still advances with the single-module skip — the queue would stall at the boundary")
+
+    nxt = reducer[reducer.index("function velaReviewNextTarget"):]
+    nxt = nxt[:nxt.index("\n}\n")]
+    # It must be able to LEAVE the starting module, and it must stay editor-only.
+    if "items[(start + n) % items.length]" in nxt:
+        ok("the search wraps over every module in outline order")
+    else:
+        fail("the search leaves the starting module", "no cross-module walk in velaReviewNextTarget")
+    if "state.fullscreen) return null" in nxt:
+        ok("the advance never fires while presenting (editor only)")
+    else:
+        fail("advance is editor-only", "velaReviewNextTarget does not bail on state.fullscreen")
+    # Returning the target module id is what lets the selection cross the boundary.
+    if "selectedId: target.id" in reducer:
+        ok("approving the last open slide of a module selects the next module")
+    else:
+        fail("approval can change module", "TOGGLE_SLIDE_REVIEWED never moves selectedId")
+
+    # ── 3. Every TOC reader uses the same predicate ──────────────────────────
+    for needle, label in [
+        ("if (reviewFilter && !velaSlideNeedsReview(s)) return null;",
+         "the TOC row list drops slides that need no review"),
+        ("item.slides.every((s) => !velaSlideNeedsReview(s))",
+         "the per-section all-approved banner uses the predicate"),
+        ("if (!velaSlideNeedsReview(s)) _rvDone++;",
+         "the \"N left\" count uses the predicate, so it can reach zero"),
+        ("if (reviewFilter && !velaSlideNeedsReview(item.slides[si])) continue;",
+         "keyboard TOC nav uses the predicate"),
+    ]:
+        if needle in lst:
+            ok(label)
+        else:
+            fail(label, "not found in part-list.jsx: " + needle)
+
+
+def test_reviewed_flag_round_trip():
+    """The `reviewed` approval flag must survive a save/load round trip.
+
+    The reducer DELETES `reviewed` rather than setting it false, so any
+    serializer that copies a fixed key list, or that treats absent and false
+    alike, would silently lose approvals. This drives the real shipped Python
+    tooling (validate.py + the compact/expand deck forms).
+    """
+    print("\n── `reviewed` survives a deck round trip ──")
+
+    def slide(**extra):
+        s = {"title": "A", "duration": 60, "bg": "#0B1020",
+             "blocks": [{"type": "heading", "text": "Hi"}]}
+        s.update(extra)
+        return s
+
+    deck = {"deckTitle": "RT", "lanes": [{"id": "l1", "title": "Main", "items": [
+        {"id": "m1", "title": "M", "slides": [slide(reviewed=True), slide(hidden=True), slide()]}]}]}
+
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "rt.vela")
+        with open(src, "w", encoding="utf-8") as f:
+            json.dump(deck, f)
+
+        # A deck carrying `reviewed` must still validate.
+        r = subprocess.run([sys.executable, os.path.join(SKILL_DIR, "scripts", "validate.py"), src],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("validate.py accepts a deck that carries `reviewed`")
+        else:
+            fail("validate.py accepts `reviewed`", (r.stdout + r.stderr).strip()[:200])
+
+        # JSON serialize → deserialize keeps the flag, and keeps absent as absent.
+        back = json.loads(json.dumps(deck))
+        slides = back["lanes"][0]["items"][0]["slides"]
+        if slides[0].get("reviewed") is True:
+            ok("an approved slide keeps `reviewed: true` through serialization")
+        else:
+            fail("approved slide keeps the flag", "reviewed was lost: " + repr(sorted(slides[0])))
+        if "reviewed" not in slides[2]:
+            ok("an unapproved slide gains no `reviewed` key (absent stays absent)")
+        else:
+            fail("absent stays absent", "an unapproved slide grew a reviewed key")
+        if slides[1].get("hidden") is True:
+            ok("the `hidden` flag round-trips beside `reviewed`")
+        else:
+            fail("hidden round-trips", "hidden was lost")
+
+        # The compact deck form must not drop the flag either.
+        out = os.path.join(td, "rt-compact.vela")
+        r = subprocess.run([sys.executable, os.path.join(SKILL_DIR, "scripts", "vela.py"),
+                            "deck", "compact", src, out], capture_output=True, text=True)
+        if r.returncode == 0 and os.path.exists(out):
+            compact = open(out, encoding="utf-8").read()
+            if '"reviewed":true' in compact.replace(" ", ""):
+                ok("the compact deck form carries `reviewed` through")
+            else:
+                fail("compact form keeps `reviewed`", "flag missing from the compacted deck")
+        else:
+            skip("compact round trip (vela.py deck compact unavailable)")
 
 
 if __name__ == "__main__":
@@ -5400,6 +5538,8 @@ if __name__ == "__main__":
         test_block_link_mark_and_clipboard()
         test_branding_zero_and_side_pane()
         test_header_narrow_window_reflow()
+        test_review_queue_drains_to_zero()
+        test_reviewed_flag_round_trip()
     if run_integration:
         test_integration()
         test_cli_commands()

@@ -2583,3 +2583,109 @@ uiSuite("Header reflow", [
     return true;
   }},
 ]);
+
+// ━━━ Review mode: the approval queue must drain to zero ━━━━━━━━━━━━━━━━━━━━━
+// Two regressions are locked down here:
+//   1. The advance stopped at the module boundary, so approving the last open
+//      slide of a module parked the selection on it and the next click on the
+//      check control un-approved it again — the count oscillated for ever.
+//   2. Hidden slides joined the rotation. A hidden slide never reaches the
+//      audience, so it needs no approval; counting it kept the queue above zero.
+// Every test drives the REAL reducer and puts the review-mode store back.
+const _rvqSlide = (extra) => ({ title: "S", duration: 60, blocks: [{ type: "heading", text: "Hi" }], ...extra });
+const _rvqState = (modules, extra) => ({
+  ...init,
+  selectedId: "m0",
+  slideIndex: 0,
+  lanes: [{ id: "l1", title: "Main", collapsed: false, items: modules.map((slides, n) => ({
+    id: "m" + n, title: "M" + n, status: "todo", importance: "should", order: n + 1, slides,
+  })) }],
+  ...extra,
+});
+const _rvqLeft = (st) => st.lanes[0].items.reduce((n, i) => n + i.slides.filter((s) => velaSlideNeedsReview(s)).length, 0);
+// Click the on-slide check control the way the canvas does: always on the slide
+// the editor is showing right now.
+const _rvqApprove = (st) => innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: st.selectedId, index: st.slideIndex });
+const _rvqWith = async (on, fn) => { const was = velaReviewFilterOn(); try { setVelaReviewFilter(on); return await fn(); } finally { setVelaReviewFilter(was); } };
+
+uiSuite("Review mode: the approval queue drains to zero", [
+  { name: "repeated approval drains a MULTI-MODULE deck to zero, never going back up", fn: async () => _rvqWith(true, async () => {
+    let st = _rvqState([[_rvqSlide({}), _rvqSlide({}), _rvqSlide({})], [_rvqSlide({}), _rvqSlide({})]]);
+    const start = _rvqLeft(st);
+    if (start !== 5) throw new Error("fixture should start with 5 slides needing review, got " + start);
+    const seen = [start];
+    for (let i = 0; i < 20 && _rvqLeft(st) > 0; i++) {
+      const before = _rvqLeft(st);
+      st = _rvqApprove(st);
+      const after = _rvqLeft(st);
+      seen.push(after);
+      // The oscillation signature: a click that UN-approves a slide.
+      if (after > before) throw new Error("approval count went UP (a click un-approved a slide): " + seen.join(","));
+      if (after === before) throw new Error("approval made no progress — the queue stalled at " + seen.join(","));
+    }
+    if (_rvqLeft(st) !== 0) throw new Error("the queue never drained: " + seen.join(","));
+    if (seen.length !== 6) throw new Error("expected exactly 5 approving clicks, got " + (seen.length - 1));
+    return true;
+  })},
+  { name: "approving the LAST slide of a module carries the author into the next module", fn: async () => _rvqWith(true, async () => {
+    let st = _rvqState([[_rvqSlide({ reviewed: true }), _rvqSlide({})], [_rvqSlide({})]], { selectedId: "m0", slideIndex: 1 });
+    st = _rvqApprove(st); // approves the last open slide of module m0
+    if (st.selectedId !== "m1") throw new Error("selection stayed in the drained module: " + st.selectedId);
+    if (st.slideIndex !== 0) throw new Error("landed on the wrong slide of the next module: " + st.slideIndex);
+    // The slide we moved to must actually need review — that is what stops the
+    // next click from silently un-approving something.
+    if (!velaSlideNeedsReview(st.lanes[0].items[1].slides[0])) throw new Error("advanced onto a slide that needs no review");
+    return true;
+  })},
+  { name: "the rotation never lands on a HIDDEN slide", fn: async () => _rvqWith(true, async () => {
+    let st = _rvqState([[_rvqSlide({}), _rvqSlide({ hidden: true }), _rvqSlide({})]]);
+    st = _rvqApprove(st);
+    if (st.slideIndex !== 2) throw new Error("the advance landed on the hidden slide: " + st.slideIndex);
+    // Cycling with the arrow keys must skip it too.
+    if (innerReducer({ ...st, slideIndex: 0 }, { type: "SET_SLIDE_INDEX", index: 1 }).slideIndex === 1)
+      throw new Error("SET_SLIDE_INDEX cycled onto the hidden slide");
+    return true;
+  })},
+  { name: "a hidden slide needs no approval, so hidden + approved leaves nothing to do", fn: async () => {
+    if (velaSlideNeedsReview(_rvqSlide({ hidden: true }))) throw new Error("a hidden slide was counted as needing review");
+    if (velaSlideNeedsReview(_rvqSlide({ reviewed: true }))) throw new Error("an approved slide was counted as needing review");
+    if (!velaSlideNeedsReview(_rvqSlide({}))) throw new Error("a plain slide was not counted as needing review");
+    if (_rvqLeft(_rvqState([[_rvqSlide({ hidden: true }), _rvqSlide({ reviewed: true })]])) !== 0)
+      throw new Error("hidden + approved should leave nothing to review");
+    return true;
+  }},
+  { name: "with nothing left to review the index is left alone (banner takes over, no trap)", fn: async () => _rvqWith(true, async () => {
+    const out = _rvqApprove(_rvqState([[_rvqSlide({ reviewed: true }), _rvqSlide({})]], { slideIndex: 1 }));
+    if (out.slideIndex !== 1 || out.selectedId !== "m0") throw new Error("selection moved with nothing left to review");
+    if (_rvqLeft(out) !== 0) throw new Error("the deck should be fully reviewed");
+    return true;
+  })},
+  { name: "presenter mode (fullscreen) never auto-advances on approval", fn: async () => _rvqWith(true, async () => {
+    const out = _rvqApprove(_rvqState([[_rvqSlide({}), _rvqSlide({})]], { fullscreen: true, slideIndex: 0 }));
+    if (out.slideIndex !== 0) throw new Error("review mode moved the presenter off the slide: " + out.slideIndex);
+    return true;
+  })},
+  { name: "review mode OFF never moves the selection on approval", fn: async () => _rvqWith(false, async () => {
+    const out = _rvqApprove(_rvqState([[_rvqSlide({}), _rvqSlide({})]], { slideIndex: 0 }));
+    if (out.slideIndex !== 0 || out.selectedId !== "m0") throw new Error("selection moved with review mode off");
+    return true;
+  })},
+  { name: "the approval flag survives the real save → reload round trip", fn: async () => {
+    let st = _rvqState([[_rvqSlide({}), _rvqSlide({}), _rvqSlide({ hidden: true })]]);
+    st = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m0", index: 0 });
+    // Exactly what the app persists and reads back: extractSave → JSON → the
+    // storage-reload sanitizer.
+    const saved = JSON.parse(JSON.stringify(extractSave(st)));
+    if (saved.lanes[0].items[0].slides[0].reviewed !== true) throw new Error("the approval never reached the saved deck");
+    const reloaded = resanitizeLoadedLanes(saved.lanes)[0].items[0].slides;
+    if (reloaded[0].reviewed !== true) throw new Error("the approval was lost on reload");
+    // The reducer DELETES the key rather than writing false — absent must stay absent.
+    if ("reviewed" in reloaded[1]) throw new Error("an unapproved slide gained a reviewed key on reload");
+    if (reloaded[2].hidden !== true) throw new Error("the hidden flag was lost on reload");
+    // Un-approving must survive the same trip as a genuine absence.
+    const un = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m0", index: 0 });
+    const unSaved = resanitizeLoadedLanes(JSON.parse(JSON.stringify(extractSave(un))).lanes)[0].items[0].slides;
+    if ("reviewed" in unSaved[0]) throw new Error("un-approve did not survive the round trip");
+    return true;
+  }},
+]);
