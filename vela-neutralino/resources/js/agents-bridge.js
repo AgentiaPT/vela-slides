@@ -27,6 +27,9 @@ const DESCRIPTORS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const HEALTH_TIMEOUT_MS = 1000;    // loopback /health probe
+const HANDSHAKE_POLL_MS = 5000;    // one readHandshake() attempt
+
 let handshake = null;   // { port, token } once the gatekeeper is up
 let detected = null;    // { id: { id, label, available, version } }
 let activeId = null;    // selected provider id
@@ -40,27 +43,64 @@ async function velaDir() {
   return dir;
 }
 
+// Read one handshake pair. The gatekeeper writes the token file before the
+// port file, so a reader that takes the port first can never see a port
+// without its token.
+async function readPair(dir, sfx) {
+  try {
+    const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
+    const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
+    if (port && token) return { port, token };
+  } catch { /* not written yet */ }
+  return null;
+}
+
+// Confirm that a handshake pair belongs to a gatekeeper that is alive NOW.
+// The files stay on disk when a gatekeeper is killed without its cleanup, so a
+// pair that is merely present proves nothing. /health needs no token and
+// answers at once.
+async function gatekeeperAlive(hs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+  try {
+    const r = await fetch(`http://localhost:${hs.port}/health`, { signal: controller.signal });
+    return r.ok;
+  } catch {
+    return false;
+  } finally { clearTimeout(timer); }
+}
+
 // Read the gatekeeper's loopback port + auth token. The extension is launched
 // by Neutralino in parallel with the webview, so the files may not exist for a
 // beat — poll briefly before giving up (AI then renders as unavailable).
+//
+// Two rules keep a cold first launch from locking the session to a dead
+// channel:
+//   1. This window's NL_PORT-keyed pair wins for the WHOLE poll. The unkeyed
+//      name is only for an older or standalone gatekeeper, and a stale unkeyed
+//      pair left by an earlier run must never be adopted while this window's
+//      own gatekeeper is still writing its files — which is exactly what a
+//      freshly built binary does when the host scans it on first launch.
+//   2. A pair is accepted only after /health proves the gatekeeper answers on
+//      that port.
 async function readHandshake() {
   let dir;
   try { dir = await velaDir(); } catch { return null; }
-  // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
-  // multiple windows never share one channel. Prefer the keyed file; fall back
-  // to the unkeyed name (older gatekeeper / standalone run).
-  const suffixes = [];
-  if (typeof window !== "undefined" && window.NL_PORT != null) suffixes.push(`-${window.NL_PORT}`);
-  suffixes.push("");
-  for (let i = 0; i < 20; i++) {
-    for (const sfx of suffixes) {
-      try {
-        const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
-        const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
-        if (port && token) return { port, token };
-      } catch { /* not written yet */ }
-    }
+  const keyed = (typeof window !== "undefined" && window.NL_PORT != null) ? `-${window.NL_PORT}` : null;
+  const primary = keyed === null ? "" : keyed;
+  // Bounded by wall clock, not by a step count: a stale pair costs a /health
+  // timeout per step, and nl-boot.js already retries this whole read with its
+  // own longer budget.
+  const deadline = Date.now() + HANDSHAKE_POLL_MS;
+  for (;;) {
+    const hs = await readPair(dir, primary);
+    if (hs && await gatekeeperAlive(hs)) return hs;
+    if (Date.now() >= deadline) break;
     await sleep(150);
+  }
+  if (keyed !== null) {
+    const hs = await readPair(dir, "");
+    if (hs && await gatekeeperAlive(hs)) return hs;
   }
   return null;
 }
@@ -76,20 +116,28 @@ async function extFetch(pathname, body, timeoutMs) {
   if (!hs) throw new Error("AI agent is not available");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let r;
   try {
     // host literal "localhost" — the desktop CSP allows http://localhost:* and
     // it resolves to the loopback the gatekeeper binds.
-    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+    r = await fetch(`http://localhost:${hs.port}${pathname}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
       body: JSON.stringify(body || {}),
       signal: controller.signal,
     });
-    if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
-    return data;
+  } catch (e) {
+    // The transport itself failed: the port is dead, or the request timed out.
+    // Drop the cached pair so the next attempt (the boot retry loop, or a
+    // manual rescan) reads the files again instead of retrying a dead channel
+    // for the rest of the session.
+    handshake = null;
+    throw e;
   } finally { clearTimeout(timer); }
+  if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
+  return data;
 }
 
 function availableList() {

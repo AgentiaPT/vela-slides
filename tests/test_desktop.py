@@ -148,6 +148,9 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
             "window.unmaximize", "window.isMaximized", "window.focus",
+            # CR16: the OS window title names the open deck. Takes a string,
+            # carries no path and no other capability.
+            "window.setTitle",
         }
         self.assertEqual(window_entries, expected)
 
@@ -307,8 +310,30 @@ class AgentsBridgeInvariants(unittest.TestCase):
     def test_handshake_prefers_window_nlport_suffix(self):
         # Must prefer the NL_PORT-keyed handshake file over the legacy
         # unsuffixed name, matching the gatekeeper's own keying (main.go).
+        # CR19: the keyed name must win for the WHOLE poll. The unsuffixed name
+        # is tried only after the poll ends, so a pair left behind by a dead
+        # gatekeeper cannot be adopted while this window's own pair is still
+        # being written. Behaviour is covered by tests/test_desktop_neutralino.cjs.
         self.assertIn("window.NL_PORT", self.js)
-        self.assertIn("suffixes.push", self.js)
+        self.assertIn("const primary = keyed === null ? \"\" : keyed;", self.js)
+        body = self.js.split("async function readHandshake()")[1].split("async function ensureHandshake")[0]
+        poll = body.split("for (;;)")[1].split("}")[0] if "for (;;)" in body else ""
+        self.assertIn("readPair(dir, primary)", poll)
+        self.assertNotIn('readPair(dir, "")', poll)
+
+    def test_handshake_probes_the_gatekeeper_before_caching(self):
+        # CR19: a handshake pair on disk proves nothing — the files survive a
+        # gatekeeper that died without its cleanup. Accept a pair only after it
+        # answers on its port.
+        self.assertIn("async function gatekeeperAlive(", self.js)
+        self.assertIn("/health", self.js)
+        self.assertIn("await gatekeeperAlive(hs)", self.js)
+
+    def test_transport_failure_clears_the_cached_handshake(self):
+        # CR19: a dead port raises a transport error, not a 401. If only 401
+        # cleared the cache, the whole session stayed on a dead channel and a
+        # manual rescan could not recover it.
+        self.assertRegex(self.js, r"handshake = null;\s*\n\s*throw e;")
 
     def test_401_resets_cached_handshake(self):
         # A stale/rotated token must not be cached forever — 401 must clear it
