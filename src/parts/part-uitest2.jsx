@@ -2205,3 +2205,87 @@ function VelaUITestRunner() {
     </div>
   );
 }
+
+// ── Sprint "lantern" W6: gallery hide action, top-right icon contrast, and
+// the Editor/Gallery view switcher (CR4 / CR10 / CR11 / CR13) ──────────────
+uiSuite("W6 Views", [
+  { name: "CR4: gallery row shows hide next to delete", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    const card = await _waitFor(() => _$$("[data-testid='gallery-slide']", root)[0], 2000);
+    const hideBtn = _$("[data-testid='gallery-hide-slide']", card);
+    const delBtn = _$("[data-testid='gallery-delete-slide']", card);
+    if (!hideBtn) throw new Error("gallery-hide-slide button missing next to delete");
+    if (!delBtn) throw new Error("gallery-delete-slide button missing");
+    if (!/^(Hide|Unhide) slide/.test(hideBtn.title)) throw new Error(`unexpected hide-slide tooltip: ${hideBtn.title}`);
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+  }},
+  { name: "CR4: hide toggles the slide's hidden state and tooltip", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    const card = await _waitFor(() => _$$("[data-testid='gallery-slide']", root)[0], 2000);
+    const hideBtn = _$("[data-testid='gallery-hide-slide']", card);
+    if (!hideBtn) throw new Error("gallery-hide-slide button missing");
+    const wasHidden = /^Unhide/.test(hideBtn.title);
+    _click(hideBtn);
+    await _waitFor(() => {
+      const b = _$("[data-testid='gallery-hide-slide']", card);
+      return b && (wasHidden ? /^Hide slide/.test(b.title) : /^Unhide slide/.test(b.title));
+    }, 1500);
+    // Restore the original state so the suite is idempotent for a re-run.
+    _click(_$("[data-testid='gallery-hide-slide']", card));
+    await _wait(150);
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+  }},
+  { name: "CR13: Editor/Gallery view switcher visible next to Present", fn: async () => {
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    const sw = await _waitFor(() => _$("[data-testid='view-switcher']"), 2000);
+    const editorSeg = _$("[data-testid='view-switch-editor']", sw);
+    const gallerySeg = _$("[data-testid='view-switch-gallery']", sw);
+    if (!editorSeg || !gallerySeg) throw new Error("view switcher segments missing");
+    if (editorSeg.getAttribute("aria-pressed") !== "true") throw new Error("Editor segment should start active");
+    if (gallerySeg.getAttribute("aria-pressed") !== "false") throw new Error("Gallery segment should start inactive");
+  }},
+  { name: "CR13: Gallery segment opens gallery and reflects active state", fn: async () => {
+    const gallerySeg = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
+    _click(gallerySeg);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    await _waitFor(() => _$("[data-testid='view-switch-gallery']")?.getAttribute("aria-pressed") === "true", 1500);
+    const editorSeg = _$("[data-testid='view-switch-editor']");
+    if (editorSeg.getAttribute("aria-pressed") !== "false") throw new Error("Editor segment should be inactive while gallery is open");
+    _click(editorSeg);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+    await _waitFor(() => _$("[data-testid='view-switch-editor']")?.getAttribute("aria-pressed") === "true", 1500);
+  }},
+  { name: "CR10/CR11: fullscreen top-right icons carry a guaranteed-contrast backdrop", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    _key("f");
+    await _waitFor(() => !_$("header"), 3000);
+    const gallery = await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+    const edit = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    // Root cause was no guaranteed backdrop: contrast depended on whatever live
+    // slide content sat behind the icon. A real chip must have visible alpha.
+    const hasBackdrop = (el) => {
+      const bg = getComputedStyle(el).backgroundColor;
+      const m = bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) return false;
+      const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
+      const alpha = parts.length > 3 ? parts[3] : 1;
+      return alpha > 0.3;
+    };
+    if (!hasBackdrop(gallery)) throw new Error("gallery-toggle has no guaranteed-contrast backdrop (CR10 regression)");
+    if (!hasBackdrop(edit)) throw new Error("present-edit-toggle has no guaranteed-contrast backdrop (CR11 regression)");
+    _key("f");
+    await _waitFor(() => _$("header"), 3000);
+  }},
+]);
