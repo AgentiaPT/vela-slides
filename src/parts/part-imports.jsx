@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.72";
+const VELA_VERSION = "13.73";
 const VELA_CHANGELOG = [
+  { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
   { v: "13.68", d: "Layout: contained and balanced images in mixed and media-only columns while preserving alignment." },
   { v: "13.67", d: "Reliability: fixed the AI slide adder sometimes leaving the wrong slide selected after inserting a new AI slide." },

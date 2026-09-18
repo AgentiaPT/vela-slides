@@ -24,6 +24,7 @@ the durable, maintainer-facing version).
 | 13 | Namespace forgery | deck input could forge a renderer-private (`_`-prefixed) flag | `8d005e2` |
 | 14 | `.map(fn)` index-as-arg | `.map(sanitizeBlock)` would have passed the index as recursion depth | palisade sprint, `8d005e2` |
 | 15 | UI redress via deck styling | deck SVG could reach app chrome through a document-global style element and inline layout/positioning CSS | `97fe76c` |
+| 16 | Transform after injection (forgeable anchor) | a build-step pattern ran over the assembled buffer, so deck content could forge its anchor and re-aim it at trusted source; the shipped path was the default one and had no test | this change |
 | — | mutation XSS (SVG↔HTML re-parse) | `<style>` attribute pass skipped; nodes outside the SVG namespace; needed an output-side re-parse backstop | `2e4f653`, `64c2144` |
 | — | Path containment | fs-guard: volume roots, shallow roots, nested OS-critical dirs; archive builder followed symlinks | `2e4f653`, `64c2144`, `5d2bdf9`, `77cff62` |
 | — | CSP asymmetry | desktop `<meta>` CSP allowed `https:` image/font egress that `serve.py` blocked | `8a2295a` |
@@ -35,6 +36,14 @@ the durable, maintainer-facing version).
   CSS-scrubber hardening chain were each a *sequence* of fixes, every round found
   by re-reviewing the previous one. After landing a security fix, re-attack it
   before closing.
+- **An audit's scope statement is where the next bug hides.** The injection
+  hardening enumerated every replace *whose replacement embeds data*; the
+  inverse — patterns that *scan* data already embedded — was never listed, and
+  that is where this class lived. When you write down what an audit covered,
+  write down the complement too, then check it.
+- **Test the path users actually take.** The default build flag had no test at
+  all, while the encoder beside it had a unit test. Cover the pipeline
+  end-to-end, not only the helper.
 - **Turn a fix into a lint when the class can regress.** `check_deck_key_drift`
   and `check_css_fetch_sink_gate` in `tools/vela-dev/scripts/lint.py` are the
   pattern: the allowlist is the single source of truth and CI fails on drift.

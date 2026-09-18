@@ -1133,13 +1133,16 @@ class VelaLocalServer:
         with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             vela_jsx = f.read()
 
-        # Inject deck data into STARTUP_PATCH
-        deck_json_str = json.dumps(deck_data, ensure_ascii=False, separators=(",", ":"))
+        # SECURITY — ORDERING IS A CONTROL, NOT A STYLE CHOICE. Every transform
+        # over the trusted app source and the trusted HTML shell runs FIRST; the
+        # untrusted deck is injected LAST. A pattern run over a buffer that
+        # already holds deck bytes can be re-anchored by deck-chosen content,
+        # which lets deck data delete or rewrite trusted source. Keep the deck
+        # injection and the placeholder substitution as the final two steps, and
+        # add new transforms above them, never below.
         marker = "const STARTUP_PATCH = null;"
         if marker not in vela_jsx:
             raise RuntimeError("STARTUP_PATCH marker not found in template")
-        deck_json_str = escape_for_script_context(deck_json_str)
-        vela_jsx = vela_jsx.replace(marker, f"const STARTUP_PATCH = {deck_json_str};", 1)
 
         # Strip ES module imports → UMD globals
         vela_jsx = re.sub(r'^import\s+\{[^}]+\}\s+from\s+"react";\s*$', '', vela_jsx, flags=re.MULTILINE)
@@ -1170,20 +1173,41 @@ class VelaLocalServer:
         # block early, ejecting the rest of the source as live HTML (rendering it
         # as text and executing the embedded test payloads). Backslash-breaking
         # the token is a no-op inside JS string/regex literals (the runtime value
-        # is byte-identical) but hides the sequence from the HTML parser. The
-        # deck JSON injected above is handled separately by
-        # escape_for_script_context (a JSON-string escaper — not applicable to JS
-        # source, which must keep its literal "<" / ">").
+        # is byte-identical) but hides the sequence from the HTML parser. This
+        # pass covers the TRUSTED source only — it runs before injection by
+        # design. The deck carries no "<" or ">" of its own: those are already
+        # \\uXXXX-escaped by escape_for_script_context below (a JSON-string
+        # escaper — not applicable to JS source, which must keep its literals).
         vela_jsx = re.sub(r"</(?=script)", r"<\\/", vela_jsx, flags=re.IGNORECASE)
         vela_jsx = vela_jsx.replace("<!--", "<\\!--")
 
-        # Assemble HTML
-        html = html_template.replace("__VELA_JSX_PLACEHOLDER__", vela_jsx)
-        html = html.replace("__VELA_CHANNEL_PORT__", str(eff_port))
+        # Trusted HTML shell: every rewrite of local.html happens here, while the
+        # shell still holds no deck bytes (see the ordering note above).
+        html = html_template.replace("__VELA_CHANNEL_PORT__", str(eff_port))
         html = html.replace("'__VELA_DECK_PATH__'", json.dumps(deck_label))
-
         if self._vendor_available:
             html = html.replace("https://unpkg.com/@babel/standalone@7.24.0/babel.min.js", "/vendor/babel.min.js")
+
+        # Folder-mode sync URLs and the home-link overlay: also shell-only.
+        safe_name = quote(deck_label, safe="")
+        html = html.replace("fetch('/poll?v='", f"fetch('/poll/{safe_name}?v='")
+        html = html.replace("fetch('/poll?v=0')", f"fetch('/poll/{safe_name}?v=0')")
+        html = html.replace("fetch('/save',", f"fetch('/save/{safe_name}',")
+        home_link = (
+            '<a href="/" title="Back to decks" id="vela-home-link" style="'
+            'position:fixed;top:0;left:0;width:44px;height:44px;z-index:10000;'
+            'display:flex;align-items:center;justify-content:center;'
+            'text-decoration:none;cursor:pointer;'
+            '"></a>'
+        )
+        html = html.replace("</body>", home_link + "</body>")
+
+        # LAST: untrusted deck into the app source, app source into the shell.
+        # Nothing may transform either buffer after this point.
+        deck_json_str = json.dumps(deck_data, ensure_ascii=False, separators=(",", ":"))
+        deck_json_str = escape_for_script_context(deck_json_str)
+        vela_jsx = vela_jsx.replace(marker, f"const STARTUP_PATCH = {deck_json_str};", 1)
+        html = html.replace("__VELA_JSX_PLACEHOLDER__", vela_jsx)
 
         return html
 
@@ -1199,23 +1223,9 @@ class VelaLocalServer:
         self.set_deck_data(deck_name, deck_data)
         self._ensure_watcher(deck_name)
 
+        # _prepare_html applies the folder-mode shell rewrites itself, before the
+        # deck is injected — do not post-process the returned HTML here.
         html = self._prepare_html(deck_data, deck_name)
-
-        # Patch sync URLs to include deck name for folder mode
-        safe_name = quote(deck_name, safe="")
-        html = html.replace("fetch('/poll?v='", f"fetch('/poll/{safe_name}?v='")
-        html = html.replace("fetch('/poll?v=0')", f"fetch('/poll/{safe_name}?v=0')")
-        html = html.replace("fetch('/save',", f"fetch('/save/{safe_name}',")
-
-        # Home link overlay for folder mode navigation
-        home_link = (
-            '<a href="/" title="Back to decks" id="vela-home-link" style="'
-            'position:fixed;top:0;left:0;width:44px;height:44px;z-index:10000;'
-            'display:flex;align-items:center;justify-content:center;'
-            'text-decoration:none;cursor:pointer;'
-            '"></a>'
-        )
-        html = html.replace("</body>", home_link + "</body>")
 
         return html.encode("utf-8")
 
