@@ -5036,23 +5036,30 @@ function setVelaReviewFilter(v) {
   const next = v === true;
   if (next === _velaReviewFilter) return;
   _velaReviewFilter = next;
-  _velaReviewKeep = new Set(); // a new review session starts with no pinned rows
+  _velaReviewKeep = new WeakSet(); // a new review session starts with no pinned rows
   _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
 }
-// Rows pinned to the review list for the rest of THIS review session, keyed
-// "<itemId>:<index>". A slide the author hides while review mode is on leaves the
-// list by the needs-review rule, and the eye control leaves with it — so the hide
-// could not be undone in place. Hiding therefore pins the row: it stays listed and
-// shows as hidden. The pin only changes what the TOC LISTS. The count and the slide
-// rotation still read velaSlideNeedsReview, so a hidden slide still needs no
-// approval. Session-only, never persisted, cleared on every mode change.
-let _velaReviewKeep = new Set();
-function velaReviewKeepKey(itemId, index) { return String(itemId) + ":" + index; }
-function velaReviewKeepAdd(itemId, index) { _velaReviewKeep.add(velaReviewKeepKey(itemId, index)); }
-function velaReviewKeepHas(itemId, index) { return _velaReviewKeep.has(velaReviewKeepKey(itemId, index)); }
+// Rows pinned to the review list for the rest of THIS review session. A slide the
+// author hides while review mode is on leaves the list by the needs-review rule, and
+// the eye control leaves with it — so the hide could not be undone in place. Hiding
+// therefore pins the row: it stays listed and shows as hidden. The pin only changes
+// what the TOC LISTS. The count and the slide rotation still read
+// velaSlideNeedsReview, so a hidden slide still needs no approval. Session-only,
+// never persisted, cleared on every mode change.
+//
+// The key is the SLIDE OBJECT, not its position. A slide carries no id of its own,
+// and every reducer action that deletes, moves, drag-reorders or re-homes a slide
+// keeps the other slide objects by reference — so the object is the only identity
+// that survives those actions. A positional key pointed at the wrong slide, or at
+// none, as soon as an index shifted. A WeakSet also lets a deleted slide go.
+// Because the key is the object, only the reducer can set the pin: the hide itself
+// makes a NEW slide object, so velaReviewKeepAdd runs there and returns that slide.
+let _velaReviewKeep = new WeakSet();
+function velaReviewKeepAdd(slide) { if (slide && typeof slide === "object") _velaReviewKeep.add(slide); return slide; }
+function velaReviewKeepHas(slide) { return !!slide && typeof slide === "object" && _velaReviewKeep.has(slide); }
 // ONE predicate for "does this slide get a row while review mode is on" — the row
 // list, the section note and the keyboard nav rail all read it, so they cannot drift.
-function velaReviewRowVisible(s, itemId, index) { return velaSlideNeedsReview(s) || velaReviewKeepHas(itemId, index); }
+function velaReviewRowVisible(s) { return velaSlideNeedsReview(s) || velaReviewKeepHas(s); }
 // An EMPTY review list has three causes and they are not the same news. The banner
 // and the per-section note both read this, so neither can report "hidden" as
 // "approved" — an author who hid every slide has approved nothing.
@@ -5264,7 +5271,7 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } const next = sanitizeSlide(updated) || s; return velaReviewKeepHas(s) ? velaReviewKeepAdd(next) : next; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
@@ -5272,7 +5279,9 @@ function innerReducer(state, a) {
     // Multi-slide insert (paste) as a SINGLE reduce — splices K sanitized slides in
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
-    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // Hiding a slide while review mode is on pins the NEW slide object, so the row
+    // stays listed and the author can undo the hide in place (see _velaReviewKeep).
+    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : velaReviewKeepAdd({ ...s, hidden: true })) : s) } : i);
     // CR7: approve / un-approve one slide. `reviewed` is DELETED rather than set to
     // false so a deck that was authored before this feature stays byte-identical.
     // Undoable on purpose (same as TOGGLE_SLIDE_HIDDEN) — a mis-click must be Ctrl+Z.
@@ -9948,8 +9957,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
   const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
-  // Same gesture as the row eye control, so it pins the row the same way.
-  const ctxHide = (si) => ctxTargets(si).forEach((i) => { velaReviewKeepAdd(item.id, i); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }); });
+  // Same gesture as the row eye control; the reducer pins the row the same way.
+  const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
   // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
   // focus in the SOURCE section on the slide that slides up into the first vacated
@@ -10124,7 +10133,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         // A row the author HID from here stays pinned for the rest of the review
         // session (velaReviewRowVisible), so the eye control never disappears with
         // the row and the hide can be undone in place.
-        if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;
+        if (reviewFilter && !velaReviewRowVisible(s)) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -10182,7 +10191,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             ) : (
               <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
-            <span onClick={(e) => { e.stopPropagation(); velaReviewKeepAdd(item.id, si); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
               title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
@@ -10203,7 +10212,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       }); })()}
       {/* CR7: a section whose slides are all approved must say so — a section that just
           vanished from the outline would read as data loss. */}
-      {reviewFilter && item.slides.length > 0 && item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si)) && (() => {
+      {reviewFilter && item.slides.length > 0 && item.slides.every((s) => !velaReviewRowVisible(s)) && (() => {
         // Say what really happened. A section whose slides are all HIDDEN has no
         // approvals, so "all approved" would be untrue.
         const ap = item.slides.filter((s) => s.reviewed === true).length;
@@ -10502,7 +10511,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
       // CR7: keyboard TOC nav follows the same rule as the list — a slide that needs
       // no review is out of the rotation while review mode is on.
-      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue; rail.push({ itemId: item.id, si }); }
+      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si])) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };
@@ -16664,27 +16673,27 @@ uiSuite("Link mark placement", [
 uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
   { name: "a slide hidden during a review session KEEPS its row, so the eye control stays reachable", fn: async () => _rvqWith(true, async () => {
     const plain = _rvqSlide({});
-    if (!velaReviewRowVisible(plain, "m0", 0)) throw new Error("a plain slide has no row");
+    if (!velaReviewRowVisible(plain)) throw new Error("a plain slide has no row");
     const hidden = _rvqSlide({ hidden: true });
-    if (velaReviewRowVisible(hidden, "m0", 0)) throw new Error("an already-hidden slide should not be listed");
-    velaReviewKeepAdd("m0", 0); // what the TOC eye control does before it dispatches
-    if (!velaReviewRowVisible(hidden, "m0", 0)) throw new Error("the row the author hid vanished under them");
+    if (velaReviewRowVisible(hidden)) throw new Error("an already-hidden slide should not be listed");
+    velaReviewKeepAdd(hidden); // what the reducer does when the author hides the slide
+    if (!velaReviewRowVisible(hidden)) throw new Error("the row the author hid vanished under them");
     // Only the LIST changes. The count and the rotation must still drop the slide.
     if (velaSlideNeedsReview(hidden)) throw new Error("a pinned row re-entered the review count");
-    if (velaReviewRowVisible(hidden, "m0", 1)) throw new Error("the pin leaked onto another row");
-    if (velaReviewRowVisible(hidden, "m1", 0)) throw new Error("the pin leaked onto another module");
+    if (velaReviewRowVisible(_rvqSlide({ hidden: true }))) throw new Error("the pin leaked onto another slide");
     return true;
   })},
   { name: "pinned rows do not outlive the review session", fn: async () => {
     const was = velaReviewFilterOn();
     try {
       setVelaReviewFilter(true);
-      velaReviewKeepAdd("m0", 0);
-      if (!velaReviewKeepHas("m0", 0)) throw new Error("the pin was not recorded");
+      const s0 = _rvqSlide({ hidden: true });
+      velaReviewKeepAdd(s0);
+      if (!velaReviewKeepHas(s0)) throw new Error("the pin was not recorded");
       setVelaReviewFilter(false);
-      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin survived leaving review mode");
+      if (velaReviewKeepHas(s0)) throw new Error("a pin survived leaving review mode");
       setVelaReviewFilter(true);
-      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin came back in the next review session");
+      if (velaReviewKeepHas(s0)) throw new Error("a pin came back in the next review session");
     } finally { setVelaReviewFilter(was); }
     return true;
   }},
@@ -16716,6 +16725,155 @@ uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
     if (_rvqLeft(h.present) !== 1) throw new Error("the review count did not follow the redo");
     return true;
   })},
+]);
+
+// ── Review mode: the pinned row must survive a delete and a reorder ──────────────
+// The pin used to be keyed by (module id, slide index). A delete or a move shifts the
+// indices, so the pin pointed at the wrong slide or at none and the hidden row left
+// the review list — the author could no longer undo the hide in place. The key is now
+// the slide OBJECT, which every one of these actions keeps by reference.
+const _rvpListed = (st) => st.lanes[0].items[0].slides.filter((s) => velaReviewRowVisible(s)).map((s) => s.title).join(",");
+const _rvpHide = (st, index) => innerReducer(st, { type: "TOGGLE_SLIDE_HIDDEN", id: "m0", index });
+const _rvpFixture = () => _rvqState([[_rvqSlide({ title: "A" }), _rvqSlide({ title: "B" }), _rvqSlide({ title: "C" })]]);
+
+uiSuite("Review mode: a pinned row survives a delete and a reorder", [
+  { name: "the hidden row stays listed after ANOTHER slide is deleted", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // the author hides B while review mode is on
+    if (_rvpListed(st) !== "A,B,C") throw new Error("the row the author hid left the list at once: " + _rvpListed(st));
+    st = innerReducer(st, { type: "REMOVE_SLIDES", id: "m0", indices: [0] }); // delete A
+    if (_rvpListed(st) !== "B,C") throw new Error("the pinned hidden row was lost after a delete: " + _rvpListed(st));
+    // The pin follows the SLIDE, never the position that slide used to hold.
+    const slides = st.lanes[0].items[0].slides;
+    if (!velaReviewKeepHas(slides[0])) throw new Error("the hidden slide lost its pin");
+    if (velaReviewKeepHas(slides[1])) throw new Error("the pin moved onto the slide that took the old index");
+    // Only the LIST changes: a hidden slide still needs no approval.
+    if (_rvqLeft(st) !== 1) throw new Error("the review count counted the hidden slide: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "the hidden row stays listed after a drag reorder and after an arrow move", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "REORDER_SLIDE", id: "m0", from: 0, to: 2 }); // drag A to the end
+    if (_rvpListed(st) !== "B,C,A") throw new Error("the pinned hidden row was lost after a drag reorder: " + _rvpListed(st));
+    st = innerReducer(st, { type: "MOVE_SLIDE", id: "m0", from: 0, dir: 1 }); // arrow-move B down
+    if (_rvpListed(st) !== "C,B,A") throw new Error("the pinned hidden row was lost after an arrow move: " + _rvpListed(st));
+    if (_rvqLeft(st) !== 2) throw new Error("the review count changed under a reorder: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "the hide is still undoable in place after the slide has moved", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "REMOVE_SLIDES", id: "m0", indices: [0] }); // delete A, so B is index 0
+    st = _rvpHide(st, 0); // the author clicks the eye control again
+    const b = st.lanes[0].items[0].slides[0];
+    if (b.hidden) throw new Error("the slide stayed hidden");
+    if (!velaReviewRowVisible(b)) throw new Error("the un-hidden slide left the list");
+    if (_rvqLeft(st) !== 2) throw new Error("the un-hidden slide did not return to the count: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "an edit to the pinned slide keeps its row", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "UPDATE_SLIDE", id: "m0", index: 1, merge: true, patch: { title: "B2" } });
+    if (_rvpListed(st) !== "A,B2,C") throw new Error("an edit dropped the pinned row: " + _rvpListed(st));
+    return true;
+  })},
+]);
+
+// ── Link mark on an ICON ROW: measured against the LABEL, not the item ───────────
+// An icon-row item has a second line of its own (the description). The reference for
+// the mark is the label the link belongs to — the item TITLE — so these measure the
+// mark against the last line of that title. Measuring against the whole item instead
+// reports every correct icon row as broken, because the description line sits below
+// the title and is usually wider.
+async function _lmIconProbe(width, items) {
+  const mk = window._createRoot;
+  if (typeof mk !== "function") throw new Error("no React root factory on this host");
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:0;top:0;width:" + width + "px;visibility:hidden;z-index:-1";
+  document.body.appendChild(host);
+  const root = mk(host);
+  try {
+    root.render(React.createElement(RenderBlock, {
+      block: { type: "icon-row", items }, staggerIdx: 0, slideTheme: _lmTheme,
+      editable: true, onChange: () => {}, presenting: false,
+    }));
+    for (let i = 0; i < 60 && !host.querySelector("[data-link-mark]"); i++) await _wait(25);
+    const marks = [...host.querySelectorAll("[data-link-mark]")];
+    if (!marks.length) throw new Error("the linked icon-row item rendered no link mark");
+    const hostRight = host.getBoundingClientRect().right;
+    return marks.map((m) => {
+      const label = m.parentElement; // the mark must be an inline suffix OF the label
+      const mr = m.getBoundingClientRect();
+      const rects = [];
+      const walk = (n) => {
+        if (n === m) return;
+        if (n.nodeType === 3 && n.textContent.trim()) {
+          const rg = document.createRange(); rg.selectNodeContents(n);
+          for (const b of rg.getClientRects()) if (b.width > 0 && b.height > 0) rects.push(b);
+        }
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(label);
+      if (!rects.length) throw new Error("the icon-row label rendered no text");
+      const lastY = Math.max(...rects.map((r) => r.y));
+      const last = rects.filter((r) => Math.abs(r.y - lastY) < 3);
+      const lastRight = Math.max(...last.map((r) => r.right));
+      const lastTop = Math.min(...last.map((r) => r.y));
+      const lastBottom = Math.max(...last.map((r) => r.bottom));
+      const ys = [...new Set(rects.map((r) => Math.round(r.y)))].sort((a, b) => a - b);
+      return {
+        inLabel: label.contains(m) && rects.length > 0,
+        lines: ys.filter((y, i) => i === 0 || y - ys[i - 1] > 3).length,
+        gap: mr.left - lastRight,
+        onLastLine: mr.top < lastBottom - 1 && mr.bottom > lastTop + 1,
+        overflow: mr.right - hostRight,
+      };
+    });
+  } finally {
+    try { root.unmount(); } catch (_) {}
+    host.remove();
+  }
+}
+const _lmIconOk = (m, what) => {
+  if (!m.inLabel) throw new Error(what + ": the mark is not a child of its label");
+  if (!m.onLastLine) throw new Error(what + ": the mark misses the label's last line");
+  if (!_lmGapOk(m.gap)) throw new Error(what + ": gap " + m.gap.toFixed(1) + "px");
+  if (m.overflow > 0.5) throw new Error(what + ": the mark spills " + m.overflow.toFixed(1) + "px past the block");
+  return true;
+};
+
+uiSuite("Link mark placement on an icon row", [
+  { name: "a SHORT icon-row label holds the mark on its own line", fn: async () => {
+    const [m] = await _lmIconProbe(600, [{ icon: "Zap", title: "Short", text: "A description line that is much wider than the title above it", link: "https://example.com/a" }]);
+    if (m.lines !== 1) throw new Error("the probe title wrapped unexpectedly");
+    return _lmIconOk(m, "short label");
+  }},
+  { name: "a LONG single-line icon-row label keeps the same gap", fn: async () => {
+    const [m] = await _lmIconProbe(700, [{ icon: "Zap", title: "A long single line label that still fits on one line", link: "https://example.com/b" }]);
+    if (m.lines !== 1) throw new Error("the probe title wrapped unexpectedly");
+    return _lmIconOk(m, "long single line");
+  }},
+  { name: "an icon-row label that wraps to two lines keeps the mark on the last line", fn: async () => {
+    const [m] = await _lmIconProbe(300, [{ icon: "Zap", title: "A label that fills a little more than one single line here", text: "sub", link: "https://example.com/c" }]);
+    if (m.lines < 2) throw new Error("the probe title did not wrap");
+    return _lmIconOk(m, "two-line label");
+  }},
+  { name: "a MANY-line icon-row label keeps the mark on the last line", fn: async () => {
+    const [m] = await _lmIconProbe(180, [{ icon: "Zap", title: _LM_LONG, text: "a much wider description line under the wrapped title", link: "https://example.com/d" }]);
+    if (m.lines < 4) throw new Error("the probe title did not wrap enough (" + m.lines + " lines)");
+    return _lmIconOk(m, "many-line label");
+  }},
+  { name: "five linked items in one icon row all measure the same", fn: async () => {
+    const out = await _lmIconProbe(320, [
+      { icon: "Zap", title: "One", text: "first description", link: "https://example.com/1" },
+      { icon: "Shield", title: "Two two two", link: "https://example.com/2" },
+      { icon: "Globe", title: _LM_LONG, text: "third description", link: "https://example.com/3" },
+      { icon: "Star", title: "Plain item with no link" },
+      { icon: "Circle", title: "Four four", text: "fourth description", link: "https://example.com/4" },
+      { icon: "Zap", title: "Five five five five", link: "https://example.com/5" },
+    ]);
+    if (out.length !== 5) throw new Error("expected 5 marks, got " + out.length);
+    out.forEach((m, i) => _lmIconOk(m, "item " + (i + 1)));
+    return true;
+  }},
 ]);
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vela Product Tour ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

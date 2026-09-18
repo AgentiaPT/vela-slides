@@ -35,23 +35,30 @@ function setVelaReviewFilter(v) {
   const next = v === true;
   if (next === _velaReviewFilter) return;
   _velaReviewFilter = next;
-  _velaReviewKeep = new Set(); // a new review session starts with no pinned rows
+  _velaReviewKeep = new WeakSet(); // a new review session starts with no pinned rows
   _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
 }
-// Rows pinned to the review list for the rest of THIS review session, keyed
-// "<itemId>:<index>". A slide the author hides while review mode is on leaves the
-// list by the needs-review rule, and the eye control leaves with it — so the hide
-// could not be undone in place. Hiding therefore pins the row: it stays listed and
-// shows as hidden. The pin only changes what the TOC LISTS. The count and the slide
-// rotation still read velaSlideNeedsReview, so a hidden slide still needs no
-// approval. Session-only, never persisted, cleared on every mode change.
-let _velaReviewKeep = new Set();
-function velaReviewKeepKey(itemId, index) { return String(itemId) + ":" + index; }
-function velaReviewKeepAdd(itemId, index) { _velaReviewKeep.add(velaReviewKeepKey(itemId, index)); }
-function velaReviewKeepHas(itemId, index) { return _velaReviewKeep.has(velaReviewKeepKey(itemId, index)); }
+// Rows pinned to the review list for the rest of THIS review session. A slide the
+// author hides while review mode is on leaves the list by the needs-review rule, and
+// the eye control leaves with it — so the hide could not be undone in place. Hiding
+// therefore pins the row: it stays listed and shows as hidden. The pin only changes
+// what the TOC LISTS. The count and the slide rotation still read
+// velaSlideNeedsReview, so a hidden slide still needs no approval. Session-only,
+// never persisted, cleared on every mode change.
+//
+// The key is the SLIDE OBJECT, not its position. A slide carries no id of its own,
+// and every reducer action that deletes, moves, drag-reorders or re-homes a slide
+// keeps the other slide objects by reference — so the object is the only identity
+// that survives those actions. A positional key pointed at the wrong slide, or at
+// none, as soon as an index shifted. A WeakSet also lets a deleted slide go.
+// Because the key is the object, only the reducer can set the pin: the hide itself
+// makes a NEW slide object, so velaReviewKeepAdd runs there and returns that slide.
+let _velaReviewKeep = new WeakSet();
+function velaReviewKeepAdd(slide) { if (slide && typeof slide === "object") _velaReviewKeep.add(slide); return slide; }
+function velaReviewKeepHas(slide) { return !!slide && typeof slide === "object" && _velaReviewKeep.has(slide); }
 // ONE predicate for "does this slide get a row while review mode is on" — the row
 // list, the section note and the keyboard nav rail all read it, so they cannot drift.
-function velaReviewRowVisible(s, itemId, index) { return velaSlideNeedsReview(s) || velaReviewKeepHas(itemId, index); }
+function velaReviewRowVisible(s) { return velaSlideNeedsReview(s) || velaReviewKeepHas(s); }
 // An EMPTY review list has three causes and they are not the same news. The banner
 // and the per-section note both read this, so neither can report "hidden" as
 // "approved" — an author who hid every slide has approved nothing.
@@ -263,7 +270,7 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } const next = sanitizeSlide(updated) || s; return velaReviewKeepHas(s) ? velaReviewKeepAdd(next) : next; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
@@ -271,7 +278,9 @@ function innerReducer(state, a) {
     // Multi-slide insert (paste) as a SINGLE reduce — splices K sanitized slides in
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
-    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // Hiding a slide while review mode is on pins the NEW slide object, so the row
+    // stays listed and the author can undo the hide in place (see _velaReviewKeep).
+    case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : velaReviewKeepAdd({ ...s, hidden: true })) : s) } : i);
     // CR7: approve / un-approve one slide. `reviewed` is DELETED rather than set to
     // false so a deck that was authored before this feature stays byte-identical.
     // Undoable on purpose (same as TOGGLE_SLIDE_HIDDEN) — a mis-click must be Ctrl+Z.

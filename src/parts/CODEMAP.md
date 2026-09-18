@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch
-- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter _velaReviewKeep velaReviewKeepKey velaReviewKeepAdd velaReviewKeepHas velaReviewRowVisible velaReviewEmptyKind useVelaReviewFilter velaFindItem velaSlideNeedsReview velaReviewSkipIndex velaReviewItemsInOrder velaReviewNextTarget NO_HISTORY MAX_HISTORY innerReducer
+- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter _velaReviewKeep velaReviewKeepAdd velaReviewKeepHas velaReviewRowVisible velaReviewEmptyKind useVelaReviewFilter velaFindItem velaSlideNeedsReview velaReviewSkipIndex velaReviewItemsInOrder velaReviewNextTarget NO_HISTORY MAX_HISTORY innerReducer
 - Comment Actions: historyInit reducer
 
 ### part-engine.jsx
@@ -127,6 +127,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Header reflow — every control stays inside a narrow window: HEADER_REFLOW_WIDTHS
 - Review mode: the approval queue must drain to zero: _rvqSlide _rvqState _rvqLeft _rvqApprove _rvqWith
 - Link mark: a WRAPPED label keeps the mark on its LAST line (v13.76): _lmTheme _lmProbe _LM_LONG _lmGapOk
+- Review mode: the pinned row must survive a delete and a reorder: _rvpListed _rvpHide _rvpFixture
+- Link mark on an ICON ROW: measured against the LABEL, not the item: _lmIconProbe _lmIconOk
 
 ### part-demo.jsx
 - Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
@@ -327,6 +329,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 547
 - part-blocks.jsx: 764-line unbannered stretch after line 819
 - part-canvas.jsx: 454-line unbannered stretch after line 41
+- part-reducer.jsx: 355-line unbannered stretch after line 21
 - part-slidepanel.jsx: 450-line unbannered stretch after line 206
 - part-slidepanel.jsx: 410-line unbannered stretch after line 968
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
