@@ -771,8 +771,13 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (n > 1 && run.w > 0 && fd && fd.widths) {
           let rawW = 0;
           for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
-            rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
+            // Measure by WinAnsi BYTE, not by code unit. /Widths is indexed by
+            // the encoded byte (FirstChar 32), so a char such as € (U+20AC,
+            // WinAnsi 0x80) must be looked up at its byte — reading it at the
+            // code unit falls through to the 500 default and the Tc correction
+            // then squeezes or spreads the whole run.
+            const byte = winAnsiByte(run.text.codePointAt(ci));
+            rawW += byte >= 32 ? (fd.widths[byte - 32] || 0) : 500;
           }
           const rawPdfW = rawW * run.fontSize / 1000;
           // tc such that: rawPdfW + tc * (n-1) ≈ domW
