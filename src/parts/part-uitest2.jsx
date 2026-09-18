@@ -1986,6 +1986,28 @@ uiSuite("Product Tour", [
 ], { setup: _productTourSetup });
 
 // ━━━ Branding side pane + accent-bar zero height (CR8/CR9) ━━━━━━━━━━━━━━
+// Commit a value into a React-controlled range input. `_type` writes through
+// the native value setter only, so React's internal value tracker still holds
+// the old string: when the new value EQUALS the current one, React drops the
+// change event and the reducer never sees it. The accent-height slider already
+// sits at its 4px default, so a plain `_type(el, "4")` is a silent no-op and
+// the test measures nothing. Clear the tracker first so every write commits.
+const _commitRange = (el, value) => {
+  if (!el) throw new Error("commitRange: element not found");
+  if (el._valueTracker) el._valueTracker.setValue("");
+  _type(el, String(value));
+};
+
+// Accent-bar height that BrandingOverlay renders for a given branding object,
+// or null when it renders no bar at all. Reads the element tree, so it checks
+// the render contract without depending on the canvas scale factor.
+const _accentBarHeight = (branding) => {
+  const tree = BrandingOverlay({ branding, index: 0, total: 1 });
+  const kids = tree?.props?.children || [];
+  const bar = kids[0];
+  return bar && bar.props ? bar.props.style.height : null;
+};
+
 uiSuite("Branding side pane + accent-bar zero (CR8/CR9)", [
   { name: "Brand toggle opens a right-hand side pane", fn: async () => {
     let pane = _$("[data-testid='branding-panel']");
@@ -2011,20 +2033,34 @@ uiSuite("Branding side pane + accent-bar zero (CR8/CR9)", [
     const heightInput = _$("[data-testid='branding-accent-height']");
     if (!heightInput) throw new Error("accent-height control not found");
     // Drive to a non-zero height first (also auto-enables branding) and confirm the bar shows.
-    _type(heightInput, "4");
-    await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500)
+    _commitRange(heightInput, 4);
+    const bar4 = await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500)
       .catch(() => { throw new Error("accent bar did not appear at 4px"); });
+    // Check the inline style, not the measured box: the canvas is scaled, so a
+    // 4px bar measures smaller on screen.
+    if (parseInt(bar4.style.height, 10) !== 4) throw new Error(`accent bar height wrong at 4px: ${bar4.style.height}`);
     // Now drive it to 0 — the bar must disappear completely, not just shrink.
-    _type(_$("[data-testid='branding-accent-height']"), "0");
+    _commitRange(_$("[data-testid='branding-accent-height']"), 0);
     await _waitFor(() => !_$("[data-testid='branding-accent-bar']"), 1500)
       .catch(() => { throw new Error("accent bar still rendered at height 0"); });
     const slider = _$("[data-testid='branding-accent-height']");
     if (String(slider.value) !== "0") throw new Error(`slider snapped away from 0 (value=${slider.value})`);
   }},
   { name: "CR8: a non-zero height re-shows the bar at that height", fn: async () => {
-    _type(_$("[data-testid='branding-accent-height']"), "6");
+    _commitRange(_$("[data-testid='branding-accent-height']"), 6);
     const bar = await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500);
     if (!bar || parseInt(bar.style.height, 10) !== 6) throw new Error(`accent bar height wrong: ${bar?.style.height}`);
+  }},
+  { name: "CR8: an unset accent height keeps the 4px default", fn: () => {
+    // Only a real 0 removes the bar. An ABSENT accentHeight means "not
+    // configured" and must still get the default bar, or every deck that never
+    // named a height would silently lose its accent bar.
+    const unset = _accentBarHeight({ enabled: true, accentBar: true });
+    if (unset !== 4) throw new Error(`unset accent height did not default to 4: ${JSON.stringify(unset)}`);
+    const zero = _accentBarHeight({ enabled: true, accentBar: true, accentHeight: 0 });
+    if (zero !== null) throw new Error(`accent height 0 still rendered a bar: ${JSON.stringify(zero)}`);
+    const six = _accentBarHeight({ enabled: true, accentBar: true, accentHeight: 6 });
+    if (six !== 6) throw new Error(`accent height 6 rendered ${JSON.stringify(six)}`);
   }},
   { name: "Close button closes the side pane", fn: async () => {
     const closeBtn = _$("[data-testid='branding-close']");

@@ -121,6 +121,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
+- Branding side pane + accent-bar zero height (CR8/CR9): _commitRange _accentBarHeight
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 - Review mode (CR7) + TOC slide delete (CR14): _rvSlide _rvState _rvSlides
 - Header reflow — every control stays inside a narrow window: HEADER_REFLOW_WIDTHS
