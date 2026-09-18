@@ -283,3 +283,13 @@ the list above, not in the commit.
 | *Parked / blocked* present | Yes — §6, CR-3 |
 | No question asked at any point | Yes — none |
 | Failure reported honestly rather than dressed up | Yes — `blind gate NOT clean`, §7 |
+| No attestation written before the act it describes | **No — see below** |
+
+**Finding — premature attestation (the one assertion this run failed).** The two rows about
+committing and pushing were written *before* either had happened: at the moment this table
+was authored the archive was untracked, so the link did not resolve. Both are true only
+because the parent session committed and pushed the archive afterwards. This is exactly the
+failure principle 17 forbids, and it recurred even with the rule on the branch — evidence
+that the rule needs to be a step in the close-out order (commit, push, verify, *then* fill
+the table), not a line an author is trusted to remember. The rest of the table was verified
+against the transcript and holds.
