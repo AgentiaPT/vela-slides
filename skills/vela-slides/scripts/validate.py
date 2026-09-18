@@ -8,7 +8,7 @@ Usage:
   python3 validate.py <deck.vela>
 """
 
-import sys, json, os
+import sys, json, os, re
 
 # ── Terminal-output funnel ──────────────────────────────────────────────
 # COMPLETE MEDIATION: every human-readable byte this script writes leaves
@@ -71,6 +71,102 @@ def check_slide_numerics(slide, loc, errors):
             continue
         if not (lo <= v <= hi):
             errors.append(f"{loc}: '{key}' out of range — must be {lo}..{hi} (got {v})")
+
+
+# ── Colour / gradient placement ─────────────────────────────────────────
+# A solid-colour field and a gradient field are DIFFERENT fields with different
+# grammars. The app encodes each with its own helper (cssColor / cssGradient in
+# src/parts/part-imports.jsx). A gradient put in a solid-colour field — the
+# commonest authoring mistake, `"bg": "linear-gradient(...)"` — satisfies neither
+# helper, so the value is dropped at render and the slide falls back to the theme
+# default. Nothing warned the author, so the deck degraded silently and the whole
+# visual design of the slide changed. The same silent drop hits every other field
+# the app routes through cssColor, and the mirror-image mistake (a solid colour
+# in `bgGradient`) drops the same way.
+#
+# These patterns MIRROR the app encoders; part-imports.jsx stays the single source
+# of truth and the only security gate. This is an author-facing lint whose job is
+# agreement: a value this validator accepts must not be dropped at render, and a
+# value it rejects must be one the app really does drop. Keep the three patterns
+# below in step with cssColor / cssGradient when either changes.
+_COLOR_OK = re.compile(r"^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$", re.I)
+_GRADIENT_PREFIX = re.compile(r"^(?:repeating-)?(?:linear|radial|conic)-gradient\s*\(", re.I)
+_GRADIENT_OK = re.compile(r"^(?:repeating-)?(?:linear|radial|conic)-gradient\([a-zA-Z0-9#.,%\s()-]*\)$")
+
+# Fields the app renders through cssColor (or writes straight into a CSS `color`
+# / `background` scalar): a solid colour token only. `border` is deliberately
+# absent — it is a CSS shorthand ("1px solid rgba(...)"), not a colour scalar.
+SOLID_COLOR_KEYS = {
+    "bg", "color", "accent", "mutedColor",
+    "dotColor", "headerBg", "lineColor", "numberColor", "trackColor",
+}
+# The one field that takes a gradient function.
+GRADIENT_KEYS = {"bgGradient"}
+# The app drops any colour/gradient scalar longer than this at ingress.
+MAX_CSS_SCALAR_LEN = 500
+_COLOR_WALK_MAX_DEPTH = 12
+
+
+def check_color_fields(node, loc, errors, depth=0):
+    """Flag colour values the app would silently drop at render.
+
+    Walks a slide (its blocks, columns, grid cells and any nested item objects)
+    and reports every colour scalar that sits in the wrong field or uses a
+    grammar the renderer cannot encode. `loc` grows with the path so the message
+    names the exact block.
+    """
+    if depth > _COLOR_WALK_MAX_DEPTH:
+        return
+    if isinstance(node, list):
+        for i, child in enumerate(node):
+            check_color_fields(child, f"{loc}[{i + 1}]", errors, depth + 1)
+        return
+    if not isinstance(node, dict):
+        return
+
+    for key, value in node.items():
+        is_solid = key in SOLID_COLOR_KEYS
+        is_gradient = key in GRADIENT_KEYS
+        if is_solid or is_gradient:
+            # The app deletes any non-string shape on a CSS key at ingress.
+            if not isinstance(value, str):
+                errors.append(
+                    f"{loc}: '{key}' must be a string — a {type(value).__name__} is dropped at load")
+            elif len(value) > MAX_CSS_SCALAR_LEN:
+                errors.append(
+                    f"{loc}: '{key}' is {len(value)} chars — over the {MAX_CSS_SCALAR_LEN}-char "
+                    f"limit, so it is dropped at load")
+            elif is_solid and _GRADIENT_PREFIX.match(value.strip()):
+                if key == "bg" and depth == 0:  # the slide's own background
+                    errors.append(
+                        f"{loc}: 'bg' holds a gradient. 'bg' takes a SOLID colour only, so the "
+                        f"gradient is dropped at render and the slide falls back to the theme "
+                        f"default. Move the gradient to 'bgGradient' and set 'bg' to a solid "
+                        f"fallback colour (for example \"#0f172a\").")
+                else:
+                    errors.append(
+                        f"{loc}: '{key}' holds a gradient. This field takes a SOLID colour only, "
+                        f"so the value is dropped at render. Use a solid colour here; only "
+                        f"'bgGradient' accepts a gradient.")
+            elif is_solid and not _COLOR_OK.match(value.strip()):
+                errors.append(
+                    f"{loc}: '{key}' is not a colour Vela accepts, so it is dropped at render and "
+                    f"the theme default is used. Use #hex, rgb()/rgba(), hsl()/hsla(), or a CSS "
+                    f"colour name.")
+            elif is_gradient and not _GRADIENT_PREFIX.match(value.strip()):
+                errors.append(
+                    f"{loc}: 'bgGradient' must be a gradient function "
+                    f"(linear-gradient / radial-gradient / conic-gradient). A solid colour here is "
+                    f"dropped at render — put a solid colour in 'bg' instead.")
+            elif is_gradient and not _GRADIENT_OK.match(value.strip()):
+                errors.append(
+                    f"{loc}: 'bgGradient' contains characters the gradient encoder rejects, so it "
+                    f"is dropped at render. Use plain colour stops (hex / rgb / hsl, numbers, "
+                    f"%, deg) and no quotes, semicolons or external references.")
+        # Recurse into nested block structures (blocks, L/R columns, grid items,
+        # table cells, flow steps …) so a nested colour gets the same check.
+        if isinstance(value, (dict, list)):
+            check_color_fields(value, f"{loc}/{key}", errors, depth + 1)
 
 
 def validate(path):
@@ -139,7 +235,11 @@ def validate(path):
                     # Auto-fix low contrast: light text on light bg or dark text on dark bg
                     bg_hex = slide.get("bg", "#0A0F1C")
                     color_hex = slide.get("color", "#E6F1FF")
-                    if bg_hex and color_hex and bg_hex.startswith("#") and color_hex.startswith("#"):
+                    # Type-check first: a deck can put any JSON shape on these
+                    # keys, and .startswith() on a list/number raises. The shape
+                    # itself is reported by check_color_fields below.
+                    if (isinstance(bg_hex, str) and isinstance(color_hex, str)
+                            and bg_hex.startswith("#") and color_hex.startswith("#")):
                         try:
                             bg_r, bg_g, bg_b = [int(bg_hex.lstrip("#")[i:i+2], 16) for i in (0,2,4)]
                             fg_r, fg_g, fg_b = [int(color_hex.lstrip("#")[i:i+2], 16) for i in (0,2,4)]
@@ -157,6 +257,11 @@ def validate(path):
 
                 # Numeric layout fields (imageCols, gap, splitGap, flex ratios)
                 check_slide_numerics(slide, loc, errors)
+
+                # Colour / gradient placement, slide and every nested block.
+                # Runs before the block checks so a silently-dropped background
+                # is reported next to the slide it wrecks.
+                check_color_fields(slide, loc, errors)
 
                 # studyNotes (offline student content) check
                 sn = slide.get("studyNotes")

@@ -7,8 +7,8 @@ Complete reference for all Vela v12 slide block types (27 total).
 ```
 {
   "blocks": [ ...block objects... ],
-  "bg": "#0f172a",                              // solid background color
-  "bgGradient": "linear-gradient(135deg, ...)", // gradient (overrides bg visually)
+  "bg": "#0f172a",                              // solid background color ONLY — a gradient here is dropped at render
+  "bgGradient": "linear-gradient(135deg, ...)", // gradient (overrides bg visually); a solid color here is dropped
   "color": "#e2e8f0",                           // default text color
   "accent": "#3b82f6",                          // accent color for dots, icons, highlights
   "align": "left|center|right",                 // horizontal alignment of block stack
