@@ -29,7 +29,15 @@ Plus, for a silent sprint (`references/silent-mode.md`): `silent` (bool),
 
 ## Report arc (README.md)
 Scope table → **agentic burndown** → stats → **before/after per change** → cost/savings →
-bugs found & fixed → a short "how it was made" note. Cross-link `plan-*.md`.
+bugs found & fixed → **out of scope — found, not fixed** → a short "how it was made" note.
+Cross-link `plan-*.md`.
+
+**Out of scope — found, not fixed** is mandatory and is included even when empty ("none
+found" is information). One entry per defect a worker or validator turned up that no change
+request asked for: where it is, what is wrong, how it was seen, and severity. Per principle
+16 these are **recorded, never fixed** — they are the next sprint's input, not this one's
+scope creep. A defect that blocked the sprint's own build/suite/harness is listed here too,
+marked *fixed — blocking*, with its commit.
 
 **A silent sprint adds two sections, right after the scope table** — they carry the steering
 the user never got in the thread, so they are load-bearing, not appendices:

@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.3
+version: 2.4
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -302,6 +302,27 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
     its **base**; don't read, diff against, fetch, or checkout any other branch (or peek at
     other refs) unless strictly required and the user approves. Diff against the base you
     were given, not a guessed default.
+16. **Out-of-scope defects: record them, never fix them.** Hunters, verifiers and workers
+    will find real bugs that no change request asked for — pre-existing breakage, adjacent
+    rough edges, defects in code the sprint only reads. **Do not fix any of them.** Write
+    each one to the report's *Out of scope — found, not fixed* section (§Proof artifact) and
+    move on. This holds for every sprint, silent or not, and for every role: a worker that
+    trips over one notes it in its return and leaves it; a validator reports it in the
+    separate out-of-scope bucket, where it **does not fail the gate** (§Stop rule).
+    Classify **at the moment of discovery**, not after a fix is already written — the bar
+    must not move because something looked quick.
+
+    Why this is a hard rule and not a preference: an unrequested fix widens the diff the
+    reviewer agreed to, can regress code the sprint has no tests for, and makes the blind
+    gate judge work that was never specified. It also breaks the burndown — scope the user
+    never approved silently lands in their branch. A found-and-recorded defect is a
+    *successful* outcome; it becomes the next sprint's input, or a backlog entry under
+    `.hyper-sprint/backlog/` where the repo keeps one.
+
+    **The one exception:** a defect that **blocks the sprint's own work** — it breaks the
+    build, the test suite, or the harness the gate must drive. Then fix the minimum needed
+    to unblock, in its own commit, and record it in the same report section marked
+    *fixed — blocking*. Nothing else qualifies, and "it was a one-liner" does not.
 
 ## Phases
 
@@ -433,7 +454,8 @@ burndown** (work-remaining = open CRs + agent-found defects; the blind-hunt roun
 scope, so the curve bumps up before zero — render with `assets/mk-burndown.py`) → **stats**
 (`assets/sprint-stats.py`) → **before/after per change** (screenshots the verifiers already
 captured: HEAD for "after", the base-commit render for "before") → **cost/savings**
-(`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed**. Use **relative**
+(`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed** → **out of scope — found, not fixed** (principle 16: every defect a
+worker or validator turned up that no CR asked for, recorded and left alone). Use **relative**
 `img/…` paths (GitHub renders those; it does *not* render base64 data-URIs) — optionally also
 emit a base64-inlined single-file copy for portable one-click viewing.
 
@@ -460,7 +482,7 @@ gotchas: **`references/demo-deck.md`**.
    recipe** + the **known-intentional behaviors / acceptance nuances**, and instructs:
    "confirm every feature in scope, then hunt ANY bug for **X min non-stop**; **report the
    literal observed output, not interpretations**; report pre-existing/out-of-scope issues
-   *separately* (they don't fail the gate)." **Withhold the sprint history** — bug counts,
+   *separately* and **do not fix them** (they don't fail the gate — principle 16)." **Withhold the sprint history** — bug counts,
    turns, elapsed time, "nearly done", the diff — so the verdict can't be anchored. Classify
    findings **in-scope defect vs cosmetic/out-of-scope from the start** — the bar never moves
    by round. Any in-scope finding → fix → **new** blind round (fresh agents; may share the
