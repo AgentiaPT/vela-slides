@@ -4091,14 +4091,20 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   // it stays scrubber-only like every other text-color field. (v13.27)
   const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
+  // CR8: `0` is a legal, deliberate "no bar" value — `|| 4` treats 0 as falsy
+  // and silently repaints the old 4px default, so the bar never truly goes
+  // away. Use a type check so only a genuinely unset value (not a number)
+  // gets the fallback, and skip the element outright at 0 so no residual
+  // strip paints.
+  const accentH = typeof b.accentHeight === "number" ? b.accentHeight : 4;
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
+    {b.accentBar && accentH > 0 && <div data-testid="branding-accent-bar" style={{ position: "absolute", top: 0, left: 0, right: 0, height: accentH, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
       const isTop = pos.startsWith("top");
       const isLeft = pos.endsWith("left");
-      const vOffset = isTop ? (b.accentBar ? (b.accentHeight || 4) + 8 : 10) : 36;
+      const vOffset = isTop ? (b.accentBar && accentH > 0 ? accentH + 8 : 10) : 36;
       const style = { position: "absolute", height: sz, objectFit: "contain", zIndex: 1, opacity: 0.9 };
       if (isTop) style.top = vOffset; else style.bottom = vOffset;
       if (isLeft) style.left = 16; else style.right = 16;
@@ -4799,7 +4805,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+// brandingPanelOpen (CR9): view-only UI toggle for the branding side pane — never
+// persisted into the deck, same treatment as commentsPanelOpen/chatOpen.
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, brandingPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -4813,7 +4821,7 @@ const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && stat
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK", "SET_BRANDING_PANEL"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -5167,6 +5175,8 @@ function innerReducer(state, a) {
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
+    // CR9: opens/closes the branding side pane (view-only, see NO_HISTORY).
+    case "SET_BRANDING_PANEL": return { ...state, brandingPanelOpen: a.open };
     default: return state;
   }
 }
@@ -15360,6 +15370,56 @@ uiSuite("Product Tour", [
   }},
 ], { setup: _productTourSetup });
 
+// ━━━ Branding side pane + accent-bar zero height (CR8/CR9) ━━━━━━━━━━━━━━
+uiSuite("Branding side pane + accent-bar zero (CR8/CR9)", [
+  { name: "Brand toggle opens a right-hand side pane", fn: async () => {
+    let pane = _$("[data-testid='branding-panel']");
+    if (!pane) {
+      const btn = await _waitFor(() => _$("[data-testid='brand-toggle']"), 2000);
+      _click(btn);
+      pane = await _waitFor(() => _$("[data-testid='branding-panel']"), 1500);
+    }
+    if (!pane) throw new Error("side pane did not open");
+  }},
+  { name: "Side pane sits beside the canvas, not over it", fn: () => {
+    const pane = _$("[data-testid='branding-panel']");
+    if (!pane) throw new Error("side pane not open");
+    const canvas = _$("[data-block-type]");
+    if (canvas) {
+      const paneRect = pane.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      // A right-hand pane must not sit to the left of (cover) the slide canvas.
+      if (paneRect.left < canvasRect.left) throw new Error(`side pane (left=${paneRect.left}) overlaps canvas (left=${canvasRect.left})`);
+    }
+  }},
+  { name: "CR8: accent height 0 removes the accent bar entirely", fn: async () => {
+    const heightInput = _$("[data-testid='branding-accent-height']");
+    if (!heightInput) throw new Error("accent-height control not found");
+    // Drive to a non-zero height first (also auto-enables branding) and confirm the bar shows.
+    _type(heightInput, "4");
+    await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500)
+      .catch(() => { throw new Error("accent bar did not appear at 4px"); });
+    // Now drive it to 0 — the bar must disappear completely, not just shrink.
+    _type(_$("[data-testid='branding-accent-height']"), "0");
+    await _waitFor(() => !_$("[data-testid='branding-accent-bar']"), 1500)
+      .catch(() => { throw new Error("accent bar still rendered at height 0"); });
+    const slider = _$("[data-testid='branding-accent-height']");
+    if (String(slider.value) !== "0") throw new Error(`slider snapped away from 0 (value=${slider.value})`);
+  }},
+  { name: "CR8: a non-zero height re-shows the bar at that height", fn: async () => {
+    _type(_$("[data-testid='branding-accent-height']"), "6");
+    const bar = await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500);
+    if (!bar || parseInt(bar.style.height, 10) !== 6) throw new Error(`accent bar height wrong: ${bar?.style.height}`);
+  }},
+  { name: "Close button closes the side pane", fn: async () => {
+    const closeBtn = _$("[data-testid='branding-close']");
+    if (!closeBtn) throw new Error("close button not found");
+    _click(closeBtn);
+    await _waitFor(() => !_$("[data-testid='branding-panel']"), 1500)
+      .catch(() => { throw new Error("side pane did not close"); });
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -22624,6 +22684,167 @@ function CommentsPanel({ state, dispatch, isMobile }) {
   );
 }
 
+// ━━━ Branding Side Pane (CR9: relocated from a bottom strip to a right pane
+// so the canvas stays visible while the user tunes branding — live feedback,
+// not a redesign of the controls themselves). ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function BrandingSidePane({ state, dispatch, isMobile, onClose }) {
+  const b = state.branding || defaultBranding;
+  const guidelines = state.guidelines;
+  const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
+  const set = (patch) => {
+    dispatch({ type: "SET_BRANDING", branding: patch });
+    // Auto-enable when any branding value is set
+    if (!b.enabled && Object.keys(patch).some((k) => k !== "enabled" && patch[k])) {
+      dispatch({ type: "SET_BRANDING", branding: { enabled: true } });
+    }
+  };
+  const close = onClose || (() => dispatch({ type: "SET_BRANDING_PANEL", open: false }));
+  const logoInputRef = useRef(null);
+
+  const handleLogo = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { set({ logo: reader.result }); };
+    reader.readAsDataURL(file);
+  };
+
+  // CR8 companion: the accent-bar height control must show and accept a real
+  // 0, so `??`-style type check here too (the "|| 4" pattern would make 0
+  // unreachable from this very slider). See part-branding.jsx for the render fix.
+  const accentH = typeof b.accentHeight === "number" ? b.accentHeight : 4;
+
+  const section = { marginBottom: 18 };
+  const sectionTitle = { display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" };
+  const row = { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 };
+  const lbl = { fontFamily: FONT.mono, fontSize: 13, color: T.textDim, width: 62, flexShrink: 0 };
+  const meta = { fontFamily: FONT.mono, fontSize: 13, color: T.textDim };
+  const inp = (extra = {}) => ({ flex: 1, padding: "6px 8px", fontSize: 13, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", minWidth: 0, ...extra });
+
+  return (
+    // Keep the stable "branding-panel" test id from the old bottom-strip panel
+    // (CR9 relocates it, doesn't rename it) — the product tour and other UI
+    // tests key off this id to know the branding surface is open/closed.
+    <div data-testid="branding-panel" style={{ width: isMobile ? "100%" : 300, display: "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${T.border}`, background: T.bgPanel, flexShrink: 0, height: "100%" }}>
+      {/* Header */}
+      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 15 }}>{"🎨"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, letterSpacing: "0.06em" }}>BRANDING</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: b.enabled ? T.accent : T.textDim, marginLeft: 4 }}>{b.enabled ? "● Active" : "○ Inactive"}</span>
+        <div style={{ flex: 1 }} />
+        <button data-testid="branding-close" onClick={close} title="Close" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>{"✕"}</button>
+      </div>
+
+      {/* Scrollable body — canvas stays visible to the left the whole time */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
+        <div style={section}>
+          <div style={sectionTitle}>{"▬"} Accent Bar</div>
+          <div style={row}>
+            <span style={lbl}>Color</span>
+            <input data-testid="branding-accent-color" type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <input data-testid="branding-accent-height" type="range" min="0" max="8" value={accentH} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{accentH}px</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"🖼"} Logo</div>
+          <div style={row}>
+            <span style={lbl}>Image</span>
+            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogo} style={{ display: "none" }} />
+            {b.logo ? <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <img src={b.logo} style={{ height: 24, objectFit: "contain", borderRadius: 2 }} />
+              <button data-testid="branding-logo-remove" onClick={() => set({ logo: null })} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 13, padding: 0 }}>Remove</button>
+            </div> : <button data-testid="branding-logo-upload" onClick={() => logoInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 13 })}>Upload</button>}
+          </div>
+          {b.logo && <>
+            <div style={row}>
+              <span style={lbl}>Corner</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, width: 60, flexShrink: 0 }}>
+                {["top-left", "top-right", "bottom-left", "bottom-right"].map((pos) => {
+                  const active = (b.logoPosition || "top-left") === pos;
+                  return <button key={pos} onClick={() => set({ logoPosition: pos })} title={pos} style={{
+                    width: 28, height: 22, borderRadius: 3, border: `1.5px solid ${active ? T.accent : T.border}`,
+                    background: active ? T.accent + "30" : "transparent", cursor: "pointer", position: "relative", padding: 0,
+                  }}><div style={{
+                    width: 7, height: 7, borderRadius: 1, background: active ? T.accent : T.textDim,
+                    position: "absolute",
+                    top: pos.startsWith("top") ? 3 : undefined,
+                    bottom: pos.startsWith("bottom") ? 3 : undefined,
+                    left: pos.endsWith("left") ? 4 : undefined,
+                    right: pos.endsWith("right") ? 4 : undefined,
+                  }} /></button>;
+                })}
+              </div>
+              <span style={meta}>{b.logoPosition || "top-left"}</span>
+            </div>
+            <div style={row}>
+              <span style={lbl}>Size</span>
+              <input type="range" min="20" max="120" step="2" value={b.logoSize || 56} onChange={(e) => set({ logoSize: parseInt(e.target.value) })} style={{ flex: 1 }} />
+              <span style={{ ...meta, width: 36, textAlign: "right" }}>{b.logoSize || 56}px</span>
+            </div>
+          </>}
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"▭"} Footer Text</div>
+          <div style={row}>
+            <span style={lbl}>Left</span>
+            <input data-testid="branding-footer-left" value={b.footerLeft || ""} onChange={(e) => set({ footerLeft: e.target.value })} placeholder="Name / Company" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Center</span>
+            <input data-testid="branding-footer-center" value={b.footerCenter || ""} onChange={(e) => set({ footerCenter: e.target.value })} placeholder="Tagline" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Right</span>
+            <input data-testid="branding-footer-right" value={b.footerRight === "auto" ? "" : (b.footerRight || "")} onChange={(e) => set({ footerRight: e.target.value || "auto" })} placeholder="auto (slide #)" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Colors</span>
+            <input type="color" value={b.footerBg?.startsWith("rgba") ? "#000000" : (b.footerBg || "#000000")} onChange={(e) => set({ footerBg: e.target.value + "cc" })} title="Footer background" style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <input type="color" value={b.footerColor || "#94a3b8"} onChange={(e) => set({ footerColor: e.target.value })} title="Footer text" style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <span style={meta}>bg / text</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"📦"} Image Compression</div>
+          <div style={row}>
+            <span style={lbl}>Max W</span>
+            <input type="range" min="300" max="960" step="20" value={b.imgMaxWidth || 600} onChange={(e) => set({ imgMaxWidth: parseInt(e.target.value) })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{b.imgMaxWidth || 600}px</span>
+          </div>
+          <div style={row}>
+            <span style={lbl}>Quality</span>
+            <input type="range" min="15" max="85" step="5" value={Math.round((b.imgQuality || 0.45) * 100)} onChange={(e) => set({ imgQuality: parseInt(e.target.value) / 100 })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{Math.round((b.imgQuality || 0.45) * 100)}%</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div onClick={() => setGuidelinesOpen(!guidelinesOpen)} style={{ ...sectionTitle, marginBottom: guidelinesOpen ? 10 : 0, cursor: "pointer", color: guidelines?.trim() ? T.accent : T.textMuted }}>
+            {"📋"} <span>SLIDE RULES</span>
+            <span style={{ fontSize: 13, marginLeft: "auto" }}>{guidelinesOpen ? "▾" : "▸"}{guidelines?.trim() ? " · active" : ""}</span>
+          </div>
+          {guidelinesOpen && <>
+            <textarea
+              data-testid="branding-guidelines"
+              value={guidelines || ""}
+              onChange={(e) => dispatch({ type: "SET_GUIDELINES", guidelines: e.target.value.slice(0, 2000) })}
+              placeholder={"Persistent rules applied to EVERY improve/alternatives call.\nE.g.:\n- Light/white slide backgrounds, dark text, good contrast\n- Max 4 bullets per slide\n- Always include icons\n- Audience is senior engineers"}
+              style={{ width: "100%", minHeight: 100, maxHeight: 200, padding: "8px 10px", fontSize: 13, fontFamily: FONT.mono, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <span style={{ ...meta, color: (guidelines?.length || 0) > 1800 ? T.amber : T.textDim }}>{guidelines?.length || 0} / 2000</span>
+              {guidelines?.trim() && <button onClick={() => dispatch({ type: "SET_GUIDELINES", guidelines: "" })} style={S.btn({ padding: "3px 8px", fontSize: 13 })}>Clear</button>}
+            </div>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ New Deck Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");
@@ -24073,6 +24294,9 @@ export default function App() {
   const showSlides = !isMobile || mobileTab === "slides";
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
   const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
+  // CR9: branding side pane — takes the same right-hand slot as chat/comments,
+  // and wins when explicitly opened (see brand-toggle below).
+  const showBrandingPanel = !isMobile ? state.brandingPanelOpen : mobileTab === "branding";
   const slideCount = selectedConcept?.slides?.length || 0;
 
   // Presentation mode: show nothing until deck is loaded and first module selected
@@ -24180,7 +24404,7 @@ export default function App() {
             const has = !!selectedConcept;
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              <button data-testid="brand-toggle" onClick={() => { const open = !state.brandingPanelOpen; dispatch({ type: "SET_BRANDING_PANEL", open }); if (open) { dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: state.brandingPanelOpen ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: state.brandingPanelOpen ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
               <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}
@@ -24239,7 +24463,7 @@ export default function App() {
               return <>
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {selectedConcept && <button onClick={() => { if (aiOk) { sa?.toggleBatchEdit?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); } }} disabled={!aiOk} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: !aiOk ? T.textDim + "60" : sa?.improving ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: aiOk ? "pointer" : "not-allowed" }}>{!aiOk ? "✨ AI not enabled" : sa?.improving ? "⏹ Stop Improve" : "✨ Improve / Batch"}</button>}
-                <button onClick={() => { sa?.toggleBranding?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.hasBranding ? T.accent : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🎨"} Brand & Guidelines</button>
+                <button onClick={() => { dispatch({ type: "SET_BRANDING_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileMenu(false); setMobileTab("branding"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.hasBranding ? T.accent : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🎨"} Brand & Guidelines</button>
               </>;
             })()}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
@@ -24329,9 +24553,11 @@ export default function App() {
         )}
 
         {/* Chat panel */}
-        {showChat && !showCommentsPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {showChat && !showCommentsPanel && !showBrandingPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
         {/* Comments panel */}
-        {showCommentsPanel && !showChat && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
+        {showCommentsPanel && !showChat && !showBrandingPanel && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
+        {/* Branding panel (CR9) */}
+        {showBrandingPanel && <BrandingSidePane state={state} dispatch={dispatch} isMobile={isMobile} onClose={() => { dispatch({ type: "SET_BRANDING_PANEL", open: false }); if (isMobile) setMobileTab("slides"); }} />}
       </div>
 
       {/* ── MOBILE BOTTOM NAV ──────────────────────────────── */}

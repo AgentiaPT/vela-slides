@@ -74,6 +74,44 @@ export async function editIcon(page, index = 0) {
 export async function exitPresent(page) { await navKey(page, "f"); await page.waitForFunction(() => { const fs = [...document.querySelectorAll("*")].find(e => { const s = getComputedStyle(e); return s.position === "fixed" && +s.zIndex >= 40 && e.offsetWidth > 500; }); return !fs && !!document.querySelector("header"); }, undefined, { timeout: 4000 }); }
 export async function openGallery(page) { if (!await page.evaluate(() => { const b = document.querySelector("[data-testid=editor-gallery-toggle]"); if (!b) return false; b.click(); return true; })) throw new Error("openGallery: no editor-gallery-toggle (must be in editor mode, not presenting)"); await page.waitForFunction(() => /GALLERY/.test(document.body.textContent), undefined, { timeout: 4000 }); }
 export async function galleryState(page) { return page.evaluate(() => ({ open: /GALLERY/.test(document.body.textContent), hiddenOverlays: document.querySelectorAll("[data-hidden-overlay]").length, hiddenBadges: document.querySelectorAll("[data-hidden-badge]").length })); }
+// Open/close the branding side pane (CR9: relocated to a right-hand pane —
+// data-testid="branding-panel" is the stable id, kept from the pre-CR9 panel).
+export async function toggleBrandingPanel(page) {
+  const opening = await page.evaluate(() => !document.querySelector("[data-testid=branding-panel]"));
+  const ok = await page.evaluate(() => { const b = document.querySelector("[data-testid=brand-toggle]"); if (!b) return false; b.click(); return true; });
+  if (!ok) throw new Error("toggleBrandingPanel: no brand-toggle button");
+  await page.waitForFunction((wantOpen) => !!document.querySelector("[data-testid=branding-panel]") === wantOpen, opening, { timeout: 3000 });
+}
+// Drive the accent-bar height slider to an exact px value via the native input
+// setter (so React's controlled input sees the change, same trick the in-app
+// UI-test harness uses) and report whether the accent bar actually renders —
+// the CR8 regression is exactly "slider says 0, bar still paints".
+export async function setAccentHeight(page, px) {
+  const r = await page.evaluate((v) => {
+    const el = document.querySelector("[data-testid=branding-accent-height]");
+    if (!el) return { ok: false, reason: "no accent-height control (open the branding panel first)" };
+    // React tracks the input's last-known value internally (_valueTracker) and
+    // SKIPS onChange if the native setter writes the same value it already has
+    // — e.g. driving to 4 when the default is already 4. Clear the tracker
+    // first so the synthetic input/change always reaches the app's handler,
+    // even when the target value happens to equal the current one.
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    if (el._valueTracker) el._valueTracker.setValue("");
+    setter.call(el, String(v));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, sliderValue: el.value };
+  }, px);
+  if (!r.ok) return r;
+  // Read bar state on the NEXT task (not inside the same synchronous evaluate
+  // call as the dispatch) so React has actually committed the re-render.
+  await page.waitForTimeout(60);
+  const after = await page.evaluate(() => {
+    const bar = document.querySelector("[data-testid=branding-accent-bar]");
+    return { barPresent: !!bar, barHeight: bar ? bar.getBoundingClientRect().height : 0 };
+  });
+  return { ...r, ...after };
+}
 // Desktop save-status pill when the native shell supplies one; otherwise the offline
 // harness proves persistence from its in-memory window.storage payload.
 export async function saveStatus(page) { return page.evaluate(async () => {
