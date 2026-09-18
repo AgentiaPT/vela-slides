@@ -255,8 +255,21 @@ function isEmojiCodepoint(cp) {
 // Returns raw RGB bytes (no alpha) for PDF embedding
 const emojiCanvasCache = new Map();
 
-async function renderEmojiToImage(emojiStr, size) {
-  const key = emojiStr + "|" + size;
+// Ink colour for the bitmap, as three 0-255 integers. The caller passes the
+// ALREADY PARSED {r,g,b} of the text the character sits in (parseColor output,
+// 0..1 floats), never a CSS string — so no deck-supplied text can reach the
+// canvas, and an out-of-range or non-numeric channel clamps to 0 instead of
+// painting something the deck chose.
+function emojiInkColor(color) {
+  const ch = (v) => (typeof v === "number" && v >= 0 && v <= 1 ? Math.round(v * 255) : 0);
+  return color ? { r: ch(color.r), g: ch(color.g), b: ch(color.b) } : { r: 0, g: 0, b: 0 };
+}
+
+async function renderEmojiToImage(emojiStr, size, color) {
+  const ink = emojiInkColor(color);
+  // The colour is part of the identity of the bitmap: the same character in two
+  // colours is two different images, so it must be part of the cache key.
+  const key = emojiStr + "|" + size + "|" + ink.r + "," + ink.g + "," + ink.b;
   if (emojiCanvasCache.has(key)) return emojiCanvasCache.get(key);
 
   const scale = 2; // render at 2x for quality
@@ -266,6 +279,10 @@ async function renderEmojiToImage(emojiStr, size) {
   canvas.height = px;
   const ctx = canvas.getContext("2d");
 
+  // Paint the character in the colour of the text it belongs to. Without this
+  // the canvas default (opaque black) is used, so on a dark slide the character
+  // is black on near-black: it is in the file, but the reader sees nothing.
+  ctx.fillStyle = `rgb(${ink.r}, ${ink.g}, ${ink.b})`;
   // Draw emoji using system font
   ctx.font = `${px * 0.85}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Android Emoji", sans-serif`;
   ctx.textAlign = "center";
@@ -274,7 +291,21 @@ async function renderEmojiToImage(emojiStr, size) {
 
   // Extract raw RGB bytes (no alpha) for PDF /DeviceRGB image
   // PDF images don't support transparency, so composite over slide background
-  const imgData = ctx.getImageData(0, 0, px, px);
+  let imgData = ctx.getImageData(0, 0, px, px);
+  // A host with no font for this script draws NOTHING. The character is already
+  // cut out of the WinAnsi text layer, so an empty bitmap loses it with no
+  // trace. Draw the standard "no glyph" box instead: the character keeps its
+  // place and the reader sees that a character is there.
+  let inked = false;
+  for (let j = 3; j < imgData.data.length; j += 4) {
+    if (imgData.data[j] > 8) { inked = true; break; }
+  }
+  if (!inked) {
+    ctx.strokeStyle = `rgb(${ink.r}, ${ink.g}, ${ink.b})`;
+    ctx.lineWidth = Math.max(1, px * 0.07);
+    ctx.strokeRect(px * 0.2, px * 0.14, px * 0.6, px * 0.72);
+    imgData = ctx.getImageData(0, 0, px, px);
+  }
   const rgba = imgData.data;
   const rgb = new Uint8Array(px * px * 3);
   const bgR = Math.round(_compositeBg.r * 255);
@@ -346,7 +377,9 @@ async function extractEmojiImages(container, containerRect, textRuns) {
         const rects = range.getClientRects();
         if (rects.length > 0) {
           const rect = rects[0];
-          const img = await renderEmojiToImage(emojiStr, fontSize);
+          // parseColor returns the composited {r,g,b} as 0..1 numbers, or null.
+          // Numbers only — the raw CSS string never reaches the canvas.
+          const img = await renderEmojiToImage(emojiStr, fontSize, parseColor(style.color));
           // Place emoji at the same position the browser renders it
           // Use rect position but cap size to fontSize for consistent alignment
           const ew = Math.min(rect.width, fontSize * 1.2);

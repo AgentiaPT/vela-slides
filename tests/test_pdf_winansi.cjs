@@ -243,6 +243,200 @@ if (!tj) {
   else bad("mixed run spacing correction", tc2[1]);
 }
 
-fs.rmSync(outDir, { recursive: true, force: true });
-console.log(`\n  ${pass} passed, ${fail} failed`);
-process.exit(fail ? 2 : 0);
+// ── 5. A character the text layer cannot carry must not take the rest of the
+//      line with it. The exporter cuts such a character out of the WinAnsi run
+//      and draws it as a bitmap; everything after it must still be drawn. A
+//      Portuguese, Polish or mixed-script deck otherwise loses a whole line.
+{
+  // Same segmentation rule extractTextRuns applies: a maximal run of code
+  // points the text layer can carry becomes one run, and each code point it
+  // cannot carry goes to the bitmap path.
+  const segmentLine = (line) => {
+    const segs = [];
+    let i = 0;
+    while (i < line.length) {
+      const cp = line.codePointAt(i);
+      const cl = cp > 0xFFFF ? 2 : 1;
+      if (isEmojiCodepoint(cp)) { i += cl; continue; }
+      let end = i;
+      while (end < line.length) {
+        const nc = line.codePointAt(end);
+        if (isEmojiCodepoint(nc)) break;
+        end += nc > 0xFFFF ? 2 : 1;
+      }
+      const seg = line.substring(i, end).trim();
+      if (seg) segs.push(seg);
+      i = end;
+    }
+    return segs;
+  };
+
+  // Greek, CJK and a Latin letter above U+00FF, each followed by more text.
+  const LINE = "EUR €1,234.56 café naïve … ™ Ω 中文 Łódź TAIL-ASCII-AFTER";
+  const segs = segmentLine(LINE);
+  const FS5 = 24;
+  const runs = [];
+  let rx = 20;
+  for (const seg of segs) {
+    const w = [...seg].reduce((a, ch) => a + (widthOfByte(winAnsiByte(ch.codePointAt(0))) || 500) * FS5 / 1000, 0);
+    runs.push({
+      text: seg, x: rx, y: 60, w, fontSize: FS5, fontFamily: "DM Sans",
+      fontWeight: 400, fontStyle: "normal", letterSpacing: 0, color: { r: 0, g: 0, b: 0 },
+    });
+    rx += w + FS5;
+  }
+  const p5 = { boxes: [], circles: [], svgIcons: [], links: [], emojiImages: [], logoImages: [], textRuns: runs };
+  const l5 = Buffer.from(buildVectorPdf([p5], 960, 540, fonts, false)).toString("latin1");
+  const shown5 = [...l5.matchAll(/\(((?:\\.|[^()\\])*)\)\s*Tj/g)].map((m) => m[1]);
+
+  // The regression: ordinary text placed AFTER the last unrenderable character.
+  if (shown5.includes("TAIL-ASCII-AFTER")) {
+    ok("text after an unrenderable character still reaches the PDF text layer");
+  } else {
+    bad("text after an unrenderable character was lost", JSON.stringify(shown5));
+  }
+  // A Latin-1 letter that merely FOLLOWS an unrenderable one is well inside the
+  // range the text layer handles — it must not be lost by association.
+  if (shown5.includes("\\363d")) {
+    ok("a Latin-1 letter following an unrenderable character keeps its own byte");
+  } else {
+    bad("Latin-1 letter after an unrenderable character", JSON.stringify(shown5));
+  }
+  // …and the WinAnsi head of the same line is unchanged.
+  if (shown5.some((s) => s.startsWith("EUR \\2001,234.56 caf\\351 na\\357ve \\205 \\231"))) {
+    ok("the WinAnsi part of the same line keeps its own bytes");
+  } else {
+    bad("WinAnsi head of the mixed line", JSON.stringify(shown5));
+  }
+  // The encoder itself must never stop early at an unencodable code point.
+  const encTail = pdfStringEncode("AΩB中C");
+  if (encTail === "(ABC)") ok("the encoder skips only the unencodable code point, never the tail");
+  else bad("encoder truncates at an unencodable code point", JSON.stringify(encTail));
+}
+
+// ── 6. The bitmap path must draw VISIBLE ink ────────────────────────────────
+// A character with no WinAnsi byte is cut out of the text layer, so the bitmap
+// is the only thing left. Two ways it used to come out empty:
+//   * the canvas ink colour was never set, so the glyph was painted in the
+//     canvas default (opaque black) and composited onto a dark slide;
+//   * a host with no font for the script drew nothing at all.
+// Both produced a bitmap identical to the slide background: the character was
+// in the file and invisible. renderEmojiToImage needs a canvas, so drive it
+// through a recording stub and assert on the RGB bytes it returns.
+const rasterSrc = fn(extractSrc, "emojiInkColor") + "\n" +
+  (() => {
+    const start = extractSrc.indexOf("async function renderEmojiToImage(");
+    if (start < 0) throw new Error("async function renderEmojiToImage not found");
+    return braceSlice(extractSrc, start);
+  })();
+
+function stubDocument(hasGlyph, rec) {
+  const parseRgb = (s) => {
+    const m = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(String(s));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+  return {
+    createElement() {
+      const canvas = { width: 0, height: 0 };
+      let buf = null;
+      const paint = (style, n) => {
+        const rgb = parseRgb(style);
+        if (!rgb) { rec.badStyle = style; return; }
+        for (let j = 0; j < n; j++) {
+          buf[j * 4] = rgb[0]; buf[j * 4 + 1] = rgb[1]; buf[j * 4 + 2] = rgb[2]; buf[j * 4 + 3] = 255;
+        }
+      };
+      const ctx = {
+        fillStyle: "#000", strokeStyle: "#000", lineWidth: 1,
+        font: "", textAlign: "", textBaseline: "",
+        fillText() { rec.fillStyle = ctx.fillStyle; if (hasGlyph) paint(ctx.fillStyle, 40); },
+        strokeRect() { rec.strokeCalls++; rec.strokeStyle = ctx.strokeStyle; paint(ctx.strokeStyle, 25); },
+        getImageData() { return { data: buf }; },
+      };
+      canvas.getContext = () => {
+        buf = new Uint8ClampedArray(canvas.width * canvas.height * 4);
+        return ctx;
+      };
+      return canvas;
+    },
+  };
+}
+
+function makeRenderer(hasGlyph, bg, rec) {
+  // eslint-disable-next-line no-new-func
+  const mk = new Function("document", "_compositeBg",
+    "const emojiCanvasCache = new Map();\n" + rasterSrc + "\nreturn renderEmojiToImage;");
+  return mk(stubDocument(hasGlyph, rec), bg);
+}
+
+(async () => {
+  // A dark slide — the case where an unset ink colour is invisible.
+  const BG = { r: 10 / 255, g: 15 / 255, b: 28 / 255 };
+  const BGB = [10, 15, 28];
+  const INK = { r: 230 / 255, g: 236 / 255, b: 255 / 255 };
+  const INKB = [230, 236, 255];
+  const hasTriple = (bytes, t) => {
+    for (let i = 0; i + 2 < bytes.length; i += 3) {
+      if (bytes[i] === t[0] && bytes[i + 1] === t[1] && bytes[i + 2] === t[2]) return true;
+    }
+    return false;
+  };
+
+  // (a) Host HAS the glyph: it must be painted in the text colour, not black.
+  {
+    const rec = { strokeCalls: 0 };
+    const img = await makeRenderer(true, BG, rec)("中", 24, INK);
+    if (hasTriple(img.bytes, INKB)) ok("the bitmap is painted in the colour of the text it replaces");
+    else bad("bitmap ink colour", `expected rgb(${INKB}) in the produced bytes, fillStyle was ${rec.fillStyle}`);
+    if (!hasTriple(img.bytes, [0, 0, 0])) ok("the bitmap no longer falls back to opaque black");
+    else bad("bitmap still contains the canvas default black");
+    if (rec.strokeCalls === 0) ok("no placeholder is drawn when the host can draw the character");
+    else bad("placeholder drawn over a real glyph", `strokeRect called ${rec.strokeCalls}x`);
+  }
+
+  // (b) Host has NO font for the script: a visible placeholder must take over,
+  //     otherwise the character is gone from both layers.
+  {
+    const rec = { strokeCalls: 0 };
+    const img = await makeRenderer(false, BG, rec)("中", 24, INK);
+    const uniform = !img.bytes.some((_, i) =>
+      i % 3 === 0 && !(img.bytes[i] === BGB[0] && img.bytes[i + 1] === BGB[1] && img.bytes[i + 2] === BGB[2]));
+    if (!uniform) ok("a character the host cannot draw still leaves visible ink in the bitmap");
+    else bad("character the host cannot draw produced an empty bitmap");
+    if (rec.strokeCalls === 1) ok("the placeholder box is drawn exactly once");
+    else bad("placeholder box", `strokeRect called ${rec.strokeCalls}x`);
+    if (hasTriple(img.bytes, INKB)) ok("the placeholder uses the text colour too");
+    else bad("placeholder colour", `strokeStyle was ${rec.strokeStyle}`);
+  }
+
+  // (c) The bitmap cache must key on the colour: the same character in two
+  //     colours is two different images.
+  {
+    const rec = { strokeCalls: 0 };
+    const render = makeRenderer(true, BG, rec);
+    const a = await render("中", 24, INK);
+    const b = await render("中", 24, { r: 1, g: 0, b: 0 });
+    if (!hasTriple(b.bytes, INKB) && hasTriple(b.bytes, [255, 0, 0])) {
+      ok("the bitmap cache keys on the colour, so a recoloured character is redrawn");
+    } else {
+      bad("bitmap cache ignores the colour", "second render reused the first colour");
+    }
+    void a;
+  }
+
+  // (d) A non-numeric or out-of-range channel must clamp, never reach the
+  //     canvas as a deck-chosen value.
+  {
+    const rec = { strokeCalls: 0 };
+    await makeRenderer(true, BG, rec)("中", 24, { r: "rgb(1,2,3)", g: 9, b: -1 });
+    if (!rec.badStyle && /^rgb\(0, 0, 0\)$/.test(String(rec.fillStyle))) {
+      ok("a bad colour channel clamps to 0 instead of reaching the canvas");
+    } else {
+      bad("bad colour channel reached the canvas", String(rec.fillStyle));
+    }
+  }
+
+  fs.rmSync(outDir, { recursive: true, force: true });
+  console.log(`\n  ${pass} passed, ${fail} failed`);
+  process.exit(fail ? 2 : 0);
+})();

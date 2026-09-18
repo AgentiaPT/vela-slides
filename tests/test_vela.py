@@ -5500,6 +5500,48 @@ def test_reviewed_flag_round_trip():
             skip("compact round trip (vela.py deck compact unavailable)")
 
 
+def test_pdf_bitmap_glyph_wiring():
+    """Vector PDF — the bitmap path must be handed the colour of its text.
+
+    A character with no WinAnsi byte is cut out of the PDF text layer and drawn
+    as a bitmap, so the bitmap is all the reader gets. The bitmap is only
+    visible when it is painted in the colour of the text it replaces; the canvas
+    default is opaque black, which disappears on a dark slide.
+
+    tests/test_pdf_winansi.cjs proves renderEmojiToImage itself behaves. It
+    cannot see the CALLER, so this check locks the wiring between the two: the
+    one call site must pass the parsed colour through, and it must pass the
+    PARSED {r,g,b} (parseColor output), never a CSS string from the page.
+    """
+    print("\n🖌️  PDF vector export — bitmap glyph colour wiring")
+    src = open(os.path.join(PARTS_DIR, "part-pdf-extract.jsx"), encoding="utf-8").read()
+
+    # One line only, so the `async function renderEmojiToImage(...) {` header
+    # (which has no `);`) can never be picked up as a call.
+    calls = re.findall(r"renderEmojiToImage\(([^\n;]*)\)\s*;", src)
+    if len(calls) == 1:
+        ok("renderEmojiToImage has exactly one call site")
+    else:
+        fail("renderEmojiToImage call sites", f"expected 1, found {len(calls)}")
+        return
+
+    args = calls[0]
+    if "parseColor(" in args:
+        ok("the call site passes the parsed text colour to the bitmap path")
+    else:
+        fail("bitmap glyph colour wiring",
+             f"call site does not pass parseColor(...): {args.strip()}")
+    if "style.color" in args and "`" not in args:
+        ok("the colour reaches the canvas as parsed numbers, not as a CSS string")
+    else:
+        fail("bitmap glyph colour source", args.strip())
+
+    if re.search(r"function emojiInkColor\(", src):
+        ok("the ink-colour clamp helper is present")
+    else:
+        fail("ink-colour clamp helper", "emojiInkColor is missing")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -5531,6 +5573,7 @@ if __name__ == "__main__":
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
         test_pdf_winansi_metrics()
+        test_pdf_bitmap_glyph_wiring()
         test_deck_ingress_identity()
         test_slide_gradient_placement()
         test_desktop_neutralino_sprint()
