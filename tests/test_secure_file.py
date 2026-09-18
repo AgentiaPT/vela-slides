@@ -25,7 +25,12 @@ import secure_file  # noqa: E402
 
 
 class TestWriteSecretPosix(unittest.TestCase):
+    """The POSIX write path. Skipped wholesale off POSIX — there is no write
+    path there at all, only the refusal that TestNonPosixIsRefused covers."""
+
     def setUp(self):
+        if os.name != "posix":
+            self.skipTest("POSIX write path; see TestNonPosixIsRefused")
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.path = os.path.join(self.root, ".secret")
@@ -34,8 +39,7 @@ class TestWriteSecretPosix(unittest.TestCase):
         secure_file.write_secret(self.path, "s3cret")
         with open(self.path, encoding="utf-8") as f:
             self.assertEqual(f.read(), "s3cret")
-        if os.name != "nt":
-            self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode) & 0o077, 0)
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode) & 0o077, 0)
 
     def test_overwrite_replaces_content(self):
         secure_file.write_secret(self.path, "first")
@@ -63,8 +67,6 @@ class TestWriteSecretPosix(unittest.TestCase):
     def test_fails_closed_when_mode_is_not_honoured(self):
         """A mount that ignores mode bits (drvfs, CIFS, FAT) must abort the
         write, not warn and continue."""
-        if os.name == "nt":
-            self.skipTest("POSIX mode path")
         real_fstat = os.fstat
 
         class _Loose:
@@ -85,8 +87,6 @@ class TestWriteSecretPosix(unittest.TestCase):
     def test_nothing_is_written_before_the_check_passes(self):
         """The secret must not exist on disk during any window when the
         permissions are still unknown."""
-        if os.name == "nt":
-            self.skipTest("POSIX mode path")
         real_fstat = os.fstat
         seen = {}
 
