@@ -425,10 +425,11 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
-        // CR7: an approved slide leaves the review list, so the user stops re-browsing
-        // work already signed off. Return null (never filter the array) — `si` must stay
-        // the REAL slide index for every dispatch below.
-        if (reviewFilter && s.reviewed) return null;
+        // CR7: a slide that needs no review leaves the review list, so the user stops
+        // re-browsing work already signed off (approved) or cut from the deck (hidden).
+        // Return null (never filter the array) — `si` must stay the REAL slide index
+        // for every dispatch below.
+        if (reviewFilter && !velaSlideNeedsReview(s)) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -507,7 +508,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       }); })()}
       {/* CR7: a section whose slides are all approved must say so — a section that just
           vanished from the outline would read as data loss. */}
-      {reviewFilter && item.slides.every((s) => s.reviewed) && (
+      {reviewFilter && item.slides.every((s) => !velaSlideNeedsReview(s)) && (
         <div data-testid="toc-section-all-approved" style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
           ✓ all {item.slides.length} approved
         </div>
@@ -765,7 +766,10 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   // slide cycle. Presenter mode and every export still use the whole deck.
   const reviewFilter = useVelaReviewFilter();
   let _rvTotal = 0, _rvDone = 0;
-  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (s.reviewed) _rvDone++; }
+  // "N left" counts the slides that still NEED review. A hidden slide is out of the
+  // rotation, so counting it would keep `reviewLeft` above zero for ever and the
+  // all-approved banner (with its clear-all escape) would never appear.
+  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (!velaSlideNeedsReview(s)) _rvDone++; }
   const reviewLeft = _rvTotal - _rvDone;
   // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
   // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
@@ -793,9 +797,9 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       const n = item.slides?.length || 0;
       if (n === 0) continue;
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
-      // CR7: keyboard TOC nav follows the same rule as the list — approved slides are
-      // out of the rotation while review mode is on.
-      else for (let si = 0; si < n; si++) { if (reviewFilter && item.slides[si]?.reviewed) continue; rail.push({ itemId: item.id, si }); }
+      // CR7: keyboard TOC nav follows the same rule as the list — a slide that needs
+      // no review is out of the rotation while review mode is on.
+      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaSlideNeedsReview(item.slides[si])) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };

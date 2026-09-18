@@ -47,20 +47,60 @@ function velaFindItem(state, id) {
   for (const l of (state.lanes || [])) { const it = l.items.find((i) => i.id === id); if (it) return it; }
   return null;
 }
-// Map a requested slide index onto the nearest UNAPPROVED slide.
+// Does this slide still need the author's approval? ONE predicate for every
+// reader — this file and the TOC in part-list.jsx — so the rotation, the row
+// list and the "N left" count can never disagree. A HIDDEN slide never reaches
+// the audience, so it needs no sign-off: it stays out of the rotation and out of
+// the count, or the queue could never reach zero and the banner never appear.
+function velaSlideNeedsReview(s) { return !!s && s.reviewed !== true && s.hidden !== true; }
+
+// Map a requested slide index onto the nearest slide that still needs review.
 // Editor only: when `state.fullscreen` is true the user is presenting, so every
-// slide must stay in the rotation. Exports never call this at all. If every slide
-// is approved the requested index is returned unchanged — the TOC then shows the
-// "all approved" banner instead of trapping the user on an empty view.
+// slide must stay in the rotation. Exports never call this at all. If no slide in
+// THIS module still needs review the requested index comes back unchanged — the
+// caller then looks in the other modules through velaReviewNextTarget.
 function velaReviewSkipIndex(state, want) {
   if (!_velaReviewFilter || state.fullscreen) return want;
   const item = velaFindItem(state, state.selectedId);
   const slides = item && Array.isArray(item.slides) ? item.slides : null;
-  if (!slides || !slides[want] || slides[want].reviewed !== true) return want;
+  if (!slides || !slides[want] || velaSlideNeedsReview(slides[want])) return want;
   const dir = want < state.slideIndex ? -1 : 1; // keep the direction of travel
-  for (let i = want + dir; i >= 0 && i < slides.length; i += dir) if (slides[i].reviewed !== true) return i;
-  for (let i = want - dir; i >= 0 && i < slides.length; i -= dir) if (slides[i].reviewed !== true) return i;
+  for (let i = want + dir; i >= 0 && i < slides.length; i += dir) if (velaSlideNeedsReview(slides[i])) return i;
+  for (let i = want - dir; i >= 0 && i < slides.length; i -= dir) if (velaSlideNeedsReview(slides[i])) return i;
   return want;
+}
+
+// Every module in outline order — per lane, sorted by `order`, the same order the
+// TOC lists them in (part-list.jsx). The rotation must follow what the author sees.
+function velaReviewItemsInOrder(state) {
+  const out = [];
+  for (const l of (state.lanes || [])) for (const i of [...(l.items || [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999))) out.push(i);
+  return out;
+}
+
+// The next slide in the WHOLE DECK that still needs review, starting just after
+// (fromId, fromIndex): the rest of this module, then each following module, then
+// round to the modules before it. A search that stopped at the module boundary
+// left the selection parked on the slide just approved, so the next click on the
+// check control silently un-approved it and the queue could never drain past the
+// first module. Returns { id, index }, or null when nothing in the deck still
+// needs review — the TOC then shows the "all approved" banner and its clear-all.
+function velaReviewNextTarget(state, fromId, fromIndex) {
+  if (!_velaReviewFilter || state.fullscreen) return null;
+  const items = velaReviewItemsInOrder(state);
+  const start = items.findIndex((i) => i.id === fromId);
+  if (start < 0) return null;
+  const from = items[start];
+  const fromSlides = Array.isArray(from.slides) ? from.slides : [];
+  for (let i = fromIndex + 1; i < fromSlides.length; i++) if (velaSlideNeedsReview(fromSlides[i])) return { id: from.id, index: i };
+  // `n` runs to items.length INCLUSIVE, so the last pass comes back to the
+  // starting module at index 0 and picks up the slides before fromIndex.
+  for (let n = 1; n <= items.length; n++) {
+    const it = items[(start + n) % items.length];
+    const slides = Array.isArray(it.slides) ? it.slides : [];
+    for (let i = 0; i < slides.length; i++) if (velaSlideNeedsReview(slides[i])) return { id: it.id, index: i };
+  }
+  return null;
 }
 
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
@@ -225,9 +265,16 @@ function innerReducer(state, a) {
         approved = true; return { ...s, reviewed: true };
       }) } : i);
       // Approving the slide you are looking at in review mode must move you off it —
-      // that is the point of the mode. Editor only (velaReviewSkipIndex checks that).
+      // that is the point of the mode. The search covers the WHOLE deck, not just
+      // this module, so the last slide of a module hands over to the next module
+      // instead of parking you on a slide you have already approved. Editor only
+      // (velaReviewNextTarget checks that).
       if (approved && state.selectedId === a.id && state.slideIndex === a.index) {
-        return { ...next, slideIndex: velaReviewSkipIndex(next, a.index) };
+        const target = velaReviewNextTarget(next, a.id, a.index);
+        if (!target) return next; // nothing left to review — stay put, banner takes over
+        return target.id === a.id
+          ? { ...next, slideIndex: target.index }
+          : { ...next, selectedId: target.id, slideIndex: target.index, selectedSlideIndices: [] };
       }
       return next;
     }
