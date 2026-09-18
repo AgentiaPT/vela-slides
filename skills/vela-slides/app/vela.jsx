@@ -1433,7 +1433,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1728,6 +1728,9 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (slide approved — dropped from the editor review rotation): strict boolean
+  // only, same fail-closed shape as `hidden`. Any other type is deleted, never coerced.
+  if ("reviewed" in clean && clean.reviewed !== true) delete clean.reviewed;
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -4823,6 +4826,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
+        {/* CR7 review checkmark — editor only (never while presenting), never exported
+            (data-no-pdf). Toggles the per-slide `reviewed` flag; review mode then drops
+            the slide from the editor rotation. Owner: w7 (part-list/part-reducer). */}
+        {editable && !presenting && externalDispatch && itemId && (
+          <div data-no-pdf="" data-testid="slide-review-check" data-reviewed={slide.reviewed ? "true" : "false"}
+            onClick={(e) => { e.stopPropagation(); externalDispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: itemId, index }); }}
+            title={slide.reviewed ? "Approved — click to un-approve" : "Mark this slide reviewed / approved"}
+            style={{ position: "absolute", top: 8, left: 8, zIndex: 6, width: 24, height: 24, borderRadius: 12, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, lineHeight: 1,
+              background: slide.reviewed ? "#16A34A" : "rgba(0,0,0,0.35)", color: "#fff",
+              border: `1.5px solid ${slide.reviewed ? "#16A34A" : "rgba(255,255,255,0.45)"}`,
+              opacity: slide.reviewed ? 1 : 0.45, transition: "opacity .15s, background .15s" }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = slide.reviewed ? 1 : 0.45; }}
+          >✓</div>
+        )}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -4856,6 +4875,51 @@ const velaDeckEpochIsCurrent = (epoch) => epoch === _activeDeckEpoch;
 // The private epoch must stay numeric and monotonic so deck input and history
 // cannot make a tour mistake a replacement deck for its original deck.
 const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && state._deckEpoch >= 0 ? state._deckEpoch + 1 : 1;
+
+// ── Review filter (CR7) ─────────────────────────────────────────────────────
+// Session-only UI mode: "show and cycle only the slides I have NOT approved yet".
+// It is deliberately not reducer state. Two readers need it — the TOC
+// (part-list.jsx) and the slide canvas (part-canvas.jsx) — and neither receives
+// it through the App prop tree, so a tiny external store keeps ONE source of
+// truth and re-renders every reader. It is never persisted: a saved deck keeps
+// the per-slide `reviewed` flags, never the mode. `velaReviewFilterOn()` is what
+// the reducer reads; `useVelaReviewFilter()` is what a component reads.
+// Declared as hoisted functions on purpose — part-canvas.jsx concatenates BEFORE
+// this file and calls the hook at render time.
+let _velaReviewFilter = false;
+const _velaReviewSubs = new Set();
+function velaReviewFilterOn() { return _velaReviewFilter; }
+function setVelaReviewFilter(v) {
+  const next = v === true;
+  if (next === _velaReviewFilter) return;
+  _velaReviewFilter = next;
+  _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
+}
+function useVelaReviewFilter() {
+  const [, bump] = useState(0);
+  useEffect(() => { const fn = () => bump((n) => n + 1); _velaReviewSubs.add(fn); return () => { _velaReviewSubs.delete(fn); }; }, []);
+  return _velaReviewFilter;
+}
+// Find the item (section) that holds the active slide list.
+function velaFindItem(state, id) {
+  for (const l of (state.lanes || [])) { const it = l.items.find((i) => i.id === id); if (it) return it; }
+  return null;
+}
+// Map a requested slide index onto the nearest UNAPPROVED slide.
+// Editor only: when `state.fullscreen` is true the user is presenting, so every
+// slide must stay in the rotation. Exports never call this at all. If every slide
+// is approved the requested index is returned unchanged — the TOC then shows the
+// "all approved" banner instead of trapping the user on an empty view.
+function velaReviewSkipIndex(state, want) {
+  if (!_velaReviewFilter || state.fullscreen) return want;
+  const item = velaFindItem(state, state.selectedId);
+  const slides = item && Array.isArray(item.slides) ? item.slides : null;
+  if (!slides || !slides[want] || slides[want].reviewed !== true) return want;
+  const dir = want < state.slideIndex ? -1 : 1; // keep the direction of travel
+  for (let i = want + dir; i >= 0 && i < slides.length; i += dir) if (slides[i].reviewed !== true) return i;
+  for (let i = want - dir; i >= 0 && i < slides.length; i -= dir) if (slides[i].reviewed !== true) return i;
+  return want;
+}
 
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
@@ -5007,6 +5071,34 @@ function innerReducer(state, a) {
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // CR7: approve / un-approve one slide. `reviewed` is DELETED rather than set to
+    // false so a deck that was authored before this feature stays byte-identical.
+    // Undoable on purpose (same as TOGGLE_SLIDE_HIDDEN) — a mis-click must be Ctrl+Z.
+    case "TOGGLE_SLIDE_REVIEWED": {
+      _dirtyMods.add(a.id);
+      let approved = false;
+      const next = mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => {
+        if (idx !== a.index) return s;
+        if (s.reviewed) { const c = { ...s }; delete c.reviewed; return c; }
+        approved = true; return { ...s, reviewed: true };
+      }) } : i);
+      // Approving the slide you are looking at in review mode must move you off it —
+      // that is the point of the mode. Editor only (velaReviewSkipIndex checks that).
+      if (approved && state.selectedId === a.id && state.slideIndex === a.index) {
+        return { ...next, slideIndex: velaReviewSkipIndex(next, a.index) };
+      }
+      return next;
+    }
+    // CR7: drop every approval in the deck — the way out of an "all approved" review view.
+    case "CLEAR_REVIEWED": {
+      let touched = false;
+      const out = mapItems((i) => {
+        if (!Array.isArray(i.slides) || !i.slides.some((s) => s.reviewed)) return i;
+        touched = true; _dirtyMods.add(i.id);
+        return { ...i, slides: i.slides.map((s) => { if (!s.reviewed) return s; const c = { ...s }; delete c.reviewed; return c; }) };
+      });
+      return touched ? out : state;
+    }
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
@@ -5035,7 +5127,10 @@ function innerReducer(state, a) {
     // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
     // after the user navigates away from an in-flight (or aborted) AI op.
     case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
+    // CR7: every slide cycle in the app (arrows, wheel, space, TOC, gallery) lands
+    // here, so the review-mode skip belongs here and nowhere else. `a.force` is the
+    // escape hatch for a jump that must land exactly where it was asked to.
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.force ? a.index : velaReviewSkipIndex(state, a.index), selectedSlideIndices: [], aiWork: null };
     // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
     // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
     // currently collapsed → expand everything, else collapse every section (caller
@@ -9589,6 +9684,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null); // { x, y, si } — right-click slide context menu
+  // CR7: review mode lists ONLY the slides that are not approved yet.
+  const reviewFilter = useVelaReviewFilter();
   // Multi-selection applies only to the currently-selected module. An empty set
   // means "just the active slide". `multiSel` is the effective explicit set.
   const multiSel = (selected && Array.isArray(selectedSlideIndices)) ? selectedSlideIndices : [];
@@ -9802,6 +9899,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
+        // CR7: an approved slide leaves the review list, so the user stops re-browsing
+        // work already signed off. Return null (never filter the array) — `si` must stay
+        // the REAL slide index for every dispatch below.
+        if (reviewFilter && s.reviewed) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -9864,10 +9965,27 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            {/* CR14: delete the slide from the TOC row, the same affordance the section
+                header already has (bare ×, no confirm). REMOVE_SLIDES keeps history, so
+                Ctrl+Z brings the slide back. Reuses ctxDelete so the row control and the
+                context-menu entry can never drift apart. */}
+            <span data-testid="toc-slide-delete" onClick={(e) => { e.stopPropagation(); ctxDelete(si); }}
+              title="Delete slide"
+              style={{ flexShrink: 0, marginLeft: 2, fontSize: 12, lineHeight: 1, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3, transition: "opacity .15s, color .15s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = T.red; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.color = T.textDim; }}
+            >×</span>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
       }); })()}
+      {/* CR7: a section whose slides are all approved must say so — a section that just
+          vanished from the outline would read as data loss. */}
+      {reviewFilter && item.slides.every((s) => s.reviewed) && (
+        <div data-testid="toc-section-all-approved" style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
+          ✓ all {item.slides.length} approved
+        </div>
+      )}
       {ctxMenu && (() => {
         const si = ctxMenu.si;
         const hidden = item.slides[si]?.hidden;
@@ -10117,6 +10235,12 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
+  // CR7 review mode. Session-only, editor-only: it filters this outline and the editor
+  // slide cycle. Presenter mode and every export still use the whole deck.
+  const reviewFilter = useVelaReviewFilter();
+  let _rvTotal = 0, _rvDone = 0;
+  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (s.reviewed) _rvDone++; }
+  const reviewLeft = _rvTotal - _rvDone;
   // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
   // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
@@ -10143,7 +10267,9 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       const n = item.slides?.length || 0;
       if (n === 0) continue;
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
-      else for (let si = 0; si < n; si++) rail.push({ itemId: item.id, si });
+      // CR7: keyboard TOC nav follows the same rule as the list — approved slides are
+      // out of the rotation while review mode is on.
+      else for (let si = 0; si < n; si++) { if (reviewFilter && item.slides[si]?.reviewed) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };
@@ -10169,6 +10295,26 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
+    <>
+    {/* CR7: enter / leave review mode. One control, and it states what it is doing, so
+        the mode is never something the user cannot find the way out of. */}
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px 2px" }}>
+      <button data-testid="review-filter-toggle" data-active={reviewFilter ? "true" : "false"}
+        onClick={() => setVelaReviewFilter(!reviewFilter)}
+        title={reviewFilter
+          ? "Review mode is ON. The outline and the editor slide cycle show only the slides you have not approved. Click to leave."
+          : "Review mode: show and cycle only the slides you have not approved yet. Editor only — presenting and exports always use every slide."}
+        style={S.btn({ padding: "3px 8px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 4, cursor: "pointer",
+          background: reviewFilter ? T.green : "transparent", color: reviewFilter ? "#fff" : T.textDim,
+          border: `1px solid ${reviewFilter ? T.green : T.border}` })}
+      >{reviewFilter ? `✓ Review ON · ${reviewLeft} left · exit` : "✓ Review"}</button>
+    </div>
+    {reviewFilter && _rvTotal > 0 && reviewLeft === 0 && (
+      <div data-testid="toc-review-banner" style={{ margin: "0 12px 6px", padding: "6px 8px", borderRadius: 4, border: `1px solid ${T.green}`, background: T.green + "18", fontSize: 11, fontFamily: FONT.mono, color: T.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span>✓ All {_rvTotal} slides approved.</span>
+        <button data-testid="review-filter-clear" onClick={() => dispatch({ type: "CLEAR_REVIEWED" })} style={S.btn({ padding: "2px 6px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 3, cursor: "pointer", background: "transparent", color: T.accent, border: `1px solid ${T.border}` })}>Clear all</button>
+      </div>
+    )}
     <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
@@ -10184,6 +10330,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
         <button onClick={() => setAdding(false)} style={S.cancelBtn()}>✕</button>
       </div> : <div onClick={() => setAdding(true)} style={{ padding: "5px 12px", fontSize: 12, color: T.textDim, cursor: "pointer", fontFamily: FONT.mono, opacity: 0.5 }}>+ section</div>}
     </div>
+    </>
   );
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
@@ -15727,6 +15874,119 @@ uiSuite("W6 Views", [
     if (!hasBackdrop(edit)) throw new Error("present-edit-toggle has no guaranteed-contrast backdrop (CR11 regression)");
     _key("f");
     await _waitFor(() => _$("header"), 3000);
+// ━━━ Review mode (CR7) + TOC slide delete (CR14) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Logic tests call the real reducer/sanitizer; DOM tests drive the real controls
+// and always put the app back the way they found it.
+const _rvSlide = (extra) => ({ title: "S", duration: 60, blocks: [{ type: "heading", text: "Hi" }], ...extra });
+const _rvState = (slides, extra) => ({
+  ...init,
+  selectedId: "m1",
+  slideIndex: 0,
+  lanes: [{ id: "l1", title: "Main", collapsed: false, items: [{ id: "m1", title: "T", status: "todo", importance: "should", order: 1, slides }] }],
+  ...extra,
+});
+const _rvSlides = (st) => st.lanes[0].items[0].slides;
+
+uiSuite("Review mode (CR7) + TOC slide delete (CR14)", [
+  { name: "ingress: reviewed:true is kept, every other type is dropped (fail closed)", fn: async () => {
+    if (sanitizeSlide(_rvSlide({ reviewed: true })).reviewed !== true) throw new Error("reviewed:true was dropped");
+    for (const bad of ["true", 1, false, 0, null, {}, [], { toString: () => "true" }]) {
+      const out = sanitizeSlide(_rvSlide({ reviewed: bad }));
+      if ("reviewed" in out) throw new Error("coercible reviewed value survived: " + JSON.stringify(bad));
+    }
+  }},
+  { name: "a deck authored before this feature gains no reviewed key", fn: async () => {
+    const out = sanitizeSlide(_rvSlide({}));
+    if ("reviewed" in out) throw new Error("pre-feature slide was given a reviewed key");
+  }},
+  { name: "TOGGLE_SLIDE_REVIEWED approves, then un-approves (key deleted, not set false)", fn: async () => {
+    let st = _rvState([_rvSlide({}), _rvSlide({})]);
+    st = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+    if (_rvSlides(st)[1].reviewed !== true) throw new Error("slide 1 was not approved");
+    st = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+    if ("reviewed" in _rvSlides(st)[1]) throw new Error("un-approve left the key behind");
+  }},
+  { name: "CLEAR_REVIEWED drops every approval in the deck", fn: async () => {
+    let st = _rvState([_rvSlide({ reviewed: true }), _rvSlide({ reviewed: true }), _rvSlide({})]);
+    st = innerReducer(st, { type: "CLEAR_REVIEWED" });
+    if (_rvSlides(st).some((s) => "reviewed" in s)) throw new Error("an approval survived CLEAR_REVIEWED");
+  }},
+  { name: "editor cycling skips an approved slide (forward and backward)", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})], { slideIndex: 0, fullscreen: false });
+      const fwd = innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (fwd.slideIndex !== 2) throw new Error("forward cycle landed on the approved slide: " + fwd.slideIndex);
+      const back = innerReducer({ ..._rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})]), slideIndex: 2 }, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (back.slideIndex !== 0) throw new Error("backward cycle landed on the approved slide: " + back.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "presenter mode (fullscreen) still cycles EVERY slide", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})], { fullscreen: true });
+      const out = innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (out.slideIndex !== 1) throw new Error("review mode hid a slide from the presentation: " + out.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "review mode off changes nothing about cycling", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(false);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})]);
+      if (innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 }).slideIndex !== 1) throw new Error("skipped with review mode OFF");
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "every slide approved is not a trap — the index is left alone", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({ reviewed: true }), _rvSlide({ reviewed: true })]);
+      if (innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 }).slideIndex !== 1) throw new Error("index moved with every slide approved");
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "approving the current slide moves you to the next unapproved one", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({}), _rvSlide({})], { slideIndex: 0 });
+      const out = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 0 });
+      if (out.slideIndex !== 1) throw new Error("did not advance off the approved slide: " + out.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "CR14: deleting a TOC slide is undoable through the normal history", fn: async () => {
+    const start = { past: [], present: _rvState([_rvSlide({ title: "A" }), _rvSlide({ title: "B" })]), future: [] };
+    const gone = reducer(start, { type: "REMOVE_SLIDES", id: "m1", indices: [1] });
+    if (_rvSlides(gone.present).length !== 1) throw new Error("slide was not deleted");
+    const back = reducer(gone, { type: "UNDO" });
+    if (_rvSlides(back.present).length !== 2) throw new Error("undo did not restore the deleted slide");
+  }},
+  { name: "CR14: the TOC row delete control is rendered on every slide row", fn: async () => {
+    const rows = document.querySelectorAll('[data-testid="toc-slide-row"]');
+    if (rows.length === 0) throw new Error("no TOC slide rows rendered");
+    const dels = document.querySelectorAll('[data-testid="toc-slide-delete"]');
+    if (dels.length !== rows.length) throw new Error(`delete controls ${dels.length} != rows ${rows.length}`);
+  }},
+  { name: "the checkmark on the slide toggles the approved state", fn: async () => {
+    const check = _$('[data-testid="slide-review-check"]');
+    if (!check) throw new Error("no review checkmark on the slide");
+    const before = check.getAttribute("data-reviewed");
+    _click(check);
+    await _waitFor(() => { const c = _$('[data-testid="slide-review-check"]'); return c && c.getAttribute("data-reviewed") !== before ? c : null; }, 2000);
+    _click(_$('[data-testid="slide-review-check"]'));
+    await _waitFor(() => { const c = _$('[data-testid="slide-review-check"]'); return c && c.getAttribute("data-reviewed") === before ? c : null; }, 2000);
+  }},
+  { name: "the review-mode toggle is in the TOC and is obvious to leave", fn: async () => {
+    const btn = _$('[data-testid="review-filter-toggle"]');
+    if (!btn) throw new Error("no review-mode toggle in the TOC");
+    if (btn.getAttribute("data-active") !== "false") throw new Error("review mode must start off");
+    _click(btn);
+    const on = await _waitFor(() => { const b = _$('[data-testid="review-filter-toggle"]'); return b && b.getAttribute("data-active") === "true" ? b : null; }, 2000);
+    if (!/exit/i.test(on.textContent || "")) throw new Error("the ON state does not say how to leave: " + on.textContent);
+    _click(on);
+    await _waitFor(() => { const b = _$('[data-testid="review-filter-toggle"]'); return b && b.getAttribute("data-active") === "false" ? b : null; }, 2000);
   }},
 ]);
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.

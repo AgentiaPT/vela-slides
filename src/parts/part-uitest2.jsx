@@ -2287,5 +2287,118 @@ uiSuite("W6 Views", [
     if (!hasBackdrop(edit)) throw new Error("present-edit-toggle has no guaranteed-contrast backdrop (CR11 regression)");
     _key("f");
     await _waitFor(() => _$("header"), 3000);
+// ━━━ Review mode (CR7) + TOC slide delete (CR14) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Logic tests call the real reducer/sanitizer; DOM tests drive the real controls
+// and always put the app back the way they found it.
+const _rvSlide = (extra) => ({ title: "S", duration: 60, blocks: [{ type: "heading", text: "Hi" }], ...extra });
+const _rvState = (slides, extra) => ({
+  ...init,
+  selectedId: "m1",
+  slideIndex: 0,
+  lanes: [{ id: "l1", title: "Main", collapsed: false, items: [{ id: "m1", title: "T", status: "todo", importance: "should", order: 1, slides }] }],
+  ...extra,
+});
+const _rvSlides = (st) => st.lanes[0].items[0].slides;
+
+uiSuite("Review mode (CR7) + TOC slide delete (CR14)", [
+  { name: "ingress: reviewed:true is kept, every other type is dropped (fail closed)", fn: async () => {
+    if (sanitizeSlide(_rvSlide({ reviewed: true })).reviewed !== true) throw new Error("reviewed:true was dropped");
+    for (const bad of ["true", 1, false, 0, null, {}, [], { toString: () => "true" }]) {
+      const out = sanitizeSlide(_rvSlide({ reviewed: bad }));
+      if ("reviewed" in out) throw new Error("coercible reviewed value survived: " + JSON.stringify(bad));
+    }
+  }},
+  { name: "a deck authored before this feature gains no reviewed key", fn: async () => {
+    const out = sanitizeSlide(_rvSlide({}));
+    if ("reviewed" in out) throw new Error("pre-feature slide was given a reviewed key");
+  }},
+  { name: "TOGGLE_SLIDE_REVIEWED approves, then un-approves (key deleted, not set false)", fn: async () => {
+    let st = _rvState([_rvSlide({}), _rvSlide({})]);
+    st = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+    if (_rvSlides(st)[1].reviewed !== true) throw new Error("slide 1 was not approved");
+    st = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+    if ("reviewed" in _rvSlides(st)[1]) throw new Error("un-approve left the key behind");
+  }},
+  { name: "CLEAR_REVIEWED drops every approval in the deck", fn: async () => {
+    let st = _rvState([_rvSlide({ reviewed: true }), _rvSlide({ reviewed: true }), _rvSlide({})]);
+    st = innerReducer(st, { type: "CLEAR_REVIEWED" });
+    if (_rvSlides(st).some((s) => "reviewed" in s)) throw new Error("an approval survived CLEAR_REVIEWED");
+  }},
+  { name: "editor cycling skips an approved slide (forward and backward)", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})], { slideIndex: 0, fullscreen: false });
+      const fwd = innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (fwd.slideIndex !== 2) throw new Error("forward cycle landed on the approved slide: " + fwd.slideIndex);
+      const back = innerReducer({ ..._rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})]), slideIndex: 2 }, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (back.slideIndex !== 0) throw new Error("backward cycle landed on the approved slide: " + back.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "presenter mode (fullscreen) still cycles EVERY slide", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})], { fullscreen: true });
+      const out = innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 });
+      if (out.slideIndex !== 1) throw new Error("review mode hid a slide from the presentation: " + out.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "review mode off changes nothing about cycling", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(false);
+      const st = _rvState([_rvSlide({}), _rvSlide({ reviewed: true }), _rvSlide({})]);
+      if (innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 }).slideIndex !== 1) throw new Error("skipped with review mode OFF");
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "every slide approved is not a trap — the index is left alone", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({ reviewed: true }), _rvSlide({ reviewed: true })]);
+      if (innerReducer(st, { type: "SET_SLIDE_INDEX", index: 1 }).slideIndex !== 1) throw new Error("index moved with every slide approved");
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "approving the current slide moves you to the next unapproved one", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      const st = _rvState([_rvSlide({}), _rvSlide({}), _rvSlide({})], { slideIndex: 0 });
+      const out = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 0 });
+      if (out.slideIndex !== 1) throw new Error("did not advance off the approved slide: " + out.slideIndex);
+    } finally { setVelaReviewFilter(was); }
+  }},
+  { name: "CR14: deleting a TOC slide is undoable through the normal history", fn: async () => {
+    const start = { past: [], present: _rvState([_rvSlide({ title: "A" }), _rvSlide({ title: "B" })]), future: [] };
+    const gone = reducer(start, { type: "REMOVE_SLIDES", id: "m1", indices: [1] });
+    if (_rvSlides(gone.present).length !== 1) throw new Error("slide was not deleted");
+    const back = reducer(gone, { type: "UNDO" });
+    if (_rvSlides(back.present).length !== 2) throw new Error("undo did not restore the deleted slide");
+  }},
+  { name: "CR14: the TOC row delete control is rendered on every slide row", fn: async () => {
+    const rows = document.querySelectorAll('[data-testid="toc-slide-row"]');
+    if (rows.length === 0) throw new Error("no TOC slide rows rendered");
+    const dels = document.querySelectorAll('[data-testid="toc-slide-delete"]');
+    if (dels.length !== rows.length) throw new Error(`delete controls ${dels.length} != rows ${rows.length}`);
+  }},
+  { name: "the checkmark on the slide toggles the approved state", fn: async () => {
+    const check = _$('[data-testid="slide-review-check"]');
+    if (!check) throw new Error("no review checkmark on the slide");
+    const before = check.getAttribute("data-reviewed");
+    _click(check);
+    await _waitFor(() => { const c = _$('[data-testid="slide-review-check"]'); return c && c.getAttribute("data-reviewed") !== before ? c : null; }, 2000);
+    _click(_$('[data-testid="slide-review-check"]'));
+    await _waitFor(() => { const c = _$('[data-testid="slide-review-check"]'); return c && c.getAttribute("data-reviewed") === before ? c : null; }, 2000);
+  }},
+  { name: "the review-mode toggle is in the TOC and is obvious to leave", fn: async () => {
+    const btn = _$('[data-testid="review-filter-toggle"]');
+    if (!btn) throw new Error("no review-mode toggle in the TOC");
+    if (btn.getAttribute("data-active") !== "false") throw new Error("review mode must start off");
+    _click(btn);
+    const on = await _waitFor(() => { const b = _$('[data-testid="review-filter-toggle"]'); return b && b.getAttribute("data-active") === "true" ? b : null; }, 2000);
+    if (!/exit/i.test(on.textContent || "")) throw new Error("the ON state does not say how to leave: " + on.textContent);
+    _click(on);
+    await _waitFor(() => { const b = _$('[data-testid="review-filter-toggle"]'); return b && b.getAttribute("data-active") === "false" ? b : null; }, 2000);
   }},
 ]);
