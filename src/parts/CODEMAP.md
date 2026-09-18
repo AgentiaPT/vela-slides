@@ -52,7 +52,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Inline Comment Card (review mode): InlineCommentCard SlideContent
 
 ### part-reducer.jsx
-- Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch NO_HISTORY MAX_HISTORY innerReducer
+- Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch
+- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter useVelaReviewFilter velaFindItem velaReviewSkipIndex NO_HISTORY MAX_HISTORY innerReducer
 - Comment Actions: historyInit reducer
 
 ### part-engine.jsx
@@ -120,6 +121,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
+- Review mode (CR7) + TOC slide delete (CR14): _rvSlide _rvState _rvSlides
 
 ### part-demo.jsx
 - Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
@@ -212,6 +214,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - BATCH_ADD: (no direct dispatch site)
 - CLEAR_BOOTSTRAP: part-chat.jsx
 - CLEAR_RESOLVED_COMMENTS: part-app-modals.jsx
+- CLEAR_REVIEWED: part-list.jsx
 - CYCLE_STATUS: (no direct dispatch site)
 - DESELECT: part-app.jsx part-demo.jsx
 - DRAG_REORDER: part-list.jsx
@@ -274,6 +277,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
 - TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_REVIEWED: (no direct dispatch site)
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx

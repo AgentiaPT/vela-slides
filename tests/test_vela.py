@@ -4801,6 +4801,151 @@ def test_svg_style_recurrence_guards():
         fail("recurrence guards: SVG inline-style layout/position denylist missing")
 
 
+def test_review_mode_and_toc_delete():
+    """CR7 review mode (per-slide `reviewed` flag) + CR14 TOC slide delete."""
+    print("\n── Review Mode (CR7) + TOC Slide Delete (CR14) ──")
+
+    imports = open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8").read()
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    lst = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    canvas = open(os.path.join(PARTS_DIR, "part-canvas.jsx"), encoding="utf-8").read()
+
+    # ── 1. Ingress: `reviewed` is allowlisted and strict-boolean ──────────────
+    slide_keys = imports[imports.index("const SAFE_SLIDE_KEYS"):]
+    slide_keys = slide_keys[:slide_keys.index("]);")]
+    if '"reviewed"' in slide_keys:
+        ok("`reviewed` is in SAFE_SLIDE_KEYS")
+    else:
+        fail("`reviewed` is in SAFE_SLIDE_KEYS", "key missing — sanitizeSlide would drop it")
+    if 'if ("reviewed" in clean && clean.reviewed !== true) delete clean.reviewed;' in imports:
+        ok("`reviewed` is strict-boolean at ingress (fail closed, never coerced)")
+    else:
+        fail("`reviewed` strict-boolean guard", "guard not found in part-imports.jsx")
+    # `reviewed` must NOT be a block key — it is slide-only.
+    block_keys = imports[imports.index("const SAFE_BLOCK_KEYS"):]
+    block_keys = block_keys[:block_keys.index("]);")]
+    if '"reviewed"' not in block_keys:
+        ok("`reviewed` is slide-only (absent from SAFE_BLOCK_KEYS)")
+    else:
+        fail("`reviewed` is slide-only", "leaked into SAFE_BLOCK_KEYS")
+
+    # ── 2. Reducer: toggle, clear, and the editor-only cycling rule ───────────
+    for needle, label in [
+        ('case "TOGGLE_SLIDE_REVIEWED"', "TOGGLE_SLIDE_REVIEWED action exists"),
+        ('case "CLEAR_REVIEWED"', "CLEAR_REVIEWED action exists (way out of an all-approved view)"),
+        ("function velaReviewSkipIndex", "velaReviewSkipIndex maps a requested index onto an unapproved slide"),
+        ("velaReviewSkipIndex(state, a.index)", "SET_SLIDE_INDEX routes every cycle through the skip"),
+        ("function useVelaReviewFilter", "review-mode store exposes a React hook"),
+    ]:
+        if needle in reducer:
+            ok(label)
+        else:
+            fail(label, "missing from part-reducer.jsx: " + needle)
+
+    # The editor-only rule: the skip bails out while presenting (state.fullscreen).
+    body = reducer[reducer.index("function velaReviewSkipIndex"):]
+    body = body[:body.index("\n}\n")]
+    if "state.fullscreen) return want" in body:
+        ok("review mode never changes the cycle while presenting (fullscreen bails out)")
+    else:
+        fail("review mode is editor-only", "velaReviewSkipIndex does not bail on state.fullscreen")
+
+    # Toggling one slide must be undoable — it must NOT be in NO_HISTORY.
+    no_hist = reducer[reducer.index("const NO_HISTORY"):]
+    no_hist = no_hist[:no_hist.index("\n")]
+    if "TOGGLE_SLIDE_REVIEWED" not in no_hist and "CLEAR_REVIEWED" not in no_hist:
+        ok("approve / clear-approvals are undoable (not in NO_HISTORY)")
+    else:
+        fail("approve is undoable", "TOGGLE_SLIDE_REVIEWED/CLEAR_REVIEWED landed in NO_HISTORY")
+
+    # ── 3. Stable test ids the verification round drives ──────────────────────
+    for needle, src, label in [
+        ('data-testid="slide-review-check"', canvas, "checkmark on the slide"),
+        ('data-testid="review-filter-toggle"', lst, "review-mode toggle in the TOC"),
+        ('data-testid="review-filter-clear"', lst, "clear-all-approvals control"),
+        ('data-testid="toc-review-banner"', lst, "all-approved banner (empty review view is not a trap)"),
+        ('data-testid="toc-slide-delete"', lst, "CR14 TOC slide delete control"),
+    ]:
+        if needle in src:
+            ok("test id present: " + label)
+        else:
+            fail("test id present: " + label, "missing " + needle)
+
+    # The checkmark must never reach a presentation or an export.
+    ci = canvas.index('data-testid="slide-review-check"')
+    check = canvas[max(0, ci - 400):ci + 900]
+    if "!presenting" in check and "data-no-pdf" in check:
+        ok("checkmark is editor-only and excluded from exports (data-no-pdf)")
+    else:
+        fail("checkmark is editor-only", "missing !presenting guard or data-no-pdf")
+
+    # CR14: the row delete must reuse the existing delete path so it stays undoable.
+    if "ctxDelete(si)" in lst.split('data-testid="toc-slide-delete"')[1][:300]:
+        ok("CR14 row delete reuses ctxDelete → REMOVE_SLIDES → undoable")
+    else:
+        fail("CR14 row delete is undoable", "row control does not reuse ctxDelete")
+
+    # ── 4. Round-trip: `reviewed` survives compact / turbo / expand ───────────
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    slide = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "duration": 60,
+             "reviewed": True, "blocks": [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+    deck = {"deckTitle": "Review RT",
+            "lanes": [{"title": "Main", "items": [{"title": "T", "status": "todo", "slides": [slide]}]}]}
+
+    def first_slide(d):
+        return d["lanes"][0]["items"][0]["slides"][0]
+
+    rt = expand_deck(compact_deck(deck))
+    if first_slide(rt).get("reviewed") is True:
+        ok("`reviewed` survives compact → expand")
+    else:
+        fail("`reviewed` survives compact → expand", repr(first_slide(rt)))
+
+    # Turbo is a positional AUTHORING shorthand and already drops every presentation
+    # metadata flag (`hidden`, `timeLock`, `notes`). `reviewed` must behave the same —
+    # no new inconsistency. Storage and save/load use full JSON, so persistence is safe.
+    hidden_slide = dict(slide)
+    hidden_slide.pop("reviewed")
+    hidden_slide["hidden"] = True
+    hdeck = {"deckTitle": "H", "lanes": [{"title": "Main", "items": [{"title": "T", "status": "todo", "slides": [hidden_slide]}]}]}
+    rt2 = first_slide(expand_deck(unturbo_deck(turbo_deck(deck))))
+    rt3 = first_slide(expand_deck(unturbo_deck(turbo_deck(hdeck))))
+    if ("reviewed" in rt2) == ("hidden" in rt3):
+        ok("`reviewed` behaves exactly like `hidden` through turbo (same lossy shorthand)")
+    else:
+        fail("`reviewed` matches `hidden` through turbo", repr(rt2) + " vs " + repr(rt3))
+
+    # A deck authored before this feature must stay untouched.
+    old = {"deckTitle": "Old", "lanes": [{"title": "Main", "items": [{"title": "T", "status": "todo",
+           "slides": [{"title": "S", "duration": 60, "blocks": [{"type": "heading", "text": "Hi"}]}]}]}]}
+    old_rt = expand_deck(compact_deck(old))
+    if "reviewed" not in first_slide(old_rt):
+        ok("a pre-feature deck gains no `reviewed` key (no corruption)")
+    else:
+        fail("a pre-feature deck is unchanged", repr(first_slide(old_rt)))
+
+    # validate.py must still accept a deck that carries the flag.
+    tmpdir = tempfile.mkdtemp()
+    try:
+        p = os.path.join(tmpdir, "r.vela")
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(deck, f)
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("validate.py accepts a deck with `reviewed`")
+        else:
+            fail("validate.py accepts a deck with `reviewed`", r.stdout + r.stderr)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -4831,6 +4976,7 @@ if __name__ == "__main__":
         test_script_context_escape_parity()
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
+        test_review_mode_and_toc_delete()
     if run_integration:
         test_integration()
         test_cli_commands()

@@ -662,6 +662,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
+        {/* CR7 review checkmark — editor only (never while presenting), never exported
+            (data-no-pdf). Toggles the per-slide `reviewed` flag; review mode then drops
+            the slide from the editor rotation. Owner: w7 (part-list/part-reducer). */}
+        {editable && !presenting && externalDispatch && itemId && (
+          <div data-no-pdf="" data-testid="slide-review-check" data-reviewed={slide.reviewed ? "true" : "false"}
+            onClick={(e) => { e.stopPropagation(); externalDispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: itemId, index }); }}
+            title={slide.reviewed ? "Approved — click to un-approve" : "Mark this slide reviewed / approved"}
+            style={{ position: "absolute", top: 8, left: 8, zIndex: 6, width: 24, height: 24, borderRadius: 12, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, lineHeight: 1,
+              background: slide.reviewed ? "#16A34A" : "rgba(0,0,0,0.35)", color: "#fff",
+              border: `1.5px solid ${slide.reviewed ? "#16A34A" : "rgba(255,255,255,0.45)"}`,
+              opacity: slide.reviewed ? 1 : 0.45, transition: "opacity .15s, background .15s" }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = slide.reviewed ? 1 : 0.45; }}
+          >✓</div>
+        )}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);

@@ -16,6 +16,51 @@ const velaDeckEpochIsCurrent = (epoch) => epoch === _activeDeckEpoch;
 // cannot make a tour mistake a replacement deck for its original deck.
 const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && state._deckEpoch >= 0 ? state._deckEpoch + 1 : 1;
 
+// ── Review filter (CR7) ─────────────────────────────────────────────────────
+// Session-only UI mode: "show and cycle only the slides I have NOT approved yet".
+// It is deliberately not reducer state. Two readers need it — the TOC
+// (part-list.jsx) and the slide canvas (part-canvas.jsx) — and neither receives
+// it through the App prop tree, so a tiny external store keeps ONE source of
+// truth and re-renders every reader. It is never persisted: a saved deck keeps
+// the per-slide `reviewed` flags, never the mode. `velaReviewFilterOn()` is what
+// the reducer reads; `useVelaReviewFilter()` is what a component reads.
+// Declared as hoisted functions on purpose — part-canvas.jsx concatenates BEFORE
+// this file and calls the hook at render time.
+let _velaReviewFilter = false;
+const _velaReviewSubs = new Set();
+function velaReviewFilterOn() { return _velaReviewFilter; }
+function setVelaReviewFilter(v) {
+  const next = v === true;
+  if (next === _velaReviewFilter) return;
+  _velaReviewFilter = next;
+  _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
+}
+function useVelaReviewFilter() {
+  const [, bump] = useState(0);
+  useEffect(() => { const fn = () => bump((n) => n + 1); _velaReviewSubs.add(fn); return () => { _velaReviewSubs.delete(fn); }; }, []);
+  return _velaReviewFilter;
+}
+// Find the item (section) that holds the active slide list.
+function velaFindItem(state, id) {
+  for (const l of (state.lanes || [])) { const it = l.items.find((i) => i.id === id); if (it) return it; }
+  return null;
+}
+// Map a requested slide index onto the nearest UNAPPROVED slide.
+// Editor only: when `state.fullscreen` is true the user is presenting, so every
+// slide must stay in the rotation. Exports never call this at all. If every slide
+// is approved the requested index is returned unchanged — the TOC then shows the
+// "all approved" banner instead of trapping the user on an empty view.
+function velaReviewSkipIndex(state, want) {
+  if (!_velaReviewFilter || state.fullscreen) return want;
+  const item = velaFindItem(state, state.selectedId);
+  const slides = item && Array.isArray(item.slides) ? item.slides : null;
+  if (!slides || !slides[want] || slides[want].reviewed !== true) return want;
+  const dir = want < state.slideIndex ? -1 : 1; // keep the direction of travel
+  for (let i = want + dir; i >= 0 && i < slides.length; i += dir) if (slides[i].reviewed !== true) return i;
+  for (let i = want - dir; i >= 0 && i < slides.length; i -= dir) if (slides[i].reviewed !== true) return i;
+  return want;
+}
+
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
@@ -166,6 +211,34 @@ function innerReducer(state, a) {
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // CR7: approve / un-approve one slide. `reviewed` is DELETED rather than set to
+    // false so a deck that was authored before this feature stays byte-identical.
+    // Undoable on purpose (same as TOGGLE_SLIDE_HIDDEN) — a mis-click must be Ctrl+Z.
+    case "TOGGLE_SLIDE_REVIEWED": {
+      _dirtyMods.add(a.id);
+      let approved = false;
+      const next = mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => {
+        if (idx !== a.index) return s;
+        if (s.reviewed) { const c = { ...s }; delete c.reviewed; return c; }
+        approved = true; return { ...s, reviewed: true };
+      }) } : i);
+      // Approving the slide you are looking at in review mode must move you off it —
+      // that is the point of the mode. Editor only (velaReviewSkipIndex checks that).
+      if (approved && state.selectedId === a.id && state.slideIndex === a.index) {
+        return { ...next, slideIndex: velaReviewSkipIndex(next, a.index) };
+      }
+      return next;
+    }
+    // CR7: drop every approval in the deck — the way out of an "all approved" review view.
+    case "CLEAR_REVIEWED": {
+      let touched = false;
+      const out = mapItems((i) => {
+        if (!Array.isArray(i.slides) || !i.slides.some((s) => s.reviewed)) return i;
+        touched = true; _dirtyMods.add(i.id);
+        return { ...i, slides: i.slides.map((s) => { if (!s.reviewed) return s; const c = { ...s }; delete c.reviewed; return c; }) };
+      });
+      return touched ? out : state;
+    }
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
@@ -194,7 +267,10 @@ function innerReducer(state, a) {
     // CR5/D4: switching module/slide clears aiWork so a slide never keeps shimmering
     // after the user navigates away from an in-flight (or aborted) AI op.
     case "SELECT": return { ...state, selectedId: a.id, slideIndex: a.slideIndex ?? 0, selectedSlideIndices: [], aiWork: null };
-    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.index, selectedSlideIndices: [], aiWork: null };
+    // CR7: every slide cycle in the app (arrows, wheel, space, TOC, gallery) lands
+    // here, so the review-mode skip belongs here and nowhere else. `a.force` is the
+    // escape hatch for a jump that must land exactly where it was asked to.
+    case "SET_SLIDE_INDEX": return { ...state, slideIndex: a.force ? a.index : velaReviewSkipIndex(state, a.index), selectedSlideIndices: [], aiWork: null };
     // CR2: TOC section collapse state (view-only; excluded from undo via NO_HISTORY).
     // `all` mirrors the mouse Ctrl/Cmd-click "collapse/expand ALL": if THIS id is
     // currently collapsed → expand everything, else collapse every section (caller

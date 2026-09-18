@@ -183,3 +183,82 @@ export async function swipe(page, dir = -1) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.waitForTimeout(150);
 }
+
+// ── CR7 review mode + CR14 TOC slide delete (owner: w7) ───────────────────────
+// Published driver contract: slide-review-check, review-filter-toggle,
+// review-filter-clear, toc-review-banner, toc-slide-delete, toc-section-all-approved.
+
+// Is the slide the editor shows approved?
+export async function isSlideApproved(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('[data-testid="slide-review-check"]');
+    if (!c) throw new Error("isSlideApproved: no checkmark on the slide (editor view?)");
+    return c.getAttribute("data-reviewed") === "true";
+  });
+}
+// Click the checkmark on the slide and WAIT for the result.
+// GOTCHA: while review mode is ON, approving the slide you are on MOVES you to the
+// next unapproved slide, so the checkmark does NOT flip to "true" — it belongs to a
+// different slide now. Wait on the TOC row count dropping instead in that case.
+export async function toggleSlideApproved(page) {
+  const before = await isSlideApproved(page);
+  const reviewOn = await isReviewMode(page);
+  const rows = reviewOn ? await tocRowCount(page) : 0;
+  await page.evaluate(() => document.querySelector('[data-testid="slide-review-check"]').click());
+  if (reviewOn && !before) {
+    await page.waitForFunction((r) => document.querySelectorAll('[data-testid="toc-slide-row"]').length < r, rows, { timeout: 4000 });
+    return true;
+  }
+  await page.waitForFunction((b) => {
+    const c = document.querySelector('[data-testid="slide-review-check"]');
+    return !!c && (c.getAttribute("data-reviewed") === "true") !== b;
+  }, before, { timeout: 4000 });
+  return !before;
+}
+// Is review mode on?
+export async function isReviewMode(page) {
+  return page.evaluate(() => {
+    const b = document.querySelector('[data-testid="review-filter-toggle"]');
+    if (!b) throw new Error("isReviewMode: no review-filter-toggle in the TOC");
+    return b.getAttribute("data-active") === "true";
+  });
+}
+// Turn review mode on or off and WAIT for the TOC to settle.
+export async function setReviewMode(page, on) {
+  if (await isReviewMode(page) === !!on) return;
+  await page.evaluate(() => document.querySelector('[data-testid="review-filter-toggle"]').click());
+  await page.waitForFunction((want) => {
+    const b = document.querySelector('[data-testid="review-filter-toggle"]');
+    return !!b && (b.getAttribute("data-active") === "true") === want;
+  }, !!on, { timeout: 4000 });
+  await page.waitForTimeout(120);
+}
+// How many slide rows the TOC lists right now.
+export async function tocRowCount(page) {
+  return page.evaluate(() => document.querySelectorAll('[data-testid="toc-slide-row"]').length);
+}
+// Delete the slide on TOC row `i` (0-based) through the row control. No confirm —
+// it matches the section delete; REMOVE_SLIDES keeps history, so Ctrl+Z restores it.
+export async function deleteTocSlide(page, i = 0) {
+  const before = await tocRowCount(page);
+  await page.evaluate((i) => {
+    const d = document.querySelectorAll('[data-testid="toc-slide-delete"]')[i];
+    if (!d) throw new Error("deleteTocSlide: no delete control on row " + i);
+    d.click();
+  }, i);
+  await page.waitForFunction((b) => document.querySelectorAll('[data-testid="toc-slide-row"]').length < b, before, { timeout: 4000 });
+  return before - 1;
+}
+// Is the "all approved" banner up (the way out of an empty review view)?
+export async function reviewBannerUp(page) {
+  return page.evaluate(() => !!document.querySelector('[data-testid="toc-review-banner"]'));
+}
+// Drop every approval in the deck from the banner.
+export async function clearAllApprovals(page) {
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-testid="review-filter-clear"]');
+    if (!b) throw new Error("clearAllApprovals: banner not up");
+    b.click();
+  });
+  await page.waitForFunction(() => !document.querySelector('[data-testid="toc-review-banner"]'), undefined, { timeout: 4000 });
+}

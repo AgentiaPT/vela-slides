@@ -1397,7 +1397,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1692,6 +1692,9 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (slide approved — dropped from the editor review rotation): strict boolean
+  // only, same fail-closed shape as `hidden`. Any other type is deleted, never coerced.
+  if ("reviewed" in clean && clean.reviewed !== true) delete clean.reviewed;
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);

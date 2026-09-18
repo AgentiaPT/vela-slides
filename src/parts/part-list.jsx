@@ -210,6 +210,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const [editingSi, setEditingSi] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null); // { x, y, si } — right-click slide context menu
+  // CR7: review mode lists ONLY the slides that are not approved yet.
+  const reviewFilter = useVelaReviewFilter();
   // Multi-selection applies only to the currently-selected module. An empty set
   // means "just the active slide". `multiSel` is the effective explicit set.
   const multiSel = (selected && Array.isArray(selectedSlideIndices)) ? selectedSlideIndices : [];
@@ -423,6 +425,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         const sPct = sDur > 0 ? Math.max(3, Math.round((sDur / maxSlideDur) * 100)) : 0;
         const slideCumTime = cumTime;
         cumTime += sDur;
+        // CR7: an approved slide leaves the review list, so the user stops re-browsing
+        // work already signed off. Return null (never filter the array) — `si` must stay
+        // the REAL slide index for every dispatch below.
+        if (reviewFilter && s.reviewed) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -485,10 +491,27 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            {/* CR14: delete the slide from the TOC row, the same affordance the section
+                header already has (bare ×, no confirm). REMOVE_SLIDES keeps history, so
+                Ctrl+Z brings the slide back. Reuses ctxDelete so the row control and the
+                context-menu entry can never drift apart. */}
+            <span data-testid="toc-slide-delete" onClick={(e) => { e.stopPropagation(); ctxDelete(si); }}
+              title="Delete slide"
+              style={{ flexShrink: 0, marginLeft: 2, fontSize: 12, lineHeight: 1, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3, transition: "opacity .15s, color .15s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = T.red; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.color = T.textDim; }}
+            >×</span>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
       }); })()}
+      {/* CR7: a section whose slides are all approved must say so — a section that just
+          vanished from the outline would read as data loss. */}
+      {reviewFilter && item.slides.every((s) => s.reviewed) && (
+        <div data-testid="toc-section-all-approved" style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
+          ✓ all {item.slides.length} approved
+        </div>
+      )}
       {ctxMenu && (() => {
         const si = ctxMenu.si;
         const hidden = item.slides[si]?.hidden;
@@ -738,6 +761,12 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const [val, setVal] = useState("");
   const laneId = lanes[0]?.id;
   const allItems = lanes.flatMap((l) => [...l.items].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)));
+  // CR7 review mode. Session-only, editor-only: it filters this outline and the editor
+  // slide cycle. Presenter mode and every export still use the whole deck.
+  const reviewFilter = useVelaReviewFilter();
+  let _rvTotal = 0, _rvDone = 0;
+  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (s.reviewed) _rvDone++; }
+  const reviewLeft = _rvTotal - _rvDone;
   // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
   // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
@@ -764,7 +793,9 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       const n = item.slides?.length || 0;
       if (n === 0) continue;
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
-      else for (let si = 0; si < n; si++) rail.push({ itemId: item.id, si });
+      // CR7: keyboard TOC nav follows the same rule as the list — approved slides are
+      // out of the rotation while review mode is on.
+      else for (let si = 0; si < n; si++) { if (reviewFilter && item.slides[si]?.reviewed) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };
@@ -790,6 +821,26 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
+    <>
+    {/* CR7: enter / leave review mode. One control, and it states what it is doing, so
+        the mode is never something the user cannot find the way out of. */}
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px 2px" }}>
+      <button data-testid="review-filter-toggle" data-active={reviewFilter ? "true" : "false"}
+        onClick={() => setVelaReviewFilter(!reviewFilter)}
+        title={reviewFilter
+          ? "Review mode is ON. The outline and the editor slide cycle show only the slides you have not approved. Click to leave."
+          : "Review mode: show and cycle only the slides you have not approved yet. Editor only — presenting and exports always use every slide."}
+        style={S.btn({ padding: "3px 8px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 4, cursor: "pointer",
+          background: reviewFilter ? T.green : "transparent", color: reviewFilter ? "#fff" : T.textDim,
+          border: `1px solid ${reviewFilter ? T.green : T.border}` })}
+      >{reviewFilter ? `✓ Review ON · ${reviewLeft} left · exit` : "✓ Review"}</button>
+    </div>
+    {reviewFilter && _rvTotal > 0 && reviewLeft === 0 && (
+      <div data-testid="toc-review-banner" style={{ margin: "0 12px 6px", padding: "6px 8px", borderRadius: 4, border: `1px solid ${T.green}`, background: T.green + "18", fontSize: 11, fontFamily: FONT.mono, color: T.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span>✓ All {_rvTotal} slides approved.</span>
+        <button data-testid="review-filter-clear" onClick={() => dispatch({ type: "CLEAR_REVIEWED" })} style={S.btn({ padding: "2px 6px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 3, cursor: "pointer", background: "transparent", color: T.accent, border: `1px solid ${T.border}` })}>Clear all</button>
+      </div>
+    )}
     <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
@@ -805,5 +856,6 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
         <button onClick={() => setAdding(false)} style={S.cancelBtn()}>✕</button>
       </div> : <div onClick={() => setAdding(true)} style={{ padding: "5px 12px", fontSize: 12, color: T.textDim, cursor: "pointer", fontFamily: FONT.mono, opacity: 0.5 }}>+ section</div>}
     </div>
+    </>
   );
 }
