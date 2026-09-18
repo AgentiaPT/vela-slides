@@ -36,7 +36,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
-- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemLinkMarkContext ItemLinkMark linkMarkStyle ItemChrome
+- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemLinkMarkContext ItemLinkMark LINK_MARK_ADVANCE LINK_MARK_LABEL_PAD linkMarkStyle ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
@@ -126,6 +126,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Review mode (CR7) + TOC slide delete (CR14): _rvSlide _rvState _rvSlides
 - Header reflow — every control stays inside a narrow window: HEADER_REFLOW_WIDTHS
 - Review mode: the approval queue must drain to zero: _rvqSlide _rvqState _rvqLeft _rvqApprove _rvqWith
+- Link mark: a WRAPPED label keeps the mark on its LAST line (v13.76): _lmTheme _lmProbe _LM_LONG _lmGapOk
 
 ### part-demo.jsx
 - Vela Product Tour: DEMO_MIN_DURATION_MS DEMO_MAX_DURATION_MS DEMO_AI_READY_TIMEOUT_MS DEMO_BASELINE_VERSION DEMO_DISCLOSURE DEMO_SCENE_ORDER DEMO_AI_PROMPT DEMO_AI_RESPONSE DEMO_EDIT_TEXT DEMO_FEATURE_BADGES _demoBadgeFor DEMO_FEATURES DEMO_DECK_SIGNATURE _demoDeckSignature DEMO_DECK_FINGERPRINT _demoFingerprintValue _demoHashText _demoFingerprintModules _demoDeckFingerprint _demoHasUnsavedUiDraft getDemoUnavailableReason _demoCreateMockAI _demoInstallMockAI _demoRemoveMockAI
@@ -153,7 +154,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
 - CSS linear-gradient parsing: parseLinearGradient gradientLineCoords buildShadingDict
 - PDF Text encoding: WINANSI_FROM_UNICODE PDF_ASCII_SUBSTITUTIONS winAnsiByte pdfStringEncode
-- Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache renderEmojiToImage extractEmojiImages extractLogoImages
+- Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache emojiInkColor renderEmojiToImage extractEmojiImages extractLogoImages
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
 - Circles/dots extraction (bullets, timeline dots): extractCircles
@@ -324,7 +325,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 860-line unbannered stretch after line 547
-- part-blocks.jsx: 764-line unbannered stretch after line 809
+- part-blocks.jsx: 764-line unbannered stretch after line 819
 - part-canvas.jsx: 454-line unbannered stretch after line 41
 - part-slidepanel.jsx: 450-line unbannered stretch after line 206
 - part-slidepanel.jsx: 404-line unbannered stretch after line 968

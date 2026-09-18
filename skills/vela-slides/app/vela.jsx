@@ -3073,10 +3073,10 @@ function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
 }
 
 // Editable text wired to patch an item property
-function ItemText({ block, onChange, editable, idx, prop, style }) {
+function ItemText({ block, onChange, editable, idx, prop, style, suffix }) {
   const items = block.items || [];
   const val = items[idx]?.[prop] || "";
-  return <EditableText text={val} editable={editable}
+  return <EditableText text={val} editable={editable} suffix={suffix}
     onSave={(v) => patchItemAt(block, onChange, idx, { [prop]: v })} style={style} />;
 }
 
@@ -3114,14 +3114,26 @@ const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, en
 // type and at every label length. (CR17)
 //
 // An item that has its own label line (icon row, bullet) passes markInLabel and
-// puts <ItemLinkMark/> straight after that label, so the marker hugs the LINKED
-// WORDS instead of the widest line of the item. Every other item type keeps the
-// default: the marker is the last child of the item wrapper.
+// feeds <ItemLinkMark/> to that label as an INLINE suffix, so the marker hugs the
+// LINKED WORDS instead of the widest line of the item. Inline is what makes a
+// WRAPPED label work: an inline box flows after the last line, while a flex or
+// block sibling is centred on the whole paragraph and pushed to the container
+// edge. Every other item type keeps the default: the marker is the last child of
+// the item wrapper.
 const ItemLinkMarkContext = React.createContext(null);
 function ItemLinkMark() { return React.useContext(ItemLinkMarkContext); }
-const linkMarkStyle = (presenter) => ({
+// Horizontal room one inline mark needs: its 6px gap plus its 14px circle.
+// The inline variant cancels that advance with an equal negative right margin,
+// so the mark never counts towards line breaking and can never be orphaned onto
+// a line of its own after a label whose last line is full. LINK_MARK_LABEL_PAD
+// gives the label the same amount of right padding, so the mark still paints
+// inside the label box instead of spilling past the block edge.
+const LINK_MARK_ADVANCE = 20;
+const LINK_MARK_LABEL_PAD = { paddingRight: LINK_MARK_ADVANCE };
+const linkMarkStyle = (presenter, inline) => ({
   display: "inline-flex", alignItems: "center", justifyContent: "center", alignSelf: "center",
   flexShrink: 0, marginLeft: 6, width: 14, height: 14, borderRadius: "50%",
+  ...(inline ? { verticalAlign: "middle", marginRight: -LINK_MARK_ADVANCE } : {}),
   background: presenter ? T.accent : T.accent + "80", fontSize: 8, lineHeight: 1,
   cursor: "pointer", transition: "opacity 0.2s",
 });
@@ -3150,9 +3162,9 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // each other.
   const linkMark = !link ? null
     : (showLinkUI && !clusterVisible && editMode)
-      ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={linkMarkStyle(false)} title={link}>🔗</span>
+      ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={linkMarkStyle(false, markInLabel)} title={link}>🔗</span>
       : (presenting && !noLinkBadge)
-        ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ ...linkMarkStyle(true), color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", opacity: hovered ? 1 : 0.55 }}>🔗</span>
+        ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ ...linkMarkStyle(true, markInLabel), color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", opacity: hovered ? 1 : 0.55 }}>🔗</span>
         : null;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
@@ -3198,12 +3210,11 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
         <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       </EditableIcon>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* A linked item underlines its own label and carries the link marker on
-            the same line, so the link reads on the text instead of beside the
-            widest line of the item. (CR17) */}
+        {/* A linked item underlines its own label and carries the link marker as
+            an inline suffix of that label, so the marker follows the last line of
+            the title instead of the widest line of the item. (CR17) */}
         <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3, minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: "currentColor", textDecorationThickness: 1, textUnderlineOffset: "3px" } : {}) }} />
-          <ItemLinkMark />
+          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" suffix={<ItemLinkMark />} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3, minWidth: 0, ...(link ? { ...LINK_MARK_LABEL_PAD, textDecoration: "underline", textDecorationColor: "currentColor", textDecorationThickness: 1, textUnderlineOffset: "3px" } : {}) }} />
         </div>
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
@@ -3237,16 +3248,15 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
           : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
-      {/* The link marker sits on the same line as the bullet text (CR17). The
-          text keeps flex:0 1 auto so the marker follows the words instead of the
-          right edge of the row, and still wraps at the available width. */}
+      {/* The link marker rides INSIDE the label as an inline suffix (CR17), so a
+          label that wraps keeps the marker on its LAST line. A flex sibling was
+          centred on the whole paragraph and pushed to the row's right edge. */}
       <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
         <EditableText text={text} editable={editMode} onSave={(v) => {
           const ni = [...(block.items || [])];
           ni[index] = typeof item === "string" ? v : { ...item, text: v };
           onChange?.({ items: ni });
-        }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: "0 1 auto", minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
-        <ItemLinkMark />
+        }} suffix={<ItemLinkMark />} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: "0 1 auto", minWidth: 0, ...(link ? { ...LINK_MARK_LABEL_PAD, textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
       </div>
     </ItemChrome>
   );
@@ -16495,6 +16505,112 @@ uiSuite("Review mode: the approval queue drains to zero", [
     const un = innerReducer(st, { type: "TOGGLE_SLIDE_REVIEWED", id: "m0", index: 0 });
     const unSaved = resanitizeLoadedLanes(JSON.parse(JSON.stringify(extractSave(un))).lanes)[0].items[0].slides;
     if ("reviewed" in unSaved[0]) throw new Error("un-approve did not survive the round trip");
+    return true;
+  }},
+]);
+
+// ── Link mark: a WRAPPED label keeps the mark on its LAST line (v13.76) ───
+// The per-item link mark used to be a FLEX SIBLING of the label box. A label
+// that wraps fills the row, so the sibling was centred on the whole paragraph
+// and pushed to the block's right edge — metres away from the words it marks.
+// The mark is now an INLINE suffix of the label itself. These mount the REAL
+// bullets renderer and measure rectangles: a source-shape check cannot tell a
+// centred sibling from an inline suffix.
+const _lmTheme = { text: "#e5e7eb", muted: "#cbd5e1", accent: "#3b82f6", bg: "#0f172a", border: "#334155" };
+// Mount one bullets block at a fixed width and report, for every link mark,
+// where it sits relative to the LAST line of its own label.
+async function _lmProbe(width, items) {
+  const mk = window._createRoot;
+  if (typeof mk !== "function") throw new Error("no React root factory on this host");
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:0;top:0;width:" + width + "px;visibility:hidden;z-index:-1";
+  document.body.appendChild(host);
+  const root = mk(host);
+  try {
+    root.render(React.createElement(RenderBlock, {
+      block: { type: "bullets", items }, staggerIdx: 0, slideTheme: _lmTheme,
+      editable: true, onChange: () => {}, presenting: false,
+    }));
+    for (let i = 0; i < 60 && !host.querySelector("[data-link-mark]"); i++) await _wait(25);
+    const marks = [...host.querySelectorAll("[data-link-mark]")];
+    if (!marks.length) throw new Error("the linked item rendered no link mark");
+    const hostRight = host.getBoundingClientRect().right;
+    return marks.map((m) => {
+      const item = m.closest("[data-pdf-link]") || m.parentElement;
+      const mr = m.getBoundingClientRect();
+      const rects = [];
+      const walk = (n) => {
+        if (n === m) return;
+        if (n.nodeType === 3 && n.textContent.trim()) {
+          const rg = document.createRange(); rg.selectNodeContents(n);
+          for (const b of rg.getClientRects()) if (b.width > 0 && b.height > 0) rects.push(b);
+        }
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(item);
+      if (!rects.length) throw new Error("the label rendered no text");
+      const lastY = Math.max(...rects.map((r) => r.y));
+      const last = rects.filter((r) => Math.abs(r.y - lastY) < 3);
+      const lastRight = Math.max(...last.map((r) => r.right));
+      const lastTop = Math.min(...last.map((r) => r.y));
+      const lastBottom = Math.max(...last.map((r) => r.bottom));
+      const ys = [...new Set(rects.map((r) => Math.round(r.y)))].sort((a, b) => a - b);
+      return {
+        lines: ys.filter((y, i) => i === 0 || y - ys[i - 1] > 3).length,
+        gap: mr.left - lastRight,
+        onLastLine: mr.top < lastBottom - 1 && mr.bottom > lastTop + 1,
+        overflow: mr.right - hostRight,
+      };
+    });
+  } finally {
+    try { root.unmount(); } catch (_) {}
+    host.remove();
+  }
+}
+const _LM_LONG = "Quarterly operating review of distributed edge caching subsystems and their latency budgets across every region we run today";
+// One gap rule for every label: the mark keeps its 6px offset, never laps the
+// words, and never drifts a whole word away.
+const _lmGapOk = (g) => g >= 3 && g <= 10;
+
+uiSuite("Link mark placement", [
+  { name: "a WRAPPED bullet label keeps the mark on its LAST line", fn: async () => {
+    const [m] = await _lmProbe(180, [{ text: _LM_LONG, link: "https://example.com/a" }]);
+    if (m.lines < 4) throw new Error("the probe label did not wrap (" + m.lines + " lines)");
+    if (!m.onLastLine) throw new Error("the mark misses the last line's band");
+    if (!_lmGapOk(m.gap)) throw new Error("wrong gap after the last line: " + m.gap.toFixed(1) + "px");
+    return true;
+  }},
+  { name: "a wrapped label never pushes the mark past the block's right edge", fn: async () => {
+    const [m] = await _lmProbe(180, [{ text: _LM_LONG, link: "https://example.com/a" }]);
+    if (m.overflow > 0.5) throw new Error("the mark spills " + m.overflow.toFixed(1) + "px past the block");
+    return true;
+  }},
+  { name: "a label that wraps to exactly two lines behaves the same", fn: async () => {
+    const [m] = await _lmProbe(300, [{ text: "A label that fills a little more than one single line here", link: "https://example.com/b" }]);
+    if (m.lines < 2) throw new Error("the probe label did not wrap");
+    if (!m.onLastLine || !_lmGapOk(m.gap)) throw new Error("two-line label: gap " + m.gap.toFixed(1) + ", onLastLine " + m.onLastLine);
+    return true;
+  }},
+  { name: "a SINGLE-LINE label keeps the same gap (the wrap fix must not break it)", fn: async () => {
+    const [m] = await _lmProbe(600, [{ text: "Short", link: "https://example.com/c" }]);
+    if (m.lines !== 1) throw new Error("the probe label wrapped unexpectedly");
+    if (!m.onLastLine || !_lmGapOk(m.gap)) throw new Error("single line: gap " + m.gap.toFixed(1) + ", onLastLine " + m.onLastLine);
+    return true;
+  }},
+  { name: "first, middle and last linked items of one block all measure the same", fn: async () => {
+    const out = await _lmProbe(240, [
+      { text: "First item has a link", link: "https://example.com/1" },
+      { text: _LM_LONG, link: "https://example.com/2" },
+      { text: "Plain item with no link at all" },
+      { text: "Punctuation, parentheses (like this) and accents café naïve", link: "https://example.com/3" },
+      { text: "Last item has a link too", link: "https://example.com/4" },
+    ]);
+    if (out.length !== 4) throw new Error("expected 4 marks, got " + out.length);
+    for (const m of out) {
+      if (!m.onLastLine) throw new Error("a mark missed its label's last line");
+      if (!_lmGapOk(m.gap)) throw new Error("a mark sits " + m.gap.toFixed(1) + "px from its label");
+      if (m.overflow > 0.5) throw new Error("a mark spilled past the block");
+    }
     return true;
   }},
 ]);
