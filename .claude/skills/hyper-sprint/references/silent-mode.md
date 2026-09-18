@@ -76,6 +76,27 @@ not failure — it is the correct outcome for an under-specified CR. Log it:
 Parking one CR never stops the others. A sprint where every CR parks still writes, commits,
 pushes and links its report.
 
+## 4b. Liveness — silent mode is where a stall is fatal
+
+Principle 17's live beat applies to every sprint, but silent mode is the one where a stall
+produces **no signal whatsoever**: no message, no report, no link. The user learns nothing,
+possibly for hours. So in silent mode the beat is not optional and the rules tighten:
+
+- **Every wait is registered with a deadline and an expiry action** before you start waiting.
+  A silent sprint may never block on something that cannot time out.
+- **The expiry action is always "proceed and ship honestly"**, never "keep waiting". A gate
+  that will not return becomes `blind gate NOT clean` in the report and in the status line —
+  it does not become silence.
+- **The beat emits nothing to the user.** Not the beat, not a detected stall, not the
+  recovery. All of it goes to the report: a stalled-and-replaced worker or an expired gate
+  belongs in *Assumptions & unilateral decisions*, because that is exactly what it is.
+- **Judge movement, not status.** See principle 17 for the concrete traps — a `RUNNING`
+  session at zero tokens, a vanished dependency behind a healthy poller, a self-matching
+  wait loop.
+
+Rule of thumb: in silent mode, ask of every wait — *if the thing I am waiting for died right
+now, how long until I notice, and what do I ship?* If either answer is "never", it is a bug.
+
 ## 5. Terminal states (all of them ship a report)
 
 | State | Report content | Final line |
@@ -105,7 +126,10 @@ A one-CR silent sprint that exercises the whole contract for a few minutes:
    - `sprint.json` has `"silent": true`;
    - the report carries *Assumptions & unilateral decisions* (non-empty, from the
      under-specified sub-point) and *Parked / blocked* (may be empty, must be present);
-   - no `AskUserQuestion` call anywhere in the transcript.
+   - no `AskUserQuestion` call anywhere in the transcript;
+   - no attestation in the report or `sprint.json` that was written before the act it
+     describes (no `VERDICT_JSON`/`TODO` placeholders, no "pushed" claimed while untracked);
+   - every wait the run registered had a deadline and a defined expiry action (§4b).
 
 A failure on any assertion is a skill bug, not a sprint bug — fix the skill before running a
 real silent sprint.

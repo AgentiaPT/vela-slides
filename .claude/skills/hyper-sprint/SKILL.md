@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.4
+version: 2.5
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -323,6 +323,48 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
     build, the test suite, or the harness the gate must drive. Then fix the minimum needed
     to unblock, in its own commit, and record it in the same report section marked
     *fixed — blocking*. Nothing else qualifies, and "it was a one-liner" does not.
+
+17. **Liveness beat — check that in-flight work is still moving, on a cadence.** A sprint
+    dies quietly far more often than it dies loudly: a sub-agent hits a session limit, a
+    remote validator vanishes, a poll waits on a file nothing will ever write. The
+    orchestrator must therefore keep a **live beat** over everything it is waiting on. This
+    is a *staleness detector*, not a status report — it exists to catch stuck work, and in
+    silent mode it produces **no user output at all**.
+
+    **Register every wait.** When you dispatch a worker, start a background command, or
+    spawn/poll an external session, record three things: what it is, when it started, and
+    the **deadline plus the expiry action** — what you will do if it never returns. **No
+    blocking wait may be unbounded.** A wait with no defined expiry action is the bug.
+
+    **Beat on a cadence** (roughly every 5–10 minutes of wall clock, or at each natural turn
+    boundary while work is outstanding) with **one cheap probe** over all in-flight items —
+    never a fan-out, never a sub-agent per item. Keep the beat's tool-result tiny: a line per
+    item, not a dump (principle 3).
+
+    **Judge progress, not presence.** "Still running" is not "still alive". Compare each item
+    against the previous beat and treat it as **stale** when it has not *moved*: token usage
+    unchanged, no new commit, no file written, no log line — while elapsed time keeps
+    growing. Concrete traps, all of which have happened:
+    - A remote session showing `RUNNING` with **0 tokens consumed** for many minutes is
+      stalled, not slow — especially after a worker restart.
+    - A session can **disappear entirely**. Probe the *dependency's* liveness, not your own
+      poller's: a healthy poll loop waiting on a dead producer looks exactly like progress.
+    - A wait loop whose own command line contains its match pattern (e.g.
+      `until ! pgrep -f "build.sh"`) **matches itself and never exits**. Anchor the pattern
+      so it cannot match the waiter.
+
+    **Act on stale, don't report it.** Per principle 12, replace a dead worker with a fresh
+    sub-agent — never absorb its work. For an expired wait, take the registered expiry action
+    and continue; a dependency that will not return must not strand the sprint. User-visible
+    output: **none in silent mode**; in a normal sprint, at most **one line, only when a
+    stall was detected and acted on**. The beat itself is never announced — a heartbeat the
+    user has to read is just principle 13 by another name.
+
+    **Never attest to something before it is true.** Do not write "committed and pushed",
+    "gate clean", or any verdict into a report, metadata file or return value in advance of
+    the act. Fill the value after the step succeeds, or leave the field absent. A placeholder
+    that ships (`"VERDICT_JSON"`, `TODO`) is a false statement in an artifact the user may be
+    reading instead of the thread.
 
 ## Phases
 
