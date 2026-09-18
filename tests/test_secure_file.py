@@ -7,13 +7,9 @@ the platform does not enforce, verifies it with a value the platform
 synthesizes, and then writes the secret anyway when the check fails. Each of
 those three is tested here on its own.
 
-The Windows ACL path cannot fully execute on a POSIX CI runner, so it is split
-so that as much as possible still is tested there: the SDDL parsing is pure
-string logic and is tested directly, and the `os.name == "nt"` branch is taken
-with the Win32 machinery unavailable to prove it fails CLOSED rather than
-degrading to an unprotected write. The parts that need a real security
-subsystem — resolving a trustee to a SID and comparing identities — run in
-TestWindowsDaclEndToEnd, which the windows-latest CI job exists to execute.
+Windows is refused outright rather than supported, so the `os.name != "posix"`
+branch is tested both by simulation here and for real by the windows-latest CI
+job, which runs this same file.
 """
 
 import os
@@ -122,116 +118,32 @@ class TestWriteSecretPosix(unittest.TestCase):
                          "file was not empty when permissions were checked")
 
 
-class TestWindowsBranchFailsClosed(unittest.TestCase):
-    """On a POSIX runner the Win32 calls are unavailable, so taking the nt
-    branch here proves the branch aborts instead of degrading to a plain,
-    unprotected write."""
+class TestNonPosixIsRefused(unittest.TestCase):
+    """Windows (and anything else that is not POSIX) must be refused, not
+    served with an unprotected file. The refusal happens before anything is
+    created, so no empty file is left behind either."""
 
-    def test_nt_branch_raises_and_leaves_nothing(self):
-        if os.name == "nt":
-            self.skipTest("this simulates nt on a non-nt host")
+    def test_refused_on_windows(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         path = os.path.join(root, ".secret")
         real_name = os.name
-        os.name = "nt"
-        try:
-            with self.assertRaises(secure_file.InsecureFileError):
+        if real_name != "posix":
+            # Running on the real thing: no simulation needed.
+            with self.assertRaises(secure_file.InsecureFileError) as cm:
                 secure_file.write_secret(path, "s3cret")
-        finally:
-            os.name = real_name
-        self.assertFalse(os.path.exists(path))
-
-
-class TestSddlParsing(unittest.TestCase):
-    """The text half of the Windows decision — which is all of it that can be
-    decided from a string. Runs on every platform.
-
-    Trustee ACCEPTABILITY is deliberately not tested here: Windows renders a
-    descriptor back using whatever alias applies, so the token we read is often
-    not the token we wrote even for the same principal (the built-in
-    Administrator comes back as `LA`). That comparison is done by SID identity
-    in `_win_trustees_allowed`, and only Windows can do it.
-    """
-
-    USER = "S-1-5-21-1111111111-2222222222-3333333333-1001"
-
-    def test_reads_protected_flag_and_trustees(self):
-        protected, trustees = secure_file._parse_sddl_dacl(
-            f"D:P(A;;FA;;;{self.USER})(A;;FA;;;BA)(A;;FA;;;SY)", "X")
-        self.assertTrue(protected)
-        self.assertEqual(trustees, [self.USER, "BA", "SY"])
-
-    def test_unprotected_dacl_is_reported_as_such(self):
-        """Without the P flag the parent directory's inheritable ACEs still
-        apply — which is the whole defect."""
-        for sddl in (f"D:(A;;FA;;;{self.USER})", f"D:AI(A;;FA;;;{self.USER})"):
-            protected, _ = secure_file._parse_sddl_dacl(sddl, "X")
-            self.assertFalse(protected, sddl)
-
-    def test_owner_and_group_prefix_do_not_confuse_the_parser(self):
-        """An owner or group alias ending in D sits immediately before the real
-        `D:` section, so a naive split finds the wrong one."""
-        for prefix in ("O:BAG:BA", "O:BAG:WD", "O:LAG:DU", ""):
-            protected, trustees = secure_file._parse_sddl_dacl(
-                f"{prefix}D:P(A;;FA;;;{self.USER})(A;;FA;;;BA)", "X")
-            self.assertTrue(protected, prefix)
-            self.assertEqual(trustees, [self.USER, "BA"], prefix)
-
-    def test_alias_rendered_owner_is_parsed_not_rejected(self):
-        """The shape a real Windows host returns when the current account is the
-        built-in Administrator. Parsing must surface it; identity comparison
-        decides it."""
-        protected, trustees = secure_file._parse_sddl_dacl(
-            "D:P(A;;FA;;;LA)(A;;FA;;;BA)(A;;FA;;;SY)", "X")
-        self.assertTrue(protected)
-        self.assertEqual(trustees, ["LA", "BA", "SY"])
-
-    def test_rejects_descriptor_with_no_dacl(self):
-        with self.assertRaises(secure_file.InsecureFileError):
-            secure_file._parse_sddl_dacl("O:BAG:BA", "X")
-
-    def test_rejects_unparsable_ace(self):
-        with self.assertRaises(secure_file.InsecureFileError):
-            secure_file._parse_sddl_dacl(f"D:P(A;;FA;;;{self.USER})(bogus)", "X")
-
-
-class TestWindowsDaclEndToEnd(unittest.TestCase):
-    """Windows only: the parts that need a real security subsystem."""
-
-    def setUp(self):
-        if os.name != "nt":
-            self.skipTest("requires Windows")
-
-    def test_written_file_carries_a_protected_owner_only_dacl(self):
-        root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
-        path = os.path.join(root, ".secret")
-        secure_file.write_secret(path, "s3cret")
-
-        api = secure_file._win_api()
-        sddl = secure_file._win_read_dacl_sddl(api, path)
-        protected, trustees = secure_file._parse_sddl_dacl(sddl, path)
-        self.assertTrue(protected, f"DACL not protected: {sddl}")
-        self.assertTrue(trustees, f"DACL has no ACEs: {sddl}")
-        # Must not raise: every trustee resolves to one we put there.
-        secure_file._win_trustees_allowed(
-            api, trustees,
-            secure_file._win_current_user_sid(*api), path)
-
-    def test_an_extra_trustee_is_rejected_by_identity(self):
-        api = secure_file._win_api()
-        user = secure_file._win_current_user_sid(*api)
-        # WD = Everyone. Nothing we ever grant.
-        with self.assertRaises(secure_file.InsecureFileError):
-            secure_file._win_trustees_allowed(api, [user, "WD"], user, "X")
-
-    def test_our_own_sid_is_accepted_however_windows_renders_it(self):
-        """Regression: the SID we set can come back as an alias. Comparing
-        rendered text rejects our own ACE; comparing identity does not."""
-        api = secure_file._win_api()
-        user = secure_file._win_current_user_sid(*api)
-        secure_file._win_trustees_allowed(api, [user, "BA", "SY"], user, "X")
+        else:
+            os.name = "nt"
+            try:
+                with self.assertRaises(secure_file.InsecureFileError) as cm:
+                    secure_file.write_secret(path, "s3cret")
+            finally:
+                os.name = real_name
+        # The message must tell the caller what to do instead, or the refusal
+        # is just a dead end.
+        self.assertIn("VELA_TOKEN", str(cm.exception))
+        self.assertFalse(os.path.exists(path),
+                         "a file was created on a platform we cannot protect")
 
 
 class TestNoFailOpenHatch(unittest.TestCase):

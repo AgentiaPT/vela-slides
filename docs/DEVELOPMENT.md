@@ -147,7 +147,7 @@ The server writes runtime info to `.vela.env` (gitignored): pid, port, host and 
 VELA_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
   python3 tools/vela-dev/scripts/serve.py examples/
 ```
-`--token-file` additionally writes `.vela.token`, but only if the file can be proven readable by you alone — on a filesystem that cannot do that (Windows without a usable ACL, WSL `drvfs`) it is skipped rather than written unprotected. On exit, cleanup handlers remove both files automatically.
+`--token-file` additionally writes `.vela.token`, but only where the file can be proven readable by you alone. Windows and WSL `drvfs` mounts cannot give that guarantee through POSIX mode bits, so the file is refused there rather than written unprotected — use `VELA_TOKEN` above instead, which works everywhere. On exit, cleanup handlers remove both files automatically.
 
 ## Build
 

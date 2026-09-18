@@ -2,59 +2,30 @@
 # © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 """One canonical way to put a secret on disk. Never hand-roll a second one.
 
-WHY THIS MODULE EXISTS
-----------------------
-POSIX mode bits are the only file-permission primitive that Python's ``os``
-layer exposes, and they do not work on two platforms this repo supports:
+`os.open(path, ..., 0o600)` does not restrict anything on Windows (the mode
+reaches the C runtime, which maps it only to FILE_ATTRIBUTE_READONLY; the NTFS
+ACL that decides access is inherited from the parent directory) nor on WSL
+`drvfs` mounts. `os.stat().st_mode` is synthesized from that same attribute on
+Windows, so a mode comparison there cannot fail on a safe file or pass on an
+unsafe one — it is decoration, not a check.
 
-* **Windows.** The mode argument of ``os.open`` reaches the C runtime, which
-  maps it only to ``FILE_ATTRIBUTE_READONLY``. The NTFS ACL that actually
-  decides who can read the file is inherited from the parent directory. A
-  ``0o600`` there is a no-op, not a restriction.
-* **WSL ``drvfs`` mounts** — the dev setup that ``docs/DEVELOPMENT.md``
-  documents as normal. Mode bits come from mount options, not from the file.
+So: never write a secret with a bare mode. Call `write_secret()`. It proves the
+restriction is real *before* the secret reaches the disk, and raises
+`InsecureFileError` when it cannot. Callers must let that propagate — the point
+of the exception is that there is no safe way to continue.
 
-``os.stat().st_mode`` is synthesized from the same attribute on Windows
-(``0o444`` when read-only, ``0o666`` otherwise), so a mode comparison there can
-never prove anything: it reports ``0o666`` for a file with a perfectly tight
-ACL and ``0o666`` for a world-readable one. A test that cannot fail on a safe
-file and cannot pass on an unsafe one is not a test.
+Order matters: unlink any existing entry (acts on a symlink itself, never its
+target), create empty and exclusively, verify, and only then write. The secret
+never exists on disk while the permissions are unknown.
 
-THE RULE
---------
-Never write a secret with a bare ``os.open(path, ..., 0o600)``. Call
-``write_secret()``. It proves the restriction is real **before** the secret
-reaches the disk, and raises ``InsecureFileError`` when it cannot prove it.
-
-Fail closed. A secret we could not protect is not written at all. The caller
-must not catch ``InsecureFileError`` and continue — the point of the exception
-is that there is no safe way to continue.
-
-ORDER OF OPERATIONS (the invariant that makes this work)
---------------------------------------------------------
-1. Remove any existing entry at the path (``unlink`` acts on a symlink itself,
-   never its target, so a planted link cannot redirect the write).
-2. Create the file **empty** and **exclusively** (``O_CREAT | O_EXCL``, plus
-   ``O_NOFOLLOW`` where available). The file we write is always one we just
-   made ourselves.
-3. Restrict it, and **read the restriction back** to prove it took.
-4. Only then write the secret.
-
-The secret never exists on disk during a window when the permissions are
-unknown. Any failure in steps 1-3 removes the empty file and raises.
-
-The Windows path follows the approach used by ``jupyter_core.paths``
-(``secure_write`` / ``win32_restrict_file_to_user``), which solves the same
-problem for the same reason. The implementation here is our own and uses the
-documented ``SetNamedSecurityInfoW`` path so the DACL can be marked protected.
+Background and the full threat model: `docs/SECURITY.md`.
 """
 
 import errno
 import os
-import re
 import stat
 
-__all__ = ["InsecureFileError", "write_secret", "enforcement_available"]
+__all__ = ["InsecureFileError", "write_secret"]
 
 
 class InsecureFileError(Exception):
@@ -74,7 +45,22 @@ class InsecureFileError(Exception):
 # written to remove. Do not add one.
 
 
-# ── POSIX ────────────────────────────────────────────────────────────────────
+# Windows is refused rather than supported. Restricting a file there means
+# building an explicit protected DACL through Win32 — perfectly possible, but it
+# is a few hundred lines of ctypes that would exist only to serve an optional
+# convenience file, and it could not be exercised on this repo's own machines.
+# Since a caller who wants to script the local API can set VELA_TOKEN and skip
+# the file entirely, refusing costs a Windows developer nothing real. If a
+# genuine need for an on-disk secret appears on Windows, implement it here with
+# SetNamedSecurityInfoW + PROTECTED_DACL_SECURITY_INFORMATION, verify the DACL
+# by reading it back, and compare trustees by SID identity (EqualSid) — never by
+# the rendered SDDL text, which Windows re-writes using whatever alias applies.
+_WINDOWS_REFUSED = (
+    "{path}: refusing to write a secret on Windows. POSIX mode bits do not "
+    "restrict a file here, and this build does not set an NTFS ACL. Set "
+    "VELA_TOKEN to a token you choose and skip the file instead."
+)
+
 
 def _posix_verify(fd, path):
     """Prove from the *descriptor* that no other user can read this file.
@@ -82,11 +68,11 @@ def _posix_verify(fd, path):
     Uses the fd, never the path: re-stat'ing by name after opening is the
     TOCTOU shape this repo has already been bitten by once.
 
-    The predicate is "no group and no other bits", not "mode == 0o600". That
-    is the property that matters, and it stays correct under a restrictive
-    umask that hands us 0o400. A filesystem that does not honour mode bits at
-    all (drvfs, CIFS, FAT) reports group/other bits here and fails, which is
-    the intended outcome — we cannot protect a secret there.
+    The predicate is "no group and no other bits", not "mode == 0o600". That is
+    the property that matters, and it stays correct under a restrictive umask
+    that hands us 0o400. A filesystem that does not honour mode bits at all
+    (drvfs, CIFS, FAT) reports group/other bits here and fails, which is the
+    intended outcome — we cannot protect a secret there.
     """
     st = os.fstat(fd)
     mode = stat.S_IMODE(st.st_mode)
@@ -96,316 +82,9 @@ def _posix_verify(fd, path):
             f"(got {oct(mode)}). This filesystem cannot protect a secret."
         )
     if st.st_uid != os.geteuid():
-        # O_EXCL means we created it, so this should be unreachable. If it
-        # ever fires, something is wrong enough that writing would be reckless.
+        # O_EXCL means we created it, so this should be unreachable. If it ever
+        # fires, something is wrong enough that writing would be reckless.
         raise InsecureFileError(f"{path}: unexpected owner (uid {st.st_uid}).")
-
-
-# ── Windows ──────────────────────────────────────────────────────────────────
-
-# Well-known SIDs we deliberately keep on the ACL.
-#   S-1-5-32-544  BUILTIN\Administrators
-#   S-1-5-18      NT AUTHORITY\SYSTEM
-# Excluding them buys nothing: an administrator holds SeBackupPrivilege and can
-# take ownership of any file, so a DACL that omits them is security theatre that
-# also breaks backup and anti-malware. Jupyter grants admins for the same reason.
-_WIN_ALLOWED_WELL_KNOWN = ("S-1-5-32-544", "S-1-5-18")
-
-_SDDL_ACE_RE = re.compile(r"\(([^)]*)\)")
-# The DACL section, with only its flag letters between "D:" and the first ACE.
-# Matching "D:" naively would also hit the trailing D of an owner/group alias.
-_SDDL_DACL_RE = re.compile(r"D:([PARI]*)(\(.*)?$")
-
-
-def _win_api():
-    """Load advapi32/kernel32 with explicit prototypes.
-
-    Every function used here is declared. ctypes defaults a return value to
-    ``c_int``, which silently truncates the 64-bit HANDLEs and pointers these
-    calls return on Win64 — a truncated PSID or PSECURITY_DESCRIPTOR would be
-    passed on to the next call as garbage. Declaring the prototypes is not
-    tidiness here; it is the difference between working and corrupting.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    PVOID = ctypes.c_void_p
-    LPDWORD = ctypes.POINTER(wintypes.DWORD)
-    PBOOL = ctypes.POINTER(wintypes.BOOL)
-    PPVOID = ctypes.POINTER(ctypes.c_void_p)
-    PLPWSTR = ctypes.POINTER(ctypes.c_wchar_p)
-
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    kernel32.GetCurrentProcess.argtypes = ()
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel32.LocalFree.restype = wintypes.HLOCAL
-    kernel32.LocalFree.argtypes = (wintypes.HLOCAL,)
-
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.OpenProcessToken.argtypes = (
-        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE),
-    )
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = (
-        wintypes.HANDLE, ctypes.c_int, PVOID, wintypes.DWORD, LPDWORD,
-    )
-    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
-    advapi32.ConvertSidToStringSidW.argtypes = (PVOID, PLPWSTR)
-    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
-    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
-        wintypes.LPCWSTR, wintypes.DWORD, PPVOID, LPDWORD,
-    )
-    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
-    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
-        PVOID, wintypes.DWORD, wintypes.DWORD, PLPWSTR, LPDWORD,
-    )
-    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
-    advapi32.ConvertStringSidToSidW.argtypes = (wintypes.LPCWSTR, PPVOID)
-    advapi32.EqualSid.restype = wintypes.BOOL
-    advapi32.EqualSid.argtypes = (PVOID, PVOID)
-    advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
-    advapi32.GetSecurityDescriptorDacl.argtypes = (PVOID, PBOOL, PPVOID, PBOOL)
-    # Both return a Win32 error code (DWORD), not a BOOL. Zero means success.
-    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
-    advapi32.SetNamedSecurityInfoW.argtypes = (
-        wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD,
-        PVOID, PVOID, PVOID, PVOID,
-    )
-    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
-    advapi32.GetNamedSecurityInfoW.argtypes = (
-        wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD,
-        PPVOID, PPVOID, PPVOID, PPVOID, PPVOID,
-    )
-    return ctypes, wintypes, advapi32, kernel32
-
-
-def _win_current_user_sid(ctypes, wintypes, advapi32, kernel32):
-    """Return the process token's user SID as a string (S-1-5-21-...)."""
-    TOKEN_QUERY = 0x0008
-    TokenUser = 1
-    ERROR_INSUFFICIENT_BUFFER = 122
-
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(
-        kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)
-    ):
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        size = wintypes.DWORD(0)
-        ctypes.set_last_error(0)
-        advapi32.GetTokenInformation(token, TokenUser, None, 0, ctypes.byref(size))
-        last = ctypes.get_last_error()
-        if last not in (ERROR_INSUFFICIENT_BUFFER, 0):
-            raise ctypes.WinError(last)
-        buf = ctypes.create_string_buffer(size.value)
-        if not advapi32.GetTokenInformation(
-            token, TokenUser, buf, size, ctypes.byref(size)
-        ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        # TOKEN_USER is { SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } },
-        # so the first pointer-sized field is the PSID.
-        psid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents
-        str_sid = ctypes.c_wchar_p()
-        if not advapi32.ConvertSidToStringSidW(psid, ctypes.byref(str_sid)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            return str(str_sid.value)
-        finally:
-            kernel32.LocalFree(str_sid)
-    finally:
-        kernel32.CloseHandle(token)
-
-
-def _parse_sddl_dacl(sddl, path):
-    """Split an SDDL string into ``(protected, [trustee, ...])``.
-
-    Pure text handling, so the parsing half of the Windows decision is testable
-    on any platform. It deliberately does NOT decide whether a trustee is
-    acceptable — see ``_win_trustees_allowed`` for why that cannot be done on
-    strings.
-    """
-    body = None
-    for m in _SDDL_DACL_RE.finditer(sddl):
-        body = m
-        break
-    if body is None:
-        raise InsecureFileError(f"{path}: security descriptor has no DACL.")
-    protected = "P" in body.group(1)
-    trustees = []
-    for ace in _SDDL_ACE_RE.findall(body.group(2) or ""):
-        fields = ace.split(";")
-        if len(fields) < 6 or not fields[5].strip():
-            raise InsecureFileError(f"{path}: unparsable ACE in DACL.")
-        trustees.append(fields[5].strip())
-    return protected, trustees
-
-
-def _win_read_dacl_sddl(api, path):
-    """Return the file's DACL, read back from disk, as an SDDL string."""
-    ctypes, _wintypes, advapi32, kernel32 = api
-
-    SE_FILE_OBJECT = 1
-    DACL_SECURITY_INFORMATION = 0x00000004
-    SDDL_REVISION_1 = 1
-
-    psd = ctypes.c_void_p()
-    err = advapi32.GetNamedSecurityInfoW(
-        path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-        None, None, None, None, ctypes.byref(psd),
-    )
-    if err != 0:
-        raise ctypes.WinError(err)
-    try:
-        out = ctypes.c_wchar_p()
-        if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            psd, SDDL_REVISION_1, DACL_SECURITY_INFORMATION,
-            ctypes.byref(out), None,
-        ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            return str(out.value or "")
-        finally:
-            kernel32.LocalFree(out)
-    finally:
-        kernel32.LocalFree(psd)
-
-
-def _win_sid_from_string(api, token):
-    """Resolve an SDDL trustee token to a real SID. Caller LocalFrees it.
-
-    ``ConvertStringSidToSidW`` accepts BOTH the ``S-1-5-...`` form and the
-    two-letter aliases, which is exactly why this exists: Windows renders a
-    descriptor back using an alias whenever one applies, so the string we read
-    is not the string we wrote even when the principal is identical. On a
-    machine whose interactive account is the built-in Administrator, the SID we
-    set comes back as ``LA``. Comparing the rendered text would reject our own
-    ACE — a presentation form is not an identity.
-    """
-    ctypes, _wintypes, advapi32, _kernel32 = api
-    psid = ctypes.c_void_p()
-    if not advapi32.ConvertStringSidToSidW(token, ctypes.byref(psid)):
-        raise ctypes.WinError(ctypes.get_last_error())
-    return psid
-
-
-def _win_trustees_allowed(api, trustees, user_sid, path):
-    """Prove every ACE names a principal we put there, by SID identity.
-
-    Resolves both sides to real SIDs and compares with ``EqualSid``. An
-    allowlist, never a denylist: an unrecognised trustee is a failure, not
-    something to pattern-match away.
-    """
-    ctypes, _wintypes, advapi32, kernel32 = api
-    allowed = []
-    try:
-        for token in (user_sid,) + _WIN_ALLOWED_WELL_KNOWN:
-            allowed.append(_win_sid_from_string(api, token))
-        for token in trustees:
-            psid = _win_sid_from_string(api, token)
-            try:
-                if not any(advapi32.EqualSid(psid, a) for a in allowed):
-                    raise InsecureFileError(
-                        f"{path}: DACL grants access to an unexpected trustee "
-                        f"({token})."
-                    )
-            finally:
-                kernel32.LocalFree(psid)
-    finally:
-        for a in allowed:
-            kernel32.LocalFree(a)
-
-
-def _win_verify_dacl(api, sddl, user_sid, path):
-    """Prove the read-back DACL is protected and grants nobody unexpected.
-
-    Two independent properties, both required:
-      * the DACL carries the ``P`` (protected) flag, so inheritable ACEs from
-        the parent directory are not applied — this is the flag that makes the
-        launch directory's ACL irrelevant;
-      * every ACE names a trustee we put there on purpose, compared by SID
-        identity rather than by rendered text.
-    """
-    protected, trustees = _parse_sddl_dacl(sddl, path)
-    if not protected:
-        raise InsecureFileError(
-            f"{path}: DACL is not protected — the parent directory's "
-            f"inheritable permissions still apply."
-        )
-    if not trustees:
-        raise InsecureFileError(f"{path}: DACL has no access-allowed entries.")
-    _win_trustees_allowed(api, trustees, user_sid, path)
-
-
-def _windows_lock_down(path):
-    """Replace the file's DACL with a protected, owner-only one, then verify.
-
-    Always applied to an empty, freshly created file, before any secret is
-    written into it — a file cannot be re-permissioned safely once it holds a
-    secret, because the window between write and restriction is exactly the
-    exposure we are removing.
-    """
-    api = _win_api()
-    ctypes, wintypes, advapi32, kernel32 = api
-
-    SE_FILE_OBJECT = 1
-    DACL_SECURITY_INFORMATION = 0x00000004
-    PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
-    SDDL_REVISION_1 = 1
-
-    user_sid = _win_current_user_sid(ctypes, wintypes, advapi32, kernel32)
-
-    # D:P  -> a DACL marked protected, so the inheritable ACEs of the parent
-    # directory are NOT merged in. That flag is the whole point: without it the
-    # launch directory's ACL decides who can read this file.
-    # FA -> FILE_ALL_ACCESS. BA -> Administrators, SY -> SYSTEM (see above).
-    sddl = "D:P(A;;FA;;;{0})(A;;FA;;;BA)(A;;FA;;;SY)".format(user_sid)
-
-    psd = ctypes.c_void_p()
-    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-        sddl, SDDL_REVISION_1, ctypes.byref(psd), None
-    ):
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        present = wintypes.BOOL()
-        defaulted = wintypes.BOOL()
-        pdacl = ctypes.c_void_p()
-        if not advapi32.GetSecurityDescriptorDacl(
-            psd, ctypes.byref(present), ctypes.byref(pdacl), ctypes.byref(defaulted)
-        ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        if not present.value:
-            raise InsecureFileError(f"{path}: built security descriptor has no DACL.")
-        # SetNamedSecurityInfoW, not SetFileSecurityW: only this call documents
-        # PROTECTED_DACL_SECURITY_INFORMATION, which is what stops the parent
-        # directory's inheritable ACEs from being applied to our file.
-        err = advapi32.SetNamedSecurityInfoW(
-            path, SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            None, None, pdacl, None,
-        )
-        if err != 0:
-            raise ctypes.WinError(err)
-    finally:
-        kernel32.LocalFree(psd)
-
-    # Read it back from disk. Setting a DACL and assuming it took is the same
-    # class of mistake as assuming a 0o600 took.
-    _win_verify_dacl(api, _win_read_dacl_sddl(api, path), user_sid, path)
-
-
-# ── Public API ───────────────────────────────────────────────────────────────
-
-def enforcement_available():
-    """True when this platform has a permission primitive we can prove.
-
-    Callers use this to decide whether to *offer* persistence, not to decide
-    whether to skip the check. ``write_secret`` still verifies.
-    """
-    return os.name in ("posix", "nt")
 
 
 def write_secret(path, text, *, encoding="utf-8"):
@@ -414,6 +93,10 @@ def write_secret(path, text, *, encoding="utf-8"):
     Raises ``InsecureFileError`` if the restriction cannot be proven, having
     written nothing. Do not catch it and continue.
     """
+    if os.name != "posix":
+        # Checked before anything is created, so no empty file is left behind.
+        raise InsecureFileError(_WINDOWS_REFUSED.format(path=path))
+
     # unlink acts on the link itself, never its target, so a planted symlink
     # cannot redirect this write or get something else truncated.
     try:
@@ -430,24 +113,7 @@ def write_secret(path, text, *, encoding="utf-8"):
         raise InsecureFileError(f"{path}: could not create the file safely: {e}") from e
 
     try:
-        if os.name == "nt":
-            # The ACL is set by path, and Windows will not re-permission a file
-            # that is open. Close first; the file is still empty, and O_EXCL
-            # above means nothing else can have taken the name in between.
-            os.close(fd)
-            fd = None
-            try:
-                _windows_lock_down(path)
-            except InsecureFileError:
-                raise
-            except Exception as e:  # ctypes / Win32 failure
-                raise InsecureFileError(
-                    f"{path}: could not apply an owner-only ACL: {e}"
-                ) from e
-            fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
-        else:
-            _posix_verify(fd, path)
-
+        _posix_verify(fd, path)
         with os.fdopen(fd, "w", encoding=encoding) as f:
             fd = None
             f.write(text)
@@ -457,9 +123,8 @@ def write_secret(path, text, *, encoding="utf-8"):
                 os.close(fd)
             except OSError:
                 pass
-        # Remove the file we created. It holds no secret at this point on any
-        # path that raises before the write, and a partial write is worse than
-        # no file.
+        # Remove the file we created. It holds no secret on any path that raises
+        # before the write, and a partial write is worse than no file.
         try:
             os.unlink(path)
         except OSError as e:

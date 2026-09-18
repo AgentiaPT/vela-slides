@@ -1753,7 +1753,7 @@ def main():
     parser.add_argument("--no-auth", action="store_true", help="Disable token authentication (NOT RECOMMENDED)")
     parser.add_argument("--token", default=None, help="Use a specific auth token (default: auto-generated, or VELA_TOKEN env var)")
     parser.add_argument("--token-file", action="store_true",
-                        help="Also write the auth token to .vela.token (opt-in). Written only if the file can be proven readable by you alone; otherwise it is skipped and the server runs without it.")
+                        help="Also write the auth token to .vela.token (opt-in, POSIX only). Written only if the file can be proven readable by you alone; otherwise it is skipped and the server runs without it — use VELA_TOKEN instead.")
     parser.add_argument("--replace", action="store_true", help="Replace existing server on the same port (kills it)")
     args = parser.parse_args()
 
