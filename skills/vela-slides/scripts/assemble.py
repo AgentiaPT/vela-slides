@@ -14,6 +14,27 @@ Injects the deck into the prebuilt skills/vela-slides/app/vela.jsx monolith.
 
 import sys, json, os, re
 
+# ── Terminal-output funnel ──────────────────────────────────────────────
+# COMPLETE MEDIATION: every human-readable byte this script writes leaves
+# through emit(), which applies the canonical encoder in _safe_term.py (read
+# that module's header for the threat and the policy). Encoding at the SINK
+# rather than at each call site is what makes the mediation total: a new print
+# site cannot be added without either routing through emit() or failing the
+# lint gate (tools/vela-dev/scripts/lint.py, check_terminal_sink_gate).
+#
+# NOT applied to file writes, and never to deck data on its way back into a
+# deck — `deck extract-text` → `patch-text` is a round-trip edit that must stay
+# lossless, so the encoder belongs on the display path only.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _safe_term import term_text  # noqa: E402
+
+_write = print  # the only builtin-print reference; everything else uses emit()
+
+
+def emit(*parts, **kwargs):
+    """Write to the terminal with deck-supplied control sequences neutralized."""
+    _write(*(term_text(p) if isinstance(p, str) else p for p in parts), **kwargs)
+
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(SKILL_DIR, "app", "vela.jsx")
 
@@ -98,7 +119,7 @@ def assemble(deck_json_path, output_path=None, minify=False):
         }
 
     if 'lanes' not in deck:
-        print("ERROR: JSON must have 'lanes' or 'slides'", file=sys.stderr)
+        emit("ERROR: JSON must have 'lanes' or 'slides'", file=sys.stderr)
         sys.exit(1)
 
     deck_json_str = json.dumps(deck, ensure_ascii=False, separators=(',', ':'))
@@ -110,7 +131,7 @@ def assemble(deck_json_path, output_path=None, minify=False):
 
     marker = "const STARTUP_PATCH = null;"
     if marker not in template:
-        print(f"ERROR: Marker not found in template. Was the app modified incorrectly?", file=sys.stderr)
+        emit(f"ERROR: Marker not found in template. Was the app modified incorrectly?", file=sys.stderr)
         sys.exit(1)
 
     assembled = template.replace(marker, f"const STARTUP_PATCH = {deck_json_str};", 1)
@@ -143,14 +164,14 @@ def assemble(deck_json_path, output_path=None, minify=False):
         for slide in item.get('slides', [])
     )
 
-    print(f"✅ Assembled: {output_path}")
-    print(f"   Slides: {total_slides} | Duration: {total_duration//60}m {total_duration%60}s | Size: {os.path.getsize(output_path)//1024}KB")
+    emit(f"✅ Assembled: {output_path}")
+    emit(f"   Slides: {total_slides} | Duration: {total_duration//60}m {total_duration%60}s | Size: {os.path.getsize(output_path)//1024}KB")
     return output_path
 
 
 if __name__ == "__main__":
     if '--help' in sys.argv or '-h' in sys.argv or len(sys.argv) < 2:
-        print(__doc__.strip())
+        emit(__doc__.strip())
         sys.exit(0)
     minify = '--minify' in sys.argv
     # Parse --output <path> flag
@@ -170,7 +191,7 @@ if __name__ == "__main__":
         i += 1
 
     if not filtered:
-        print("Usage: python3 assemble.py <deck.vela> [--output <path>] [output.jsx]", file=sys.stderr)
+        emit("Usage: python3 assemble.py <deck.vela> [--output <path>] [output.jsx]", file=sys.stderr)
         sys.exit(1)
 
     deck_path = filtered[0]

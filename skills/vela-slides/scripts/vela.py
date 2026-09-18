@@ -22,6 +22,32 @@ Exit codes:
 
 import json, sys, os, subprocess, copy, shutil
 
+# ── Terminal-output funnel ──────────────────────────────────────────────
+# COMPLETE MEDIATION: every human-readable byte this script writes leaves
+# through emit(), which applies the canonical encoder in _safe_term.py (read
+# that module's header for the threat and the policy). Encoding at the SINK
+# rather than at each call site is what makes the mediation total: a new print
+# site cannot be added without either routing through emit() or failing the
+# lint gate (tools/vela-dev/scripts/lint.py, check_terminal_sink_gate).
+#
+# NOT applied to file writes, and never to deck data on its way back into a
+# deck — `deck extract-text` → `patch-text` is a round-trip edit that must stay
+# lossless, so the encoder belongs on the display path only.
+#
+# This sink also covers the RELAY hop: this script re-prints the captured
+# stdout of validate.py / assemble.py, so deck text can reach the terminal one
+# process later than it was read. Encoding at the sink catches that hop;
+# encoding where the value is read does not.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _safe_term import term_text, term_label, Untrusted  # noqa: E402
+
+_write = print  # the only builtin-print reference; everything else uses emit()
+
+
+def emit(*parts, **kwargs):
+    """Write to the terminal with deck-supplied control sequences neutralized."""
+    _write(*(term_text(p) if isinstance(p, str) else p for p in parts), **kwargs)
+
 # ── Paths ──────────────────────────────────────────────────────────────
 SKILL_DIR = os.path.dirname(os.path.realpath(__file__))
 SCRIPTS_DIR = SKILL_DIR
@@ -67,11 +93,19 @@ def _is_json():
     return _json_mode or "--json" in sys.argv
 
 def _out(data):
-    """Print structured output to stdout."""
+    """Print structured output to stdout.
+
+    ensure_ascii=True is a security setting here, not a style choice. This is
+    the machine/agent path, and `json.dumps` only escapes C0 — DEL, the C1 range
+    (0x9B is the 8-bit CSI introducer), bidi overrides and zero-width
+    characters all survive `ensure_ascii=False` as raw bytes. Escaping to \\uXXXX
+    makes the payload inert for every downstream reader while staying a lossless
+    round-trip for any JSON parser.
+    """
     if isinstance(data, (dict, list)):
-        print(json.dumps(data, ensure_ascii=False, indent=2))
+        emit(json.dumps(data, ensure_ascii=True, indent=2))
     else:
-        print(data)
+        emit(data)
 
 def _err(code, message, suggestions=None, retryable=False):
     """Print error and exit with semantic code."""
@@ -79,12 +113,12 @@ def _err(code, message, suggestions=None, retryable=False):
         err = {"success": False, "error": {"code": code, "message": message, "retryable": retryable}}
         if suggestions:
             err["error"]["suggestions"] = suggestions
-        print(json.dumps(err, ensure_ascii=False, indent=2))
+        emit(json.dumps(err, ensure_ascii=True, indent=2))  # see _out: machine path
     else:
-        print(f"❌ {message}", file=sys.stderr)
+        emit(f"❌ {message}", file=sys.stderr)
         if suggestions:
             for s in suggestions:
-                print(f"   💡 {s}", file=sys.stderr)
+                emit(f"   💡 {s}", file=sys.stderr)
     sys.exit(code)
 
 def _ok(data, message=None):
@@ -100,7 +134,7 @@ def _ok(data, message=None):
         _out(out)
     else:
         if message:
-            print(f"✅ {message}", file=sys.stderr)
+            emit(f"✅ {message}", file=sys.stderr)
         if data and not isinstance(data, bool):
             _out(data)
     sys.exit(EXIT_OK)
@@ -1069,13 +1103,19 @@ def deck_list(args):
         _ok({"deck_title": deck.get("deckTitle", "Untitled"), "slide_count": len(slides), "slides": slides})
     else:
         title = deck.get("deckTitle", "Untitled")
-        print(f"📊 {title}")
-        print(f"{'#':>3}  {'Title':<40} {'Blk':>4} {'Theme':>6} {'Dur':>5}  Types")
-        print("─" * 95)
+        emit(f"📊 {title}")
+        emit(f"{'#':>3}  {'Title':<40} {'Blk':>4} {'Theme':>6} {'Dur':>5}  Types")
+        emit("─" * 95)
         for s in slides:
             types_str = ", ".join(f"{t}:{c}" for t, c in s["block_types"].items())
-            print(f"{s['num']:>3}  {s['title'][:38]:<40} {s['blocks']:>4} {s['theme']:>6} {s['duration']:>4}s  {types_str}")
-        print(f"\n   Total: {len(slides)} slides")
+            # IDENTITY sink: this row is how the operator tells one slide from
+            # another, so it gets the label policy (NFKC fold + whitespace
+            # collapse + width cap) rather than only the funnel's content
+            # encoder. Capping inside term_label also keeps the column aligned:
+            # slicing the RAW title to 38 and escaping afterwards would let an
+            # escaped control byte push the row wider than its column.
+            emit(f"{s['num']:>3}  {term_label(s['title'], '—', 38):<40} {s['blocks']:>4} {s['theme']:>6} {s['duration']:>4}s  {types_str}")
+        emit(f"\n   Total: {len(slides)} slides")
         sys.exit(EXIT_OK)
 
 def deck_validate(args):
@@ -1101,14 +1141,14 @@ def deck_validate(args):
                  suggestions=["Fix the reported errors and re-run: vela deck validate <deck.vela>",
                               "Use --json for structured error details"])
         else:
-            print(result.stdout, end="")
-            print(result.stderr, end="", file=sys.stderr)
+            emit(result.stdout, end="")
+            emit(result.stderr, end="", file=sys.stderr)
             sys.exit(EXIT_VALIDATION)
     else:
         if _is_json():
             _ok({"valid": True, "output": result.stdout.strip()}, "Deck is valid")
         else:
-            print(result.stdout, end="")
+            emit(result.stdout, end="")
             sys.exit(EXIT_OK)
 
 def deck_assemble(args):
@@ -1141,7 +1181,7 @@ def deck_assemble(args):
         if _is_json():
             _ok({"assembled": True, "output": result.stdout.strip()})
         else:
-            print(result.stdout, end="")
+            emit(result.stdout, end="")
             sys.exit(EXIT_OK)
 
 def deck_extract(args):
@@ -1184,8 +1224,8 @@ def deck_extract(args):
         _ok({"extracted": True, "output": output, "deckTitle": deck.get("deckTitle", ""),
              "lanes": lanes, "slides": slides})
     else:
-        print(f"✅ Extracted: {output}")
-        print(f"   {deck.get('deckTitle', '?')} — {lanes} lane(s), {slides} slide(s)")
+        emit(f"✅ Extracted: {output}")
+        emit(f"   {deck.get('deckTitle', '?')} — {lanes} lane(s), {slides} slide(s)")
         sys.exit(EXIT_OK)
 
 def deck_ship(args):
@@ -1251,8 +1291,8 @@ def deck_ship(args):
         if _is_json():
             _err(EXIT_VALIDATION, "Validation failed", suggestions=["Fix issues and retry"])
         else:
-            print(result.stdout, end="")
-            print("❌ Validation failed — aborting ship", file=sys.stderr)
+            emit(result.stdout, end="")
+            emit("❌ Validation failed — aborting ship", file=sys.stderr)
             sys.exit(EXIT_VALIDATION)
 
     # Step 2: Assemble
@@ -1266,8 +1306,8 @@ def deck_ship(args):
         if _is_json():
             _err(EXIT_FAIL, f"Assembly failed: {detail}")
         else:
-            print(result.stdout, end="")
-            print(f"❌ Assembly failed: {detail}", file=sys.stderr)
+            emit(result.stdout, end="")
+            emit(f"❌ Assembly failed: {detail}", file=sys.stderr)
             sys.exit(EXIT_FAIL)
 
     # Clean up temp expanded file
@@ -1308,13 +1348,13 @@ def deck_ship(args):
     else:
         for s in steps:
             if s.get("output"):
-                print(s["output"])
+                emit(s["output"])
         if was_compact:
-            print(f"✅ Auto-expanded from compact format", file=sys.stderr)
-        print(f"✅ JSON copied to {json_out}", file=sys.stderr)
-        print(f"\n📦 Ready to present:", file=sys.stderr)
+            emit(f"✅ Auto-expanded from compact format", file=sys.stderr)
+        emit(f"✅ JSON copied to {json_out}", file=sys.stderr)
+        emit(f"\n📦 Ready to present:", file=sys.stderr)
         for f in files_to_present:
-            print(f"   {f}", file=sys.stderr)
+            emit(f"   {f}", file=sys.stderr)
         sys.exit(EXIT_OK)
 
 def _is_hex_color(s):
@@ -1338,7 +1378,7 @@ def deck_replace_text(args):
         if _is_json():
             _ok({"replaced": 0, "old": old, "new": new}, "Text not found — no changes")
         else:
-            print(f"⚠️  \"{old}\" not found in deck — no changes", file=sys.stderr)
+            emit(f"⚠️  \"{old}\" not found in deck — no changes", file=sys.stderr)
             sys.exit(EXIT_OK)
     raw = raw.replace(old, new)
 
@@ -1370,7 +1410,7 @@ def deck_replace_text(args):
         msg = f"✅ Replaced {count} occurrence(s): \"{old}\" → \"{new}\""
         if rgba_count > 0:
             msg += f" (+{rgba_count} rgba cascaded)"
-        print(msg, file=sys.stderr)
+        emit(msg, file=sys.stderr)
         sys.exit(EXIT_OK)
 
 def deck_expand(args):
@@ -1392,7 +1432,7 @@ def deck_expand(args):
         if _is_json():
             _ok({"already_full": True}, "Deck is already in full format")
         else:
-            print("⚠️  Deck is already in full format — no expansion needed", file=sys.stderr)
+            emit("⚠️  Deck is already in full format — no expansion needed", file=sys.stderr)
             sys.exit(EXIT_OK)
         return
     out_path = output or path
@@ -1401,7 +1441,7 @@ def deck_expand(args):
     if _is_json():
         _ok({"expanded": True, "from": fmt_name, "slides": slide_count, "output": out_path})
     else:
-        print(f"✅ Expanded {fmt_name} → {slide_count} slides → {out_path}", file=sys.stderr)
+        emit(f"✅ Expanded {fmt_name} → {slide_count} slides → {out_path}", file=sys.stderr)
         sys.exit(EXIT_OK)
 
 def deck_compact(args):
@@ -1417,7 +1457,7 @@ def deck_compact(args):
         if _is_json():
             _ok({"already_compact": True}, "Deck is already compact")
         else:
-            print("⚠️  Deck is already compact — no compaction needed", file=sys.stderr)
+            emit("⚠️  Deck is already compact — no compaction needed", file=sys.stderr)
             sys.exit(EXIT_OK)
     compacted = compact_deck(deck)
     out_path = output or path
@@ -1439,8 +1479,8 @@ def deck_compact(args):
              "full_bytes": full_bytes, "compact_bytes": compact_bytes,
              "savings_pct": round(savings, 1), "output": out_path})
     else:
-        print(f"✅ Compacted {slide_count} slides, {themes} themes → {out_path}", file=sys.stderr)
-        print(f"   {full_bytes:,}B → {compact_bytes:,}B ({savings:.0f}% smaller)", file=sys.stderr)
+        emit(f"✅ Compacted {slide_count} slides, {themes} themes → {out_path}", file=sys.stderr)
+        emit(f"   {full_bytes:,}B → {compact_bytes:,}B ({savings:.0f}% smaller)", file=sys.stderr)
         sys.exit(EXIT_OK)
 
 def deck_turbo(args):
@@ -1459,7 +1499,7 @@ def deck_turbo(args):
         if _is_json():
             _ok({"already_turbo": True}, "Deck is already in turbo format")
         else:
-            print("⚠️  Deck is already in turbo format", file=sys.stderr)
+            emit("⚠️  Deck is already in turbo format", file=sys.stderr)
             sys.exit(EXIT_OK)
     if _is_compact(deck):
         deck = expand_deck(deck)
@@ -1485,8 +1525,8 @@ def deck_turbo(args):
              "full_bytes": full_bytes, "turbo_bytes": turbo_bytes,
              "savings_pct": round(savings, 1), "output": out_path})
     else:
-        print(f"✅ Turbo: {slide_count} slides, {palette_size} colors → {out_path}", file=sys.stderr)
-        print(f"   {full_bytes:,}B → {turbo_bytes:,}B ({savings:.0f}% smaller)", file=sys.stderr)
+        emit(f"✅ Turbo: {slide_count} slides, {palette_size} colors → {out_path}", file=sys.stderr)
+        emit(f"   {full_bytes:,}B → {turbo_bytes:,}B ({savings:.0f}% smaller)", file=sys.stderr)
         sys.exit(EXIT_OK)
 
 
@@ -1559,19 +1599,25 @@ def slide_view(args):
             "slide": slide
         })
     else:
-        print(f"━━━ Slide {num}: {slide.get('title', '—')} ━━━")
-        print(f"  Section: {item.get('title', '?')}")
-        print(f"  bg: {slide.get('bg','?')}  accent: {slide.get('accent','?')}  align: {slide.get('align','left')}  vAlign: {slide.get('verticalAlign','top')}")
+        emit(f"━━━ Slide {num}: {slide.get('title', '—')} ━━━")
+        emit(f"  Section: {item.get('title', '?')}")
+        emit(f"  bg: {slide.get('bg','?')}  accent: {slide.get('accent','?')}  align: {slide.get('align','left')}  vAlign: {slide.get('verticalAlign','top')}")
         if slide.get("bgGradient"):
             g = slide["bgGradient"]
-            print(f"  gradient: {g[:60]}{'...' if len(g)>60 else ''}")
-        print(f"  padding: {slide.get('padding','?')}  duration: {slide.get('duration','?')}s")
-        print(f"  blocks ({len(slide.get('blocks', []))}):")
+            emit(f"  gradient: {g[:60]}{'...' if len(g)>60 else ''}")
+        emit(f"  padding: {slide.get('padding','?')}  duration: {slide.get('duration','?')}s")
+        emit(f"  blocks ({len(slide.get('blocks', []))}):")
         for i, block in enumerate(slide.get("blocks", [])):
-            print(f"    [{i}] {_block_summary(block)}")
+            # _block_summary returns deck text mixed with our own chrome, across
+            # a function boundary — the shape where "is this value untrusted?"
+            # stops being obvious at the call site. Untrusted makes the encoded
+            # form the DEFAULT rendering of this value in any f-string, so the
+            # interpolation is safe on its own rather than only because emit()
+            # cleans up afterwards. Layer under the funnel, not instead of it.
+            emit(f"    [{i}] {Untrusted(_block_summary(block))}")
         sn = slide.get("studyNotes")
         if sn and isinstance(sn, dict):
-            print(f"  studyNotes: {len(sn.get('text', ''))} chars, "
+            emit(f"  studyNotes: {len(sn.get('text', ''))} chars, "
                   f"{len(sn.get('questions', []) or [])} questions, "
                   f"{len(sn.get('glossary', {}) or {})} glossary terms, "
                   f"diagram={'yes' if sn.get('diagram') else 'no'}")
@@ -1838,23 +1884,23 @@ def deck_stats(args):
             "issues": issues,
         })
     else:
-        print(f"📊 {deck.get('deckTitle', 'Deck')}")
-        print(f"   {len(deck.get('lanes', []))} lanes · {modules} modules · {total_slides} slides · {time_str}")
-        print(f"   Blocks: {', '.join(f'{k}:{v}' for k, v in block_dist)}")
+        emit(f"📊 {deck.get('deckTitle', 'Deck')}")
+        emit(f"   {len(deck.get('lanes', []))} lanes · {modules} modules · {total_slides} slides · {time_str}")
+        emit(f"   Blocks: {', '.join(f'{k}:{v}' for k, v in block_dist)}")
         if missing_duration:
-            print(f"   ⚠ {missing_duration} slides missing duration")
+            emit(f"   ⚠ {missing_duration} slides missing duration")
         if missing_bg:
-            print(f"   ⚠ {missing_bg} slides missing bg")
+            emit(f"   ⚠ {missing_bg} slides missing bg")
         if empty_modules:
-            print(f"   ⚠ {empty_modules} empty modules")
+            emit(f"   ⚠ {empty_modules} empty modules")
         if issues:
-            print(f"\n   🔍 Issues ({len(issues)}):")
+            emit(f"\n   🔍 Issues ({len(issues)}):")
             for issue in issues[:15]:
-                print(f"   • {issue}")
+                emit(f"   • {issue}")
             if len(issues) > 15:
-                print(f"   ...and {len(issues) - 15} more")
+                emit(f"   ...and {len(issues) - 15} more")
         else:
-            print(f"\n   ✅ No issues found")
+            emit(f"\n   ✅ No issues found")
         sys.exit(EXIT_OK)
 
 
@@ -1971,13 +2017,13 @@ def deck_find(args):
              "missing": prop_missing or None, "results": results})
     else:
         if not results:
-            print(f"No matches found", file=sys.stderr)
+            emit(f"No matches found", file=sys.stderr)
             sys.exit(EXIT_OK)
-        print(f"🔍 Found {len(results)} match{'es' if len(results) != 1 else ''}:")
+        emit(f"🔍 Found {len(results)} match{'es' if len(results) != 1 else ''}:")
         for r in results[:20]:
-            print(f"   #{r['slide']:2d} {r['title']}")
+            emit(f"   #{r['slide']:2d} {r['title']}")
         if len(results) > 20:
-            print(f"   ...and {len(results) - 20} more")
+            emit(f"   ...and {len(results) - 20} more")
         sys.exit(EXIT_OK)
 
 
@@ -2006,8 +2052,8 @@ def deck_dump(args):
                 slide_key = k.split(".")[0] if k.startswith("s") else k
                 if slide_key != cur_slide and k.startswith("s"):
                     cur_slide = slide_key
-                    print(f"\n━━━ Slide {slide_key[1:]} ━━━")
-                print(f"  {k}: {v}")
+                    emit(f"\n━━━ Slide {slide_key[1:]} ━━━")
+                emit(f"  {k}: {v}")
             sys.exit(EXIT_OK)
     else:
         slide_num = 0
@@ -2040,9 +2086,9 @@ def deck_dump(args):
         if _is_json():
             _ok({"slides": slide_num, "dump": lines})
         else:
-            print(f"📋 {deck.get('deckTitle', 'Deck')} ({slide_num} slides)\n")
+            emit(f"📋 {deck.get('deckTitle', 'Deck')} ({slide_num} slides)\n")
             for line in lines:
-                print(line)
+                emit(line)
             sys.exit(EXIT_OK)
 
 
@@ -2321,10 +2367,16 @@ def deck_extract_text(args):
         if _is_json():
             _ok({"extracted": len(texts), "output": output})
         else:
-            print(f"✅ Extracted {len(texts)} text fields → {output}", file=sys.stderr)
+            emit(f"✅ Extracted {len(texts)} text fields → {output}", file=sys.stderr)
             sys.exit(EXIT_OK)
     else:
-        print(result)
+        # stdout is a round-trip path (`extract-text > t.json` then `patch-text`),
+        # so it must stay lossless — the funnel's encoder would drop format
+        # characters that belong to the author's text. ensure_ascii=True keeps
+        # every codepoint recoverable AND leaves nothing for a terminal to
+        # interpret, so the encoder is a no-op here instead of a corruption.
+        # The file branch above stays unescaped: translators edit that by hand.
+        emit(json.dumps(texts, ensure_ascii=True, indent=2))
         sys.exit(EXIT_OK)
 
 
@@ -2344,7 +2396,7 @@ def deck_patch_text(args):
     if _is_json():
         _ok({"patched": patched, "total_keys": len(texts)})
     else:
-        print(f"✅ Patched {patched}/{len(texts)} text fields", file=sys.stderr)
+        emit(f"✅ Patched {patched}/{len(texts)} text fields", file=sys.stderr)
         sys.exit(EXIT_OK)
 
 
@@ -2477,9 +2529,9 @@ def deck_split(args):
         _ok({"sections": len(new_items), "slides": len(all_slides),
              "items": [{"title": it["title"], "slides": len(it["slides"])} for it in new_items]})
     else:
-        print(f"✅ Split {len(all_slides)} slides into {len(new_items)} sections:")
+        emit(f"✅ Split {len(all_slides)} slides into {len(new_items)} sections:")
         for it in new_items:
-            print(f"   {it['title']} ({len(it['slides'])} slides)")
+            emit(f"   {it['title']} ({len(it['slides'])} slides)")
         sys.exit(EXIT_OK)
 
 
@@ -2623,7 +2675,7 @@ def main():
         sys.exit(EXIT_OK)
 
     if not clean_args or clean_args[0] in ("--help", "-h", "help"):
-        print(__doc__)
+        emit(__doc__)
         sys.exit(EXIT_OK)
 
     resource = clean_args[0]
