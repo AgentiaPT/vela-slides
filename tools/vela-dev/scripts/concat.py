@@ -114,10 +114,54 @@ REPO_ROOT = os.path.dirname(os.path.dirname(DEV_DIR))                  # repo ro
 SKILL_PARTS = os.path.join(REPO_ROOT, "src", "parts")
 SKILL_TEMPLATE = os.path.join(REPO_ROOT, "skills", "vela-slides", "app", "vela.jsx")
 
+def parse_check(output_path, part_starts):
+    """Parse the built bundle with the vendored Babel and fail on a syntax error.
+
+    The duplicate-declaration check above is text-level, so it cannot see an
+    unbalanced bracket. A part that lost its closing bracket (a bad merge, a
+    truncated edit) still builds, and the error only appears far later, at the
+    end of the bundle. One real parse catches it at build time and names the
+    part that owns the failing line. The check is skipped, not failed, when
+    node or the vendored Babel is absent.
+    """
+    import json, shutil, subprocess
+    checker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parse-check.js")
+    if not shutil.which("node") or not os.path.exists(checker):
+        print("   Parse check: skipped (no node)")
+        return
+    try:
+        proc = subprocess.run(["node", checker, output_path],
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"   Parse check: skipped ({exc})")
+        return
+    if proc.returncode == 0:
+        print("   Parses ✓")
+        return
+    if proc.returncode != 1:
+        print(f"   Parse check: skipped ({proc.stderr.strip() or 'no vendored babel'})")
+        return
+    try:
+        err = json.loads(proc.stdout)
+    except ValueError:
+        err = {"message": proc.stdout.strip() or proc.stderr.strip(), "line": 0, "column": 0}
+    line = int(err.get("line") or 0)
+    owner, offset = "", line
+    for start, name in part_starts:
+        if start <= line:
+            owner, offset = name, line - start + 1
+    print("   ❌ SYNTAX ERROR in the built bundle:")
+    print(f"      {err.get('message')}")
+    print(f"      bundle line {line}" + (f" → {owner} line {offset}" if owner else ""))
+    print("      A bracket is probably unbalanced earlier in that part.")
+    sys.exit(1)
+
+
 def concat(parts_dir, output_path, release=False):
     chunks = []
     total_lines = 0
     total_stripped = 0
+    part_starts = []  # (first bundle line, part name) — maps a parse error back
 
     for part_name in load_part_order(parts_dir):
         if release and part_name in RELEASE_EXCLUDED_PARTS:
@@ -132,6 +176,7 @@ def concat(parts_dir, output_path, release=False):
         content, stripped = strip_dev_only(content, part_name, release)
         total_stripped += stripped
         lines = content.count('\n') + (0 if content.endswith('\n') else 1)
+        part_starts.append((total_lines + 1, part_name))
         total_lines += lines
         chunks.append(content)
         print(f"  {part_name}: {lines} lines" + (f" (−{stripped} dev-only block(s))" if stripped else ""))
@@ -190,6 +235,8 @@ def concat(parts_dir, output_path, release=False):
         sys.exit(1)
     else:
         print("   No duplicate declarations ✓")
+
+    parse_check(output_path, part_starts)
 
     if release:
         # Fail the build (never silently ship) if any test-hook surface survived

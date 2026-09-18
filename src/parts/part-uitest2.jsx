@@ -2287,6 +2287,9 @@ uiSuite("W6 Views", [
     if (!hasBackdrop(edit)) throw new Error("present-edit-toggle has no guaranteed-contrast backdrop (CR11 regression)");
     _key("f");
     await _waitFor(() => _$("header"), 3000);
+  }},
+]);
+
 // ━━━ Review mode (CR7) + TOC slide delete (CR14) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Logic tests call the real reducer/sanitizer; DOM tests drive the real controls
 // and always put the app back the way they found it.
