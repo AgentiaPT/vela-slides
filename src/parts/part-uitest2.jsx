@@ -2725,3 +2725,65 @@ uiSuite("Review mode: the approval queue drains to zero", [
     return true;
   }},
 ]);
+
+// ── Review mode: a hide must stay undoable, and an empty list must tell the truth ──
+// Two defects this locks down: hiding a slide from the TOC while review mode was on
+// took the row — and with it the eye control — out of the list, so the hide could not
+// be undone in place; and an empty review list always read "all approved", even when
+// nothing was approved and every slide was hidden.
+uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
+  { name: "a slide hidden during a review session KEEPS its row, so the eye control stays reachable", fn: async () => _rvqWith(true, async () => {
+    const plain = _rvqSlide({});
+    if (!velaReviewRowVisible(plain, "m0", 0)) throw new Error("a plain slide has no row");
+    const hidden = _rvqSlide({ hidden: true });
+    if (velaReviewRowVisible(hidden, "m0", 0)) throw new Error("an already-hidden slide should not be listed");
+    velaReviewKeepAdd("m0", 0); // what the TOC eye control does before it dispatches
+    if (!velaReviewRowVisible(hidden, "m0", 0)) throw new Error("the row the author hid vanished under them");
+    // Only the LIST changes. The count and the rotation must still drop the slide.
+    if (velaSlideNeedsReview(hidden)) throw new Error("a pinned row re-entered the review count");
+    if (velaReviewRowVisible(hidden, "m0", 1)) throw new Error("the pin leaked onto another row");
+    if (velaReviewRowVisible(hidden, "m1", 0)) throw new Error("the pin leaked onto another module");
+    return true;
+  })},
+  { name: "pinned rows do not outlive the review session", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      velaReviewKeepAdd("m0", 0);
+      if (!velaReviewKeepHas("m0", 0)) throw new Error("the pin was not recorded");
+      setVelaReviewFilter(false);
+      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin survived leaving review mode");
+      setVelaReviewFilter(true);
+      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin came back in the next review session");
+    } finally { setVelaReviewFilter(was); }
+    return true;
+  }},
+  { name: "an empty review list never reports hidden slides as approved", fn: async () => {
+    if (velaReviewEmptyKind(0, 21) !== "hidden") throw new Error("21 hidden and 0 approved was reported as approved");
+    if (velaReviewEmptyKind(21, 0) !== "approved") throw new Error("21 approved was not reported as approved");
+    if (velaReviewEmptyKind(20, 1) !== "mixed") throw new Error("20 approved + 1 hidden was not reported as mixed");
+    if (velaReviewEmptyKind(0, 0) !== "hidden") throw new Error("an empty deck must not claim approvals");
+    return true;
+  }},
+  { name: "hiding a slide is undoable, and undo puts it back in the review count", fn: async () => _rvqWith(true, async () => {
+    let h = { past: [], present: _rvqState([[_rvqSlide({}), _rvqSlide({})]]), future: [] };
+    h = reducer(h, { type: "TOGGLE_SLIDE_HIDDEN", id: "m0", index: 0 });
+    if (_rvqLeft(h.present) !== 1) throw new Error("hiding did not take the slide out of the review count");
+    h = reducer(h, { type: "UNDO" });
+    if (h.present.lanes[0].items[0].slides[0].hidden) throw new Error("undo did not clear the hidden flag");
+    if (_rvqLeft(h.present) !== 2) throw new Error("undo did not put the slide back in the review count");
+    return true;
+  })},
+  { name: "approving a slide is undoable, and the review count follows the undo", fn: async () => _rvqWith(true, async () => {
+    let h = { past: [], present: _rvqState([[_rvqSlide({}), _rvqSlide({})]]), future: [] };
+    h = reducer(h, { type: "TOGGLE_SLIDE_REVIEWED", id: "m0", index: 0 });
+    if (_rvqLeft(h.present) !== 1) throw new Error("approval did not reduce the review count");
+    h = reducer(h, { type: "UNDO" });
+    if ("reviewed" in h.present.lanes[0].items[0].slides[0]) throw new Error("undo did not drop the approval");
+    if (_rvqLeft(h.present) !== 2) throw new Error("the review count did not follow the undo");
+    h = reducer(h, { type: "REDO" });
+    if (h.present.lanes[0].items[0].slides[0].reviewed !== true) throw new Error("redo did not restore the approval");
+    if (_rvqLeft(h.present) !== 1) throw new Error("the review count did not follow the redo");
+    return true;
+  })},
+]);

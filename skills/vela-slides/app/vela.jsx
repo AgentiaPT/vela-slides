@@ -5026,8 +5026,27 @@ function setVelaReviewFilter(v) {
   const next = v === true;
   if (next === _velaReviewFilter) return;
   _velaReviewFilter = next;
+  _velaReviewKeep = new Set(); // a new review session starts with no pinned rows
   _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
 }
+// Rows pinned to the review list for the rest of THIS review session, keyed
+// "<itemId>:<index>". A slide the author hides while review mode is on leaves the
+// list by the needs-review rule, and the eye control leaves with it — so the hide
+// could not be undone in place. Hiding therefore pins the row: it stays listed and
+// shows as hidden. The pin only changes what the TOC LISTS. The count and the slide
+// rotation still read velaSlideNeedsReview, so a hidden slide still needs no
+// approval. Session-only, never persisted, cleared on every mode change.
+let _velaReviewKeep = new Set();
+function velaReviewKeepKey(itemId, index) { return String(itemId) + ":" + index; }
+function velaReviewKeepAdd(itemId, index) { _velaReviewKeep.add(velaReviewKeepKey(itemId, index)); }
+function velaReviewKeepHas(itemId, index) { return _velaReviewKeep.has(velaReviewKeepKey(itemId, index)); }
+// ONE predicate for "does this slide get a row while review mode is on" — the row
+// list, the section note and the keyboard nav rail all read it, so they cannot drift.
+function velaReviewRowVisible(s, itemId, index) { return velaSlideNeedsReview(s) || velaReviewKeepHas(itemId, index); }
+// An EMPTY review list has three causes and they are not the same news. The banner
+// and the per-section note both read this, so neither can report "hidden" as
+// "approved" — an author who hid every slide has approved nothing.
+function velaReviewEmptyKind(approved, hidden) { return approved === 0 ? "hidden" : hidden === 0 ? "approved" : "mixed"; }
 function useVelaReviewFilter() {
   const [, bump] = useState(0);
   useEffect(() => { const fn = () => bump((n) => n + 1); _velaReviewSubs.add(fn); return () => { _velaReviewSubs.delete(fn); }; }, []);
@@ -9612,7 +9631,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {/* The strip WRAPS, the same way the app header does. It is one centred row
+            that never shrank: in a narrow window the row was wider than the panel and,
+            because the row is centred, buttons were laid out past BOTH edges where no
+            scrollbar could reach them (the Overview control was the last one out).
+            Wrapping puts every control on a reachable row instead. The label font
+            stays at 13px — nothing is made unreadable to win space. */}
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 3, rowGap: 4 }}>
           <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -9913,7 +9938,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
   const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
-  const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
+  // Same gesture as the row eye control, so it pins the row the same way.
+  const ctxHide = (si) => ctxTargets(si).forEach((i) => { velaReviewKeepAdd(item.id, i); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }); });
   // Multi-move ascending with index-shift compensation keeps target order intact.
   // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
   // focus in the SOURCE section on the slide that slides up into the first vacated
@@ -10085,7 +10111,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         // re-browsing work already signed off (approved) or cut from the deck (hidden).
         // Return null (never filter the array) — `si` must stay the REAL slide index
         // for every dispatch below.
-        if (reviewFilter && !velaSlideNeedsReview(s)) return null;
+        // A row the author HID from here stays pinned for the rest of the review
+        // session (velaReviewRowVisible), so the eye control never disappears with
+        // the row and the hide can be undone in place.
+        if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -10143,7 +10172,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             ) : (
               <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
-            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+            <span onClick={(e) => { e.stopPropagation(); velaReviewKeepAdd(item.id, si); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
               title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
@@ -10164,11 +10193,16 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       }); })()}
       {/* CR7: a section whose slides are all approved must say so — a section that just
           vanished from the outline would read as data loss. */}
-      {reviewFilter && item.slides.every((s) => !velaSlideNeedsReview(s)) && (
-        <div data-testid="toc-section-all-approved" style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
-          ✓ all {item.slides.length} approved
-        </div>
-      )}
+      {reviewFilter && item.slides.length > 0 && item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si)) && (() => {
+        // Say what really happened. A section whose slides are all HIDDEN has no
+        // approvals, so "all approved" would be untrue.
+        const ap = item.slides.filter((s) => s.reviewed === true).length;
+        const hd = item.slides.length - ap;
+        const kind = velaReviewEmptyKind(ap, hd);
+        return <div data-testid="toc-section-all-approved" data-empty-kind={kind} style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
+          {kind === "hidden" ? `all ${item.slides.length} hidden` : kind === "approved" ? `✓ all ${ap} approved` : `✓ ${ap} approved · ${hd} hidden`}
+        </div>;
+      })()}
       {ctxMenu && (() => {
         const si = ctxMenu.si;
         const hidden = item.slides[si]?.hidden;
@@ -10421,12 +10455,15 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   // CR7 review mode. Session-only, editor-only: it filters this outline and the editor
   // slide cycle. Presenter mode and every export still use the whole deck.
   const reviewFilter = useVelaReviewFilter();
-  let _rvTotal = 0, _rvDone = 0;
+  let _rvTotal = 0, _rvApproved = 0, _rvHidden = 0;
   // "N left" counts the slides that still NEED review. A hidden slide is out of the
   // rotation, so counting it would keep `reviewLeft` above zero for ever and the
   // all-approved banner (with its clear-all escape) would never appear.
-  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (!velaSlideNeedsReview(s)) _rvDone++; }
-  const reviewLeft = _rvTotal - _rvDone;
+  // Approved and hidden are counted APART: an empty review list can mean "everything
+  // is approved" or "nothing is left because the slides are hidden", and the banner
+  // must not report the second as the first. A slide that is both counts as approved.
+  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (s.reviewed === true) _rvApproved++; else if (s.hidden === true) _rvHidden++; }
+  const reviewLeft = _rvTotal - _rvApproved - _rvHidden;
   // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
   // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
@@ -10455,7 +10492,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
       // CR7: keyboard TOC nav follows the same rule as the list — a slide that needs
       // no review is out of the rotation while review mode is on.
-      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaSlideNeedsReview(item.slides[si])) continue; rail.push({ itemId: item.id, si }); }
+      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };
@@ -10497,7 +10534,11 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
     {reviewFilter && _rvTotal > 0 && reviewLeft === 0 && (
       <div data-testid="toc-review-banner" style={{ margin: "0 12px 6px", padding: "6px 8px", borderRadius: 4, border: `1px solid ${T.green}`, background: T.green + "18", fontSize: 11, fontFamily: FONT.mono, color: T.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span>✓ All {_rvTotal} slides approved.</span>
+        {(() => { const kind = velaReviewEmptyKind(_rvApproved, _rvHidden); return <span data-empty-kind={kind}>{kind === "hidden"
+          ? `Nothing left to review — all ${_rvTotal} slides are hidden.`
+          : kind === "approved"
+            ? `✓ All ${_rvTotal} slides approved.`
+            : `✓ ${_rvApproved} of ${_rvTotal} slides approved · ${_rvHidden} hidden.`}</span>; })()}
         <button data-testid="review-filter-clear" onClick={() => dispatch({ type: "CLEAR_REVIEWED" })} style={S.btn({ padding: "2px 6px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 3, cursor: "pointer", background: "transparent", color: T.accent, border: `1px solid ${T.border}` })}>Clear all</button>
       </div>
     )}
@@ -16497,6 +16538,68 @@ uiSuite("Review mode: the approval queue drains to zero", [
     if ("reviewed" in unSaved[0]) throw new Error("un-approve did not survive the round trip");
     return true;
   }},
+]);
+
+// ── Review mode: a hide must stay undoable, and an empty list must tell the truth ──
+// Two defects this locks down: hiding a slide from the TOC while review mode was on
+// took the row — and with it the eye control — out of the list, so the hide could not
+// be undone in place; and an empty review list always read "all approved", even when
+// nothing was approved and every slide was hidden.
+uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
+  { name: "a slide hidden during a review session KEEPS its row, so the eye control stays reachable", fn: async () => _rvqWith(true, async () => {
+    const plain = _rvqSlide({});
+    if (!velaReviewRowVisible(plain, "m0", 0)) throw new Error("a plain slide has no row");
+    const hidden = _rvqSlide({ hidden: true });
+    if (velaReviewRowVisible(hidden, "m0", 0)) throw new Error("an already-hidden slide should not be listed");
+    velaReviewKeepAdd("m0", 0); // what the TOC eye control does before it dispatches
+    if (!velaReviewRowVisible(hidden, "m0", 0)) throw new Error("the row the author hid vanished under them");
+    // Only the LIST changes. The count and the rotation must still drop the slide.
+    if (velaSlideNeedsReview(hidden)) throw new Error("a pinned row re-entered the review count");
+    if (velaReviewRowVisible(hidden, "m0", 1)) throw new Error("the pin leaked onto another row");
+    if (velaReviewRowVisible(hidden, "m1", 0)) throw new Error("the pin leaked onto another module");
+    return true;
+  })},
+  { name: "pinned rows do not outlive the review session", fn: async () => {
+    const was = velaReviewFilterOn();
+    try {
+      setVelaReviewFilter(true);
+      velaReviewKeepAdd("m0", 0);
+      if (!velaReviewKeepHas("m0", 0)) throw new Error("the pin was not recorded");
+      setVelaReviewFilter(false);
+      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin survived leaving review mode");
+      setVelaReviewFilter(true);
+      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin came back in the next review session");
+    } finally { setVelaReviewFilter(was); }
+    return true;
+  }},
+  { name: "an empty review list never reports hidden slides as approved", fn: async () => {
+    if (velaReviewEmptyKind(0, 21) !== "hidden") throw new Error("21 hidden and 0 approved was reported as approved");
+    if (velaReviewEmptyKind(21, 0) !== "approved") throw new Error("21 approved was not reported as approved");
+    if (velaReviewEmptyKind(20, 1) !== "mixed") throw new Error("20 approved + 1 hidden was not reported as mixed");
+    if (velaReviewEmptyKind(0, 0) !== "hidden") throw new Error("an empty deck must not claim approvals");
+    return true;
+  }},
+  { name: "hiding a slide is undoable, and undo puts it back in the review count", fn: async () => _rvqWith(true, async () => {
+    let h = { past: [], present: _rvqState([[_rvqSlide({}), _rvqSlide({})]]), future: [] };
+    h = reducer(h, { type: "TOGGLE_SLIDE_HIDDEN", id: "m0", index: 0 });
+    if (_rvqLeft(h.present) !== 1) throw new Error("hiding did not take the slide out of the review count");
+    h = reducer(h, { type: "UNDO" });
+    if (h.present.lanes[0].items[0].slides[0].hidden) throw new Error("undo did not clear the hidden flag");
+    if (_rvqLeft(h.present) !== 2) throw new Error("undo did not put the slide back in the review count");
+    return true;
+  })},
+  { name: "approving a slide is undoable, and the review count follows the undo", fn: async () => _rvqWith(true, async () => {
+    let h = { past: [], present: _rvqState([[_rvqSlide({}), _rvqSlide({})]]), future: [] };
+    h = reducer(h, { type: "TOGGLE_SLIDE_REVIEWED", id: "m0", index: 0 });
+    if (_rvqLeft(h.present) !== 1) throw new Error("approval did not reduce the review count");
+    h = reducer(h, { type: "UNDO" });
+    if ("reviewed" in h.present.lanes[0].items[0].slides[0]) throw new Error("undo did not drop the approval");
+    if (_rvqLeft(h.present) !== 2) throw new Error("the review count did not follow the undo");
+    h = reducer(h, { type: "REDO" });
+    if (h.present.lanes[0].items[0].slides[0].reviewed !== true) throw new Error("redo did not restore the approval");
+    if (_rvqLeft(h.present) !== 1) throw new Error("the review count did not follow the redo");
+    return true;
+  })},
 ]);
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vela Product Tour ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
