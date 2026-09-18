@@ -2405,3 +2405,43 @@ uiSuite("Review mode (CR7) + TOC slide delete (CR14)", [
     await _waitFor(() => { const b = _$('[data-testid="review-filter-toggle"]'); return b && b.getAttribute("data-active") === "false" ? b : null; }, 2000);
   }},
 ]);
+
+
+// ━━━ Block link mark + block clipboard (CR17 / CR6) ━━━━━━━━━━━━━━━━━
+// CR17: the per-item link mark must stay in the layout flow. An absolutely
+// positioned badge follows the item BOX, which is as wide as the item's widest
+// line, so it lands on the label's last letters or far to the right of them.
+// CR6: the block clipboard must re-sanitize its payload on the way in and on
+// the way out — stored state is not a trusted source.
+uiSuite("Block link mark + clipboard (CR17/CR6)", [
+  { name: "link mark is laid out in flow, not positioned", fn: async () => {
+    const edit = linkMarkStyle(false), present = linkMarkStyle(true);
+    if (edit.position || present.position) throw new Error("link mark is positioned");
+    if (edit.top != null || edit.right != null || present.top != null || present.right != null) throw new Error("link mark still carries corner offsets");
+    if (edit.flexShrink !== 0) throw new Error("link mark can be squeezed onto the label");
+    return true;
+  }},
+  { name: "label-bearing items host the mark on their own label line", fn: async () => {
+    for (const [name, src] of [["IconRowItem", IconRowItem.toString()], ["BulletItem", BulletItem.toString()]]) {
+      if (!src.includes("markInLabel")) throw new Error(name + " does not claim the mark");
+      if (!src.includes("ItemLinkMark")) throw new Error(name + " does not render the mark beside its label");
+    }
+    return true;
+  }},
+  { name: "clipboard drops unknown keys and renderer-private flags", fn: async () => {
+    const clean = sanitizeBlock({ type: "text", text: "hello", nope: 1, _solo: true });
+    putBlockClipboard(clean);
+    const out = sanitizeBlock(JSON.parse(JSON.stringify(blockClipboard.block)));
+    if (out.nope !== undefined) throw new Error("unknown key survived the clipboard");
+    if (out._solo !== undefined) throw new Error("renderer-private flag survived the clipboard");
+    if (out.type !== "text" || out.text !== "hello") throw new Error("clipboard lost the block content");
+    return true;
+  }},
+  { name: "clipboard cannot carry an unsafe item link", fn: async () => {
+    putBlockClipboard(sanitizeBlock({ type: "icon-row", items: [{ text: "x", link: "javascript:alert(1)" }] }));
+    const out = sanitizeBlock(JSON.parse(JSON.stringify(blockClipboard.block)));
+    if (out.items[0].link) throw new Error("unsafe link survived the clipboard");
+    putBlockClipboard(null);
+    return true;
+  }},
+]);
