@@ -16217,6 +16217,94 @@ uiSuite("Block link mark + clipboard (CR17/CR6)", [
     return true;
   }},
 ]);
+
+// ── Header reflow — every control stays inside a narrow window ────────
+// The desktop header used to be one row that never wrapped. Below about 680px
+// that row was wider than the window, so the last controls (view switcher,
+// Present, Export, Comments) were laid out past the right edge, with no
+// scrollbar and no menu to reach them. The band 500-680px has no mobile layout
+// either, because the mobile breakpoint is 500px. These tests narrow the app
+// root — the header is a flex child of it, so the header reflows just as it
+// does in a small window — then check that each control is inside the root and
+// answers a hit test at its own centre.
+const HEADER_REFLOW_WIDTHS = [500, 550, 600, 650, 700, 900];
+
+uiSuite("Header reflow", [
+  { name: "Present and the view switcher stay inside the window at every width", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header) throw new Error("no header");
+    // The mobile layout has its own control set — nothing to check here. The
+    // view switcher is desktop-only, so it is the correct mobile guard; guarding
+    // on the action group instead would let this test pass by the group being
+    // absent, which is the very regression it must catch.
+    if (!_$('[data-testid="view-switcher"]')) return true;
+    const root = header.parentElement;
+    const prevW = root.style.width, prevMin = root.style.minWidth;
+    try {
+      for (const w of HEADER_REFLOW_WIDTHS) {
+        root.style.width = w + "px";
+        root.style.minWidth = w + "px";
+        await _wait(80);
+        const box = root.getBoundingClientRect();
+        const present = [...header.querySelectorAll("button")].find((b) => (b.textContent || "").includes("Present"));
+        const targets = [
+          ["Present", present],
+          ["view switcher", _$('[data-testid="view-switcher"]')],
+          ["Gallery segment", _$('[data-testid="view-switch-gallery"]')],
+          ["Export", _$('[data-testid="export-menu-toggle"]')],
+          ["Comments", _$('[data-testid="comments-toggle"]')],
+        ];
+        for (const [label, el] of targets) {
+          if (!el) throw new Error(label + " is missing at " + w + "px");
+          const r = el.getBoundingClientRect();
+          if (r.right > box.right + 0.5 || r.left < box.left - 0.5) {
+            throw new Error(label + " is outside the window at " + w + "px (right " + Math.round(r.right) + " vs " + Math.round(box.right) + ")");
+          }
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+          if (!hit || !(hit === el || el.contains(hit) || hit.contains(el))) {
+            throw new Error(label + " cannot be clicked at " + w + "px");
+          }
+        }
+      }
+    } finally {
+      root.style.width = prevW;
+      root.style.minWidth = prevMin;
+      await _wait(60);
+    }
+    return true;
+  }},
+  { name: "header grows taller instead of hiding a wrapped row", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header) throw new Error("no header");
+    if (!_$('[data-testid="view-switcher"]')) return true;
+    const group = _$('[data-testid="header-actions"]');
+    if (!group) throw new Error("the desktop header has no reflowing action group");
+    const root = header.parentElement;
+    const prevW = root.style.width, prevMin = root.style.minWidth;
+    try {
+      root.style.width = "600px";
+      root.style.minWidth = "600px";
+      await _wait(80);
+      const hb = header.getBoundingClientRect(), gb = group.getBoundingClientRect();
+      if (gb.bottom > hb.bottom + 0.5) throw new Error("the action rows spill out below the header");
+      if (hb.height < 44) throw new Error("header is shorter than its own minimum");
+    } finally {
+      root.style.width = prevW;
+      root.style.minWidth = prevMin;
+      await _wait(60);
+    }
+    return true;
+  }},
+  { name: "reflow does not shrink header type below 13px", fn: async () => {
+    const header = document.querySelector("header");
+    if (!header || !_$('[data-testid="view-switcher"]')) return true;
+    for (const b of header.querySelectorAll("button")) {
+      const size = parseFloat(getComputedStyle(b).fontSize);
+      if (size < 13) throw new Error("a header button uses " + size + "px type");
+    }
+    return true;
+  }},
+]);
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vela Product Tour ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // A short, safe tour of the live app. Its Vera turn uses a local deterministic
@@ -24954,7 +25042,10 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {/* On desktop the height is a MINIMUM, not a fixed value: the action group
+          below wraps onto more rows in a narrow window, and the header must grow
+          with it. A fixed height kept the wrapped rows out of the viewport. */}
+      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", flexWrap: isMobile ? "nowrap" : "wrap", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : "auto", minHeight: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -24989,7 +25080,16 @@ export default function App() {
         {/* Spacer — pushes actions right */}
         <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
         {/* Right: deck-level actions with dropdowns */}
-        {!isMobile && <>
+        {/* Desktop action group — one box so the buttons can reflow together.
+            In a narrow window the buttons do not fit on one row; before, the last
+            controls (view switcher, Present, Export, Comments) were laid out past
+            the right edge of the window, where no scrollbar could reach them.
+            flexShrink 0 keeps the group at its natural width while the deck title
+            (which has its own ellipsis) still has room to give, so a normal
+            desktop window keeps the single-row header. When even that is not
+            enough, the group moves to its own header row, and maxWidth 100% holds
+            it inside the window so its own wrap splits it into readable rows. */}
+        {!isMobile && <div data-testid="header-actions" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 10, flexShrink: 0, maxWidth: "100%" }}>
           {/* View dropdown — shows current ratio */}
           {(() => {
             const sa = slideActionsRef.current;
@@ -25063,7 +25163,7 @@ export default function App() {
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
-        </>}
+        </div>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
           {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); }} style={{ padding: "4px 10px", background: T.green, color: "#fff", border: "none", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }} title="Present">{"▶"}</button>}

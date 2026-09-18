@@ -5298,6 +5298,70 @@ def test_branding_zero_and_side_pane():
         fail("CR9: SET_BRANDING_PANEL missing, or not registered in NO_HISTORY")
 
 
+def test_header_narrow_window_reflow():
+    print("\n── Header: controls stay inside a narrow window ──")
+
+    app = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    uitest2 = open(os.path.join(PARTS_DIR, "part-uitest2.jsx"), encoding="utf-8").read()
+
+    start = app.index("{!state.fullscreen && <header style=")
+    header_open = app[start:start + 600]
+
+    # The desktop header must be able to put its controls on more than one row.
+    # With a single non-wrapping row the last controls (view switcher, Present,
+    # Export, Comments) were laid out past the right edge of the window.
+    if re.search(r'flexWrap:\s*isMobile\s*\?\s*"nowrap"\s*:\s*"wrap"', header_open):
+        ok("header: desktop layout wraps, mobile layout stays on one row")
+    else:
+        fail("header: desktop header does not wrap — narrow windows push controls out of reach")
+
+    # A fixed height would hide every wrapped row. The height must be a minimum.
+    if re.search(r'minHeight:\s*isMobile\s*\?\s*40\s*:\s*44', header_open):
+        ok("header: desktop height is a minimum, so wrapped rows stay visible")
+    else:
+        fail("header: desktop header still has a fixed height")
+    if re.search(r'height:\s*isMobile\s*\?\s*40\s*:\s*44', header_open):
+        fail("header: fixed desktop height is still present")
+    else:
+        ok("header: no fixed desktop height")
+
+    # The desktop controls live in one group that reflows as a unit.
+    if 'data-testid="header-actions"' not in app:
+        fail("header: no header-actions group — the controls cannot reflow together")
+    else:
+        ok("header: desktop controls sit in a header-actions group")
+        g = app.index('data-testid="header-actions"')
+        group_open = app[g:g + 400]
+        for prop, why in (
+            ('flexWrap: "wrap"', "group does not wrap its buttons"),
+            ("flexShrink: 0", "group gives up width before the deck title does"),
+            ('maxWidth: "100%"', "group can grow wider than the window"),
+        ):
+            if prop in group_open:
+                ok(f"header-actions: {prop}")
+            else:
+                fail(f"header-actions: {prop} missing — {why}")
+
+    # The two controls the QA pass called out keep a stable test id, so the
+    # browser battery below can find them at every width.
+    for tid in ("view-switcher", "view-switch-gallery"):
+        if f'data-testid="{tid}"' in app:
+            ok(f"header: {tid} test id present")
+        else:
+            fail(f"header: {tid} test id missing")
+
+    # The browser battery proves the real layout, not just this source contract.
+    if 'uiSuite("Header reflow"' in uitest2:
+        ok("UI battery: Header reflow suite registered")
+    else:
+        fail("UI battery: no Header reflow suite in part-uitest2.jsx")
+    for w in ("500", "600", "700", "900"):
+        if re.search(r"HEADER_REFLOW_WIDTHS[^\]]*\b" + w + r"\b", uitest2, re.S):
+            ok(f"UI battery: width {w}px is covered")
+        else:
+            fail(f"UI battery: width {w}px is not covered")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -5335,6 +5399,7 @@ if __name__ == "__main__":
         test_review_mode_and_toc_delete()
         test_block_link_mark_and_clipboard()
         test_branding_zero_and_side_pane()
+        test_header_narrow_window_reflow()
     if run_integration:
         test_integration()
         test_cli_commands()
