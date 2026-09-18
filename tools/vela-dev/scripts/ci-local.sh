@@ -56,6 +56,8 @@ run_gate() {
     unit)     python3 tests/test_vela.py --unit ;;
     integ)    python3 tests/test_vela.py --integration ;;
     server)   python3 -m unittest tests.test_serve -v ;;
+    secrets)  python3 -m unittest tests.test_secure_file -v &&
+              python3 tools/vela-dev/scripts/check-secret-writes.py ;;
     desktop)  python3 -m unittest tests.test_desktop -v ;;
     go)       gotest ;;
     concat)   concat_check ;;
@@ -86,6 +88,7 @@ if [ "$PAR" -eq 0 ]; then
   run unit    "Unit"                run_gate unit
   run integ   "Integration"         run_gate integ
   run server  "Server"              run_gate server
+  run secrets "Secret-write policy" run_gate secrets
   run desktop "Desktop gatekeeper"  run_gate desktop
   run go      "Go gatekeeper"       run_gate go
   run concat  "Template sync"       run_gate concat
@@ -106,6 +109,7 @@ else
   run unit    "Unit"                run_gate unit &
   run integ   "Integration"         run_gate integ &
   run server  "Server"              run_gate server &
+  run secrets "Secret-write policy" run_gate secrets &
   run desktop "Desktop gatekeeper"  run_gate desktop &
   run go      "Go gatekeeper"       run_gate go &
   run concat  "Template sync"       run_gate concat &

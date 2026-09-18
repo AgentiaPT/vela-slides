@@ -70,6 +70,37 @@ jobs:
 
           echo "✅ Version bumped from $BASE_VERSION → $PR_VERSION."
 
+  secret-hygiene:
+    # The defect this job exists for shipped because every other runner is
+    # ubuntu-latest: a POSIX-only permission assumption had nowhere to fail.
+    # Windows is in the matrix so the ACL path in secure_file.py actually
+    # EXECUTES on the platform whose semantics it exists to handle — on Linux
+    # that code can only ever be reasoned about, never run.
+    name: Secret-write hygiene (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Run the checks directly rather than through ci-local.sh: that script is
+      # bash and assumes a POSIX layout, and this job must run identically on
+      # the Windows runner. ci-local.sh --gate secrets runs the same two
+      # commands for local use.
+      - name: Secret-to-disk helper
+        run: python -m unittest tests.test_secure_file -v
+
+      - name: Secret-write policy
+        run: python tools/vela-dev/scripts/check-secret-writes.py
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest

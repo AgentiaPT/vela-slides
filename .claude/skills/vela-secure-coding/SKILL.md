@@ -105,6 +105,7 @@ All in `src/parts/part-imports.jsx` unless noted.
 | Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-export-md.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
 | Marker substitution in a template | `String.replace(marker, () => value)` (replacer **function**) | a string replacement (`$&`/`$1` splicing) |
 | Local HTTP auth compare | `hmac.compare_digest` | `==` |
+| Any secret written to disk | `secure_file.write_secret` (`tools/vela-dev/scripts/`) | `os.open(p, ..., 0o600)` + an `st_mode` check — both are no-ops on Windows and WSL `drvfs` |
 | Desktop filesystem path | go through `fs-guard` (`vela-neutralino/resources/js/fs-guard.js`) | a direct `Neutralino.filesystem.*` call |
 
 If you genuinely need a new encoder: put it next to its siblings, give it the
@@ -162,6 +163,26 @@ commit if you want the full story.
     trusted controls (clickjacking a one-click action). Paint properties are
     fine; anything that positions is not.
 
+16. **A guarantee the platform does not give you.** A control is only as real
+    as the weakest platform it runs on. POSIX mode bits are the canonical
+    example: `0o600` sets nothing on Windows (the CRT maps the mode only to
+    `FILE_ATTRIBUTE_READONLY`; the ACL is inherited from the parent directory)
+    and nothing on WSL `drvfs`, which is this repo's documented dev setup.
+    Worse, the obvious check is blind in the same place — `st_mode` on Windows
+    is synthesized from that one attribute, so it reads `0o666` for a file with
+    a perfect ACL and `0o666` for a world-readable one. A check that cannot
+    fail on a safe input and cannot pass on an unsafe one is decoration.
+    Before you rely on an OS primitive, ask which supported platform it is a
+    no-op on, and whether your verification can tell the two apart there.
+    Secrets to disk go through `secure_file.write_secret`; the
+    `check-secret-writes.py` CI gate keeps a second copy from appearing.
+17. **Fail-open on an unverifiable guard.** `print("WARNING: ...")` followed by
+    the sensitive operation is not a guard, it is a log line. If a check cannot
+    be satisfied, drop the operation — the same "fail closed" rule as §0.3,
+    applied to I/O rather than to deck values. Note the ordering trap too: a
+    check that runs *after* the write has already happened cannot prevent
+    anything. Restrict, verify, then write.
+
 ## 4. Per-surface checklist
 
 **New/changed block renderer (`part-blocks.jsx`, `part-slides.jsx`, `part-slidepanel.jsx`)**
@@ -190,7 +211,13 @@ commit if you want the full story.
 - stdlib only; no `eval`/`exec`/`pickle`/`os.system`/`shell=True`; `subprocess`
   in list form; JSON-only deserialization.
 - Filesystem: NFKC-fold + reject separators/traversal/quotes, then **realpath
-  containment**, then open with `O_NOFOLLOW` and use the fd. Skip symlinks in
+  containment**, then open with `O_NOFOLLOW` and use the fd.
+- **Secrets to disk**: prefer not writing one at all — a token the caller
+  supplies (`VELA_TOKEN`) or hands to the browser in the launch URL never
+  needs protecting. When one must be persisted, `secure_file.write_secret`
+  is the only way; it restricts and *verifies* before the secret is written
+  and raises rather than degrading. Never catch `InsecureFileError` and
+  continue. `ci-local.sh --gate secrets` enforces this repo-wide. Skip symlinks in
   archive builders and require member realpaths to stay in-root.
 - HTTP: loopback bind, mandatory token (`compare_digest`), Origin **and** Host
   checks, payload cap, extension allowlist, `HttpOnly`/`SameSite=Strict` cookies.

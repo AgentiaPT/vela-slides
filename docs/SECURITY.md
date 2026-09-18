@@ -133,6 +133,7 @@ Running `tools/vela-dev/scripts/serve.py <folder>` starts a local HTTP server fo
 | Payload limits | Save requests capped at 5 MB (`413 Payload too large` above the limit) |
 | Deck extension | Only `.vela` files are listed, served, or accepted for save |
 | Authentication | Per-session token + `HttpOnly`, `SameSite=Strict` session cookie |
+| Token at rest | The token is **not** persisted. It reaches the browser in the launch URL, or the operator supplies it via `VELA_TOKEN` / `--token`. `.vela.env` holds discovery data only (pid, port, host, mode) — nothing a local process cannot already read from `ps`/`netstat`. `--token-file` opts in to a separate `.vela.token`, written only through the canonical helper that proves the file is owner-only first (explicit ACL on Windows) and writes nothing when it cannot |
 | Cross-origin writes | Mutating requests must match the server's full origin (scheme/host/port); saves require `application/json` |
 | Host header check | DNS rebinding protection for localhost mode |
 
