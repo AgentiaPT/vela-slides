@@ -57,7 +57,9 @@
   </style>
 </head>
 <body>
-  <div id="root">
+  <!-- tabindex="-1" lets nl-boot.js put the keyboard focus back on the page
+       when the window gets focus again, without adding a tab stop (CR18). -->
+  <div id="root" tabindex="-1">
     <div id="vela-loading">
       <div class="boat">⛵</div>
       <div class="title">VELA</div>

@@ -67,6 +67,85 @@ function focusWindow() {
   setTimeout(tryFocus, 400);
 }
 
+// ---------- Keyboard focus after the window gets focus again (CR18) --------
+//
+// Vela binds its navigation keys with `window.addEventListener("keydown")` —
+// presenter, editor and gallery all do. A DOM keydown occurs only when the
+// document holds the keyboard focus. When the user goes to another window and
+// comes back, the native window gets focus again but the embedded webview is
+// left with NO focused element on WebView2 and on gtk-webkit. Every key press
+// is then lost until the user clicks inside the page.
+//
+// The repair: give the document a focus target again as soon as the window
+// gets focus. `#root` has tabindex="-1" (index.html), so it can take focus
+// from code without becoming a tab stop. The handler acts only when nothing
+// useful holds the focus, so it never takes the focus from a text field.
+function velaNeedsFocusRestore(doc) {
+  if (!doc) return false;
+  const el = doc.activeElement;
+  return !el || el === doc.body || el === doc.documentElement;
+}
+
+function restoreKeyboardFocus() {
+  try {
+    if (!velaNeedsFocusRestore(document)) return false;
+    const sink = document.getElementById("root") || document.body;
+    if (sink && typeof sink.focus === "function") {
+      sink.focus({ preventScroll: true });
+      return true;
+    }
+  } catch { /* focus is best effort */ }
+  return false;
+}
+
+function installFocusRestore() {
+  // The native event is the reliable one. The DOM `focus` event does not fire
+  // in the webview when the widget itself never took the focus.
+  try {
+    Neutralino.events.on("windowFocus", () => { focusWindow(); restoreKeyboardFocus(); });
+  } catch { /* events.* gated or not ready */ }
+  window.addEventListener("focus", restoreKeyboardFocus);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) restoreKeyboardFocus();
+  });
+}
+
+// ---------- Native window title (CR16) ------------------------------------
+//
+// The OS window must name the open deck, so that several Vela windows are easy
+// to tell apart. Format: `Vela Slides - <deck title>`, and plain `Vela Slides`
+// when the deck has no title. The title is always built from the deck title
+// and never from the current window title, so repeated updates cannot stack
+// the prefix. A deck title that already starts with the app name loses that
+// prefix for the same reason.
+const VELA_APP_TITLE = "Vela Slides";
+const VELA_TITLE_MAX = 120;
+
+function velaWindowTitle(deckTitle) {
+  if (typeof deckTitle !== "string") return VELA_APP_TITLE;
+  // Control characters and line separators must not go into the native title.
+  let t = deckTitle.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim();
+  let prev = null;
+  while (t !== prev) {
+    prev = t;
+    t = t.replace(/^vela\s+slides\s*[-\u2013\u2014:|]\s*/i, "").trim();
+  }
+  if (/^vela\s+slides$/i.test(t)) t = "";
+  if (!t) return VELA_APP_TITLE;
+  if (t.length > VELA_TITLE_MAX) t = t.slice(0, VELA_TITLE_MAX).trim() + "\u2026";
+  return VELA_APP_TITLE + " - " + t;
+}
+
+let lastWindowTitle = null;
+function applyWindowTitle(deck) {
+  const title = velaWindowTitle(deck && deck.deckTitle);
+  if (title === lastWindowTitle) return title;
+  lastWindowTitle = title;
+  try { document.title = title; } catch { /* no document title */ }
+  try { Neutralino.window.setTitle(title); } catch { /* window.* gated or not ready */ }
+  return title;
+}
+
 async function boot() {
   setMsg("Starting Neutralino…");
   try {
@@ -82,6 +161,7 @@ async function boot() {
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
+  installFocusRestore();
   installTrustBridge();
   // Wire the AI bridge. Synchronous hooks (sender + default info) are set
   // immediately so velaAIAvailable() resolves before Vela mounts; provider
@@ -170,17 +250,21 @@ async function boot() {
   // Expose the startup patch BEFORE vela.jsx is transpiled so STARTUP_PATCH
   // inside the monolith picks it up on first render.
   window.__velaStartupPatch = initialDeck;
+  applyWindowTitle(initialDeck);
 
   // External-edit listener: when deck-io sees a file change from outside,
   // push into the running app via the existing __velaReceiveDeckUpdate hook.
   deckIO.onDeckLoaded((deck, _path, meta = {}) => {
+    applyWindowTitle(deck);
     if (meta.external && window.__velaReceiveDeckUpdate) {
       window.__velaReceiveDeckUpdate(deck);
     }
   });
 
   // Save hook: Vela calls this on every state change. deck-io debounces.
-  window.__velaSendDeckUpdate = (deck) => deckIO.saveCurrent(deck);
+  // It is also the one hook that sees every deck title edit, so the native
+  // window title is refreshed from here (CR16).
+  window.__velaSendDeckUpdate = (deck) => { applyWindowTitle(deck); return deckIO.saveCurrent(deck); };
 
   // Save-status channel: deck-io reports every save transition so the app's
   // top-bar pill can show Saving/Saved/Couldn't-save/Reconnecting instead of a
@@ -579,6 +663,23 @@ function installFullscreenBridge() {
 
 // ---------- Vela transpile + mount -----------------------------------------
 
+// UMD shim for the monolith. Babel-standalone cannot resolve ES modules, so
+// the named React hooks and the named lucide icons must already be in scope
+// when the transpiled source runs. sync-vela.py deliberately does NOT write
+// this into `resources/vela.jsx`: the standalone-HTML exporter fetches that
+// same file and prepends a shim of its own, and two shims declare `useState`
+// twice, which makes the export fail to parse. So the file on disk stays a
+// plain copy of the monolith and the shim is added here, in memory, at
+// transpile time.
+const VELA_UMD_SHIM =
+  "// --- Neutralino UMD shim (added by nl-boot.js) -----------------------\n" +
+  "const { useState, useReducer, useEffect, useLayoutEffect, useRef,\n" +
+  "        useCallback, useMemo } = React;\n" +
+  "const _LucideAll = window.lucideReact;\n" +
+  "const { ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, X,\n" +
+  "        Presentation, Download, Upload, Search, FileDown } = window.lucideReact;\n" +
+  "// -------------------------------------------------------------------\n\n";
+
 async function loadVela() {
   // Fetch the preprocessed monolith. Served by Neutralino's static server
   // at the document root (`/resources/`), so a plain relative path works.
@@ -591,7 +692,10 @@ async function loadVela() {
   // Inject the startup patch by replacing the sentinel in the source. This
   // keeps the marker machinery compatible with assemble.py and serve.py —
   // the monolith itself is untouched between the three runtimes.
-  const patched = injectStartupPatch(jsx, window.__velaStartupPatch);
+  // ORDER MATTERS: every transform of trusted source runs FIRST and the deck
+  // data goes in LAST, so deck content can never forge an anchor that a later
+  // step keys on.
+  const patched = injectStartupPatch(VELA_UMD_SHIM + jsx, window.__velaStartupPatch);
 
   const { code } = Babel.transform(patched, {
     presets: [["react", { runtime: "classic" }]],

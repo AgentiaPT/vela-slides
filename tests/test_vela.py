@@ -4987,6 +4987,31 @@ def test_slide_gradient_placement():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+# ── Sprint "lantern" — Neutralino desktop defects (CR12/16/18/19) ───────────
+# Driver for tests/test_desktop_neutralino.cjs. That suite builds a REAL
+# standalone-HTML export from the real sync-vela.py output and boots it, then
+# pins the window-title, focus-restore and gatekeeper-handshake behaviour.
+def test_desktop_neutralino_sprint():
+    print("\n━━━ Neutralino desktop (CR12 export / CR16 title / CR18 focus / CR19 AI handshake) ━━━")
+    script = os.path.join(REPO_ROOT, "tests", "test_desktop_neutralino.cjs")
+    label = "Neutralino desktop sprint suite"
+    if not os.path.exists(script):
+        fail(label, f"missing: {script}")
+        return
+    try:
+        r = subprocess.run(["node", script], capture_output=True, text=True, timeout=180)
+    except FileNotFoundError:
+        fail(label, "node not on PATH")
+        return
+    except subprocess.TimeoutExpired:
+        fail(label, "timeout after 180s")
+        return
+    if r.returncode == 0:
+        m = re.search(r"(\d+)\s+passed,\s+(\d+)\s+failed", r.stdout)
+        ok(f"{label} ({m.group(1) if m else '?'} cases)")
+    else:
+        fail(label, f"node tests/test_desktop_neutralino.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+
 
 if __name__ == "__main__":
     args = sys.argv[1:]
@@ -5021,6 +5046,7 @@ if __name__ == "__main__":
         test_pdf_winansi_metrics()
         test_deck_ingress_identity()
         test_slide_gradient_placement()
+        test_desktop_neutralino_sprint()
     if run_integration:
         test_integration()
         test_cli_commands()
