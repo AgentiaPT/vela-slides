@@ -355,6 +355,42 @@ const MASTER_KEY = "vela-deck";
 const MOD_PREFIX = "vela-m-";
 const uid = () => crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10);
 
+// Deck-ingress identity: lane and module ids travel INSIDE the deck file, and a
+// module id is also a storage key (`MOD_PREFIX + id`, above) plus the key for
+// dirty tracking, selection and undo. Ingress used to discard the incoming id
+// and mint a fresh uid() for every lane and module, so simply OPENING a deck and
+// changing nothing rewrote every id in the file on the next save. Keeping the
+// incoming id restores a stable round trip.
+//
+// SECURITY: an incoming id is untrusted deck data and it becomes a STORAGE KEY,
+// so it is allowlisted before it is trusted — never merely length-clamped:
+//   * string only. Any other shape is refused outright; no String() coercion, so
+//     a coercible gadget (array, {toString}) cannot satisfy the pattern the way a
+//     real string does (same type-check-first rule as cssColor/cssGradient).
+//   * `[A-Za-z0-9_-]`, 1..40 chars. This is the charset uid() itself produces. It
+//     admits no separator, traversal token, whitespace, control or unicode
+//     character, so a deck can never steer `MOD_PREFIX + id` out of the module
+//     key namespace or collide with MASTER_KEY.
+//   * unique within one deck. Two modules that share an id share one storage slot
+//     and one dirty flag, which loses slides silently, so a repeat is refused.
+// Anything that fails falls back to a fresh uid() — the old behaviour, now
+// applied only to the ids that are genuinely unusable instead of to all of them.
+// Fail closed: a rejected id is replaced, never passed through.
+const DECK_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+function adoptDeckId(rawId, seen) {
+  let id = (typeof rawId === "string" && DECK_ID_RE.test(rawId)) ? rawId : "";
+  // Duck-type the reservation set instead of trusting the argument: a stray
+  // `.map(sanitizeItem)` anywhere would hand the ARRAY INDEX to this parameter,
+  // and a number has no .has(). Treat anything that is not a Set as "no set"
+  // so the id is still allowlisted; only uniqueness is skipped.
+  if (!seen || typeof seen.has !== "function" || typeof seen.add !== "function") return id || uid();
+  // uid() is random, so a minted replacement can itself repeat — keep drawing
+  // until the id is free, then reserve it for the rest of this deck.
+  while (!id || seen.has(id)) id = uid();
+  seen.add(id);
+  return id;
+}
+
 // ━━━ Startup Patch System ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Set STARTUP_PATCH to apply changes on load:
 //   Full deck:  { lanes: [...], deckTitle: "..." }     → replaces entire deck
@@ -1728,7 +1764,10 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
-function sanitizeItem(item) {
+// `seen` is the per-deck id reservation set threaded in by validateAndSanitizeDeck
+// (see adoptDeckId). Callers MUST pass it explicitly — never `.map(sanitizeItem)`,
+// which would hand the array INDEX to the second parameter.
+function sanitizeItem(item, seen) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
   // Migrate legacy notes to a module-level comment if no comments exist
@@ -1736,7 +1775,7 @@ function sanitizeItem(item) {
     comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
   }
   return {
-    id: uid(),
+    id: adoptDeckId(item.id, seen),
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
     comments,
@@ -1817,10 +1856,18 @@ function validateAndSanitizeDeck(raw) {
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  // One reservation set for the whole deck: lane ids and module ids share it, so
+  // an adopted id is unique across BOTH kinds. See adoptDeckId for why an
+  // incoming id is allowlisted before it is kept.
+  const seenIds = new Set();
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    // The lane claims its own id first, so a lane keeps its id even when a module
+    // inside it carries the same one. `.map((it) => …)` — never `.map(sanitizeItem)`,
+    // which would pass the array index as the `seen` argument.
+    const id = adoptDeckId(lane.id, seenIds);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((it) => sanitizeItem(it, seenIds)).filter(Boolean) : [];
+    return { id, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {

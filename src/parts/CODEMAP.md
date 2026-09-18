@@ -10,7 +10,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 ### part-imports.jsx
 - (untitled): __DEBUG dbg VELA_LOCAL_MODE VELA_CHANNEL_PORT VELA_CHANNEL_TOKEN VELA_PRESENTATION_MODE
 - AI Capability Detection: velaAIAvailable VELA_AI_UNAVAILABLE_MSG velaIsArtifactMode useAIAvailable velaClipboard velaClipboardWriteSlide velaClipboardReadSlide velaClipboardWriteSlides velaClipboardReadSlides VELA_VERSION VELA_CHANGELOG
-- Session Cost Tracker: VELA_PRICING velaSessionStats MASTER_KEY MOD_PREFIX uid
+- Session Cost Tracker: VELA_PRICING velaSessionStats MASTER_KEY MOD_PREFIX uid DECK_ID_RE adoptDeckId
 - Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
@@ -313,7 +313,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 509
+- part-imports.jsx: 860-line unbannered stretch after line 545
 - part-blocks.jsx: 764-line unbannered stretch after line 769
 - part-canvas.jsx: 414-line unbannered stretch after line 24
 - part-slidepanel.jsx: 446-line unbannered stretch after line 206

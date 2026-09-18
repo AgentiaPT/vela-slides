@@ -4830,6 +4830,162 @@ def test_pdf_winansi_metrics():
         fail("vector PDF WinAnsi metric suite", "node not on PATH")
     except subprocess.TimeoutExpired:
         fail("vector PDF WinAnsi metric suite", "timeout after 120s")
+def test_deck_ingress_identity():
+    """CR1 — opening a deck must not rewrite its lane/module ids or timestamps.
+
+    Ingress used to mint a fresh uid() for every lane and module, so loading a
+    deck and changing nothing still produced a different file on the next save.
+    A module id is also a storage key (`vela-m-<moduleId>`), so the incoming id
+    is allowlisted before it is kept. The node suite drives the REAL sanitizer.
+    """
+    print("\n── Deck-ingress identity (CR1) ──")
+
+    ident_script = os.path.join(REPO_ROOT, "tests", "test_deck_ingress_identity.cjs")
+    if os.path.exists(ident_script):
+        try:
+            r = subprocess.run(["node", ident_script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
+                count = m.group(1) if m else "?"
+                ok(f"deck-ingress identity suite ({count} cases)")
+            else:
+                fail("deck-ingress identity suite",
+                     f"node tests/test_deck_ingress_identity.cjs exited {r.returncode}\n{r.stdout}\n{r.stderr}")
+        except FileNotFoundError:
+            fail("deck-ingress identity suite", "node not on PATH")
+        except subprocess.TimeoutExpired:
+            fail("deck-ingress identity suite", "timeout after 60s")
+    else:
+        fail("deck-ingress identity suite", f"missing: {ident_script}")
+
+    with open(os.path.join(PARTS_DIR, "part-imports.jsx"), encoding="utf-8") as f:
+        pi = f.read()
+
+    # The allowlist is what makes an incoming id safe as a storage key.
+    if "const DECK_ID_RE = /^[A-Za-z0-9_-]{1,40}$/" in pi:
+        ok("incoming deck ids are charset+length allowlisted")
+    else:
+        fail("incoming deck ids must be allowlisted", "DECK_ID_RE missing from part-imports.jsx")
+
+    # Type-check first: a coercible shape must never satisfy the pattern.
+    if 'typeof rawId === "string" && DECK_ID_RE.test(rawId)' in pi:
+        ok("adoptDeckId type-checks before it tests the pattern")
+    else:
+        fail("adoptDeckId must type-check first", "no String() coercion is allowed here")
+
+    # A bare `.map(sanitizeItem)` would hand the array INDEX to `seen`, so the
+    # ingress call must name its arguments explicitly.
+    if "map((it) => sanitizeItem(it, seenIds))" in pi:
+        ok("ingress passes the id reservation set to sanitizeItem explicitly")
+    else:
+        fail("ingress must not call sanitizeItem as a bare .map callback",
+             "the array index would arrive as the `seen` argument")
+
+
+def test_slide_gradient_placement():
+    """CR2 — validate.py must report a gradient placed in a solid-colour field.
+
+    A gradient in `bg` satisfies neither cssColor nor cssGradient, so the app
+    drops it at render and the slide falls back to the theme default. Nothing
+    warned the author. The validator now fails the deck with a message that
+    names the field and the fix.
+    """
+    print("\n── Slide background gradient placement (CR2) ──")
+
+    validator = os.path.join(SKILL_DIR, "scripts", "validate.py")
+    tmp = tempfile.mkdtemp(prefix="vela-grad-")
+
+    def run(deck):
+        p = os.path.join(tmp, "d.vela")
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(deck, f)
+        r = subprocess.run([sys.executable, validator, p], capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr
+
+    def deck_with(slide_extra, block=None):
+        slide = {"duration": 60, "bg": "#0f172a", "color": "#e2e8f0",
+                 "blocks": [block or {"type": "heading", "text": "H"}]}
+        slide.update(slide_extra)
+        return {"deckTitle": "T", "lanes": [{"id": "l1", "title": "L", "items": [
+            {"id": "m1", "title": "M", "slides": [slide]}]}]}
+
+    try:
+        # 1. the reported defect: a gradient in `bg`.
+        code, out = run(deck_with({"bg": "linear-gradient(135deg, #0f172a, #1e293b)"}))
+        if code != 0 and "'bg' holds a gradient" in out:
+            ok("gradient in slide 'bg' is reported as an error")
+        else:
+            fail("gradient in slide 'bg' must be an error", f"exit {code}\n{out}")
+        if "bgGradient" in out and "solid" in out.lower():
+            ok("the message names 'bgGradient' and the solid-colour fallback")
+        else:
+            fail("the 'bg' gradient message must say what to use instead", out)
+
+        # 2. every gradient function name, not just linear-gradient.
+        for grad in ("radial-gradient(circle, #111, #222)",
+                     "conic-gradient(#111, #222)",
+                     "repeating-linear-gradient(45deg, #111, #222 10px)"):
+            code, out = run(deck_with({"bg": grad}))
+            if code != 0 and "holds a gradient" in out:
+                ok(f"gradient in 'bg' detected: {grad.split('(')[0]}")
+            else:
+                fail(f"gradient in 'bg' not detected: {grad}", f"exit {code}\n{out}")
+
+        # 3. the mirror-image mistake: a solid colour in `bgGradient`.
+        code, out = run(deck_with({"bgGradient": "#123456"}))
+        if code != 0 and "'bgGradient' must be a gradient function" in out:
+            ok("solid colour in 'bgGradient' is reported as an error")
+        else:
+            fail("solid colour in 'bgGradient' must be an error", f"exit {code}\n{out}")
+
+        # 4. the same silent drop inside a block.
+        code, out = run(deck_with({}, {"type": "callout", "text": "x",
+                                       "bg": "linear-gradient(90deg, #111, #222)"}))
+        if code != 0 and "holds a gradient" in out and "blocks[1]" in out:
+            ok("gradient in a block 'bg' is reported and located")
+        else:
+            fail("gradient in a block 'bg' must be an error", f"exit {code}\n{out}")
+
+        # 5. a colour token the renderer cannot encode is reported too.
+        code, out = run(deck_with({"color": "1px solid #fff"}))
+        if code != 0 and "is not a colour Vela accepts" in out:
+            ok("an unencodable colour token is reported")
+        else:
+            fail("an unencodable colour token must be an error", f"exit {code}\n{out}")
+
+        # 6. a non-string on a colour key (the app deletes it at load).
+        code, out = run(deck_with({"bg": ["#0f172a"]}))
+        if code != 0 and "must be a string" in out:
+            ok("a non-string colour value is reported")
+        else:
+            fail("a non-string colour value must be an error", f"exit {code}\n{out}")
+
+        # 7. REGRESSION GUARD: a legal deck still passes.
+        code, out = run(deck_with({"bg": "#0f172a",
+                                   "bgGradient": "linear-gradient(135deg, #0f172a, #1e293b)",
+                                   "accent": "rgba(59,130,246,0.8)",
+                                   "mutedColor": "slategray"}))
+        if code == 0:
+            ok("a deck with correct colour placement still passes")
+        else:
+            fail("a correct deck must still pass", f"exit {code}\n{out}")
+
+        # 8. REGRESSION GUARD: the shipped example decks stay valid.
+        bad_examples = []
+        for name in sorted(os.listdir(os.path.join(REPO_ROOT, "examples"))):
+            if not name.endswith(".vela"):
+                continue
+            p = os.path.join(REPO_ROOT, "examples", name)
+            r = subprocess.run([sys.executable, validator, p], capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                bad_examples.append(f"{name}: {r.stdout}")
+        if not bad_examples:
+            ok("every example deck still validates (no false positives)")
+        else:
+            fail("the colour check must not reject a shipped example deck",
+                 "\n".join(bad_examples))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
@@ -4863,6 +5019,8 @@ if __name__ == "__main__":
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
         test_pdf_winansi_metrics()
+        test_deck_ingress_identity()
+        test_slide_gradient_placement()
     if run_integration:
         test_integration()
         test_cli_commands()
