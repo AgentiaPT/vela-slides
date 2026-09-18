@@ -257,8 +257,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
   const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
-  // Same gesture as the row eye control, so it pins the row the same way.
-  const ctxHide = (si) => ctxTargets(si).forEach((i) => { velaReviewKeepAdd(item.id, i); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }); });
+  // Same gesture as the row eye control; the reducer pins the row the same way.
+  const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
   // Multi-move ascending with index-shift compensation keeps target order intact.
   // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
   // focus in the SOURCE section on the slide that slides up into the first vacated
@@ -433,7 +433,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         // A row the author HID from here stays pinned for the rest of the review
         // session (velaReviewRowVisible), so the eye control never disappears with
         // the row and the hide can be undone in place.
-        if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;
+        if (reviewFilter && !velaReviewRowVisible(s)) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -491,7 +491,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             ) : (
               <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
-            <span onClick={(e) => { e.stopPropagation(); velaReviewKeepAdd(item.id, si); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
               title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
@@ -512,7 +512,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       }); })()}
       {/* CR7: a section whose slides are all approved must say so — a section that just
           vanished from the outline would read as data loss. */}
-      {reviewFilter && item.slides.length > 0 && item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si)) && (() => {
+      {reviewFilter && item.slides.length > 0 && item.slides.every((s) => !velaReviewRowVisible(s)) && (() => {
         // Say what really happened. A section whose slides are all HIDDEN has no
         // approvals, so "all approved" would be untrue.
         const ap = item.slides.filter((s) => s.reviewed === true).length;
@@ -811,7 +811,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
       // CR7: keyboard TOC nav follows the same rule as the list — a slide that needs
       // no review is out of the rotation while review mode is on.
-      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue; rail.push({ itemId: item.id, si }); }
+      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si])) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };

@@ -5427,13 +5427,13 @@ def test_review_queue_drains_to_zero():
     # review session. The COUNT keeps the bare predicate, so a pinned row never
     # re-enters "N left".
     for needle, label in [
-        ("if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;",
+        ("if (reviewFilter && !velaReviewRowVisible(s)) return null;",
          "the TOC row list drops slides that need no review"),
-        ("item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si))",
+        ("item.slides.every((s) => !velaReviewRowVisible(s))",
          "the per-section all-approved banner uses the predicate"),
         ("if (s.reviewed === true) _rvApproved++; else if (s.hidden === true) _rvHidden++;",
          "the \"N left\" count uses the predicate, so it can reach zero"),
-        ("if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue;",
+        ("if (reviewFilter && !velaReviewRowVisible(item.slides[si])) continue;",
          "keyboard TOC nav uses the predicate"),
     ]:
         if needle in lst:
@@ -5619,7 +5619,7 @@ def test_review_hide_undo_and_toolbar_reflow():
         ok("review: one row-visibility predicate exists (velaReviewRowVisible)")
     else:
         fail("review: no velaReviewRowVisible predicate")
-    if re.search(r"velaReviewRowVisible\(s,\s*itemId,\s*index\)\s*\{\s*return velaSlideNeedsReview\(s\)\s*\|\|\s*velaReviewKeepHas", reducer):
+    if re.search(r"velaReviewRowVisible\(s\)\s*\{\s*return velaSlideNeedsReview\(s\)\s*\|\|\s*velaReviewKeepHas\(s\)", reducer):
         ok("review: a pinned row is listed even when it needs no review")
     else:
         fail("review: velaReviewRowVisible does not fall back to the pin set")
@@ -5630,30 +5630,29 @@ def test_review_hide_undo_and_toolbar_reflow():
         fail("review: velaSlideNeedsReview changed — a hidden slide may be back in the rotation")
     # The pin set is session-only and is cleared on every mode change.
     setter = reducer[reducer.index("function setVelaReviewFilter"):][:400]
-    if "_velaReviewKeep = new Set()" in setter:
+    if "_velaReviewKeep = new WeakSet()" in setter:
         ok("review: pinned rows are cleared whenever review mode is toggled")
     else:
         fail("review: pinned rows survive a review session")
-    if "_velaReviewKeep" in tlist.split("velaReviewKeepAdd")[0][:0] or True:
-        pass
-
     # ---- The TOC reads the new predicate everywhere a row can appear ----
-    if "!velaReviewRowVisible(s, item.id, si)" in tlist:
+    if "!velaReviewRowVisible(s)" in tlist:
         ok("TOC: the slide-row filter uses the pinned-row predicate")
     else:
         fail("TOC: the slide-row filter still drops a row the author just hid")
-    if "!velaReviewRowVisible(item.slides[si], item.id, si)" in tlist:
+    if "!velaReviewRowVisible(item.slides[si])" in tlist:
         ok("TOC: keyboard nav uses the same predicate as the list")
     else:
         fail("TOC: keyboard nav and the row list can disagree")
-    if re.search(r"velaReviewKeepAdd\(item\.id, si\); dispatch\(\{ type: \"TOGGLE_SLIDE_HIDDEN\"", tlist):
-        ok("TOC: the row eye control pins its row before it hides the slide")
+    # The pin is keyed by the slide OBJECT, so the REDUCER sets it: the hide makes a
+    # new slide object that the TOC cannot reach before it dispatches.
+    if re.search(r"velaReviewKeepAdd\(\{ \.\.\.s, hidden: true \}\)", reducer):
+        ok("review: hiding a slide pins the new slide object in the reducer")
     else:
-        fail("TOC: the row eye control does not pin its row — the hide cannot be undone in place")
-    if re.search(r"ctxHide = \(si\) => ctxTargets\(si\)\.forEach\(\(i\) => \{ velaReviewKeepAdd\(item\.id, i\);", tlist):
-        ok("TOC: the context-menu Hide pins its rows the same way")
+        fail("review: the hide does not pin its slide — the hide cannot be undone in place")
+    if "velaReviewKeepAdd(item.id" not in tlist and "velaReviewKeepAdd(" not in tlist:
+        ok("TOC: no positional pin is left in the TOC")
     else:
-        fail("TOC: the context-menu Hide and the row eye control have drifted apart")
+        fail("TOC: a positional pin key is still in part-list.jsx")
 
     # ---- An empty review list must not claim approvals that were never given ----
     if "function velaReviewEmptyKind" in reducer:
@@ -5718,6 +5717,126 @@ def test_review_hide_undo_and_toolbar_reflow():
 
 
 
+
+def test_review_pin_survives_delete_and_reorder():
+    print("\n── Review mode: the pinned row survives a delete and a reorder ──")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    tlist = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    uitest2 = open(os.path.join(PARTS_DIR, "part-uitest2.jsx"), encoding="utf-8").read()
+
+    # ---- The pin key must be the slide itself, not its position ----
+    # A positional key ("<itemId>:<index>") pointed at the wrong slide, or at none,
+    # as soon as a delete or a move shifted the indices, so the hidden row left the
+    # review list and the author could not undo the hide in place.
+    if "let _velaReviewKeep = new WeakSet();" in reducer:
+        ok("review pin: the pin set is keyed by the slide object")
+    else:
+        fail("review pin: the pin set is not a WeakSet of slides")
+    if "function velaReviewKeepKey" not in reducer:
+        ok("review pin: no positional pin key is left")
+    else:
+        fail("review pin: a positional pin key (itemId + index) is still built")
+    if re.search(r"function velaReviewKeepAdd\(slide\)", reducer) and re.search(r"function velaReviewKeepHas\(slide\)", reducer):
+        ok("review pin: add and has both take the slide")
+    else:
+        fail("review pin: add/has still take a module id and an index")
+    if re.search(r"function velaReviewRowVisible\(s\)\s*\{\s*return velaSlideNeedsReview\(s\)\s*\|\|\s*velaReviewKeepHas\(s\);", reducer):
+        ok("review pin: the row predicate reads the pin by slide")
+    else:
+        fail("review pin: the row predicate does not read the pin by slide")
+
+    # ---- Only the reducer can pin, because the hide makes a NEW slide object ----
+    hide = reducer[reducer.index('case "TOGGLE_SLIDE_HIDDEN"'):][:500]
+    if "velaReviewKeepAdd({ ...s, hidden: true })" in hide:
+        ok("review pin: hiding a slide pins the new slide object")
+    else:
+        fail("review pin: the hide does not pin its slide")
+    upd = reducer[reducer.index('case "UPDATE_SLIDE"'):][:700]
+    if "velaReviewKeepHas(s) ? velaReviewKeepAdd(next) : next" in upd:
+        ok("review pin: an edit carries the pin to the replacement slide")
+    else:
+        fail("review pin: an edit to a pinned slide drops its row")
+
+    # ---- Delete and move must keep the slide objects they do not touch ----
+    for needle, label in [
+        ('case "REMOVE_SLIDES": { _dirtyMods.add(a.id); const drop = new Set(a.indices || []); if (!drop.size) return state; return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => !drop.has(idx)) } : i); }',
+         "delete keeps every surviving slide object"),
+        ('case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });',
+         "drag reorder keeps every slide object"),
+        ('case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });',
+         "arrow move keeps every slide object"),
+    ]:
+        if needle in reducer:
+            ok("review pin: " + label)
+        else:
+            fail("review pin: " + label, "the action no longer keeps slide identity")
+
+    # ---- The TOC must no longer pin by position ----
+    if "velaReviewKeepAdd(" not in tlist:
+        ok("TOC: the row eye control and the context-menu Hide leave the pin to the reducer")
+    else:
+        fail("TOC: a positional pin call is still in part-list.jsx")
+
+    # ---- Regression suites registered ----
+    if "Review mode: a pinned row survives a delete and a reorder" in uitest2:
+        ok("UI battery: the delete/reorder pin suite is registered")
+    else:
+        fail("UI battery: no suite covers the pin under a delete or a reorder")
+    for needle, label in [
+        ('type: "REMOVE_SLIDES", id: "m0", indices: [0]', "the suite deletes a slide while a row is pinned"),
+        ('type: "REORDER_SLIDE", id: "m0", from: 0, to: 2', "the suite drag-reorders while a row is pinned"),
+        ('type: "MOVE_SLIDE", id: "m0", from: 0, dir: 1', "the suite arrow-moves while a row is pinned"),
+    ]:
+        if needle in uitest2:
+            ok("UI battery: " + label)
+        else:
+            fail("UI battery: " + label)
+
+
+def test_icon_row_link_mark_placement():
+    print("\n── Link mark: an icon row places it like a bullet ──")
+
+    blocks = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    uitest2 = open(os.path.join(PARTS_DIR, "part-uitest2.jsx"), encoding="utf-8").read()
+
+    # Both renderers must hand the mark to their own label as an INLINE suffix, and
+    # both must reserve the same room for it. A mark placed as a sibling of the label
+    # is centred on the whole item and pushed to the block edge.
+    icon = blocks[blocks.index("function IconRowItem"):blocks.index("function BulletItem")]
+    bullet = blocks[blocks.index("function BulletItem"):]
+    for src, label in [(icon, "icon row"), (bullet, "bullets")]:
+        if "markInLabel" in src:
+            ok("link mark: the " + label + " renderer places the mark inside its label")
+        else:
+            fail("link mark: the " + label + " renderer lets the wrapper place the mark")
+        if "suffix={<ItemLinkMark />}" in src:
+            ok("link mark: the " + label + " label carries the mark as an inline suffix")
+        else:
+            fail("link mark: the " + label + " label does not carry the mark")
+        if "LINK_MARK_LABEL_PAD" in src:
+            ok("link mark: the " + label + " label reserves room for the mark")
+        else:
+            fail("link mark: the " + label + " label reserves no room for the mark")
+    # The inline variant must cancel its own advance, or a full last line orphans it.
+    if "marginRight: -LINK_MARK_ADVANCE" in blocks:
+        ok("link mark: the inline mark cancels its advance, so it never wraps alone")
+    else:
+        fail("link mark: the inline mark can be orphaned onto a line of its own")
+
+    # ---- Regression suite registered ----
+    # The suite measures the mark against the label's LAST LINE. An icon-row item has
+    # a description line below the title, so a probe that measures against the whole
+    # ITEM reports a correct icon row as broken.
+    if "Link mark placement on an icon row" in uitest2:
+        ok("UI battery: the icon-row link-mark suite is registered")
+    else:
+        fail("UI battery: no suite measures the icon-row link mark")
+    if "const label = m.parentElement; // the mark must be an inline suffix OF the label" in uitest2:
+        ok("UI battery: the icon-row probe measures against the label, not the item")
+    else:
+        fail("UI battery: the icon-row probe uses the wrong reference element")
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -5761,6 +5880,8 @@ if __name__ == "__main__":
         test_reviewed_flag_round_trip()
         test_link_mark_follows_wrapped_label()
         test_review_hide_undo_and_toolbar_reflow()
+        test_review_pin_survives_delete_and_reorder()
+        test_icon_row_link_mark_placement()
     if run_integration:
         test_integration()
         test_cli_commands()

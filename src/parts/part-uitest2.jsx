@@ -2840,27 +2840,27 @@ uiSuite("Link mark placement", [
 uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
   { name: "a slide hidden during a review session KEEPS its row, so the eye control stays reachable", fn: async () => _rvqWith(true, async () => {
     const plain = _rvqSlide({});
-    if (!velaReviewRowVisible(plain, "m0", 0)) throw new Error("a plain slide has no row");
+    if (!velaReviewRowVisible(plain)) throw new Error("a plain slide has no row");
     const hidden = _rvqSlide({ hidden: true });
-    if (velaReviewRowVisible(hidden, "m0", 0)) throw new Error("an already-hidden slide should not be listed");
-    velaReviewKeepAdd("m0", 0); // what the TOC eye control does before it dispatches
-    if (!velaReviewRowVisible(hidden, "m0", 0)) throw new Error("the row the author hid vanished under them");
+    if (velaReviewRowVisible(hidden)) throw new Error("an already-hidden slide should not be listed");
+    velaReviewKeepAdd(hidden); // what the reducer does when the author hides the slide
+    if (!velaReviewRowVisible(hidden)) throw new Error("the row the author hid vanished under them");
     // Only the LIST changes. The count and the rotation must still drop the slide.
     if (velaSlideNeedsReview(hidden)) throw new Error("a pinned row re-entered the review count");
-    if (velaReviewRowVisible(hidden, "m0", 1)) throw new Error("the pin leaked onto another row");
-    if (velaReviewRowVisible(hidden, "m1", 0)) throw new Error("the pin leaked onto another module");
+    if (velaReviewRowVisible(_rvqSlide({ hidden: true }))) throw new Error("the pin leaked onto another slide");
     return true;
   })},
   { name: "pinned rows do not outlive the review session", fn: async () => {
     const was = velaReviewFilterOn();
     try {
       setVelaReviewFilter(true);
-      velaReviewKeepAdd("m0", 0);
-      if (!velaReviewKeepHas("m0", 0)) throw new Error("the pin was not recorded");
+      const s0 = _rvqSlide({ hidden: true });
+      velaReviewKeepAdd(s0);
+      if (!velaReviewKeepHas(s0)) throw new Error("the pin was not recorded");
       setVelaReviewFilter(false);
-      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin survived leaving review mode");
+      if (velaReviewKeepHas(s0)) throw new Error("a pin survived leaving review mode");
       setVelaReviewFilter(true);
-      if (velaReviewKeepHas("m0", 0)) throw new Error("a pin came back in the next review session");
+      if (velaReviewKeepHas(s0)) throw new Error("a pin came back in the next review session");
     } finally { setVelaReviewFilter(was); }
     return true;
   }},
@@ -2892,4 +2892,153 @@ uiSuite("Review mode: hide stays undoable, empty list tells the truth", [
     if (_rvqLeft(h.present) !== 1) throw new Error("the review count did not follow the redo");
     return true;
   })},
+]);
+
+// ── Review mode: the pinned row must survive a delete and a reorder ──────────────
+// The pin used to be keyed by (module id, slide index). A delete or a move shifts the
+// indices, so the pin pointed at the wrong slide or at none and the hidden row left
+// the review list — the author could no longer undo the hide in place. The key is now
+// the slide OBJECT, which every one of these actions keeps by reference.
+const _rvpListed = (st) => st.lanes[0].items[0].slides.filter((s) => velaReviewRowVisible(s)).map((s) => s.title).join(",");
+const _rvpHide = (st, index) => innerReducer(st, { type: "TOGGLE_SLIDE_HIDDEN", id: "m0", index });
+const _rvpFixture = () => _rvqState([[_rvqSlide({ title: "A" }), _rvqSlide({ title: "B" }), _rvqSlide({ title: "C" })]]);
+
+uiSuite("Review mode: a pinned row survives a delete and a reorder", [
+  { name: "the hidden row stays listed after ANOTHER slide is deleted", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // the author hides B while review mode is on
+    if (_rvpListed(st) !== "A,B,C") throw new Error("the row the author hid left the list at once: " + _rvpListed(st));
+    st = innerReducer(st, { type: "REMOVE_SLIDES", id: "m0", indices: [0] }); // delete A
+    if (_rvpListed(st) !== "B,C") throw new Error("the pinned hidden row was lost after a delete: " + _rvpListed(st));
+    // The pin follows the SLIDE, never the position that slide used to hold.
+    const slides = st.lanes[0].items[0].slides;
+    if (!velaReviewKeepHas(slides[0])) throw new Error("the hidden slide lost its pin");
+    if (velaReviewKeepHas(slides[1])) throw new Error("the pin moved onto the slide that took the old index");
+    // Only the LIST changes: a hidden slide still needs no approval.
+    if (_rvqLeft(st) !== 1) throw new Error("the review count counted the hidden slide: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "the hidden row stays listed after a drag reorder and after an arrow move", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "REORDER_SLIDE", id: "m0", from: 0, to: 2 }); // drag A to the end
+    if (_rvpListed(st) !== "B,C,A") throw new Error("the pinned hidden row was lost after a drag reorder: " + _rvpListed(st));
+    st = innerReducer(st, { type: "MOVE_SLIDE", id: "m0", from: 0, dir: 1 }); // arrow-move B down
+    if (_rvpListed(st) !== "C,B,A") throw new Error("the pinned hidden row was lost after an arrow move: " + _rvpListed(st));
+    if (_rvqLeft(st) !== 2) throw new Error("the review count changed under a reorder: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "the hide is still undoable in place after the slide has moved", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "REMOVE_SLIDES", id: "m0", indices: [0] }); // delete A, so B is index 0
+    st = _rvpHide(st, 0); // the author clicks the eye control again
+    const b = st.lanes[0].items[0].slides[0];
+    if (b.hidden) throw new Error("the slide stayed hidden");
+    if (!velaReviewRowVisible(b)) throw new Error("the un-hidden slide left the list");
+    if (_rvqLeft(st) !== 2) throw new Error("the un-hidden slide did not return to the count: " + _rvqLeft(st));
+    return true;
+  })},
+  { name: "an edit to the pinned slide keeps its row", fn: async () => _rvqWith(true, async () => {
+    let st = _rvpHide(_rvpFixture(), 1); // hide B
+    st = innerReducer(st, { type: "UPDATE_SLIDE", id: "m0", index: 1, merge: true, patch: { title: "B2" } });
+    if (_rvpListed(st) !== "A,B2,C") throw new Error("an edit dropped the pinned row: " + _rvpListed(st));
+    return true;
+  })},
+]);
+
+// ── Link mark on an ICON ROW: measured against the LABEL, not the item ───────────
+// An icon-row item has a second line of its own (the description). The reference for
+// the mark is the label the link belongs to — the item TITLE — so these measure the
+// mark against the last line of that title. Measuring against the whole item instead
+// reports every correct icon row as broken, because the description line sits below
+// the title and is usually wider.
+async function _lmIconProbe(width, items) {
+  const mk = window._createRoot;
+  if (typeof mk !== "function") throw new Error("no React root factory on this host");
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:0;top:0;width:" + width + "px;visibility:hidden;z-index:-1";
+  document.body.appendChild(host);
+  const root = mk(host);
+  try {
+    root.render(React.createElement(RenderBlock, {
+      block: { type: "icon-row", items }, staggerIdx: 0, slideTheme: _lmTheme,
+      editable: true, onChange: () => {}, presenting: false,
+    }));
+    for (let i = 0; i < 60 && !host.querySelector("[data-link-mark]"); i++) await _wait(25);
+    const marks = [...host.querySelectorAll("[data-link-mark]")];
+    if (!marks.length) throw new Error("the linked icon-row item rendered no link mark");
+    const hostRight = host.getBoundingClientRect().right;
+    return marks.map((m) => {
+      const label = m.parentElement; // the mark must be an inline suffix OF the label
+      const mr = m.getBoundingClientRect();
+      const rects = [];
+      const walk = (n) => {
+        if (n === m) return;
+        if (n.nodeType === 3 && n.textContent.trim()) {
+          const rg = document.createRange(); rg.selectNodeContents(n);
+          for (const b of rg.getClientRects()) if (b.width > 0 && b.height > 0) rects.push(b);
+        }
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(label);
+      if (!rects.length) throw new Error("the icon-row label rendered no text");
+      const lastY = Math.max(...rects.map((r) => r.y));
+      const last = rects.filter((r) => Math.abs(r.y - lastY) < 3);
+      const lastRight = Math.max(...last.map((r) => r.right));
+      const lastTop = Math.min(...last.map((r) => r.y));
+      const lastBottom = Math.max(...last.map((r) => r.bottom));
+      const ys = [...new Set(rects.map((r) => Math.round(r.y)))].sort((a, b) => a - b);
+      return {
+        inLabel: label.contains(m) && rects.length > 0,
+        lines: ys.filter((y, i) => i === 0 || y - ys[i - 1] > 3).length,
+        gap: mr.left - lastRight,
+        onLastLine: mr.top < lastBottom - 1 && mr.bottom > lastTop + 1,
+        overflow: mr.right - hostRight,
+      };
+    });
+  } finally {
+    try { root.unmount(); } catch (_) {}
+    host.remove();
+  }
+}
+const _lmIconOk = (m, what) => {
+  if (!m.inLabel) throw new Error(what + ": the mark is not a child of its label");
+  if (!m.onLastLine) throw new Error(what + ": the mark misses the label's last line");
+  if (!_lmGapOk(m.gap)) throw new Error(what + ": gap " + m.gap.toFixed(1) + "px");
+  if (m.overflow > 0.5) throw new Error(what + ": the mark spills " + m.overflow.toFixed(1) + "px past the block");
+  return true;
+};
+
+uiSuite("Link mark placement on an icon row", [
+  { name: "a SHORT icon-row label holds the mark on its own line", fn: async () => {
+    const [m] = await _lmIconProbe(600, [{ icon: "Zap", title: "Short", text: "A description line that is much wider than the title above it", link: "https://example.com/a" }]);
+    if (m.lines !== 1) throw new Error("the probe title wrapped unexpectedly");
+    return _lmIconOk(m, "short label");
+  }},
+  { name: "a LONG single-line icon-row label keeps the same gap", fn: async () => {
+    const [m] = await _lmIconProbe(700, [{ icon: "Zap", title: "A long single line label that still fits on one line", link: "https://example.com/b" }]);
+    if (m.lines !== 1) throw new Error("the probe title wrapped unexpectedly");
+    return _lmIconOk(m, "long single line");
+  }},
+  { name: "an icon-row label that wraps to two lines keeps the mark on the last line", fn: async () => {
+    const [m] = await _lmIconProbe(300, [{ icon: "Zap", title: "A label that fills a little more than one single line here", text: "sub", link: "https://example.com/c" }]);
+    if (m.lines < 2) throw new Error("the probe title did not wrap");
+    return _lmIconOk(m, "two-line label");
+  }},
+  { name: "a MANY-line icon-row label keeps the mark on the last line", fn: async () => {
+    const [m] = await _lmIconProbe(180, [{ icon: "Zap", title: _LM_LONG, text: "a much wider description line under the wrapped title", link: "https://example.com/d" }]);
+    if (m.lines < 4) throw new Error("the probe title did not wrap enough (" + m.lines + " lines)");
+    return _lmIconOk(m, "many-line label");
+  }},
+  { name: "five linked items in one icon row all measure the same", fn: async () => {
+    const out = await _lmIconProbe(320, [
+      { icon: "Zap", title: "One", text: "first description", link: "https://example.com/1" },
+      { icon: "Shield", title: "Two two two", link: "https://example.com/2" },
+      { icon: "Globe", title: _LM_LONG, text: "third description", link: "https://example.com/3" },
+      { icon: "Star", title: "Plain item with no link" },
+      { icon: "Circle", title: "Four four", text: "fourth description", link: "https://example.com/4" },
+      { icon: "Zap", title: "Five five five five", link: "https://example.com/5" },
+    ]);
+    if (out.length !== 5) throw new Error("expected 5 marks, got " + out.length);
+    out.forEach((m, i) => _lmIconOk(m, "item " + (i + 1)));
+    return true;
+  }},
 ]);
