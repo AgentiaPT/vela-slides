@@ -104,6 +104,7 @@ All in `src/parts/part-imports.jsx` unless noted.
 | Markdown export text | `mdInline` / `mdCell` / `escGap` (`part-export-md.jsx`) | writing a deck field into `.md` raw |
 | Deck JSON inlined into `<script>` | `escapeForScriptContext` — JS: `vela-neutralino/resources/js/script-escape.js`; Python: `escape_for_script_context` in `skills/vela-slides/scripts/assemble.py` (byte-parity test in `tests/test_vela.py`). Exception: `part-export-md.jsx` carries a deliberate in-app copy (the monolith can't `require()` files) — if you touch either, keep them identical | a per-site escape |
 | Marker substitution in a template | `String.replace(marker, () => value)` (replacer **function**) | a string replacement (`$&`/`$1` splicing) |
+| Any text transform in a build step (minify, strip, patch, rewrite) | run it on the **template**, then inject; injection is the LAST step that touches the buffer | running a pattern over a buffer that already holds deck bytes |
 | Local HTTP auth compare | `hmac.compare_digest` | `==` |
 | Desktop filesystem path | go through `fs-guard` (`vela-neutralino/resources/js/fs-guard.js`) | a direct `Neutralino.filesystem.*` call |
 
@@ -161,6 +162,18 @@ commit if you want the full story.
     deck inline styles — either can restyle, hide, move, or re-label the app's
     trusted controls (clickjacking a one-click action). Paint properties are
     fine; anything that positions is not.
+16. **Transform after injection (forgeable anchor).** A build step that rewrites
+    trusted source must run **before** untrusted data enters the buffer. Once
+    deck bytes are in the string, deck content can forge whatever token that
+    step keys on — a declaration name, a marker, a comment — and re-aim it at
+    trusted code; a non-greedy span that starts in deck content and ends in
+    template code deletes everything between. Three rules: transform the
+    template first and **inject last**; anchor any structural pattern to
+    something deck content cannot produce (start-of-line — injected JSON is
+    always mid-line and carries no real newline); and add a fail-closed check
+    that the output equals template-with-marker-replaced, so a future
+    post-injection step fails the build instead of shipping a silently
+    corrupted artifact. Ordering here is a control, not a style choice.
 
 ## 4. Per-surface checklist
 
@@ -189,6 +202,11 @@ commit if you want the full story.
 **Python (`serve.py`, `assemble.py`, `vela.py`, `agent_backend.py`, `package-skill.py`)**
 - stdlib only; no `eval`/`exec`/`pickle`/`os.system`/`shell=True`; `subprocess`
   in list form; JSON-only deserialization.
+- **Build order**: in any script that splices a deck into a template
+  (`assemble.py`, `serve.py`), every transform of the trusted template runs
+  first and the deck goes in last — see §3.16. Never add a step below the
+  injection line. `assemble.verify_injection_integrity()` is the fail-closed
+  backstop; keep it as the last thing before the write.
 - Filesystem: NFKC-fold + reject separators/traversal/quotes, then **realpath
   containment**, then open with `O_NOFOLLOW` and use the fd. Skip symlinks in
   archive builders and require member realpaths to stay in-root.
