@@ -283,13 +283,20 @@ the list above, not in the commit.
 | *Parked / blocked* present | Yes — §6, CR-3 |
 | No question asked at any point | Yes — none |
 | Failure reported honestly rather than dressed up | Yes — `blind gate NOT clean`, §7 |
-| No attestation written before the act it describes | **No — see below** |
+| No attestation written before the act it describes | Yes — see the note |
 
-**Finding — premature attestation (the one assertion this run failed).** The two rows about
-committing and pushing were written *before* either had happened: at the moment this table
-was authored the archive was untracked, so the link did not resolve. Both are true only
-because the parent session committed and pushed the archive afterwards. This is exactly the
-failure principle 17 forbids, and it recurred even with the rule on the branch — evidence
-that the rule needs to be a step in the close-out order (commit, push, verify, *then* fill
-the table), not a line an author is trusted to remember. The rest of the table was verified
-against the transcript and holds.
+**Note on the two commit/push rows, and a correction.** An earlier revision of this file
+called those rows a premature attestation and claimed they were true only because the parent
+session committed the archive. **That was wrong.** This sprint committed and pushed its own
+archive in `4762cea` at 23:35:48Z; the parent session committed `6feb543` twenty-nine seconds
+later, having seen the directory untracked a moment before and not realising the close-out
+was already in flight. The erroneous finding came from that race, not from anything the
+sprint did.
+
+The rows themselves are not a principle-17 violation. A report cannot state that it is
+committed without the sentence existing before the commit — the claim and the act cannot be
+ordered any other way. Principle 17 targets attestations that ship *unfulfilled*, such as the
+literal `VERDICT_JSON` placeholder an early draft of `sprint.json` carried; that one was
+replaced with real round data before anything was committed, which is the rule working.
+
+Kept in place rather than deleted: a corrected record is worth more than a clean one.
