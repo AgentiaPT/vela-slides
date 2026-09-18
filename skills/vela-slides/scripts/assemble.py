@@ -69,14 +69,27 @@ def escape_for_script_context(json_str):
     )
 
 
-def safe_minify(jsx_text):
-    """JSX-safe minification: strip comments, blanks, changelog. Never breaks ASI."""
-    # Phase 1: nuke multi-line const blocks (VELA_CHANGELOG) in one regex pass
+def safe_minify(template_text):
+    """JSX-safe minification: strip comments, blanks, changelog. Never breaks ASI.
+
+    SECURITY CONTRACT — call this on the RAW TEMPLATE ONLY, never on assembled
+    output. Every transform here rewrites trusted application source. Once deck
+    JSON has been injected the buffer holds untrusted bytes, and a pattern run
+    over that mixed buffer can be re-anchored by deck-chosen content, letting
+    deck data delete or rewrite trusted source. assemble() enforces the ordering;
+    verify_injection_integrity() is the fail-closed backstop if it ever regresses.
+    """
+    # Phase 1: nuke multi-line const blocks (VELA_CHANGELOG) in one regex pass.
+    # Anchored to start-of-line (MULTILINE): the declaration always sits at
+    # column 0 in the template, while injected deck JSON is always mid-line and
+    # can carry no real newline (json.dumps escapes them). The anchor is defence
+    # in depth — it denies the marker-forgery primitive even if the ordering
+    # guarantee above is ever broken.
     text = re.sub(
-        r'const VELA_CHANGELOG = \[.*?\];',
+        r'^const VELA_CHANGELOG = \[.*?\];',
         'const VELA_CHANGELOG = [];',
-        jsx_text,
-        flags=re.DOTALL
+        template_text,
+        flags=re.DOTALL | re.MULTILINE
     )
     # Phase 2: line-by-line strip
     out = []
@@ -90,6 +103,22 @@ def safe_minify(jsx_text):
             continue
         out.append(line)
     return '\n'.join(out)
+
+
+MARKER = "const STARTUP_PATCH = null;"
+
+
+def verify_injection_integrity(assembled, template, injected):
+    """Fail-closed gate: the deck may occupy the marker slot and nothing else.
+
+    Recomputes the only legal output from the trusted template and the single
+    injected value, and compares it to the bytes we are about to write. Any step
+    that runs after injection and rewrites trusted source — a minifier, a
+    patcher, a future post-processing pass whose pattern a hostile deck can
+    re-anchor — fails this check instead of shipping a silently corrupted
+    artifact. Invariant: attacker bytes never change template bytes.
+    """
+    return assembled == template.replace(MARKER, injected, 1)
 
 
 def slugify(text):
@@ -129,12 +158,18 @@ def assemble(deck_json_path, output_path=None, minify=False):
     with open(TEMPLATE, 'r', encoding="utf-8") as f:
         template = f.read()
 
-    marker = "const STARTUP_PATCH = null;"
-    if marker not in template:
+    # Step 2b: transform the TEMPLATE, then inject. Order is a security control,
+    # not a style choice — see safe_minify()'s contract. Injection must be the
+    # last operation that touches the output buffer.
+    if minify:
+        template = safe_minify(template)
+
+    if MARKER not in template:
         emit(f"ERROR: Marker not found in template. Was the app modified incorrectly?", file=sys.stderr)
         sys.exit(1)
 
-    assembled = template.replace(marker, f"const STARTUP_PATCH = {deck_json_str};", 1)
+    injected = f"const STARTUP_PATCH = {deck_json_str};"
+    assembled = template.replace(MARKER, injected, 1)
 
     # Step 3: determine output path
     if not output_path:
@@ -142,8 +177,11 @@ def assemble(deck_json_path, output_path=None, minify=False):
         output_dir = os.environ.get("VELA_OUTPUT_DIR", os.getcwd())
         output_path = os.path.join(output_dir, f"{slug}.jsx")
 
-    if minify:
-        assembled = safe_minify(assembled)
+    # Fail closed before anything reaches disk.
+    if not verify_injection_integrity(assembled, template, injected):
+        emit("ERROR: assembled output failed the injection-integrity check — refusing to write.",
+             file=sys.stderr)
+        sys.exit(1)
 
     out_dir = os.path.dirname(output_path)
     if out_dir:

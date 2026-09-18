@@ -208,9 +208,9 @@ Vela Slides is a solo-maintained open-source project. We offer **symbolic bounti
 
 **Medium and above require crossing a security boundary.** A finding is eligible for Medium or higher *only if* it grants capability the attacker did not already hold — it must cross a trust boundary, not presuppose access that already grants equal-or-greater capability by a simpler path. If the precondition already yields as much, the finding is defense-in-depth and is capped at **Low or Informational**, regardless of how severe the isolated primitive sounds.
 
-**Total cash payouts are capped at $300 per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
+**Total cash payouts are capped per calendar year.** Once the cap is reached, all subsequent valid findings receive Hall of Fame recognition only for the remainder of the year. Cash eligibility resets January 1.
 
-**2026 remaining: $15 **
+**2026 remaining: $0 **
 
 This ceiling is non-negotiable. Reports submitted after the cap is hit are still triaged and credited — they simply do not receive cash that year. Final severity and reward are at maintainer discretion.
 
@@ -267,5 +267,5 @@ We gratefully acknowledge the following security researchers:
 
 | Researcher | Contribution | Date |
 |------------|-------------|------|
-| Mirochill | XSS Vuln., Beacon Vuln., Origin Checks, SymLink| 2026-May, 2026-Jul |
+| Mirochill | XSS Vuln., Beacon Vuln., Origin Checks, SymLink| 2026-May, 2026-Jul, 2026-Aug |
 

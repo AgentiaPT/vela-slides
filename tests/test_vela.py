@@ -4355,6 +4355,180 @@ def test_block_primitives():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ━━━ Build-Pipeline Trust Boundary ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# The class this guards: a build step that rewrites trusted source must never
+# run over a buffer that already holds untrusted deck bytes. Deck content can
+# forge whatever anchor such a step keys on, re-aiming it at trusted code.
+# These tests are deliberately anchor-agnostic — they assert the invariant
+# (deck bytes never change template bytes), not any one pattern — so a future
+# post-injection transform keyed on some other token fails them too.
+
+DECK_LINE_RE = re.compile(r'(?m)^(?:const STARTUP_PATCH = ).*$')
+
+def _trusted_region(artifact_text):
+    """The artifact with the injected deck line collapsed to a sentinel."""
+    return DECK_LINE_RE.sub("<<DECK>>", artifact_text)
+
+
+def _deck_with_payload(payload_blocks):
+    return {
+        "deckTitle": "Trust Boundary",
+        "lanes": [{"title": "Main", "items": [{
+            "title": "Item", "status": "todo", "importance": "must",
+            "slides": [{
+                "title": "Slide", "duration": 60, "bg": "#101010", "color": "#ffffff",
+                "blocks": [{"type": "text", "content": c} for c in payload_blocks],
+            }],
+        }]}],
+    }
+
+
+# Anchors a hostile deck could forge. Each is paired with and without a closing
+# token, because the two shapes fail differently: one runs the match off the end
+# of the deck into trusted source, the other keeps it inside the deck and drops
+# whatever sits between. Both must be inert.
+_HOSTILE_PAYLOADS = {
+    "changelog-open":   ["const VELA_CHANGELOG = [", "tail"],
+    "changelog-closed": ["const VELA_CHANGELOG = [", "vanishes?", "];", "tail"],
+    "startup-marker":   ["const STARTUP_PATCH = null;", "tail"],
+    "local-mode":       ["const VELA_LOCAL_MODE = false;", "tail"],
+    "channel-port":     ["const VELA_CHANNEL_PORT = 0;", "tail"],
+    "console-line":     ["console.log('x')", "tail"],
+    "comment-line":     ["// dropped?", "tail"],
+}
+
+BENIGN_PAYLOAD = ["perfectly ordinary content", "tail"]
+
+
+def test_build_pipeline_trust_boundary():
+    print("\n── Build-Pipeline Trust Boundary ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        import assemble as asm
+    except Exception as e:  # pragma: no cover
+        fail("Import assemble", str(e))
+        return
+
+    tmpdir = tempfile.mkdtemp(prefix="vela-trust-")
+    try:
+        def build(deck, name, minify=True):
+            deck_path = os.path.join(tmpdir, name + ".vela")
+            out_path = os.path.join(tmpdir, name + ".jsx")
+            with open(deck_path, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            asm.assemble(deck_path, out_path, minify=minify)
+            with open(out_path, encoding="utf-8") as f:
+                return f.read()
+
+        # 1. THE INVARIANT — attacker bytes never change template bytes.
+        #    Minify is the path `vela deck ship` always takes, so it is the one
+        #    that matters; the plain path is checked too so neither can drift.
+        for minify in (True, False):
+            label = "minified" if minify else "plain"
+            baseline = _trusted_region(build(_deck_with_payload(BENIGN_PAYLOAD),
+                                             "benign-" + label, minify))
+            for pname, payload in _HOSTILE_PAYLOADS.items():
+                got = _trusted_region(build(_deck_with_payload(payload),
+                                            f"{pname}-{label}", minify))
+                if got == baseline:
+                    ok(f"{label}: trusted source unchanged by deck payload '{pname}'")
+                else:
+                    fail(f"{label}: deck payload '{pname}' altered trusted source",
+                         f"{len(baseline)} vs {len(got)} bytes outside the deck line")
+
+        # 2. The deck itself must survive intact — silent content loss is the
+        #    quieter half of this bug and leaves valid, wrong output.
+        for pname, payload in _HOSTILE_PAYLOADS.items():
+            deck = _deck_with_payload(payload)
+            art = build(deck, "roundtrip-" + pname)
+            m = re.search(r'(?m)^const STARTUP_PATCH = (\{.*\});$', art)
+            if not m:
+                fail(f"Deck round-trip '{pname}'", "STARTUP_PATCH not found")
+                continue
+            raw = m.group(1)
+            for esc, ch in (("\\u003c", "<"), ("\\u003e", ">"), ("\\u0026", "&")):
+                raw = raw.replace(esc, ch)
+            try:
+                back = json.loads(raw)
+            except Exception as e:
+                fail(f"Deck round-trip '{pname}'", f"unparseable: {e}")
+                continue
+            if back == deck:
+                ok(f"Deck round-trips byte-exact with payload '{pname}'")
+            else:
+                fail(f"Deck round-trip '{pname}'", "deck content was altered or dropped")
+
+        # 3. safe_minify's changelog pass must be start-of-line anchored, so it
+        #    cannot be re-anchored from inside any single-line value.
+        mid_line = 'const X = "const VELA_CHANGELOG = [";\nconst KEEP = 1;\n'
+        if asm.safe_minify(mid_line) == mid_line.rstrip("\n"):
+            ok("safe_minify: mid-line changelog anchor does not match")
+        else:
+            fail("safe_minify: mid-line changelog anchor", "pattern matched inside a value")
+
+        real = 'const VELA_CHANGELOG = [\n  { v: "1.0" },\n];\nconst KEEP = 1;\n'
+        if "const VELA_CHANGELOG = [];" in asm.safe_minify(real):
+            ok("safe_minify: real changelog block still collapsed")
+        else:
+            fail("safe_minify: real changelog block", "declaration was not collapsed")
+
+        # 4. The fail-closed gate must reject any post-injection mutation.
+        tpl = "a\n" + asm.MARKER + "\nb\n"
+        inj = "const STARTUP_PATCH = {};"
+        good = tpl.replace(asm.MARKER, inj, 1)
+        if asm.verify_injection_integrity(good, tpl, inj):
+            ok("verify_injection_integrity: accepts a clean assembly")
+        else:
+            fail("verify_injection_integrity: clean assembly", "rejected a valid build")
+        if not asm.verify_injection_integrity(good.replace("b", ""), tpl, inj):
+            ok("verify_injection_integrity: rejects a mutated assembly")
+        else:
+            fail("verify_injection_integrity: mutated assembly", "corruption passed the gate")
+
+        # 5. Same invariant on the local preview server, which builds its HTML
+        #    through a separate path with its own transforms.
+        try:
+            sys.path.insert(0, DEV_SCRIPTS)
+            import importlib
+            srv_mod = importlib.import_module("serve")
+
+            class _FakeServer:
+                channel_port = 0
+                ai_enabled = False
+                _channel_token = ""
+                _vendor_available = False
+
+            prep = srv_mod.VelaLocalServer._prepare_html
+            base = _trusted_region(prep(_FakeServer(),
+                                        _deck_with_payload(BENIGN_PAYLOAD), "deck"))
+            bad = 0
+            for pname, payload in _HOSTILE_PAYLOADS.items():
+                got = _trusted_region(prep(_FakeServer(),
+                                           _deck_with_payload(payload), "deck"))
+                if got != base:
+                    bad += 1
+                    fail(f"serve.py: deck payload '{pname}' altered trusted output")
+            if not bad:
+                ok("serve.py: trusted shell and app source unchanged by every deck payload")
+
+            # Escaping must still hold after the reorder: proven on the built
+            # HTML, not by grepping the source for a helper call.
+            html = prep(_FakeServer(),
+                        _deck_with_payload(["</script><img src=x>", "&amp;"]), "deck")
+            line = next((l for l in html.split("\n")
+                         if l.startswith("const STARTUP_PATCH = ")), "")
+            if line and "<" not in line and ">" not in line and "\\u003c" in line:
+                ok("serve.py: deck JSON reaches <script> with HTML tokens escaped")
+            else:
+                fail("serve.py deck JSON escaping", "raw HTML tokens survived into the script block")
+        except Exception as e:
+            fail("serve.py trust-boundary check", str(e))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ━━━ Script-Context Injection Parity (Phase 5) ━━━━━━━━━━━━━━━━━━━
 
 def test_script_context_escape_parity():
@@ -4642,6 +4816,7 @@ if __name__ == "__main__":
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
         test_script_context_escape_parity()
+        test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
     if run_integration:
         test_integration()
