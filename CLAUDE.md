@@ -42,7 +42,7 @@ before it continues. Do not ask an over-limit agent to do more work.
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.3MB, 18,421 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~1.8MB, 24,408 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 

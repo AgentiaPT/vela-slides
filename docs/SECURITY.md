@@ -182,6 +182,12 @@ All Python scripts use standard library only (zero external dependencies). Secur
 - JSON-only deserialization (`json.load` / `json.loads`)
 - No dynamic imports with user input
 - No hardcoded secrets or credentials
+- Deck-supplied strings printed to the terminal (including `--json` output) are
+  encoded through a single canonical output funnel before display, so a
+  crafted deck cannot spoof the terminal or make displayed text diverge from
+  stored text (display-spoofing class, CWE-150). Implementation:
+  `skills/vela-slides/scripts/_safe_term.py`; enforced at every CLI output
+  site by `lint.py`'s terminal-sink gate.
 
 ## Reporting Vulnerabilities
 
@@ -239,7 +245,7 @@ Automated-scanner output and AI-generated reports **without manual verification 
 ### Scope
 
 **In scope:**
-- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py)
+- Shipped skill scripts under `skills/vela-slides/scripts/` (vela.py, assemble.py, validate.py, _safe_term.py) and dev toolchain under `tools/vela-dev/scripts/` (serve.py, concat.py, lint.py, agent_backend.py, package-skill.py)
 - The Vela JSX application (`src/parts/*.jsx`, built into `skills/vela-slides/app/vela.jsx`)
 - Deck JSON parsing, validation, and sanitization
 - Local development server endpoints and file handling

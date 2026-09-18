@@ -257,6 +257,7 @@ All build scripts use **only Python stdlib**. No external packages.
 | `assemble.py` | `skills/vela-slides/scripts/assemble.py` | `sys`, `json`, `os`, `re` | — (injects into prebuilt `vela.jsx`) |
 | `validate.py` | `skills/vela-slides/scripts/validate.py` | `sys`, `json`, `os` | — |
 | `vela.py` | `skills/vela-slides/scripts/vela.py` | `json`, `sys`, `os`, `subprocess`, `copy`, `shutil` | `validate.py`, `assemble.py` |
+| `_safe_term.py` | `skills/vela-slides/scripts/_safe_term.py` | `unicodedata` | — (imported by `vela.py`, `validate.py`, `assemble.py`) |
 | `serve.py` | `tools/vela-dev/scripts/serve.py` | `hashlib`, `hmac`, `http.server`, `http.cookies`, `secrets`, `threading`, `concurrent.futures`, `urllib.parse`, `webbrowser`, `os`, `sys`, `json`, `re`, `time` | `webbrowser.open()` or `cmd.exe` (Windows) |
 | `sync-skill-docs.py` | `tools/vela-dev/scripts/sync-skill-docs.py` | `subprocess`, `os`, `re` | `git` |
 | `lint.py` | `tools/vela-dev/scripts/lint.py` | `sys`, `os`, `re` | — |
