@@ -1,0 +1,22 @@
+{
+  "codename": "ember",
+  "date": "2026-09-18",
+  "silent": true,
+  "branch": "claude/keen-bohr-70l6lu",
+  "sprintHeadAtStart": "9b3b759739dc5cf379ca496e5974c2cb4c90462e",
+  "commits": {
+    "crWork": "c92335ce0a83c28eb97a55342372237e6413a5e3",
+    "gateFix": "28f76a4196d81f9d406ca3efd6f3347a8ec4988a"
+  },
+  "crs": { "total": 3, "done": 2, "parked": 1 },
+  "clusters": 1,
+  "blindGate": {
+    "rounds": 2,
+    "round1": { "sha": "c92335ce0a83c28eb97a55342372237e6413a5e3", "verdict": "DEFECTS FOUND", "inScopeDefects": 5 },
+    "round2": { "sha": "0d08c8d5df287d5361a34029022d9bb7fba55901", "verdict": "NOT RETURNED", "note": "dispatched twice, no verdict inside the registered wait" },
+    "result": "NOT CLEAN"
+  },
+  "proofArtifact": "Markdown sprint report",
+  "demoRecorded": false,
+  "cost": { "total": 9.37, "currency": "USD", "source": "assets/sprint-cost.py --audit", "measuredAt": "mid-sprint" }
+}
