@@ -5,7 +5,9 @@
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+// brandingPanelOpen (CR9): view-only UI toggle for the branding side pane — never
+// persisted into the deck, same treatment as commentsPanelOpen/chatOpen.
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, brandingPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -64,7 +66,7 @@ function velaReviewSkipIndex(state, want) {
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK", "SET_BRANDING_PANEL"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -449,6 +451,8 @@ function innerReducer(state, a) {
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
     case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
+    // CR9: opens/closes the branding side pane (view-only, see NO_HISTORY).
+    case "SET_BRANDING_PANEL": return { ...state, brandingPanelOpen: a.open };
     default: return state;
   }
 }

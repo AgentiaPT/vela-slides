@@ -192,6 +192,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Deck Stats Dialog: StatsDialog
 - Changelog Dialog: ChangelogDialog
 - Comments Panel (review sidebar): CommentsPanel
+- Branding Side Pane (CR9: relocated from a bottom strip to a right pane: BrandingSidePane
 - New Deck Dialog: NewDeckDialog
 - Keyboard Shortcuts Overlay: _questionKey ShortcutHelp
 - Session Cost Badge: fmtCost fmtTokens CostBadge
@@ -251,13 +252,14 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - RESTORE_DEMO_STATE: part-demo.jsx
 - SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-demo.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
-- SET_BRANDING: part-chat.jsx part-slides.jsx
+- SET_BRANDING: part-app-modals.jsx part-chat.jsx part-slides.jsx
+- SET_BRANDING_PANEL: part-app-modals.jsx part-app.jsx
 - SET_CHAT: part-app.jsx part-chat.jsx part-demo.jsx
 - SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
 - SET_FONT_SCALE: part-demo.jsx part-slidepanel.jsx
 - SET_FULLSCREEN: part-app.jsx part-demo.jsx part-slidepanel.jsx
-- SET_GUIDELINES: part-app.jsx part-slides.jsx
+- SET_GUIDELINES: part-app-modals.jsx part-app.jsx part-slides.jsx
 - SET_IMPORTANCE: part-list.jsx
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
@@ -333,4 +335,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 484-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1188 lines)
-- part-app.jsx: 357-line unbannered stretch after line 860
+- part-app.jsx: 362-line unbannered stretch after line 860

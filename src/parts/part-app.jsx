@@ -862,6 +862,9 @@ export default function App() {
   const showSlides = !isMobile || mobileTab === "slides";
   const showChat = !isMobile ? state.chatOpen : mobileTab === "chat";
   const showCommentsPanel = !isMobile ? state.commentsPanelOpen : mobileTab === "comments";
+  // CR9: branding side pane — takes the same right-hand slot as chat/comments,
+  // and wins when explicitly opened (see brand-toggle below).
+  const showBrandingPanel = !isMobile ? state.brandingPanelOpen : mobileTab === "branding";
   const slideCount = selectedConcept?.slides?.length || 0;
 
   // Presentation mode: show nothing until deck is loaded and first module selected
@@ -978,7 +981,7 @@ export default function App() {
             const segStyle = (active) => ({ padding: "4px 10px", fontSize: 13, fontFamily: FONT.mono, fontWeight: active ? 700 : 500, color: active ? "#fff" : T.textDim, background: active ? T.accent : "transparent", border: "none", cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.4 });
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              <button data-testid="brand-toggle" onClick={() => { const open = !state.brandingPanelOpen; dispatch({ type: "SET_BRANDING_PANEL", open }); if (open) { dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: state.brandingPanelOpen ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: state.brandingPanelOpen ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
               {/* flexShrink: 0 — this pill uses overflow:hidden for its rounded
                   corners, which (per the flexbox auto-min-size rule) would
                   otherwise make IT the header's shrink target under space
@@ -1047,7 +1050,7 @@ export default function App() {
               return <>
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {selectedConcept && <button onClick={() => { if (aiOk) { sa?.toggleBatchEdit?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); } }} disabled={!aiOk} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: !aiOk ? T.textDim + "60" : sa?.improving ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: aiOk ? "pointer" : "not-allowed" }}>{!aiOk ? "✨ AI not enabled" : sa?.improving ? "⏹ Stop Improve" : "✨ Improve / Batch"}</button>}
-                <button onClick={() => { sa?.toggleBranding?.(); setMobileMenu(false); if (isMobile && mobileTab !== "slides") setMobileTab("slides"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.hasBranding ? T.accent : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🎨"} Brand & Guidelines</button>
+                <button onClick={() => { dispatch({ type: "SET_BRANDING_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); setMobileMenu(false); setMobileTab("branding"); }} style={{ width: "100%", padding: "10px 14px", background: "transparent", border: "none", color: sa?.hasBranding ? T.accent : T.text, fontFamily: FONT.body, fontSize: 14, textAlign: "left", cursor: "pointer" }}>{"🎨"} Brand & Guidelines</button>
               </>;
             })()}
             <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
@@ -1137,9 +1140,11 @@ export default function App() {
         )}
 
         {/* Chat panel */}
-        {showChat && !showCommentsPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
+        {showChat && !showCommentsPanel && !showBrandingPanel && <ChatPanel state={state} dispatch={dispatch} isMobile={isMobile} getLayoutStats={() => slideActionsRef.current?.getLayoutStats?.()} />}
         {/* Comments panel */}
-        {showCommentsPanel && !showChat && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
+        {showCommentsPanel && !showChat && !showBrandingPanel && <CommentsPanel state={state} dispatch={dispatch} isMobile={isMobile} />}
+        {/* Branding panel (CR9) */}
+        {showBrandingPanel && <BrandingSidePane state={state} dispatch={dispatch} isMobile={isMobile} onClose={() => { dispatch({ type: "SET_BRANDING_PANEL", open: false }); if (isMobile) setMobileTab("slides"); }} />}
       </div>
 
       {/* ── MOBILE BOTTOM NAV ──────────────────────────────── */}

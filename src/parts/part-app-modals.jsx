@@ -508,6 +508,167 @@ function CommentsPanel({ state, dispatch, isMobile }) {
   );
 }
 
+// ━━━ Branding Side Pane (CR9: relocated from a bottom strip to a right pane
+// so the canvas stays visible while the user tunes branding — live feedback,
+// not a redesign of the controls themselves). ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function BrandingSidePane({ state, dispatch, isMobile, onClose }) {
+  const b = state.branding || defaultBranding;
+  const guidelines = state.guidelines;
+  const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
+  const set = (patch) => {
+    dispatch({ type: "SET_BRANDING", branding: patch });
+    // Auto-enable when any branding value is set
+    if (!b.enabled && Object.keys(patch).some((k) => k !== "enabled" && patch[k])) {
+      dispatch({ type: "SET_BRANDING", branding: { enabled: true } });
+    }
+  };
+  const close = onClose || (() => dispatch({ type: "SET_BRANDING_PANEL", open: false }));
+  const logoInputRef = useRef(null);
+
+  const handleLogo = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { set({ logo: reader.result }); };
+    reader.readAsDataURL(file);
+  };
+
+  // CR8 companion: the accent-bar height control must show and accept a real
+  // 0, so `??`-style type check here too (the "|| 4" pattern would make 0
+  // unreachable from this very slider). See part-branding.jsx for the render fix.
+  const accentH = typeof b.accentHeight === "number" ? b.accentHeight : 4;
+
+  const section = { marginBottom: 18 };
+  const sectionTitle = { display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" };
+  const row = { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 };
+  const lbl = { fontFamily: FONT.mono, fontSize: 13, color: T.textDim, width: 62, flexShrink: 0 };
+  const meta = { fontFamily: FONT.mono, fontSize: 13, color: T.textDim };
+  const inp = (extra = {}) => ({ flex: 1, padding: "6px 8px", fontSize: 13, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", minWidth: 0, ...extra });
+
+  return (
+    // Keep the stable "branding-panel" test id from the old bottom-strip panel
+    // (CR9 relocates it, doesn't rename it) — the product tour and other UI
+    // tests key off this id to know the branding surface is open/closed.
+    <div data-testid="branding-panel" style={{ width: isMobile ? "100%" : 300, display: "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${T.border}`, background: T.bgPanel, flexShrink: 0, height: "100%" }}>
+      {/* Header */}
+      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 15 }}>{"🎨"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, letterSpacing: "0.06em" }}>BRANDING</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, color: b.enabled ? T.accent : T.textDim, marginLeft: 4 }}>{b.enabled ? "● Active" : "○ Inactive"}</span>
+        <div style={{ flex: 1 }} />
+        <button data-testid="branding-close" onClick={close} title="Close" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>{"✕"}</button>
+      </div>
+
+      {/* Scrollable body — canvas stays visible to the left the whole time */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
+        <div style={section}>
+          <div style={sectionTitle}>{"▬"} Accent Bar</div>
+          <div style={row}>
+            <span style={lbl}>Color</span>
+            <input data-testid="branding-accent-color" type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <input data-testid="branding-accent-height" type="range" min="0" max="8" value={accentH} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{accentH}px</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"🖼"} Logo</div>
+          <div style={row}>
+            <span style={lbl}>Image</span>
+            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogo} style={{ display: "none" }} />
+            {b.logo ? <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <img src={b.logo} style={{ height: 24, objectFit: "contain", borderRadius: 2 }} />
+              <button data-testid="branding-logo-remove" onClick={() => set({ logo: null })} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 13, padding: 0 }}>Remove</button>
+            </div> : <button data-testid="branding-logo-upload" onClick={() => logoInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 13 })}>Upload</button>}
+          </div>
+          {b.logo && <>
+            <div style={row}>
+              <span style={lbl}>Corner</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, width: 60, flexShrink: 0 }}>
+                {["top-left", "top-right", "bottom-left", "bottom-right"].map((pos) => {
+                  const active = (b.logoPosition || "top-left") === pos;
+                  return <button key={pos} onClick={() => set({ logoPosition: pos })} title={pos} style={{
+                    width: 28, height: 22, borderRadius: 3, border: `1.5px solid ${active ? T.accent : T.border}`,
+                    background: active ? T.accent + "30" : "transparent", cursor: "pointer", position: "relative", padding: 0,
+                  }}><div style={{
+                    width: 7, height: 7, borderRadius: 1, background: active ? T.accent : T.textDim,
+                    position: "absolute",
+                    top: pos.startsWith("top") ? 3 : undefined,
+                    bottom: pos.startsWith("bottom") ? 3 : undefined,
+                    left: pos.endsWith("left") ? 4 : undefined,
+                    right: pos.endsWith("right") ? 4 : undefined,
+                  }} /></button>;
+                })}
+              </div>
+              <span style={meta}>{b.logoPosition || "top-left"}</span>
+            </div>
+            <div style={row}>
+              <span style={lbl}>Size</span>
+              <input type="range" min="20" max="120" step="2" value={b.logoSize || 56} onChange={(e) => set({ logoSize: parseInt(e.target.value) })} style={{ flex: 1 }} />
+              <span style={{ ...meta, width: 36, textAlign: "right" }}>{b.logoSize || 56}px</span>
+            </div>
+          </>}
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"▭"} Footer Text</div>
+          <div style={row}>
+            <span style={lbl}>Left</span>
+            <input data-testid="branding-footer-left" value={b.footerLeft || ""} onChange={(e) => set({ footerLeft: e.target.value })} placeholder="Name / Company" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Center</span>
+            <input data-testid="branding-footer-center" value={b.footerCenter || ""} onChange={(e) => set({ footerCenter: e.target.value })} placeholder="Tagline" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Right</span>
+            <input data-testid="branding-footer-right" value={b.footerRight === "auto" ? "" : (b.footerRight || "")} onChange={(e) => set({ footerRight: e.target.value || "auto" })} placeholder="auto (slide #)" style={inp()} />
+          </div>
+          <div style={row}>
+            <span style={lbl}>Colors</span>
+            <input type="color" value={b.footerBg?.startsWith("rgba") ? "#000000" : (b.footerBg || "#000000")} onChange={(e) => set({ footerBg: e.target.value + "cc" })} title="Footer background" style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <input type="color" value={b.footerColor || "#94a3b8"} onChange={(e) => set({ footerColor: e.target.value })} title="Footer text" style={{ width: 28, height: 22, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
+            <span style={meta}>bg / text</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div style={sectionTitle}>{"📦"} Image Compression</div>
+          <div style={row}>
+            <span style={lbl}>Max W</span>
+            <input type="range" min="300" max="960" step="20" value={b.imgMaxWidth || 600} onChange={(e) => set({ imgMaxWidth: parseInt(e.target.value) })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{b.imgMaxWidth || 600}px</span>
+          </div>
+          <div style={row}>
+            <span style={lbl}>Quality</span>
+            <input type="range" min="15" max="85" step="5" value={Math.round((b.imgQuality || 0.45) * 100)} onChange={(e) => set({ imgQuality: parseInt(e.target.value) / 100 })} style={{ flex: 1 }} />
+            <span style={{ ...meta, width: 36, textAlign: "right" }}>{Math.round((b.imgQuality || 0.45) * 100)}%</span>
+          </div>
+        </div>
+
+        <div style={section}>
+          <div onClick={() => setGuidelinesOpen(!guidelinesOpen)} style={{ ...sectionTitle, marginBottom: guidelinesOpen ? 10 : 0, cursor: "pointer", color: guidelines?.trim() ? T.accent : T.textMuted }}>
+            {"📋"} <span>SLIDE RULES</span>
+            <span style={{ fontSize: 13, marginLeft: "auto" }}>{guidelinesOpen ? "▾" : "▸"}{guidelines?.trim() ? " · active" : ""}</span>
+          </div>
+          {guidelinesOpen && <>
+            <textarea
+              data-testid="branding-guidelines"
+              value={guidelines || ""}
+              onChange={(e) => dispatch({ type: "SET_GUIDELINES", guidelines: e.target.value.slice(0, 2000) })}
+              placeholder={"Persistent rules applied to EVERY improve/alternatives call.\nE.g.:\n- Light/white slide backgrounds, dark text, good contrast\n- Max 4 bullets per slide\n- Always include icons\n- Audience is senior engineers"}
+              style={{ width: "100%", minHeight: 100, maxHeight: 200, padding: "8px 10px", fontSize: 13, fontFamily: FONT.mono, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 4, color: T.text, outline: "none", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <span style={{ ...meta, color: (guidelines?.length || 0) > 1800 ? T.amber : T.textDim }}>{guidelines?.length || 0} / 2000</span>
+              {guidelines?.trim() && <button onClick={() => dispatch({ type: "SET_GUIDELINES", guidelines: "" })} style={S.btn({ padding: "3px 8px", fontSize: 13 })}>Clear</button>}
+            </div>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ━━━ New Deck Dialog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function NewDeckDialog({ onClose, onSubmit }) {
   const [name, setName] = useState("");

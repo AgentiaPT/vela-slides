@@ -1985,6 +1985,56 @@ uiSuite("Product Tour", [
   }},
 ], { setup: _productTourSetup });
 
+// ━━━ Branding side pane + accent-bar zero height (CR8/CR9) ━━━━━━━━━━━━━━
+uiSuite("Branding side pane + accent-bar zero (CR8/CR9)", [
+  { name: "Brand toggle opens a right-hand side pane", fn: async () => {
+    let pane = _$("[data-testid='branding-panel']");
+    if (!pane) {
+      const btn = await _waitFor(() => _$("[data-testid='brand-toggle']"), 2000);
+      _click(btn);
+      pane = await _waitFor(() => _$("[data-testid='branding-panel']"), 1500);
+    }
+    if (!pane) throw new Error("side pane did not open");
+  }},
+  { name: "Side pane sits beside the canvas, not over it", fn: () => {
+    const pane = _$("[data-testid='branding-panel']");
+    if (!pane) throw new Error("side pane not open");
+    const canvas = _$("[data-block-type]");
+    if (canvas) {
+      const paneRect = pane.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      // A right-hand pane must not sit to the left of (cover) the slide canvas.
+      if (paneRect.left < canvasRect.left) throw new Error(`side pane (left=${paneRect.left}) overlaps canvas (left=${canvasRect.left})`);
+    }
+  }},
+  { name: "CR8: accent height 0 removes the accent bar entirely", fn: async () => {
+    const heightInput = _$("[data-testid='branding-accent-height']");
+    if (!heightInput) throw new Error("accent-height control not found");
+    // Drive to a non-zero height first (also auto-enables branding) and confirm the bar shows.
+    _type(heightInput, "4");
+    await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500)
+      .catch(() => { throw new Error("accent bar did not appear at 4px"); });
+    // Now drive it to 0 — the bar must disappear completely, not just shrink.
+    _type(_$("[data-testid='branding-accent-height']"), "0");
+    await _waitFor(() => !_$("[data-testid='branding-accent-bar']"), 1500)
+      .catch(() => { throw new Error("accent bar still rendered at height 0"); });
+    const slider = _$("[data-testid='branding-accent-height']");
+    if (String(slider.value) !== "0") throw new Error(`slider snapped away from 0 (value=${slider.value})`);
+  }},
+  { name: "CR8: a non-zero height re-shows the bar at that height", fn: async () => {
+    _type(_$("[data-testid='branding-accent-height']"), "6");
+    const bar = await _waitFor(() => _$("[data-testid='branding-accent-bar']"), 1500);
+    if (!bar || parseInt(bar.style.height, 10) !== 6) throw new Error(`accent bar height wrong: ${bar?.style.height}`);
+  }},
+  { name: "Close button closes the side pane", fn: async () => {
+    const closeBtn = _$("[data-testid='branding-close']");
+    if (!closeBtn) throw new Error("close button not found");
+    _click(closeBtn);
+    await _waitFor(() => !_$("[data-testid='branding-panel']"), 1500)
+      .catch(() => { throw new Error("side pane did not close"); });
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

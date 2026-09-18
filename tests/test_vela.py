@@ -5223,6 +5223,79 @@ def test_block_link_mark_and_clipboard():
         ok("CR6: the paste target is marked before the click")
     else:
         fail("CR6: the paste target is marked before the click")
+# ━━━ Branding: accent-bar zero height + side pane (CR8/CR9) ━━━━━━━━━━━━━━
+
+def test_branding_zero_and_side_pane():
+    print("\n── Branding: accent-bar zero height + side pane (CR8/CR9) ──")
+
+    branding = open(os.path.join(PARTS_DIR, "part-branding.jsx"), encoding="utf-8").read()
+    modals = open(os.path.join(PARTS_DIR, "part-app-modals.jsx"), encoding="utf-8").read()
+    app = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+
+    # CR8: a set `0` must survive as a real "no bar" value. The old "|| 4"
+    # pattern treats 0 as falsy and silently repaints the 4px default.
+    if "b.accentHeight || 4" in branding:
+        fail("CR8: part-branding.jsx still uses the falsy `|| 4` default for accentHeight")
+    else:
+        ok("CR8: accent-bar height no longer uses the falsy `|| 4` default")
+
+    # A genuinely unset value (not a number) must still default to 4px.
+    if 'typeof b.accentHeight === "number" ? b.accentHeight : 4' in branding:
+        ok("CR8: accentHeight falls back to 4px only when it is not a number")
+    else:
+        fail("CR8: accentHeight default is not a type-safe (non-falsy) check")
+
+    # At 0 the bar element itself must not render — not just be 0px tall.
+    if re.search(r"b\.accentBar\s*&&\s*accentH\s*>\s*0\s*&&\s*<div", branding):
+        ok("CR8: accent-bar <div> is skipped entirely when height resolves to 0")
+    else:
+        fail("CR8: accent-bar <div> is not gated on height > 0 — may still render at 0")
+
+    # CR9: the branding editor is a right-hand pane (a component alongside the
+    # existing Chat/Comments side panels), not the old bottom strip.
+    if "function BrandingSidePane(" not in modals:
+        fail("CR9: BrandingSidePane component not found in part-app-modals.jsx")
+    else:
+        ok("CR9: BrandingSidePane component defined")
+
+    pane_start = modals.index("function BrandingSidePane(")
+    pane_body = modals[pane_start:pane_start + 6000]
+    if 'data-testid="branding-panel"' in pane_body:
+        ok("CR9: side pane keeps the stable branding-panel test id")
+    else:
+        fail("CR9: side pane dropped the branding-panel test id")
+    if 'data-testid="branding-close"' in pane_body:
+        ok("CR9: side pane has a dedicated close control")
+    else:
+        fail("CR9: side pane has no close affordance")
+    if 'width: isMobile ? "100%" : 300' in pane_body:
+        ok("CR9: side pane uses a fixed, sensible desktop width")
+    else:
+        fail("CR9: side pane width looks wrong")
+
+    # Readability: every literal pixel font size in the pane body must be
+    # >= 13px (never tiny labels), per the accessibility ask in CR9.
+    sizes = [int(n) for n in re.findall(r"fontSize:\s*(\d+)", pane_body)]
+    if sizes and min(sizes) >= 13:
+        ok(f"CR9: all {len(sizes)} literal font sizes in the side pane are >= 13px")
+    else:
+        fail("CR9: side pane text readability", f"sizes found: {sizes}")
+
+    # The pane is mounted beside the canvas (App renders it in the same panel
+    # row as Chat/Comments), never as a full-screen overlay that hides it.
+    if "showBrandingPanel && <BrandingSidePane" in app:
+        ok("CR9: App mounts BrandingSidePane in the side-panel row (canvas stays visible)")
+    else:
+        fail("CR9: BrandingSidePane is not mounted next to the slide canvas")
+
+    # Reducer: open/close state is view-only (excluded from undo history),
+    # like the sibling Chat/Comments panels.
+    if 'case "SET_BRANDING_PANEL"' in reducer and \
+       '"SET_BRANDING_PANEL"' in reducer[:reducer.index('case "SET_BRANDING_PANEL"')]:
+        ok("CR9: SET_BRANDING_PANEL is excluded from undo history")
+    else:
+        fail("CR9: SET_BRANDING_PANEL missing, or not registered in NO_HISTORY")
 
 
 if __name__ == "__main__":
@@ -5261,6 +5334,7 @@ if __name__ == "__main__":
         test_desktop_neutralino_sprint()
         test_review_mode_and_toc_delete()
         test_block_link_mark_and_clipboard()
+        test_branding_zero_and_side_pane()
     if run_integration:
         test_integration()
         test_cli_commands()
