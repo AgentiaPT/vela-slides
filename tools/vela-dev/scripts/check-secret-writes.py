@@ -35,6 +35,17 @@ import os
 import re
 import sys
 
+# A gate must never fail because of how it prints its own result. The Windows
+# console defaults to cp1252, which cannot encode the status glyphs the rest of
+# this repo's tooling uses, so an all-clear run died on its own success line.
+# Reconfigure to UTF-8 where we can (keeping output identical across runners),
+# and fall back to ASCII markers where we cannot.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    PASS_MARK, FAIL_MARK = "\u2705", "\u274c"
+except (AttributeError, OSError, ValueError):  # pragma: no cover
+    PASS_MARK, FAIL_MARK = "PASS:", "FAIL:"
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 
@@ -152,7 +163,7 @@ def main(argv):
     check_helper_has_no_hatch()
 
     if FINDINGS:
-        print("❌ Secret-write policy violations:\n")
+        print(f"{FAIL_MARK} Secret-write policy violations:\n")
         for rel, n, why, line in FINDINGS:
             where = f"{rel}:{n}" if n else rel
             print(f"  {where}\n      {why}")
@@ -163,8 +174,8 @@ def main(argv):
               f"with '# {ALLOW_MARK} <reason>' if it genuinely handles no secret.")
         return 1
 
-    print("✅ Secret-write policy: no raw owner-only modes or st_mode "
-          "assertions outside the canonical helper.")
+    print(f"{PASS_MARK} Secret-write policy: no raw owner-only modes or "
+          f"st_mode assertions outside the canonical helper.")
     return 0
 
 
