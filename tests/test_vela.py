@@ -4801,6 +4801,77 @@ def test_svg_style_recurrence_guards():
         fail("recurrence guards: SVG inline-style layout/position denylist missing")
 
 
+def test_block_link_mark_and_clipboard():
+    """CR17/CR15/CR6 — editor chrome placement and block copy/paste.
+
+    CR17: the per-item link mark must stay in the layout flow. A mark anchored to
+    the item box lands over the label's last letters, or far right of it, because
+    the box follows the widest line of the item.
+    CR15: a block flush with the slide edge has no padding gutter, so its hover
+    chrome must clamp inward instead of escaping outward.
+    CR6: a pasted block must be re-sanitized, never trusted as stored.
+    """
+    print("\n\U0001f9e9 Block link mark + clipboard (CR17/CR15/CR6)")
+    blocks = open(os.path.join(PARTS_DIR, "part-blocks.jsx"), encoding="utf-8").read()
+    canvas = open(os.path.join(PARTS_DIR, "part-canvas.jsx"), encoding="utf-8").read()
+
+    # CR17 — no absolutely positioned link badge is left in the item chrome.
+    marks = [ln for ln in blocks.splitlines() if "data-link-mark" in ln]
+    if marks and not any('position: "absolute"' in ln for ln in marks):
+        ok("CR17: link mark is never positioned absolutely")
+    else:
+        fail("CR17: link mark is never positioned absolutely", "found an absolute mark" if marks else "no mark found")
+
+    if "badgeAnchor" not in blocks:
+        ok("CR17: the corner badge anchor is gone")
+    else:
+        fail("CR17: the corner badge anchor is gone", "badgeAnchor still referenced")
+
+    # CR17 — the label-bearing items put the mark beside their own label.
+    for comp in ("IconRowItem", "BulletItem"):
+        start = blocks.index("function %s(" % comp)
+        end = blocks.index("\n// \u2501\u2501\u2501", start)
+        body = blocks[start:end]
+        if "markInLabel" in body and "<ItemLinkMark />" in body:
+            ok("CR17: %s places the link mark on its label line" % comp)
+        else:
+            fail("CR17: %s places the link mark on its label line" % comp)
+
+    # CR15 — the hover toolbar and its popups follow the measured clamp.
+    if "measureChromeClamp" in canvas and "chromeClamp.top ? 4 : -8" in canvas and "chromeClamp.right ? 4 : -8" in canvas:
+        ok("CR15: block toolbar clamps inward when the slide edge is close")
+    else:
+        fail("CR15: block toolbar clamps inward when the slide edge is close")
+
+    if canvas.count("chromeClamp.top ? 30 :") >= 3:
+        ok("CR15: the block popups clamp inward too")
+    else:
+        fail("CR15: the block popups clamp inward too",
+             "only %d popup(s) clamped" % canvas.count("chromeClamp.top ? 30 :"))
+
+    # CR6 — copy and paste both run the payload through sanitizeBlock.
+    for name in ("handleBlockCopy", "handleBlockPaste"):
+        start = canvas.index("const %s = useCallback" % name)
+        body = canvas[start:start + 700]
+        if "sanitizeBlock(" in body:
+            ok("CR6: %s re-sanitizes the block" % name)
+        else:
+            fail("CR6: %s re-sanitizes the block" % name)
+
+    # CR6 — a paste is one ordinary block edit, so it joins the undo history.
+    start = canvas.index("const handleBlockPaste = useCallback")
+    if "onEdit({ blocks: next })" in canvas[start:start + 700]:
+        ok("CR6: paste goes through the normal block-edit channel (undoable)")
+    else:
+        fail("CR6: paste goes through the normal block-edit channel (undoable)")
+
+    # CR6 — the paste target is visible before the click.
+    if "data-paste-marker" in canvas and "pasteTargetIdx === i" in canvas:
+        ok("CR6: the paste target is marked before the click")
+    else:
+        fail("CR6: the paste target is marked before the click")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     run_all = "--all" in args
@@ -4831,6 +4902,7 @@ if __name__ == "__main__":
         test_script_context_escape_parity()
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()
+        test_block_link_mark_and_clipboard()
     if run_integration:
         test_integration()
         test_cli_commands()

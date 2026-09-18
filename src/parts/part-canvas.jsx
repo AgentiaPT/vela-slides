@@ -38,6 +38,36 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
+// ━━━ Block clipboard — copy/paste of one block ("item") ━━━━━━━━━━━━
+// Model (CR6):
+//   * Copy takes ONE block. The clipboard lives for the session and is shared
+//     by every slide, so a block copied here pastes on any other slide.
+//   * Paste is always anchored to a block: the paste control sits in that
+//     block's hover toolbar and inserts AFTER it. The user points at the target
+//     before the paste, so there is no hidden "current position" to guess.
+//   * A paste goes through onEdit({ blocks }), the same channel as every other
+//     block edit, so it makes exactly one undo step. A copy changes no deck
+//     state, so it makes none.
+//   * The payload runs through sanitizeBlock on copy AND again on paste. Live
+//     state is never a trusted source (secure-coding §0.1), and the second pass
+//     also drops renderer-private "_" flags that the first pass could not see.
+const blockClipboard = { block: null, subs: new Set() };
+const putBlockClipboard = (block) => {
+  blockClipboard.block = block;
+  blockClipboard.subs.forEach((fn) => { try { fn(); } catch (e) { /* a dead subscriber must not stop the others */ } });
+};
+// Re-render every mounted slide canvas when the clipboard changes, so the paste
+// control appears at once on the slide the user is looking at.
+const useBlockClipboard = () => {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const fn = () => bump((n) => n + 1);
+    blockClipboard.subs.add(fn);
+    return () => { blockClipboard.subs.delete(fn); };
+  }, []);
+  return blockClipboard.block;
+};
+
 function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
@@ -116,6 +146,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [blockPrompt, setBlockPrompt] = useState("");
   const [commentingBlockIdx, setCommentingBlockIdx] = useState(null);
   const [commentText, setCommentText] = useState("");
+  // CR15: how much room the hovered block leaves between itself and the slide
+  // edge. Measured on hover, used to clamp the block chrome inward.
+  const [chromeClamp, setChromeClamp] = useState({ top: false, right: false });
+  const clipboardBlock = useBlockClipboard();
+  const [pasteTargetIdx, setPasteTargetIdx] = useState(null); // block the paste marker points after
 
   // Close popup when blockEditing finishes
   const prevEditing = useRef(blockEditing);
@@ -133,6 +168,28 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
     onEdit({ blocks: blocks.filter((_, i) => i !== blockIdx) });
+  }, [onEdit, blocks]);
+
+  // CR6 — copy one block to the session clipboard. No deck state changes, so
+  // this makes no undo step.
+  const handleBlockCopy = useCallback((blockIdx) => {
+    const src = blocks[blockIdx];
+    if (!src) return;
+    const clean = sanitizeBlock(JSON.parse(JSON.stringify(src)));
+    if (!clean || !clean.type) return;
+    putBlockClipboard(clean);
+  }, [blocks]);
+
+  // CR6 — paste the clipboard block AFTER blockIdx. One undo step, because it
+  // is one onEdit patch. sanitizeBlock runs again here: the clipboard is state,
+  // and state is never a trusted source.
+  const handleBlockPaste = useCallback((blockIdx) => {
+    if (!onEdit || !blockClipboard.block) return;
+    const clean = sanitizeBlock(JSON.parse(JSON.stringify(blockClipboard.block)));
+    if (!clean || !clean.type) return;
+    const next = [...blocks];
+    next.splice(Math.min(blockIdx + 1, next.length), 0, clean);
+    onEdit({ blocks: next });
   }, [onEdit, blocks]);
 
   useLayoutEffect(() => {
@@ -442,6 +499,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
   const pad = isSoloImage ? "0px" : String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24) + "px").join(" ");
 
+  // CR15 — a block flush with the slide edge has no padding gutter for the
+  // toolbar to escape into (a full-bleed image sets the slide pad to 0), and the
+  // slide wrapper clips at the 960×540 boundary, so outward chrome becomes
+  // invisible and unclickable. Measure the free room once per hover and let the
+  // chrome clamp INWARD when the room is smaller than the chrome. The block rect
+  // is in scaled screen pixels while offsetWidth is unscaled, so their ratio is
+  // the live canvas scale; the threshold is scaled by it to stay correct at any
+  // zoom. See the positioning-regime note at the top of this file.
+  const CHROME_ESCAPE = 28; // toolbar height (18) + its 8px outward offset, unscaled
+  const measureChromeClamp = (el) => {
+    const box = outerRef.current;
+    if (!el || !box) return { top: false, right: false };
+    const r = el.getBoundingClientRect(), o = box.getBoundingClientRect();
+    const scale = el.offsetWidth > 0 ? r.width / el.offsetWidth : 1;
+    const need = CHROME_ESCAPE * (scale > 0 ? scale : 1);
+    return { top: r.top - o.top < need, right: o.right - r.right < need };
+  };
+
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => editable && onEdit ? (
@@ -449,19 +524,27 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
-      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      onMouseEnter={(e) => { setHoveredBlock(i); setChromeClamp(measureChromeClamp(e.currentTarget)); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); setPasteTargetIdx(null); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {/* CR6 — paste insert marker: the copied block lands right here. */}
+      {pasteTargetIdx === i && !presenting && <div data-paste-marker="" style={{ position: "absolute", left: 0, right: 0, bottom: -5, height: 3, background: T.accent, borderRadius: 2, pointerEvents: "none", zIndex: 11, boxShadow: `0 0 8px ${T.accent}` }} />}
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-block-toolbar="" style={{ position: "absolute", top: chromeClamp.top ? 4 : -8, right: chromeClamp.right ? 4 : -8, display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
+        {/* CR6 — copy this block into the session clipboard. */}
+        <button data-block-copy="" onClick={(e) => { e.stopPropagation(); handleBlockCopy(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.bgPanel, border: `1px solid ${T.border}`, color: T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Copy this element">⧉</button>
+        {/* CR6 — paste the copied block directly after this one. Pointing at
+            the button shows the insert marker, so the target is visible before
+            the click. The control only exists while the clipboard holds one. */}
+        {clipboardBlock && <button data-block-paste="" onClick={(e) => { e.stopPropagation(); setPasteTargetIdx(null); handleBlockPaste(i); }} onMouseEnter={() => setPasteTargetIdx(i)} onMouseLeave={() => setPasteTargetIdx(null)} style={{ width: 18, height: 18, borderRadius: "50%", background: T.accent, border: `1px solid ${T.accent}`, color: "#fff", fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={`Paste the copied ${clipboardBlock.type} below this element`}>📋</button>}
         <button onClick={(e) => { e.stopPropagation(); handleBlockChange(i, { hidden: b.hidden ? undefined : true }); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.hidden ? st.accent : T.bgPanel, border: `1px solid ${b.hidden ? st.accent : T.border}`, color: b.hidden ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.hidden ? "Hidden in presentation — click to show" : "Hide this element in presentation (stays in editor)"}>{b.hidden ? "🙈" : "👁"}</button>
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: chromeClamp.top ? 30 : -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
@@ -473,13 +556,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -32, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: chromeClamp.top ? 30 : -32, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: chromeClamp.top ? 30 : -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}

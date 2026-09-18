@@ -520,9 +520,30 @@ const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRad
 // chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
 const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
 
+// Idle link marker — sits IN THE FLOW, as the last child of the item wrapper.
+// It must never be positioned absolutely against that wrapper: the wrapper box
+// is as wide as its WIDEST line (an icon-row subtitle URL is usually wider than
+// the title), so a corner-anchored badge lands either on top of the label's last
+// letters or far to the right of it, and the offset changes from item to item.
+// An in-flow marker always follows the content it belongs to, in every block
+// type and at every label length. (CR17)
+//
+// An item that has its own label line (icon row, bullet) passes markInLabel and
+// puts <ItemLinkMark/> straight after that label, so the marker hugs the LINKED
+// WORDS instead of the widest line of the item. Every other item type keeps the
+// default: the marker is the last child of the item wrapper.
+const ItemLinkMarkContext = React.createContext(null);
+function ItemLinkMark() { return React.useContext(ItemLinkMarkContext); }
+const linkMarkStyle = (presenter) => ({
+  display: "inline-flex", alignItems: "center", justifyContent: "center", alignSelf: "center",
+  flexShrink: 0, marginLeft: 6, width: 14, height: 14, borderRadius: "50%",
+  background: presenter ? T.accent : T.accent + "80", fontSize: 8, lineHeight: 1,
+  cursor: "pointer", transition: "opacity 0.2s",
+});
+
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, noLinkBadge, markInLabel, reorder }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -532,7 +553,6 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   const deletable = typeof onDelete === "function";
   const clickable = link && !editMode;
   const a = anchor || { top: 2, right: 2 };
-  const ba = badgeAnchor || { top: 2, right: 2 };
   const enter = () => { setHovered(true); if (editMode) notifyHover?.(true); };
   const leave = () => { setHovered(false); if (editMode) notifyHover?.(false); };
   // While a reorder pin is active anywhere in the block, the pinned slot keeps its
@@ -540,6 +560,15 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  // One marker node, two variants: editable (opens the link editor) and
+  // presenter (opens the link). Never both — editMode and presenting exclude
+  // each other.
+  const linkMark = !link ? null
+    : (showLinkUI && !clusterVisible && editMode)
+      ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={linkMarkStyle(false)} title={link}>🔗</span>
+      : (presenting && !noLinkBadge)
+        ? <span data-link-mark="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ ...linkMarkStyle(true), color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", opacity: hovered ? 1 : 0.55 }}>🔗</span>
+        : null;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
@@ -547,11 +576,10 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
-      {children}
-      {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
-      {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      <ItemLinkMarkContext.Provider value={linkMark}>{children}</ItemLinkMarkContext.Provider>
+      {/* Idle link marker, in flow (see linkMarkStyle). An item that renders
+          <ItemLinkMark/> beside its own label places it itself. */}
+      {!markInLabel && linkMark}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
       {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
@@ -577,15 +605,21 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
     <ItemChrome editable={editable} presenting={presenting}
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
-      link={link} linkLabel={item.title}
+      link={link} linkLabel={item.title} markInLabel
       reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
       <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
         <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
       </EditableIcon>
-      <div style={{ flex: 1 }}>
-        <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* A linked item underlines its own label and carries the link marker on
+            the same line, so the link reads on the text instead of beside the
+            widest line of the item. (CR17) */}
+        <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3, minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: "currentColor", textDecorationThickness: 1, textUnderlineOffset: "3px" } : {}) }} />
+          <ItemLinkMark />
+        </div>
         {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
       </div>
     </ItemChrome>
@@ -609,7 +643,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
     <ItemChrome editable={editable} presenting={presenting}
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
-      link={link} linkLabel={text}
+      link={link} linkLabel={text} markInLabel
       reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
@@ -618,11 +652,17 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
           : <div style={{ width: 6, height: 6, borderRadius: "50%", background: cssColor(block.dotColor) || st.accent, flexShrink: 0 }} />)}
-      <EditableText text={text} editable={editMode} onSave={(v) => {
-        const ni = [...(block.items || [])];
-        ni[index] = typeof item === "string" ? v : { ...item, text: v };
-        onChange?.({ items: ni });
-      }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
+      {/* The link marker sits on the same line as the bullet text (CR17). The
+          text keeps flex:0 1 auto so the marker follows the words instead of the
+          right edge of the row, and still wraps at the available width. */}
+      <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+        <EditableText text={text} editable={editMode} onSave={(v) => {
+          const ni = [...(block.items || [])];
+          ni[index] = typeof item === "string" ? v : { ...item, text: v };
+          onChange?.({ items: ni });
+        }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: "0 1 auto", minWidth: 0, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
+        <ItemLinkMark />
+      </div>
     </ItemChrome>
   );
 }
