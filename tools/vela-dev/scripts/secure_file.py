@@ -109,10 +109,12 @@ def _posix_verify(fd, path):
 # Excluding them buys nothing: an administrator holds SeBackupPrivilege and can
 # take ownership of any file, so a DACL that omits them is security theatre that
 # also breaks backup and anti-malware. Jupyter grants admins for the same reason.
-_WIN_ALLOWED_WELL_KNOWN = {"S-1-5-32-544", "S-1-5-18"}
-_WIN_SDDL_ALIASES = {"BA": "S-1-5-32-544", "SY": "S-1-5-18", "LS": "S-1-5-19"}
+_WIN_ALLOWED_WELL_KNOWN = ("S-1-5-32-544", "S-1-5-18")
 
 _SDDL_ACE_RE = re.compile(r"\(([^)]*)\)")
+# The DACL section, with only its flag letters between "D:" and the first ACE.
+# Matching "D:" naively would also hit the trailing D of an owner/group alias.
+_SDDL_DACL_RE = re.compile(r"D:([PARI]*)(\(.*)?$")
 
 
 def _win_api():
@@ -161,6 +163,10 @@ def _win_api():
     advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
         PVOID, wintypes.DWORD, wintypes.DWORD, PLPWSTR, LPDWORD,
     )
+    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+    advapi32.ConvertStringSidToSidW.argtypes = (wintypes.LPCWSTR, PPVOID)
+    advapi32.EqualSid.restype = wintypes.BOOL
+    advapi32.EqualSid.argtypes = (PVOID, PVOID)
     advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
     advapi32.GetSecurityDescriptorDacl.argtypes = (PVOID, PBOOL, PPVOID, PBOOL)
     # Both return a Win32 error code (DWORD), not a BOOL. Zero means success.
@@ -214,9 +220,28 @@ def _win_current_user_sid(ctypes, wintypes, advapi32, kernel32):
         kernel32.CloseHandle(token)
 
 
-def _win_normalize_sid(token):
-    token = token.strip().upper()
-    return _WIN_SDDL_ALIASES.get(token, token)
+def _parse_sddl_dacl(sddl, path):
+    """Split an SDDL string into ``(protected, [trustee, ...])``.
+
+    Pure text handling, so the parsing half of the Windows decision is testable
+    on any platform. It deliberately does NOT decide whether a trustee is
+    acceptable — see ``_win_trustees_allowed`` for why that cannot be done on
+    strings.
+    """
+    body = None
+    for m in _SDDL_DACL_RE.finditer(sddl):
+        body = m
+        break
+    if body is None:
+        raise InsecureFileError(f"{path}: security descriptor has no DACL.")
+    protected = "P" in body.group(1)
+    trustees = []
+    for ace in _SDDL_ACE_RE.findall(body.group(2) or ""):
+        fields = ace.split(";")
+        if len(fields) < 6 or not fields[5].strip():
+            raise InsecureFileError(f"{path}: unparsable ACE in DACL.")
+        trustees.append(fields[5].strip())
+    return protected, trustees
 
 
 def _win_read_dacl_sddl(api, path):
@@ -249,35 +274,70 @@ def _win_read_dacl_sddl(api, path):
         kernel32.LocalFree(psd)
 
 
-def _win_verify_sddl(sddl, user_sid, path):
+def _win_sid_from_string(api, token):
+    """Resolve an SDDL trustee token to a real SID. Caller LocalFrees it.
+
+    ``ConvertStringSidToSidW`` accepts BOTH the ``S-1-5-...`` form and the
+    two-letter aliases, which is exactly why this exists: Windows renders a
+    descriptor back using an alias whenever one applies, so the string we read
+    is not the string we wrote even when the principal is identical. On a
+    machine whose interactive account is the built-in Administrator, the SID we
+    set comes back as ``LA``. Comparing the rendered text would reject our own
+    ACE — a presentation form is not an identity.
+    """
+    ctypes, _wintypes, advapi32, _kernel32 = api
+    psid = ctypes.c_void_p()
+    if not advapi32.ConvertStringSidToSidW(token, ctypes.byref(psid)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return psid
+
+
+def _win_trustees_allowed(api, trustees, user_sid, path):
+    """Prove every ACE names a principal we put there, by SID identity.
+
+    Resolves both sides to real SIDs and compares with ``EqualSid``. An
+    allowlist, never a denylist: an unrecognised trustee is a failure, not
+    something to pattern-match away.
+    """
+    ctypes, _wintypes, advapi32, kernel32 = api
+    allowed = []
+    try:
+        for token in (user_sid,) + _WIN_ALLOWED_WELL_KNOWN:
+            allowed.append(_win_sid_from_string(api, token))
+        for token in trustees:
+            psid = _win_sid_from_string(api, token)
+            try:
+                if not any(advapi32.EqualSid(psid, a) for a in allowed):
+                    raise InsecureFileError(
+                        f"{path}: DACL grants access to an unexpected trustee "
+                        f"({token})."
+                    )
+            finally:
+                kernel32.LocalFree(psid)
+    finally:
+        for a in allowed:
+            kernel32.LocalFree(a)
+
+
+def _win_verify_dacl(api, sddl, user_sid, path):
     """Prove the read-back DACL is protected and grants nobody unexpected.
 
     Two independent properties, both required:
       * the DACL carries the ``P`` (protected) flag, so inheritable ACEs from
         the parent directory are not applied — this is the flag that makes the
         launch directory's ACL irrelevant;
-      * every ACE names a trustee we put there on purpose.
+      * every ACE names a trustee we put there on purpose, compared by SID
+        identity rather than by rendered text.
     """
-    head = sddl.split("D:", 1)
-    if len(head) != 2:
-        raise InsecureFileError(f"{path}: security descriptor has no DACL.")
-    body = head[1]
-    flags = body[: len(body) - len(body.lstrip("PARIarip"))]
-    if "P" not in flags.upper():
+    protected, trustees = _parse_sddl_dacl(sddl, path)
+    if not protected:
         raise InsecureFileError(
             f"{path}: DACL is not protected — the parent directory's "
             f"inheritable permissions still apply."
         )
-    allowed = {_win_normalize_sid(user_sid)} | _WIN_ALLOWED_WELL_KNOWN
-    for ace in _SDDL_ACE_RE.findall(body):
-        fields = ace.split(";")
-        if len(fields) < 6:
-            raise InsecureFileError(f"{path}: unparsable ACE in DACL.")
-        trustee = _win_normalize_sid(fields[5])
-        if trustee not in allowed:
-            raise InsecureFileError(
-                f"{path}: DACL grants access to an unexpected trustee ({trustee})."
-            )
+    if not trustees:
+        raise InsecureFileError(f"{path}: DACL has no access-allowed entries.")
+    _win_trustees_allowed(api, trustees, user_sid, path)
 
 
 def _windows_lock_down(path):
@@ -334,7 +394,7 @@ def _windows_lock_down(path):
 
     # Read it back from disk. Setting a DACL and assuming it took is the same
     # class of mistake as assuming a 0o600 took.
-    _win_verify_sddl(_win_read_dacl_sddl(api, path), user_sid, path)
+    _win_verify_dacl(api, _win_read_dacl_sddl(api, path), user_sid, path)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
