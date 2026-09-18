@@ -468,6 +468,129 @@ def main():
         with open(force_path, encoding="utf-8") as f:
             check(json.load(f).get("n") == "Fresh", "deck init --force overwrote the file")
 
+        # ══ Terminal-escape neutralization (CWE-150) ════════════════════
+        # A received deck must not be able to drive the operator's terminal
+        # when it is merely inspected. Byte-level assertions on the real CLI:
+        # source review is not proof (secure-coding §0.5).
+        print("\n── Terminal-escape neutralization ──")
+        ESC, BEL, NUL, DEL, CR = "\x1b", "\x07", "\x00", "\x7f", "\r"
+        C1_CSI, RTLO, ZWSP = "\x9b", "‮", "​"
+        payload = (ESC + "]0;PWNED" + BEL + ESC + "[31m" + ESC + "[2K" + ESC + "[1G"
+                   + C1_CSI + "31m" + RTLO + ZWSP + NUL + DEL + CR + "spoofed")
+        esc_deck = {
+            "deckTitle": payload,
+            "lanes": [{"title": payload, "items": [{
+                "title": payload, "status": "done", "importance": "must",
+                "slides": [{"bg": "#000000", "color": "#ffffff", "duration": 10,
+                            "title": payload,
+                            "blocks": [{"type": "heading", "text": payload, "size": "2xl"},
+                                       {"type": "text", "text": payload, "size": "md"}]}],
+            }]}],
+        }
+        esc_path = write_json("escape-payload.vela", esc_deck)
+
+        # Bytes a terminal emulator acts on. CR is included deliberately: it
+        # returns the cursor to column zero and overwrites a line already read.
+        RAW_CONTROL = (ESC, BEL, NUL, DEL, CR, C1_CSI, "\x08")
+        READ_ONLY_CMDS = [
+            ("deck", "list", esc_path),
+            ("deck", "stats", esc_path),
+            ("deck", "dump", esc_path),
+            ("deck", "find", esc_path, "spoofed"),
+            ("deck", "validate", esc_path),   # relays validate.py's own stdout
+            ("slide", "view", esc_path, "1"),
+        ]
+        for cmd in READ_ONLY_CMDS:
+            r = run_vela(*cmd)
+            blob = (r.stdout or "") + (r.stderr or "")
+            hits = sorted({hex(ord(c)) for c in RAW_CONTROL if c in blob})
+            check(not hits, f"`vela {' '.join(cmd[:2])}` emits no raw control bytes",
+                  f"found {hits} in output")
+
+        # The payload must still be VISIBLE, not silently deleted — a strip
+        # lets two different decks render identically.
+        r = run_vela("deck", "list", esc_path)
+        check("^[" in r.stdout, "control bytes are escaped to caret notation, not dropped",
+              f"stdout: {r.stdout[:120]!r}")
+
+        # validate.py invoked DIRECTLY (not through the relay) must be safe too.
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), esc_path],
+                           capture_output=True, text=True, cwd=tmpdir)
+        blob = (r.stdout or "") + (r.stderr or "")
+        check(not any(c in blob for c in RAW_CONTROL),
+              "validate.py run directly emits no raw control bytes")
+
+        # The --json machine path feeds an agent's context, not a TTY. json.dumps
+        # escapes C0 only, so DEL / C1 / bidi / zero-width need ensure_ascii.
+        for cmd in (("deck", "list", esc_path, "--json"),
+                    ("deck", "stats", esc_path, "--json")):
+            r = run_vela(*cmd)
+            blob = (r.stdout or "") + (r.stderr or "")
+            hits = sorted({hex(ord(c)) for c in (*RAW_CONTROL, RTLO, ZWSP) if c in blob})
+            check(not hits, f"`vela {' '.join(cmd[:2])} --json` emits no raw control bytes",
+                  f"found {hits}")
+
+        # extract-text → patch-text is a ROUND TRIP. The display encoder must
+        # not run on it, or an inspection would corrupt the author's text.
+        rt_deck = {
+            "deckTitle": "Round Trip",
+            "lanes": [{"title": "Main", "items": [{
+                "title": "M", "status": "done", "importance": "must",
+                "slides": [{"bg": "#000000", "color": "#ffffff", "duration": 10,
+                            "blocks": [{"type": "text",
+                                        "text": "Estratégia — Visão \U0001f680 mc²",
+                                        "size": "md"}]}],
+            }]}],
+        }
+        rt_path = write_json("roundtrip.vela", rt_deck)
+        r = run_vela("deck", "extract-text", rt_path)
+        check_exit(r, EXIT_OK, "deck extract-text to stdout")
+        try:
+            recovered = json.loads(r.stdout)
+            original = rt_deck["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["text"]
+            check(original in recovered.values(),
+                  "extract-text stdout round-trips author text losslessly",
+                  f"got {list(recovered.values())!r}")
+        except json.JSONDecodeError as e:
+            fail("extract-text stdout round-trips author text losslessly", e)
+
+        # ══ Encoder unit behaviour (_safe_term) ═════════════════════════
+        print("\n── Terminal encoder (_safe_term) ──")
+        import _safe_term  # noqa: E402  (SCRIPTS is already on sys.path)
+
+        check(_safe_term.term_text(ESC + "[31m") == "^[[31m",
+              "term_text escapes ESC to caret notation")
+        check(_safe_term.term_text(C1_CSI + "31m") == "^[31m",
+              "term_text escapes the 8-bit C1 CSI introducer (0x9b)")
+        check(RTLO not in _safe_term.term_text("a" + RTLO + "b"),
+              "term_text drops bidi overrides (Trojan Source class)")
+        check(_safe_term.term_text("x" + CR + "y") == "x^My",
+              "term_text escapes CR (line-overwrite primitive)")
+        # Fail closed on a non-string and on an ill-formed value.
+        check(_safe_term.term_text({"__str__": "x"}, "FB") == "FB",
+              "term_text returns the fallback for a non-string (no coercion)")
+        check(_safe_term.term_text("a\ud800b", "FB") == "FB",
+              "term_text fails closed on a lone surrogate")
+        # Width is bounded in the same pass, so a value cannot flood the screen.
+        check(len(_safe_term.term_text("A" * 90000)) <= 50000,
+              "term_text bounds output width")
+        check(len(_safe_term.term_label("A" * 9000)) <= 200,
+              "term_label bounds label width")
+        # Fidelity: the encoder must not damage legitimate authored content.
+        for legit in ("Estratégia — Visão 2026 \U0001f680",
+                      "e = mc² ∀x∈ℝ",
+                      "Devanāgarī: हिन्दी",
+                      "العربية",
+                      "\U0001f468‍\U0001f4bb Engineering"):
+            check(_safe_term.term_text(legit) == legit,
+                  f"term_text preserves legitimate text: {legit[:18]}")
+        # Untrusted renders encoded by default; .raw is the explicit opt-out.
+        u = _safe_term.Untrusted(ESC + "[31mX")
+        check(f"{u}" == "^[[31mX", "Untrusted renders encoded in an f-string")
+        check(format(u, ">10") == "   ^[[31mX",
+              "Untrusted applies a format spec to the ENCODED text")
+        check(u.raw == ESC + "[31mX", "Untrusted.raw returns the original bytes")
+
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

@@ -686,6 +686,54 @@ def lint_monolith(filepath):
     return errors, warnings
 
 
+# ── Terminal-sink funnel gate ────────────────────────────────────────
+# The shipped CLI prints untrusted deck values. A terminal interprets C0/C1
+# control bytes inside a printed string as commands (CWE-150), so every
+# human-readable byte must leave through the one encoder-applying funnel
+# (`emit`) in each script. Auditing the ARGUMENTS of ~80 print sites is the
+# fragile version of this check — resolving locals and helper returns is
+# exactly where the CSS sink gate has to work hardest. Banning the raw sink
+# instead makes the invariant total and trivially decidable: if a bare
+# print()/sys.std*.write() is absent, mediation is complete by construction.
+# One missed site is all a payload needs, so this is enforced mechanically.
+TERMINAL_SINK_FILES = ["vela.py", "validate.py", "assemble.py"]
+# The single sanctioned builtin-print reference, inside the funnel itself.
+_FUNNEL_ALIAS_RE = re.compile(r'^_write\s*=\s*print\s*$')
+_RAW_SINK_RE = re.compile(r'(?<![\w.])(print\s*\(|sys\.std(?:out|err)\.write\s*\()')
+
+
+def check_terminal_sink_gate(parts_dir):
+    """Fail if a shipped CLI script writes to the terminal outside `emit`."""
+    errors = []
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(parts_dir)))
+    scripts_dir = os.path.join(repo_root, "skills", "vela-slides", "scripts")
+    if not os.path.isdir(scripts_dir):
+        return errors  # not a full checkout; nothing to assert
+    for fname in TERMINAL_SINK_FILES:
+        fpath = os.path.join(scripts_dir, fname)
+        if not os.path.exists(fpath):
+            errors.append(f"Terminal-sink gate: missing shipped script {fname}")
+            continue
+        with open(fpath, 'r', encoding="utf-8") as f:
+            source = f.read()
+        # The funnel must still be present and wired, or banning print() below
+        # would pass vacuously on a script that simply stopped printing safely.
+        if "from _safe_term import" not in source or "def emit(" not in source:
+            errors.append(
+                f"Terminal-sink gate: {fname} has no `emit` funnel importing "
+                f"_safe_term — deck text would reach the terminal unencoded")
+            continue
+        for lineno, line in enumerate(source.split("\n"), 1):
+            code = line.split("#", 1)[0].strip()
+            if not code or _FUNNEL_ALIAS_RE.match(code):
+                continue
+            if _RAW_SINK_RE.search(code):
+                errors.append(
+                    f"Terminal-sink gate: raw output sink in {fname}:{lineno} — "
+                    f"use emit()/emit to keep deck text encoded: {code[:60]}")
+    return errors
+
+
 def lint_parts(parts_dir):
     """Lint all part-files in a directory."""
     errors = []
@@ -724,6 +772,7 @@ def lint_parts(parts_dir):
     errors += check_svg_style_element_disallowed(parts_dir)
     errors += check_security_tests_not_skippable(parts_dir)
     errors += check_part_order_complete(parts_dir)
+    errors += check_terminal_sink_gate(parts_dir)
 
     return errors, warnings
 

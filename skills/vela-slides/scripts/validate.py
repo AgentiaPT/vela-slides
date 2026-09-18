@@ -10,6 +10,27 @@ Usage:
 
 import sys, json, os
 
+# ── Terminal-output funnel ──────────────────────────────────────────────
+# COMPLETE MEDIATION: every human-readable byte this script writes leaves
+# through emit(), which applies the canonical encoder in _safe_term.py (read
+# that module's header for the threat and the policy). Encoding at the SINK
+# rather than at each call site is what makes the mediation total: a new print
+# site cannot be added without either routing through emit() or failing the
+# lint gate (tools/vela-dev/scripts/lint.py, check_terminal_sink_gate).
+#
+# NOT applied to file writes, and never to deck data on its way back into a
+# deck — `deck extract-text` → `patch-text` is a round-trip edit that must stay
+# lossless, so the encoder belongs on the display path only.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _safe_term import term_text  # noqa: E402
+
+_write = print  # the only builtin-print reference; everything else uses emit()
+
+
+def emit(*parts, **kwargs):
+    """Write to the terminal with deck-supplied control sequences neutralized."""
+    _write(*(term_text(p) if isinstance(p, str) else p for p in parts), **kwargs)
+
 REQUIRED_SLIDE_KEYS = {"blocks", "duration"}
 VALID_BLOCK_TYPES = {
     "heading", "text", "bullets", "image", "code", "grid", "callout",
@@ -66,12 +87,12 @@ def validate(path):
             # Save expanded version back so assembly works
             real_path = os.path.realpath(path)
             if real_path != os.path.abspath(path):
-                print(f"WARNING: refusing to write through symlink: {path}", file=sys.stderr)
+                emit(f"WARNING: refusing to write through symlink: {path}", file=sys.stderr)
             else:
                 with open(real_path, 'w', encoding="utf-8") as f:
                     json.dump(deck, f, ensure_ascii=False)
         except ImportError as e:
-            print(f"WARNING: could not expand compact/turbo deck ({e}); "
+            emit(f"WARNING: could not expand compact/turbo deck ({e}); "
                   f"validating the un-expanded form", file=sys.stderr)
 
     errors = []
@@ -214,23 +235,23 @@ def validate(path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 validate.py <deck.vela>", file=sys.stderr)
+        emit("Usage: python3 validate.py <deck.vela>", file=sys.stderr)
         sys.exit(1)
 
     errors, warnings, stats = validate(sys.argv[1])
 
-    print(f"📊 Deck Stats: {stats['slides']} slides | {stats['blocks']} blocks | {stats['duration']//60}m {stats['duration']%60}s")
-    print(f"   Block types: {', '.join(f'{k}({v})' for k,v in sorted(stats['block_types'].items(), key=lambda x: -x[1]))}")
+    emit(f"📊 Deck Stats: {stats['slides']} slides | {stats['blocks']} blocks | {stats['duration']//60}m {stats['duration']%60}s")
+    emit(f"   Block types: {', '.join(f'{k}({v})' for k,v in sorted(stats['block_types'].items(), key=lambda x: -x[1]))}")
 
     if warnings:
-        print(f"\n⚠️  {len(warnings)} warnings:")
+        emit(f"\n⚠️  {len(warnings)} warnings:")
         for w in warnings:
-            print(f"   • {w}")
+            emit(f"   • {w}")
 
     if errors:
-        print(f"\n❌ {len(errors)} errors:")
+        emit(f"\n❌ {len(errors)} errors:")
         for e in errors:
-            print(f"   • {e}")
+            emit(f"   • {e}")
         sys.exit(1)
     else:
-        print(f"\n✅ Deck is valid")
+        emit(f"\n✅ Deck is valid")
