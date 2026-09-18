@@ -5422,14 +5422,18 @@ def test_review_queue_drains_to_zero():
         fail("approval can change module", "TOGGLE_SLIDE_REVIEWED never moves selectedId")
 
     # ── 3. Every TOC reader uses the same predicate ──────────────────────────
+    # The row list and the keyboard rail read velaReviewRowVisible, which is
+    # velaSlideNeedsReview plus the rows the author pinned by hiding them in this
+    # review session. The COUNT keeps the bare predicate, so a pinned row never
+    # re-enters "N left".
     for needle, label in [
-        ("if (reviewFilter && !velaSlideNeedsReview(s)) return null;",
+        ("if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;",
          "the TOC row list drops slides that need no review"),
-        ("item.slides.every((s) => !velaSlideNeedsReview(s))",
+        ("item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si))",
          "the per-section all-approved banner uses the predicate"),
-        ("if (!velaSlideNeedsReview(s)) _rvDone++;",
+        ("if (s.reviewed === true) _rvApproved++; else if (s.hidden === true) _rvHidden++;",
          "the \"N left\" count uses the predicate, so it can reach zero"),
-        ("if (reviewFilter && !velaSlideNeedsReview(item.slides[si])) continue;",
+        ("if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue;",
          "keyboard TOC nav uses the predicate"),
     ]:
         if needle in lst:
@@ -5602,6 +5606,117 @@ def test_link_mark_follows_wrapped_label():
     else:
         fail("the UI battery measures both a wrapped and a single-line label")
 
+def test_review_hide_undo_and_toolbar_reflow():
+    print("\n\u2500\u2500 Review mode: hide stays undoable, toolbar stays reachable \u2500\u2500")
+
+    reducer = open(os.path.join(PARTS_DIR, "part-reducer.jsx"), encoding="utf-8").read()
+    tlist = open(os.path.join(PARTS_DIR, "part-list.jsx"), encoding="utf-8").read()
+    panel = open(os.path.join(PARTS_DIR, "part-slidepanel.jsx"), encoding="utf-8").read()
+    uitest2 = open(os.path.join(PARTS_DIR, "part-uitest2.jsx"), encoding="utf-8").read()
+
+    # ---- A row the author hides in review mode must stay listed ----
+    if "function velaReviewRowVisible" in reducer:
+        ok("review: one row-visibility predicate exists (velaReviewRowVisible)")
+    else:
+        fail("review: no velaReviewRowVisible predicate")
+    if re.search(r"velaReviewRowVisible\(s,\s*itemId,\s*index\)\s*\{\s*return velaSlideNeedsReview\(s\)\s*\|\|\s*velaReviewKeepHas", reducer):
+        ok("review: a pinned row is listed even when it needs no review")
+    else:
+        fail("review: velaReviewRowVisible does not fall back to the pin set")
+    # The pin must not re-enter the count or the rotation.
+    if re.search(r"function velaSlideNeedsReview\(s\)\s*\{\s*return !!s && s\.reviewed !== true && s\.hidden !== true;", reducer):
+        ok("review: a hidden slide still needs no approval (rotation and count unchanged)")
+    else:
+        fail("review: velaSlideNeedsReview changed — a hidden slide may be back in the rotation")
+    # The pin set is session-only and is cleared on every mode change.
+    setter = reducer[reducer.index("function setVelaReviewFilter"):][:400]
+    if "_velaReviewKeep = new Set()" in setter:
+        ok("review: pinned rows are cleared whenever review mode is toggled")
+    else:
+        fail("review: pinned rows survive a review session")
+    if "_velaReviewKeep" in tlist.split("velaReviewKeepAdd")[0][:0] or True:
+        pass
+
+    # ---- The TOC reads the new predicate everywhere a row can appear ----
+    if "!velaReviewRowVisible(s, item.id, si)" in tlist:
+        ok("TOC: the slide-row filter uses the pinned-row predicate")
+    else:
+        fail("TOC: the slide-row filter still drops a row the author just hid")
+    if "!velaReviewRowVisible(item.slides[si], item.id, si)" in tlist:
+        ok("TOC: keyboard nav uses the same predicate as the list")
+    else:
+        fail("TOC: keyboard nav and the row list can disagree")
+    if re.search(r"velaReviewKeepAdd\(item\.id, si\); dispatch\(\{ type: \"TOGGLE_SLIDE_HIDDEN\"", tlist):
+        ok("TOC: the row eye control pins its row before it hides the slide")
+    else:
+        fail("TOC: the row eye control does not pin its row — the hide cannot be undone in place")
+    if re.search(r"ctxHide = \(si\) => ctxTargets\(si\)\.forEach\(\(i\) => \{ velaReviewKeepAdd\(item\.id, i\);", tlist):
+        ok("TOC: the context-menu Hide pins its rows the same way")
+    else:
+        fail("TOC: the context-menu Hide and the row eye control have drifted apart")
+
+    # ---- An empty review list must not claim approvals that were never given ----
+    if "function velaReviewEmptyKind" in reducer:
+        ok("review: one helper decides what an empty review list means")
+    else:
+        fail("review: no velaReviewEmptyKind helper — the banner can invent approvals")
+    if re.search(r"velaReviewEmptyKind\(approved, hidden\)\s*\{\s*return approved === 0 \? \"hidden\" : hidden === 0 \? \"approved\" : \"mixed\";", reducer):
+        ok("review: nothing approved reads as 'hidden', never as 'approved'")
+    else:
+        fail("review: velaReviewEmptyKind does not separate hidden from approved")
+    if "_rvApproved" in tlist and "_rvHidden" in tlist:
+        ok("TOC: approved and hidden slides are counted apart")
+    else:
+        fail("TOC: approved and hidden slides are still counted together")
+    if re.search(r"reviewLeft = _rvTotal - _rvApproved - _rvHidden", tlist):
+        ok("TOC: 'N left' still drops both approved and hidden slides")
+    else:
+        fail("TOC: the 'N left' count changed shape")
+    banner = tlist[tlist.index('data-testid="toc-review-banner"'):][:900]
+    if "velaReviewEmptyKind(_rvApproved, _rvHidden)" in banner:
+        ok("TOC banner: the wording comes from the shared helper")
+    else:
+        fail("TOC banner: the wording does not use the shared helper")
+    if 'kind === "approved"' in banner and "all ${_rvTotal} slides are hidden" in banner:
+        ok("TOC banner: the all-hidden case has its own wording")
+    else:
+        fail("TOC banner: an all-hidden deck can still read 'all approved'")
+    if 'data-testid="review-filter-clear"' in banner:
+        ok("TOC banner: the escape control stays in every empty state")
+    else:
+        fail("TOC banner: the escape control was lost")
+    note = tlist[tlist.index('data-testid="toc-section-all-approved"') - 400:]
+    note = note[:note.index("</div>") + 6]
+    if "velaReviewEmptyKind" in note and "hidden" in note:
+        ok("TOC section note: an all-hidden section says hidden, not approved")
+    else:
+        fail("TOC section note: an all-hidden section can still read 'all approved'")
+
+    # ---- The bottom slide toolbar must keep every control reachable ----
+    bar = panel[panel.index('data-testid="slide-toolbar"'):][:500]
+    if 'flexWrap: "wrap"' in bar:
+        ok("slide toolbar: the strip wraps, so no control is laid out past the window edge")
+    else:
+        fail("slide toolbar: the strip still does not wrap — narrow windows hide the last controls")
+    if "height:" not in bar.split("display:")[0]:
+        ok("slide toolbar: no fixed height, so wrapped rows stay visible")
+    else:
+        fail("slide toolbar: a fixed height would hide the wrapped rows")
+    # Wrapping must not be paid for by shrinking the labels.
+    for m in re.finditer(r"fontSize: (\d+), fontFamily: FONT\.mono", bar):
+        if int(m.group(1)) < 13:
+            fail("slide toolbar: a label font dropped below 13px")
+            break
+    else:
+        ok("slide toolbar: label text stays at 13px or larger")
+
+    # ---- Regression suite registered ----
+    if "Review mode: hide stays undoable, empty list tells the truth" in uitest2:
+        ok("UI battery: the review hide/empty-state suite is registered")
+    else:
+        fail("UI battery: no suite covers the review hide/empty-state behaviour")
+
+
 
 if __name__ == "__main__":
     args = sys.argv[1:]
@@ -5645,6 +5760,7 @@ if __name__ == "__main__":
         test_review_queue_drains_to_zero()
         test_reviewed_flag_round_trip()
         test_link_mark_follows_wrapped_label()
+        test_review_hide_undo_and_toolbar_reflow()
     if run_integration:
         test_integration()
         test_cli_commands()

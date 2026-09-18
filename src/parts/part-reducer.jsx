@@ -35,8 +35,27 @@ function setVelaReviewFilter(v) {
   const next = v === true;
   if (next === _velaReviewFilter) return;
   _velaReviewFilter = next;
+  _velaReviewKeep = new Set(); // a new review session starts with no pinned rows
   _velaReviewSubs.forEach((fn) => { try { fn(); } catch {} });
 }
+// Rows pinned to the review list for the rest of THIS review session, keyed
+// "<itemId>:<index>". A slide the author hides while review mode is on leaves the
+// list by the needs-review rule, and the eye control leaves with it — so the hide
+// could not be undone in place. Hiding therefore pins the row: it stays listed and
+// shows as hidden. The pin only changes what the TOC LISTS. The count and the slide
+// rotation still read velaSlideNeedsReview, so a hidden slide still needs no
+// approval. Session-only, never persisted, cleared on every mode change.
+let _velaReviewKeep = new Set();
+function velaReviewKeepKey(itemId, index) { return String(itemId) + ":" + index; }
+function velaReviewKeepAdd(itemId, index) { _velaReviewKeep.add(velaReviewKeepKey(itemId, index)); }
+function velaReviewKeepHas(itemId, index) { return _velaReviewKeep.has(velaReviewKeepKey(itemId, index)); }
+// ONE predicate for "does this slide get a row while review mode is on" — the row
+// list, the section note and the keyboard nav rail all read it, so they cannot drift.
+function velaReviewRowVisible(s, itemId, index) { return velaSlideNeedsReview(s) || velaReviewKeepHas(itemId, index); }
+// An EMPTY review list has three causes and they are not the same news. The banner
+// and the per-section note both read this, so neither can report "hidden" as
+// "approved" — an author who hid every slide has approved nothing.
+function velaReviewEmptyKind(approved, hidden) { return approved === 0 ? "hidden" : hidden === 0 ? "approved" : "mixed"; }
 function useVelaReviewFilter() {
   const [, bump] = useState(0);
   useEffect(() => { const fn = () => bump((n) => n + 1); _velaReviewSubs.add(fn); return () => { _velaReviewSubs.delete(fn); }; }, []);

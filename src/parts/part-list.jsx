@@ -257,7 +257,8 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
   const ctxTargets = (si) => (multiSel.length > 1 && multiSel.includes(si)) ? [...multiSel].sort((a, b) => a - b) : [si];
   const ctxDelete = (si) => { const idxs = ctxTargets(si).sort((a, b) => b - a); dispatch({ type: "REMOVE_SLIDES", id: item.id, indices: idxs }); dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: Math.max(0, Math.min(...idxs) - 1) }); };
   const ctxDuplicate = (si) => dispatch({ type: "DUPLICATE_SLIDE", id: item.id, index: si });
-  const ctxHide = (si) => ctxTargets(si).forEach((i) => dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }));
+  // Same gesture as the row eye control, so it pins the row the same way.
+  const ctxHide = (si) => ctxTargets(si).forEach((i) => { velaReviewKeepAdd(item.id, i); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: i }); });
   // Multi-move ascending with index-shift compensation keeps target order intact.
   // `keepFocus` (Ctrl/⌘-click on the destination) moves the slide(s) "out" but keeps
   // focus in the SOURCE section on the slide that slides up into the first vacated
@@ -429,7 +430,10 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
         // re-browsing work already signed off (approved) or cut from the deck (hidden).
         // Return null (never filter the array) — `si` must stay the REAL slide index
         // for every dispatch below.
-        if (reviewFilter && !velaSlideNeedsReview(s)) return null;
+        // A row the author HID from here stays pinned for the rest of the review
+        // session (velaReviewRowVisible), so the eye control never disappears with
+        // the row and the hide can be undone in place.
+        if (reviewFilter && !velaReviewRowVisible(s, item.id, si)) return null;
         const slideRowId = item.id + ":" + si;
         const isRowFocused = nav.focusedRowId === slideRowId;
         return <React.Fragment key={si}>
@@ -487,7 +491,7 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
             ) : (
               <span onDoubleClick={(e) => startEditSlideTitle(e, si, title)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: s.hidden ? "line-through" : "none" }}>{title}</span>
             )}
-            <span onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
+            <span onClick={(e) => { e.stopPropagation(); velaReviewKeepAdd(item.id, si); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: item.id, index: si }); }}
               title={s.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (keeps it in the list, excludes it from presentation & counts)"}
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
@@ -508,11 +512,16 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
       }); })()}
       {/* CR7: a section whose slides are all approved must say so — a section that just
           vanished from the outline would read as data loss. */}
-      {reviewFilter && item.slides.every((s) => !velaSlideNeedsReview(s)) && (
-        <div data-testid="toc-section-all-approved" style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
-          ✓ all {item.slides.length} approved
-        </div>
-      )}
+      {reviewFilter && item.slides.length > 0 && item.slides.every((s, si) => !velaReviewRowVisible(s, item.id, si)) && (() => {
+        // Say what really happened. A section whose slides are all HIDDEN has no
+        // approvals, so "all approved" would be untrue.
+        const ap = item.slides.filter((s) => s.reviewed === true).length;
+        const hd = item.slides.length - ap;
+        const kind = velaReviewEmptyKind(ap, hd);
+        return <div data-testid="toc-section-all-approved" data-empty-kind={kind} style={{ padding: "3px 8px 3px 12px", fontSize: 11, fontFamily: FONT.mono, color: T.textDim, opacity: 0.7 }}>
+          {kind === "hidden" ? `all ${item.slides.length} hidden` : kind === "approved" ? `✓ all ${ap} approved` : `✓ ${ap} approved · ${hd} hidden`}
+        </div>;
+      })()}
       {ctxMenu && (() => {
         const si = ctxMenu.si;
         const hidden = item.slides[si]?.hidden;
@@ -765,12 +774,15 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   // CR7 review mode. Session-only, editor-only: it filters this outline and the editor
   // slide cycle. Presenter mode and every export still use the whole deck.
   const reviewFilter = useVelaReviewFilter();
-  let _rvTotal = 0, _rvDone = 0;
+  let _rvTotal = 0, _rvApproved = 0, _rvHidden = 0;
   // "N left" counts the slides that still NEED review. A hidden slide is out of the
   // rotation, so counting it would keep `reviewLeft` above zero for ever and the
   // all-approved banner (with its clear-all escape) would never appear.
-  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (!velaSlideNeedsReview(s)) _rvDone++; }
-  const reviewLeft = _rvTotal - _rvDone;
+  // Approved and hidden are counted APART: an empty review list can mean "everything
+  // is approved" or "nothing is left because the slides are hidden", and the banner
+  // must not report the second as the first. A slide that is both counts as approved.
+  for (const it of allItems) for (const s of (it.slides || [])) { _rvTotal++; if (s.reviewed === true) _rvApproved++; else if (s.hidden === true) _rvHidden++; }
+  const reviewLeft = _rvTotal - _rvApproved - _rvHidden;
   // CR2: collapse state now lives in the reducer (state.collapsedSections) so the
   // TOC disclosure keys + the collapsed-header current-slide marker can read/act on it.
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
@@ -799,7 +811,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
       if (collapsedSet.has(item.id)) rail.push({ itemId: item.id, si: 0 });
       // CR7: keyboard TOC nav follows the same rule as the list — a slide that needs
       // no review is out of the rotation while review mode is on.
-      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaSlideNeedsReview(item.slides[si])) continue; rail.push({ itemId: item.id, si }); }
+      else for (let si = 0; si < n; si++) { if (reviewFilter && !velaReviewRowVisible(item.slides[si], item.id, si)) continue; rail.push({ itemId: item.id, si }); }
     }
     return rail;
   };
@@ -841,7 +853,11 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
     </div>
     {reviewFilter && _rvTotal > 0 && reviewLeft === 0 && (
       <div data-testid="toc-review-banner" style={{ margin: "0 12px 6px", padding: "6px 8px", borderRadius: 4, border: `1px solid ${T.green}`, background: T.green + "18", fontSize: 11, fontFamily: FONT.mono, color: T.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span>✓ All {_rvTotal} slides approved.</span>
+        {(() => { const kind = velaReviewEmptyKind(_rvApproved, _rvHidden); return <span data-empty-kind={kind}>{kind === "hidden"
+          ? `Nothing left to review — all ${_rvTotal} slides are hidden.`
+          : kind === "approved"
+            ? `✓ All ${_rvTotal} slides approved.`
+            : `✓ ${_rvApproved} of ${_rvTotal} slides approved · ${_rvHidden} hidden.`}</span>; })()}
         <button data-testid="review-filter-clear" onClick={() => dispatch({ type: "CLEAR_REVIEWED" })} style={S.btn({ padding: "2px 6px", fontSize: 11, fontFamily: FONT.mono, borderRadius: 3, cursor: "pointer", background: "transparent", color: T.accent, border: `1px solid ${T.border}` })}>Clear all</button>
       </div>
     )}

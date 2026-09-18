@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch
-- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter useVelaReviewFilter velaFindItem velaSlideNeedsReview velaReviewSkipIndex velaReviewItemsInOrder velaReviewNextTarget NO_HISTORY MAX_HISTORY innerReducer
+- Review filter (CR7): _velaReviewFilter _velaReviewSubs velaReviewFilterOn setVelaReviewFilter _velaReviewKeep velaReviewKeepKey velaReviewKeepAdd velaReviewKeepHas velaReviewRowVisible velaReviewEmptyKind useVelaReviewFilter velaFindItem velaSlideNeedsReview velaReviewSkipIndex velaReviewItemsInOrder velaReviewNextTarget NO_HISTORY MAX_HISTORY innerReducer
 - Comment Actions: historyInit reducer
 
 ### part-engine.jsx
@@ -328,7 +328,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-blocks.jsx: 764-line unbannered stretch after line 819
 - part-canvas.jsx: 454-line unbannered stretch after line 41
 - part-slidepanel.jsx: 450-line unbannered stretch after line 206
-- part-slidepanel.jsx: 404-line unbannered stretch after line 968
+- part-slidepanel.jsx: 410-line unbannered stretch after line 968
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
