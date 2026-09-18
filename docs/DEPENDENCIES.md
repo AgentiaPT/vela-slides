@@ -232,7 +232,7 @@ APIs used by the Vela app at runtime in the browser:
 
 | Requirement | Value |
 |-------------|-------|
-| Runner OS | `ubuntu-latest` |
+| Runner OS | `ubuntu-latest` (all jobs); `windows-latest` also, for the `secret-hygiene` job only — POSIX-only permission assumptions can't fail on Linux alone |
 | Python | 3.12 (via `setup-python`) |
 
 ### External CLI tools used in CI
@@ -260,6 +260,8 @@ All build scripts use **only Python stdlib**. No external packages.
 | `serve.py` | `tools/vela-dev/scripts/serve.py` | `hashlib`, `hmac`, `http.server`, `http.cookies`, `secrets`, `threading`, `concurrent.futures`, `urllib.parse`, `webbrowser`, `os`, `sys`, `json`, `re`, `time` | `webbrowser.open()` or `cmd.exe` (Windows) |
 | `sync-skill-docs.py` | `tools/vela-dev/scripts/sync-skill-docs.py` | `subprocess`, `os`, `re` | `git` |
 | `lint.py` | `tools/vela-dev/scripts/lint.py` | `sys`, `os`, `re` | — |
+| `secure_file.py` | `tools/vela-dev/scripts/secure_file.py` | `errno`, `os`, `stat` | — (canonical secret-to-disk helper; imported by `serve.py`) |
+| `check-secret-writes.py` | `tools/vela-dev/scripts/check-secret-writes.py` | `os`, `re`, `sys` | — (CI gate: `ci-local.sh --gate secrets`) |
 
 ---
 
@@ -269,6 +271,7 @@ All build scripts use **only Python stdlib**. No external packages.
 |-----------|-----------|----------------|---------------|
 | `test_vela.py` | Custom runner | `json`, `sys`, `os`, `subprocess`, `tempfile`, `re` | `python3` (concat, validate, tests, evals) |
 | `test_serve.py` | `unittest` | `unittest`, `http.client`, `json`, `os`, `sys`, `threading`, `time` | — |
+| `test_secure_file.py` | `unittest` | `unittest`, `os`, `shutil`, `stat`, `sys`, `tempfile` | — |
 | `test_e2e_serve.js` | Playwright | `child_process`, `playwright` | `python3 serve.py` |
 
 ---

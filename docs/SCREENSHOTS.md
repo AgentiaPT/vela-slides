@@ -72,7 +72,7 @@ for (let attempt = 0; attempt < 30; attempt++) {
 }
 ```
 
-**Server auth:** Use `--no-auth` for automated screenshots. The token file is `.vela.env` (not `.vela-server-*`).
+**Server auth:** Use `--no-auth` for automated screenshots. `.vela.env` holds discovery data only (pid/port/host/mode), never the token — supply the token via `VELA_TOKEN` if you need an authenticated server instead.
 
 **Deck URL pattern:** `http://127.0.0.1:{port}/deck/{filename.vela}`
 

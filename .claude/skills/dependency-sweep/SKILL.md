@@ -144,7 +144,7 @@ Run the repo's gate before committing:
 ```bash
 python3 tests/test_vela.py                      # 488
 python3 tests/test_vela.py --integration        # 102
-python3 tests/test_serve.py                     # 124
+python3 tests/test_serve.py                     # 175
 python3 -m unittest tests.test_desktop          # 35
 node tests/test_release_build.cjs               # 22
 python3 -m unittest tests.test_dep_sweep        # 57 (this tooling)
